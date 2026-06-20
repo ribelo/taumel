@@ -1,0 +1,17 @@
+{
+  "name": "taumel",
+  "private": true,
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "scripts": {
+    "ocaml:init": "nix develop -c taumel-opam-init",
+    "build:ocaml": "nix develop -c sh scripts/build-ocaml.sh",
+    "test:ocaml": "nix develop -c dune runtest",
+    "smoke:artifact": "nix develop -c node test/smoke_footer_artifact.mjs",
+    "gate": "npm run build:ocaml && npm run test:ocaml && npm run smoke:artifact"
+  }
+}

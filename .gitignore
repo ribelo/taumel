@@ -1,0 +1,6 @@
+_build/
+_opam/
+*.install
+node_modules/
+dist/
+

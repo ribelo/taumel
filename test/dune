@@ -1,0 +1,5 @@
+(test
+ (name test_footer_model)
+ (package taumel)
+ (libraries taumel))
+

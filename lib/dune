@@ -1,0 +1,4 @@
+(library
+ (name taumel)
+ (public_name taumel))
+
