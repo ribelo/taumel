@@ -1,5 +1,65 @@
 (test
  (name test_footer_model)
+ (modules test_footer_model)
  (package taumel)
  (libraries taumel))
 
+(test
+ (name test_core_architecture)
+ (modules test_core_architecture)
+ (package taumel)
+ (libraries taumel))
+
+(test
+ (name test_core_regressions)
+ (modules test_core_regressions)
+ (package taumel)
+ (libraries taumel))
+
+(test
+ (name test_thread_tools)
+ (modules test_thread_tools)
+ (package taumel)
+ (libraries taumel))
+
+(test
+ (name test_mutation_plan)
+ (modules test_mutation_plan)
+ (package taumel)
+ (libraries taumel))
+
+(test
+ (name test_usage_plan)
+ (modules test_usage_plan)
+ (package taumel)
+ (libraries taumel))
+
+(test
+ (name test_command_plan)
+ (modules test_command_plan)
+ (package taumel)
+ (libraries taumel))
+
+(test
+ (name test_request_user_input)
+ (modules test_request_user_input)
+ (package taumel)
+ (libraries taumel))
+
+(test
+ (name test_runtime_policy)
+ (modules test_runtime_policy)
+ (package taumel)
+ (libraries taumel))
+
+(test
+ (name test_subagent_plan)
+ (modules test_subagent_plan)
+ (package taumel)
+ (libraries taumel))
+
+(test
+ (name test_tool_param_decoders)
+ (modules test_tool_param_decoders)
+ (package taumel)
+ (libraries taumel))

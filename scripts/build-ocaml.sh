@@ -1,7 +1,7 @@
 set -eu
 
-dune build bin/taumel_footer.bc.js
+dune build bin/taumel_main.bc.js
 mkdir -p dist
-rm -f dist/taumel_footer.cjs
-cp _build/default/bin/taumel_footer.bc.js dist/taumel_footer.cjs
-chmod u+w dist/taumel_footer.cjs
+rm -f dist/taumel.cjs
+cp _build/default/bin/taumel_main.bc.js dist/taumel.cjs
+chmod u+w dist/taumel.cjs

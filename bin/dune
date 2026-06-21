@@ -1,7 +1,6 @@
 (executable
- (name taumel_footer)
+ (name taumel_main)
  (modes js)
- (libraries taumel eta eta_jsoo js_of_ocaml)
+ (libraries taumel eta eta_http eta_http_js eta_jsoo js_of_ocaml)
  (js_of_ocaml
   (flags --effects=cps)))
-

@@ -1,10 +1,13 @@
 # taumel
 
-Taumel is a standalone pi extension rewrite experiment for tau.
+Taumel is a standalone OCaml/js_of_ocaml rewrite experiment for the tau pi
+extension. It does not depend on the Tau codebase.
 
-The first milestone is a footer-only extension implemented in OCaml, compiled
-to JavaScript with js_of_ocaml, and run on Eta_jsoo. The TypeScript entrypoint is
-only a pi loading and host-adapter boundary.
+The OCaml core owns the kept rewrite surface: shared infrastructure contracts,
+capability profiles, the tool gateway, sandbox policy and canonical tools,
+sub-agents, goals, Ralph-loop state, structured user input, thread lookup,
+OpenAI usage rendering, and the footer model. The TypeScript entrypoint remains
+a small pi loading and host-adapter boundary.
 
 ## Build
 
@@ -14,7 +17,7 @@ Initialize the shared normal OCaml opam switch and local Eta pins:
 nix develop -c taumel-opam-init
 ```
 
-Build and copy the jsoo artifact to `dist/taumel_footer.cjs`:
+Build and copy the jsoo artifact to `dist/taumel.cjs`:
 
 ```sh
 npm run build:ocaml

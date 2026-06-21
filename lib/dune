@@ -1,4 +1,4 @@
 (library
  (name taumel)
- (public_name taumel))
-
+ (public_name taumel)
+ (libraries yojson))

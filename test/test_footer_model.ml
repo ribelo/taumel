@@ -39,6 +39,8 @@ let test_render_line () =
         cwd = "/home/ribelo/projects/ribelo/taumel";
         branch = "main";
         filesystem_mode = "danger-full-access";
+        network_mode = "disabled";
+        no_sandbox = false;
         git_delta = { added = 12; removed = 3 };
         provider = "openai-codex";
         model = "gpt-test";
@@ -53,7 +55,81 @@ let test_render_line () =
   if not (String.contains line '%') then failwith "rendered line omits context usage";
   if not (String.contains line ':') then failwith "rendered line omits branch"
 
+let test_render_workspace_sandbox_label () =
+  let line =
+    Footer.render_line
+      ~colorize:(fun _ text -> text)
+      ~width:120
+      {
+        cwd = "/repo";
+        branch = "main";
+        filesystem_mode = "workspace-write";
+        network_mode = "disabled";
+        no_sandbox = false;
+        git_delta = { added = 0; removed = 0 };
+        provider = "openai-codex";
+        model = "gpt-test";
+        thinking = "medium";
+        total_cost = 0.0;
+        context_percent = 0.0;
+        context_window = 0.0;
+      }
+  in
+  if not (contains_substring line "workspace-write") then
+    failwith "rendered line abbreviates workspace sandbox";
+  if contains_substring line " ww " then
+    failwith "rendered line uses old workspace sandbox abbreviation"
+
+let test_render_missing_model_defaults () =
+  let line =
+    Footer.render_line
+      ~colorize:(fun _ text -> text)
+      ~width:120
+      {
+        cwd = "/repo";
+        branch = "main";
+        filesystem_mode = "workspace-write";
+        network_mode = "disabled";
+        no_sandbox = false;
+        git_delta = { added = 0; removed = 0 };
+        provider = "";
+        model = "";
+        thinking = "";
+        total_cost = 0.0;
+        context_percent = 0.0;
+        context_window = 0.0;
+      }
+  in
+  if not (contains_substring line "no-model • off") then
+    failwith "rendered line omits OCaml model/thinking defaults"
+
+let test_render_no_sandbox () =
+  let line =
+    Footer.render_line
+      ~colorize:(fun _ text -> text)
+      ~width:120
+      {
+        cwd = "/repo";
+        branch = "main";
+        filesystem_mode = "danger-full-access";
+        network_mode = "enabled";
+        no_sandbox = true;
+        git_delta = { added = 0; removed = 0 };
+        provider = "openai-codex";
+        model = "gpt-test";
+        thinking = "medium";
+        total_cost = 0.0;
+        context_percent = 0.0;
+        context_window = 0.0;
+      }
+  in
+  if not (contains_substring line "no-sandbox") then
+    failwith "rendered line omits no-sandbox state"
+
 let () =
   test_parse_git_numstat ();
   test_format_token_window ();
-  test_render_line ()
+  test_render_line ();
+  test_render_workspace_sandbox_label ();
+  test_render_missing_model_defaults ();
+  test_render_no_sandbox ()

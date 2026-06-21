@@ -7,6 +7,8 @@ type snapshot = {
   cwd : string;
   branch : string;
   filesystem_mode : string;
+  network_mode : string;
+  no_sandbox : bool;
   git_delta : git_delta;
   provider : string;
   model : string;
@@ -130,6 +132,17 @@ let sandbox_dot_color = function
   | "read-only" -> "success"
   | _ -> "warning"
 
+let sandbox_label snapshot =
+  if snapshot.no_sandbox then "no-sandbox"
+  else
+    let base =
+      match snapshot.filesystem_mode with
+      | "read-only" -> "read-only"
+      | "danger-full-access" -> "danger-full-access"
+      | _ -> "workspace-write"
+    in
+    if snapshot.network_mode = "enabled" then base ^ "+net" else base
+
 let context_text percent window =
   if Float.is_finite window && window > 0.0 then
     let percent = if Float.is_finite percent then percent else 0.0 in
@@ -138,6 +151,11 @@ let context_text percent window =
          (int_of_float (Float.round percent))
          (format_token_window window))
   else None
+
+let display_default ~default value =
+  match String.trim value with
+  | "" -> default
+  | value -> value
 
 let render_line ~colorize ~width snapshot =
   if width <= 0 then ""
@@ -150,14 +168,17 @@ let render_line ~colorize ~width snapshot =
     let git_delta =
       Printf.sprintf "Δ+%d/-%d" snapshot.git_delta.added snapshot.git_delta.removed
     in
-    let left_raw = dot ^ "  " ^ repo_line ^ " " ^ git_delta in
+    let sandbox = sandbox_label snapshot in
+    let left_raw = dot ^ " " ^ sandbox ^ "  " ^ repo_line ^ " " ^ git_delta in
     let dot_rendered = colorize (sandbox_dot_color snapshot.filesystem_mode) dot in
     let left_rendered =
-      dot_rendered ^ "  " ^ colorize "dim" repo_line ^ " "
+      dot_rendered ^ " " ^ colorize "dim" sandbox ^ "  " ^ colorize "dim" repo_line ^ " "
       ^ colorize "dim" git_delta
     in
     let provider = provider_label snapshot.provider in
-    let model_and_meta = snapshot.model ^ " • " ^ snapshot.thinking in
+    let model = display_default ~default:"no-model" snapshot.model in
+    let thinking = display_default ~default:"off" snapshot.thinking in
+    let model_and_meta = model ^ " • " ^ thinking in
     let middle_raw =
       if provider = "" then model_and_meta else provider ^ " • " ^ model_and_meta
     in
@@ -204,4 +225,3 @@ let render_line ~colorize ~width snapshot =
       else
         let raw = left_raw ^ " " ^ right_raw in
         colorize "dim" (take_width width raw)
-

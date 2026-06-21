@@ -65,6 +65,8 @@
               eval "$(opam env --switch "$switch_name" --set-switch)"
 
               opam pin add -n eta "$eta_path" --yes
+              opam pin add -n eta_http "$eta_path" --yes
+              opam pin add -n eta_http_js "$eta_path" --yes
               opam pin add -n eta_jsoo "$eta_path" --yes
 
               opam install . --deps-only --with-test --assume-depexts --yes
@@ -106,4 +108,3 @@
       );
     };
 }
-

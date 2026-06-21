@@ -17,5 +17,8 @@
   (ocaml (>= 5.2.0))
   (dune (>= 3.21))
   eta
+  eta_http
+  eta_http_js
   eta_jsoo
-  (js_of_ocaml (>= 5.0))))
+  (js_of_ocaml (>= 5.0))
+  yojson))
