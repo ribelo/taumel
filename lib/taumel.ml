@@ -3,6 +3,7 @@ module Child_session = Child_session
 module Command_plan = Command_plan
 module Footer_model = Footer_model
 module Goal = Goal
+module Global_settings = Global_settings
 module Mutation_plan = Mutation_plan
 module Permissions = Permissions
 module Ralph_loop = Ralph_loop

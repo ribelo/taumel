@@ -688,32 +688,63 @@ let test_goal_turn_accounting () =
 let test_permissions_active_resolution () =
   let resolved =
     Permissions.resolve_active
+      ~host_sandbox_preset:None ~host_network_mode:None ~host_no_sandbox:None
+      ~session_subagent:false
+      Permissions.Missing
+  in
+  assert_bool "missing permissions defaults to full access"
+    (resolved.profile.sandbox_preset = Capability.Danger_full_access);
+  assert_bool "missing permissions defaults to never approval"
+    (resolved.profile.approval_policy = Capability.Never);
+  assert_bool "missing permissions enables network"
+    (resolved.network_mode = Sandbox.Network_enabled);
+  assert_bool "missing permissions leaves no-sandbox disabled"
+    (not resolved.no_sandbox);
+  assert_bool "missing permissions records root session"
+    (not resolved.subagent);
+  assert_equal "missing permissions filesystem mode" "danger-full-access"
+    resolved.filesystem_mode;
+  let flagged =
+    Permissions.resolve_active
       ~host_sandbox_preset:(Some Capability.Read_only)
       ~host_network_mode:(Some Sandbox.Network_enabled)
       ~host_no_sandbox:(Some true) ~session_subagent:false
       Permissions.Missing
   in
-  assert_bool "missing permissions uses host sandbox"
-    (resolved.profile.sandbox_preset = Capability.Read_only);
-  assert_bool "missing permissions uses host network"
-    (resolved.network_mode = Sandbox.Network_enabled);
-  assert_bool "missing permissions uses host no-sandbox" resolved.no_sandbox;
-  assert_bool "missing permissions records root session"
-    (not resolved.subagent);
-  assert_equal "missing permissions filesystem mode" "read-only"
-    resolved.filesystem_mode;
+  assert_bool "flags override default sandbox"
+    (flagged.profile.sandbox_preset = Capability.Read_only);
+  assert_bool "flags reset preset approval"
+    (flagged.profile.approval_policy = Capability.On_request);
+  assert_bool "flags override default network"
+    (flagged.network_mode = Sandbox.Network_enabled);
+  assert_bool "flags override default no-sandbox" flagged.no_sandbox;
   let persisted_profile =
     {
       Capability.default with
-      sandbox_preset = Capability.Danger_full_access;
+      sandbox_preset = Capability.Workspace_write;
       no_sandbox_allowed = true;
     }
   in
   let persisted =
     expect_ok "persisted permissions"
-      (Permissions.create ~network_mode:Sandbox.Network_enabled ~no_sandbox:true
+      (Permissions.create ~network_mode:Sandbox.Network_disabled ~no_sandbox:true
          persisted_profile)
   in
+  let overridden =
+    Permissions.resolve_active
+      ~host_sandbox_preset:(Some Capability.Danger_full_access)
+      ~host_network_mode:None ~host_no_sandbox:(Some false)
+      ~session_subagent:false
+      (Permissions.Persisted persisted)
+  in
+  assert_bool "flags override persisted sandbox"
+    (overridden.profile.sandbox_preset = Capability.Danger_full_access);
+  assert_bool "flags override persisted approval"
+    (overridden.profile.approval_policy = Capability.Never);
+  assert_bool "full access flag forces network"
+    (overridden.network_mode = Sandbox.Network_enabled);
+  assert_bool "no-sandbox flag overrides persisted"
+    (not overridden.no_sandbox);
   let child =
     Permissions.resolve_active ~host_sandbox_preset:None ~host_network_mode:None
       ~host_no_sandbox:None ~session_subagent:true
@@ -723,7 +754,7 @@ let test_permissions_active_resolution () =
     (not child.profile.no_sandbox_allowed);
   assert_bool "subagent no-sandbox disabled" (not child.no_sandbox);
   assert_bool "subagent marker kept" child.subagent;
-  assert_equal "subagent filesystem mode" "danger-full-access"
+  assert_equal "subagent filesystem mode" "workspace-write"
     child.filesystem_mode
 
 let test_goal_command_planning () =

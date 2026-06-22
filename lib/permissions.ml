@@ -28,6 +28,7 @@ type prompt_plan =
     }
 
 let default_prompt_title = "Sandbox settings"
+let network_prompt_title = "Network access"
 
 let menu_selected_value options selected =
   match Shared.trim_non_empty selected with
@@ -84,6 +85,24 @@ let network_for_active_profile (profile : Capability_profile.t) requested =
   | Capability_profile.Danger_full_access -> Sandbox.Network_enabled
   | Capability_profile.Read_only | Capability_profile.Workspace_write -> requested
 
+let network_mode_for_sandbox_preset = function
+  | Capability_profile.Danger_full_access -> Sandbox.Network_enabled
+  | Capability_profile.Read_only | Capability_profile.Workspace_write ->
+      Sandbox.Network_disabled
+
+let approval_policy_for_sandbox_preset = function
+  | Capability_profile.Danger_full_access -> Capability_profile.Never
+  | Capability_profile.Read_only | Capability_profile.Workspace_write ->
+      Capability_profile.On_request
+
+let profile_for_sandbox_preset (profile : Capability_profile.t)
+    (sandbox_preset : Capability_profile.sandbox_preset) =
+  {
+    profile with
+    Capability_profile.sandbox_preset = sandbox_preset;
+    approval_policy = approval_policy_for_sandbox_preset sandbox_preset;
+  }
+
 let active_state ~(profile : Capability_profile.t) ~network_mode ~no_sandbox
     ~subagent =
   let network_mode = network_for_active_profile profile network_mode in
@@ -96,48 +115,64 @@ let active_state ~(profile : Capability_profile.t) ~network_mode ~no_sandbox
       Capability_profile.sandbox_to_string profile.sandbox_preset;
   }
 
+let default_active_state ~session_subagent =
+  active_state
+    ~profile:
+      (profile_for_sandbox_preset Capability_profile.default
+         Capability_profile.Danger_full_access)
+    ~network_mode:Sandbox.Network_enabled ~no_sandbox:false
+    ~subagent:session_subagent
+
+let persisted_active_state ~session_subagent permissions =
+  let subagent = session_subagent || permissions.sandbox.subagent in
+  let profile =
+    if subagent then { permissions.profile with no_sandbox_allowed = false }
+    else permissions.profile
+  in
+  active_state ~profile ~network_mode:permissions.sandbox.network_mode
+    ~no_sandbox:(if subagent then false else permissions.sandbox.no_sandbox)
+    ~subagent
+
+let apply_flag_overrides ~host_sandbox_preset ~host_network_mode
+    ~host_no_sandbox active =
+  let active =
+    match host_sandbox_preset with
+    | None -> active
+    | Some sandbox_preset ->
+        active_state
+          ~profile:(profile_for_sandbox_preset active.profile sandbox_preset)
+          ~network_mode:(network_mode_for_sandbox_preset sandbox_preset)
+          ~no_sandbox:active.no_sandbox ~subagent:active.subagent
+  in
+  let active =
+    match host_network_mode with
+    | None -> active
+    | Some network_mode ->
+        active_state ~profile:active.profile ~network_mode
+          ~no_sandbox:active.no_sandbox ~subagent:active.subagent
+  in
+  match host_no_sandbox with
+  | None -> active
+  | Some requested ->
+      let no_sandbox = (not active.subagent) && requested in
+      active_state
+        ~profile:{ active.profile with no_sandbox_allowed = no_sandbox }
+        ~network_mode:active.network_mode ~no_sandbox ~subagent:active.subagent
+
 let resolve_active ~host_sandbox_preset ~host_network_mode ~host_no_sandbox
     ~session_subagent persisted =
-  match persisted with
-  | Missing ->
-      let no_sandbox =
-        if session_subagent then false
-        else Option.value host_no_sandbox ~default:false
-      in
-      let sandbox_preset =
-        Option.value host_sandbox_preset
-          ~default:Capability_profile.Workspace_write
-      in
-      let profile =
-        {
-          Capability_profile.default with
-          sandbox_preset;
-          no_sandbox_allowed = no_sandbox;
-        }
-      in
-      active_state ~profile
-        ~network_mode:
-          (Option.value host_network_mode ~default:Sandbox.Network_disabled)
-        ~no_sandbox ~subagent:session_subagent
-  | Invalid ->
-      active_state ~profile:Capability_profile.default
-        ~network_mode:Sandbox.Network_disabled ~no_sandbox:false
-        ~subagent:session_subagent
-  | Persisted permissions ->
-      let subagent = session_subagent || permissions.sandbox.subagent in
-      let profile =
-        if subagent then
-          { permissions.profile with no_sandbox_allowed = false }
-        else permissions.profile
-      in
-      active_state ~profile ~network_mode:permissions.sandbox.network_mode
-        ~no_sandbox:(if subagent then false else permissions.sandbox.no_sandbox)
-        ~subagent
-
-let network_mode_for_sandbox_preset = function
-  | Capability_profile.Danger_full_access -> Sandbox.Network_enabled
-  | Capability_profile.Read_only | Capability_profile.Workspace_write ->
-      Sandbox.Network_disabled
+  let active =
+    match persisted with
+    | Missing -> default_active_state ~session_subagent
+    | Invalid ->
+        active_state ~profile:Capability_profile.default
+          ~network_mode:Sandbox.Network_disabled ~no_sandbox:false
+          ~subagent:session_subagent
+    | Persisted permissions ->
+        persisted_active_state ~session_subagent permissions
+  in
+  apply_flag_overrides ~host_sandbox_preset ~host_network_mode ~host_no_sandbox
+    active
 
 let rebuild_sandbox (state : state) =
   let network_mode =
@@ -154,7 +189,7 @@ let rebuild_sandbox (state : state) =
 let apply_update (state : state) = function
   | Set_sandbox sandbox_preset ->
       {
-        profile = { state.profile with sandbox_preset };
+        profile = profile_for_sandbox_preset state.profile sandbox_preset;
         sandbox =
           {
             state.sandbox with
@@ -274,8 +309,7 @@ let network_menu_options (state : state) =
       "Block network access in read-only and workspace-write modes.";
   ]
 
-let permissions_menu_options (state : state) =
-  sandbox_menu_options state @ network_menu_options state
+let permissions_menu_options (state : state) = sandbox_menu_options state
 
 let persisted_to_json (state : state) =
   Shared.Object
@@ -346,4 +380,21 @@ let parse input =
   | [ "agents"; "deny-all" ] -> Ok (Some Deny_all_agents)
   | _ ->
       Error
-        "usage: /permissions [show|sandbox <preset>|approval <policy>|network <enabled|disabled>|no-sandbox <enabled|disabled>|tools allow <names...>|tools deny-all|agents allow <names...>|agents deny-all]"
+        "usage: /permissions [show|sandbox <preset>|approval <policy>|no-sandbox <enabled|disabled>|tools allow <names...>|tools deny-all|agents allow <names...>|agents deny-all]"
+
+(* /permissions configures everything except network access, which now lives in
+   the dedicated /network command. The permissive [parse] above still accepts a
+   [network ...] selection so the shared menu-finish path can apply it. *)
+let parse_permissions input =
+  match parse_words input with
+  | "network" :: _ -> Error "network access is configured with /network"
+  | _ -> parse input
+
+let parse_network input =
+  match parse_words input with
+  | [] | [ "show" ] -> Ok None
+  | [ value ] | [ "network"; value ] -> (
+      match network_of_string value with
+      | Some mode -> Ok (Some (Set_network mode))
+      | None -> Error ("unknown network mode: " ^ value))
+  | _ -> Error "usage: /network [show|enabled|disabled]"

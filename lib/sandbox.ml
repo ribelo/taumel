@@ -306,6 +306,18 @@ let approval_decision (config : config) message =
   | Never -> Deny message
   | On_request | On_failure | Untrusted -> Requires_approval message
 
+let approval_policy_to_codex_string = function
+  | Never -> "Never"
+  | On_request -> "OnRequest"
+  | On_failure -> "OnFailure"
+  | Untrusted -> "UnlessTrusted"
+
+let reject_exec_escalation_message policy =
+  let policy = approval_policy_to_codex_string policy in
+  Printf.sprintf
+    "approval policy is %s; reject command — you cannot ask for escalated permissions if the approval policy is %s"
+    policy policy
+
 let authorize_mutation_path ?(approved = false) (config : config) access path =
   if config.no_sandbox then Allow
   else
@@ -345,8 +357,11 @@ let authorize_effect (config : config) = function
 let authorize_exec (config : config) request =
   match request.sandbox_permissions with
   | Require_escalated { justification; _ } ->
-      approval_decision config
-        (if justification = "" then "command requested escalation" else justification)
+      if config.approval_policy <> On_request then
+        Deny (reject_exec_escalation_message config.approval_policy)
+      else
+        approval_decision config
+          (if justification = "" then "command requested escalation" else justification)
   | Use_default -> (
       match request.workdir with
       | Some workdir -> authorize_path config Read workdir

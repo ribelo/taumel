@@ -41,6 +41,12 @@
  (libraries taumel))
 
 (test
+ (name test_global_settings)
+ (modules test_global_settings)
+ (package taumel)
+ (libraries taumel))
+
+(test
  (name test_request_user_input)
  (modules test_request_user_input)
  (package taumel)

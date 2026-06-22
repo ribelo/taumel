@@ -1,9 +1,11 @@
 import type {
   ChildSessionBridge,
+  ComposerController,
   CoreBridge,
   PiLike,
 } from "./types.ts";
 
+import { executeComposerCommand } from "./composer.ts";
 import {
   applyChildSessionUpdate,
   createChildSession,
@@ -171,10 +173,15 @@ export async function executeGatewayCommand(
   pi: PiLike,
   core: CoreBridge,
   childSessions: Map<string, ChildSessionBridge>,
+  composer: ComposerController | undefined,
   name: string,
   args: string,
   ctx: unknown,
 ): Promise<unknown> {
+  if (name === "composer") {
+    return executeComposerCommand(core, composer, args, ctx);
+  }
+
   const callCore = (commandCtx: unknown) => coreCall(core, "handleCommand", [name, args, commandCtx]);
   const plan = coreCall(core, "planCommandExecution", [name, args, ctx]);
   if (!isRecord(plan)) throw new Error("Invalid Taumel command execution plan");
@@ -230,6 +237,7 @@ export function registerGatewayCommands(
   pi: PiLike,
   core: CoreBridge,
   childSessions: Map<string, ChildSessionBridge>,
+  composer?: ComposerController,
 ): void {
   if (typeof pi.registerCommand !== "function") return;
   const specs = coreCall(core, "commandSpecs");
@@ -245,6 +253,7 @@ export function registerGatewayCommands(
           pi,
           core,
           childSessions,
+          composer,
           name,
           _args,
           ctx,

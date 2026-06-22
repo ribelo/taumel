@@ -33,8 +33,10 @@ let command_specs =
   [
     {
       name = "permissions";
-      description = "Configure sandbox permissions.";
+      description = "Configure sandbox preset, approval, and tool/agent access.";
     };
+    { name = "network"; description = "Enable or disable sandbox network access." };
+    { name = "composer"; description = "Configure the Taumel composer UI." };
     { name = "ralph"; description = "Start, pause, resume, finish, and list Ralph tasks." };
     { name = "usage"; description = "Show OpenAI account and quota usage." };
     { name = "goal"; description = "Show or update the thread goal." };

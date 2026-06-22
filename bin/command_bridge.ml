@@ -103,6 +103,7 @@ let handle name args ctx =
   Session_sync.sync_session_from_host ~scope:"command handle" ctx;
   match name with
   | "permissions" -> Permissions_commands.handle args ctx
+  | "network" -> Permissions_commands.handle_network args ctx
   | "goal" -> Goal_tools.handle_command args ctx
   | "ralph" -> Ralph_tools.handle_command args ctx
   | "usage" -> Usage_bridge.handle_command ()

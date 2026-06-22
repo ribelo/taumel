@@ -14,5 +14,9 @@
     "smoke:artifact": "nix develop -c node test/smoke_artifact.mjs",
     "smoke:entrypoint": "bun test/smoke_entrypoint.mjs",
     "gate": "npm run build:ocaml && npm run test:ocaml && npm run smoke:artifact && npm run smoke:entrypoint"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.79.9",
+    "@earendil-works/pi-tui": "^0.79.9"
   }
 }

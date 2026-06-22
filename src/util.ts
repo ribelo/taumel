@@ -395,7 +395,7 @@ async function syncDirectory(path: string): Promise<void> {
   }
 }
 
-async function writeFileAtomically(path: string, contents: string): Promise<void> {
+export async function writeFileAtomically(path: string, contents: string): Promise<void> {
   const parent = dirname(path);
   await mkdir(parent, { recursive: true });
   const tempPath = join(parent, `.${basename(path)}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`);

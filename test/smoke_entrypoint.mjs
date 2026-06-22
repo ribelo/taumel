@@ -3,9 +3,12 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import taumel from "../src/index.ts";
+import { renderComposerInput } from "../src/composer.ts";
 
 const cwd = await mkdtemp(join(tmpdir(), "taumel-entrypoint-"));
 const originalFetch = globalThis.fetch;
+const originalSettingsPath = process.env.TAUMEL_SETTINGS_PATH;
+process.env.TAUMEL_SETTINGS_PATH = join(cwd, "taumel-settings.json");
 
 const handlers = new Map();
 const internalHandlers = new Map();
@@ -20,12 +23,14 @@ const confirmations = [];
 const activeToolUpdates = [];
 const fetchCalls = [];
 const sentMessages = [];
+const editorFactories = [];
 const childContexts = new Map();
 let activeTools = ["bash", "write", "usage", "bash"];
-let sandboxMode = "workspace-write";
+let sandboxMode = undefined;
 let extensionLoading = true;
 let childCounter = 0;
 let pendingMessages = false;
+let renderRequests = 0;
 
 const pushHandler = (map, event, handler) => {
   const list = map.get(event) ?? [];
@@ -122,9 +127,16 @@ try {
   const parentEntries = [];
   const ctx = {
     cwd,
+    hasUI: true,
     ui: {
       setFooter: () => undefined,
       notify: (message, type) => notifications.push({ message, type }),
+      requestRender: () => {
+        renderRequests += 1;
+      },
+      setEditorComponent: (factory) => {
+        editorFactories.push(factory);
+      },
       confirm: async (title, prompt, options) => {
         confirmations.push({ title, prompt, options });
         return true;
@@ -191,6 +203,10 @@ try {
   for (const handler of handlers.get("session_start") ?? []) {
     handler({ type: "session_start" }, ctx);
   }
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  if (editorFactories.length !== 1) {
+    throw new Error(`composer editor was not installed on session_start: ${editorFactories.length}`);
+  }
 
   for (const name of ["exec_command", "write_stdin", "apply_patch", "edit", "write", "agent", "request_user_input"]) {
     if (!tools.has(name)) throw new Error(`missing registered tool: ${name}`);
@@ -198,8 +214,41 @@ try {
   if (tools.has("usage")) {
     throw new Error("usage was registered as a model-callable tool");
   }
-  for (const name of ["permissions", "usage", "ralph", "goal"]) {
+  for (const name of ["permissions", "network", "composer", "usage", "ralph", "goal"]) {
     if (!commands.has(name)) throw new Error(`missing registered command: ${name}`);
+  }
+
+  const composerRendered = renderComposerInput(
+    16,
+    (width) => ["─".repeat(width), "hello" + " ".repeat(Math.max(0, width - 5)), "─".repeat(width), "complete"],
+    true,
+  );
+  if (
+    composerRendered.length !== 4 ||
+    !composerRendered[0].startsWith("\x1b[48;2;46;56;60m") ||
+    !composerRendered[1].includes("›") ||
+    composerRendered[3].startsWith("\x1b[48;2;46;56;60m")
+  ) {
+    throw new Error(`composer render wrapper did not match expected Tau look: ${JSON.stringify(composerRendered)}`);
+  }
+
+  const composerShow = await commands.get("composer").handler("show", ctx);
+  if (
+    composerShow.action !== "command_result" ||
+    !composerShow.message.includes("Composer: on") ||
+    !composerShow.message.includes(process.env.TAUMEL_SETTINGS_PATH)
+  ) {
+    throw new Error(`composer show did not report global state and path: ${JSON.stringify(composerShow)}`);
+  }
+  const composerOff = await commands.get("composer").handler("off", ctx);
+  const composerFile = JSON.parse(await readFile(process.env.TAUMEL_SETTINGS_PATH, "utf8"));
+  if (
+    composerOff.action !== "command_result" ||
+    !composerOff.message.includes("Composer: off") ||
+    composerFile?.composer?.enabled !== false ||
+    renderRequests === 0
+  ) {
+    throw new Error(`composer off did not persist and rerender: ${JSON.stringify({ composerOff, composerFile, renderRequests })}`);
   }
 
   const noGoalResult = await commands.get("goal").handler("", ctx);
@@ -306,6 +355,80 @@ try {
     !activeToolUpdates[0].includes("apply_patch")
   ) {
     throw new Error(`openai active tool sync did not select apply_patch: ${JSON.stringify(activeToolUpdates)}`);
+  }
+
+  const defaultPermission = await commands.get("permissions").handler("show", ctx);
+  if (
+    defaultPermission.action !== "command_result" ||
+    !defaultPermission.message.includes("sandbox=danger-full-access") ||
+    !defaultPermission.message.includes("approval=never") ||
+    !defaultPermission.message.includes("network=enabled")
+  ) {
+    throw new Error(`default permissions were not full access: ${JSON.stringify(defaultPermission)}`);
+  }
+  const rejectedEscalationConfirmCount = confirmations.length;
+  const rejectedEscalation = await tools.get("exec_command").execute(
+    "exec-escalation-rejected",
+    {
+      cmd: "echo should-not-run",
+      sandbox_permissions: "require_escalated",
+      justification: "need host",
+    },
+    undefined,
+    undefined,
+    ctx,
+  );
+  if (
+    confirmations.length !== rejectedEscalationConfirmCount ||
+    !rejectedEscalation.content?.[0]?.text.includes("approval policy is Never; reject command") ||
+    rejectedEscalation.content?.[0]?.text === "need host"
+  ) {
+    throw new Error(`exec escalation rejection did not match Codex: ${JSON.stringify({ rejectedEscalation, confirmations })}`);
+  }
+  const workspaceSetup = await commands.get("permissions").handler("sandbox workspace-write", ctx);
+  if (
+    workspaceSetup.action !== "command_result" ||
+    !workspaceSetup.message.includes("sandbox=workspace-write") ||
+    !workspaceSetup.message.includes("approval=on-request") ||
+    !workspaceSetup.message.includes("network=disabled")
+  ) {
+    throw new Error(`workspace permissions did not apply preset defaults: ${JSON.stringify(workspaceSetup)}`);
+  }
+  const savedWorkspacePermission = parentEntries.filter((entry) => entry.customType === "taumel.permissions").at(-1);
+  const networkPermission = await commands.get("network").handler("enabled", ctx);
+  const networkEntry = parentEntries.filter((entry) => entry.customType === "taumel.permissions").at(-1);
+  if (
+    networkPermission.action !== "command_result" ||
+    !networkPermission.message.includes("network=enabled") ||
+    networkEntry?.data?.networkMode !== "enabled"
+  ) {
+    throw new Error(`network command did not persist shared permissions state: ${JSON.stringify({ networkPermission, networkEntry })}`);
+  }
+  const resumedEntries = [
+    { type: "custom", customType: "taumel.permissions", data: savedWorkspacePermission.data },
+  ];
+  const resumedCtx = {
+    ...ctx,
+    sessionManager: {
+      getSessionId: () => "resumed-session",
+      getSessionFile: () => join(cwd, "resumed-session.json"),
+      appendCustomEntry: (type, value) => {
+        resumedEntries.push({ type: "custom", customType: type, data: value });
+      },
+      getEntries: () => resumedEntries,
+      getBranch: () => [],
+    },
+  };
+  for (const handler of handlers.get("session_resume") ?? []) {
+    handler({ type: "session_resume", previousSessionFile: join(cwd, "parent-session.json") }, resumedCtx);
+  }
+  const resumedPermission = await commands.get("permissions").handler("show", resumedCtx);
+  if (
+    resumedPermission.action !== "command_result" ||
+    !resumedPermission.message.includes("sandbox=workspace-write") ||
+    !resumedPermission.message.includes("network=disabled")
+  ) {
+    throw new Error(`resume did not load saved permissions: ${JSON.stringify({ resumedPermission, resumedEntries })}`);
   }
 
   ctx.model.provider = "anthropic";
@@ -773,6 +896,11 @@ try {
   }
 } finally {
   globalThis.fetch = originalFetch;
+  if (originalSettingsPath === undefined) {
+    delete process.env.TAUMEL_SETTINGS_PATH;
+  } else {
+    process.env.TAUMEL_SETTINGS_PATH = originalSettingsPath;
+  }
   await rm(cwd, { recursive: true, force: true });
 }
 

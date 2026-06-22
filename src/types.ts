@@ -115,6 +115,16 @@ export type ChildSessionBridge = SessionInfo & {
   readonly thinkingApplied?: boolean;
 };
 
+export type ComposerController = {
+  readonly path: string;
+  settings: {
+    readonly composer: {
+      readonly enabled: boolean;
+    };
+  };
+  latestTui?: unknown;
+};
+
 export type CoreBridge = {
   readonly init: (host: ExtensionHost) => void;
   readonly call: (name: string, args?: readonly unknown[]) => unknown;

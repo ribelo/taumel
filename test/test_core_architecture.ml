@@ -915,6 +915,11 @@ let test_permissions_state () =
     | Some update -> expect_ok "apply no-sandbox permission" (Permissions.apply_update state update)
   in
   assert_bool "no-sandbox enabled" state.sandbox.no_sandbox;
+  expect_error "permissions command rejects network"
+    (Permissions.parse_permissions "network enabled");
+  (match expect_ok "parse network command" (Permissions.parse_network "enabled") with
+  | Some (Permissions.Set_network Sandbox.Network_enabled) -> ()
+  | _ -> fail "parse network command" "expected Set_network enabled");
   let state =
     expect_ok "deny tools" (Permissions.apply_update state Permissions.Deny_all_tools)
   in
@@ -933,9 +938,13 @@ let test_permissions_state () =
   assert_bool "invalid menu selection"
     (Permissions.menu_selected_value menu "missing" = None);
   let permissions_menu = Permissions.permissions_menu_options state in
+  assert_bool "permissions menu excludes network"
+    (Permissions.menu_selected_value permissions_menu "Network disabled (current)"
+    = None);
+  let network_menu = Permissions.network_menu_options state in
   assert_equal "network menu selection by label" "network disabled"
     (Option.value
-       (Permissions.menu_selected_value permissions_menu "Network disabled (current)")
+       (Permissions.menu_selected_value network_menu "Network disabled (current)")
        ~default:"");
   (match
      Permissions.prompt_selection_plan ~ui_available:true ~title:"" permissions_menu
@@ -945,7 +954,7 @@ let test_permissions_state () =
         Permissions.default_prompt_title plan.title;
       assert_bool "permissions prompt labels"
         (List.mem "Workspace write (current)" plan.labels
-        && List.mem "Network disabled (current)" plan.labels)
+        && not (List.mem "Network disabled (current)" plan.labels))
   | Permissions.Prompt_unavailable ->
       fail "permissions prompt plan" "expected select plan");
   (match

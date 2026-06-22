@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import type { ChildSessionBridge, CoreBridge, PiLike, TaumelGlobal } from "./types.ts";
 import { coreCall, isRecord, stringArrayFromUnknown } from "./util.ts";
+import { createComposerController } from "./composer.ts";
 import { makeHost } from "./host.ts";
 import { registerGatewayTools } from "./tool-executor.ts";
 import { installGoalContinuationLoop, registerGatewayCommands } from "./command-executor.ts";
@@ -47,8 +48,9 @@ export default async function taumel(pi: PiLike) {
 
   core.init(makeHost(pi));
   const childSessions = new Map<string, ChildSessionBridge>();
+  const composer = await createComposerController(pi);
   registerGatewayTools(pi, core, childSessions);
-  registerGatewayCommands(pi, core, childSessions);
+  registerGatewayCommands(pi, core, childSessions, composer);
   installGoalContinuationLoop(pi, core);
   installSandboxToolActivation(pi, core);
 }

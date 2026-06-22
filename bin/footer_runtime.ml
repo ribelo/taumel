@@ -69,6 +69,7 @@ let register_handlers host =
         emit_changed host)
   in
   ignore (call2 host "on" (js_string "session_start") (inject (update_handler true)));
+  ignore (call2 host "on" (js_string "session_resume") (inject (update_handler false)));
   ignore (call2 host "on" (js_string "session_switch") (inject (update_handler false)));
   ignore (call2 host "on" (js_string "model_select") (inject (update_handler false)));
   ignore

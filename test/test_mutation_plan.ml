@@ -83,7 +83,33 @@ let test_exec_plan () =
       assert_equal "exec approval message" "need host" approval.message;
       assert_equal "exec approval title" "Command requires approval"
         approval.title
-  | None -> fail "exec approval" "expected approval")
+  | None -> fail "exec approval" "expected approval");
+  let expect_escalation_rejected label policy expected =
+    expect_error label expected
+      (Mutation.plan_exec { sandbox with approval_policy = policy }
+         {
+           cmd = "echo hi";
+           workdir = "";
+           default_workdir = "/repo";
+           sandbox_permissions =
+             Sandbox.Require_escalated
+               { justification = "need host"; prefix_rule = None };
+           yield_time_ms = None;
+           max_output_tokens = None;
+           tty = false;
+           shell = "";
+           login = true;
+         })
+  in
+  expect_escalation_rejected "exec escalation never"
+    Sandbox.Never
+    "approval policy is Never; reject command — you cannot ask for escalated permissions if the approval policy is Never";
+  expect_escalation_rejected "exec escalation on-failure"
+    Sandbox.On_failure
+    "approval policy is OnFailure; reject command — you cannot ask for escalated permissions if the approval policy is OnFailure";
+  expect_escalation_rejected "exec escalation untrusted"
+    Sandbox.Untrusted
+    "approval policy is UnlessTrusted; reject command — you cannot ask for escalated permissions if the approval policy is UnlessTrusted"
 
 let test_exec_request_parser () =
   let request =

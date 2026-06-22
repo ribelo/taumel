@@ -27,49 +27,64 @@ let menu_option_from_js obj =
     selected = get_bool obj "selected";
   }
 
-let prompt_result permissions =
+let prompt_with ~title ~options permissions =
   ok_obj
     [
       ("action", js_string "permissions_prompt");
-      ("title", js_string Taumel.Permissions.default_prompt_title);
+      ("title", js_string title);
       ("message", js_string (Taumel.Permissions.summary permissions));
       ( "options",
-        js_array
-          (Taumel.Permissions.permissions_menu_options permissions
-          |> List.map (fun option -> inject (js_menu_option option))) );
+        js_array (List.map (fun option -> inject (js_menu_option option)) options)
+      );
     ]
 
-let handle args ctx =
+let prompt_result permissions =
+  prompt_with ~title:Taumel.Permissions.default_prompt_title
+    ~options:(Taumel.Permissions.permissions_menu_options permissions)
+    permissions
+
+let network_prompt_result permissions =
+  prompt_with ~title:Taumel.Permissions.network_prompt_title
+    ~options:(Taumel.Permissions.network_menu_options permissions)
+    permissions
+
+let build_permissions () =
   let workspace_roots = if state.cwd = "" then [] else [ state.cwd ] in
-  match
-    Taumel.Permissions.create ~workspace_roots
-      ~network_mode:!active_network_mode ~no_sandbox:!active_no_sandbox
-      ~subagent:!active_subagent (active_profile ())
-  with
+  Taumel.Permissions.create ~workspace_roots ~network_mode:!active_network_mode
+    ~no_sandbox:!active_no_sandbox ~subagent:!active_subagent (active_profile ())
+
+let command_result message =
+  ok_obj [ ("action", js_string "command_result"); ("message", js_string message) ]
+
+let apply_and_persist permissions update ctx =
+  match Taumel.Permissions.apply_update permissions update with
   | Error message -> error_obj message
-  | Ok permissions -> (
-      if String.trim args = "" then prompt_result permissions
-      else
-      match Taumel.Permissions.parse args with
-      | Error message -> error_obj message
-      | Ok None ->
-          ok_obj
-            [
-              ("action", js_string "command_result");
-              ("message", js_string (Taumel.Permissions.summary permissions));
-            ]
-      | Ok (Some update) -> (
-          match Taumel.Permissions.apply_update permissions update with
-          | Error message -> error_obj message
-          | Ok next ->
-              apply_state next;
-              Session_sync.save_permissions_state ctx;
-              (match !active_host with Some host -> emit_changed host | None -> ());
-              ok_obj
-                [
-                  ("action", js_string "command_result");
-                  ("message", js_string (Taumel.Permissions.summary next));
-                ]))
+  | Ok next ->
+      apply_state next;
+      Session_sync.save_permissions_state ctx;
+      (match !active_host with Some host -> emit_changed host | None -> ());
+      command_result (Taumel.Permissions.summary next)
+
+let run ~parser ~on_empty args ctx =
+  match build_permissions () with
+  | Error message -> error_obj message
+  | Ok permissions ->
+      if String.trim args = "" then on_empty permissions
+      else (
+        match parser args with
+        | Error message -> error_obj message
+        | Ok None -> command_result (Taumel.Permissions.summary permissions)
+        | Ok (Some update) -> apply_and_persist permissions update ctx)
+
+let handle args ctx =
+  run ~parser:Taumel.Permissions.parse_permissions ~on_empty:prompt_result args ctx
+
+let handle_network args ctx =
+  run ~parser:Taumel.Permissions.parse_network ~on_empty:network_prompt_result
+    args ctx
+
+let apply_menu_value value ctx =
+  run ~parser:Taumel.Permissions.parse ~on_empty:prompt_result value ctx
 
 let finish_prompt prompt selection ctx =
   match get_string selection "status" with
@@ -100,7 +115,7 @@ let finish_prompt prompt selection ctx =
               ("action", js_string "command_result");
               ("message", js_string "Invalid permissions selection.");
             |]
-      | Some args -> handle args ctx
+      | Some value -> apply_menu_value value ctx
 
 let plan_prompt prompt facts =
   let options =

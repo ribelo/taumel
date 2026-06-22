@@ -55,6 +55,7 @@ let core_call name_js args_js =
   | "planAgentBridgeUpdate" -> Agent_tools.plan_bridge_update (arg 0)
   | "handleCommand" ->
       Command_bridge.handle (string_arg args 0) (string_arg args 1) (arg 2)
+  | "handleComposerCommand" -> Composer_commands.handle (string_arg args 0) (arg 1)
   | "planCommandNotification" ->
       Tool_catalog_bridge.plan_command_notification (Unsafe.coerce (arg 0)) (arg 1)
         (arg 2)
