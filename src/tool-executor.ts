@@ -36,7 +36,7 @@ import {
   validateWorkspaceMutationPaths,
   writePatchFiles,
 } from "./util.ts";
-import { shellRenderersForTool } from "./shell-renderer.ts";
+import { renderersForTool } from "./tool-renderer.ts";
 
 function preparedToolResult(core: CoreBridge, prepared: Record<string, unknown>, extraDetails: Record<string, unknown> = {}) {
   const result = coreCall(core, "toolResultEnvelope", [{ prepared, extraDetails }]);
@@ -822,7 +822,7 @@ export function registerGatewayTools(
       promptSnippet: spec.promptSnippet,
       promptGuidelines: spec.promptGuidelines ?? [],
       parameters: spec.parameters,
-      ...shellRenderersForTool(name),
+      ...renderersForTool(name),
       execute: async (...args) => {
         const { params, signal, ctx } = readInvocation(args);
         return executeTool(pi, core, childSessions, name, params, ctx, signal);
