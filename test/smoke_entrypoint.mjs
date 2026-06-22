@@ -31,6 +31,7 @@ let extensionLoading = true;
 let childCounter = 0;
 let pendingMessages = false;
 let renderRequests = 0;
+let confirmBehavior = async () => true;
 
 const pushHandler = (map, event, handler) => {
   const list = map.get(event) ?? [];
@@ -50,6 +51,7 @@ const assistantMessage = (stopReason = "stop", errorMessage = undefined) => ({
   stopReason,
   ...(errorMessage === undefined ? {} : { errorMessage }),
 });
+const assert = (condition, message) => { if (!condition) throw new Error(message); };
 
 globalThis.fetch = async (url, options = {}) => {
   fetchCalls.push({ url: String(url), options });
@@ -139,7 +141,7 @@ try {
       },
       confirm: async (title, prompt, options) => {
         confirmations.push({ title, prompt, options });
-        return true;
+        return confirmBehavior(title, prompt, options);
       },
     },
     model: { provider: "openai-codex", id: "gpt-test" },
@@ -211,12 +213,39 @@ try {
   for (const name of ["exec_command", "write_stdin", "apply_patch", "edit", "write", "agent", "request_user_input"]) {
     if (!tools.has(name)) throw new Error(`missing registered tool: ${name}`);
   }
+  for (const name of ["exec_command", "write_stdin"]) {
+    assert(typeof tools.get(name).renderCall === "function" && typeof tools.get(name).renderResult === "function", `${name} did not register compact shell renderers`);
+  }
+  const plainTheme = { fg: (_color, value) => value, bold: (value) => value };
+  const longShellOutput = Array.from({ length: 20 }, (_, index) => `file-${index + 1}`).join("\n");
+  const shellResult = { content: [{ type: "text", text: longShellOutput }], details: { ok: true, output: longShellOutput, exitCode: 0 } };
+  const renderShell = (expanded) => tools.get("exec_command").renderResult(shellResult, { expanded, isPartial: false }, plainTheme, { args: { cmd: "ls many-files" } }).render(120).join("\n");
+  const compactShell = renderShell(false);
+  const expandedShell = renderShell(true);
+  const compactShellLines = compactShell.split("\n").map((line) => line.trim());
+  const expandedShellLines = expandedShell.split("\n").map((line) => line.trim());
+  assert(
+    !compactShellLines.includes("file-1") &&
+    compactShell.includes("earlier lines") &&
+    compactShell.includes("ls many-files") &&
+    expandedShellLines.includes("file-1") &&
+    expandedShell.length > compactShell.length,
+    `shell renderer did not compact long output: ${JSON.stringify({ compactShell, expandedShell })}`,
+  );
   if (tools.has("usage")) {
     throw new Error("usage was registered as a model-callable tool");
   }
   for (const name of ["permissions", "network", "composer", "usage", "ralph", "goal"]) {
     if (!commands.has(name)) throw new Error(`missing registered command: ${name}`);
   }
+  const contextHandlers = handlers.get("context") ?? [];
+  assert(contextHandlers.length === 1, `environment context handler was not registered: ${contextHandlers.length}`);
+  const runContext = async (messages, context = ctx) => {
+    const result = await contextHandlers[0]({ type: "context", messages }, context);
+    return result?.messages ?? messages;
+  };
+  const findEnvironmentMessage = (messages) =>
+    messages.find((message) => message?.role === "custom" && message?.customType === "taumel.environment_context");
 
   const composerRendered = renderComposerInput(
     16,
@@ -366,6 +395,18 @@ try {
   ) {
     throw new Error(`default permissions were not full access: ${JSON.stringify(defaultPermission)}`);
   }
+  const initialContextMessages = await runContext([{ role: "user", content: "initial context" }]);
+  const initialEnvironment = findEnvironmentMessage(initialContextMessages);
+  assert(
+    initialContextMessages[0] === initialEnvironment &&
+    initialContextMessages[1]?.role === "user" &&
+    initialEnvironment?.content?.includes("<sandbox_mode>danger-full-access</sandbox_mode>") &&
+    initialEnvironment.content.includes("<approval_policy>never</approval_policy>") &&
+    initialEnvironment.content.includes("<network_access>enabled</network_access>"),
+    `initial environment context was not injected before user input: ${JSON.stringify(initialContextMessages)}`,
+  );
+  const unchangedContext = await contextHandlers[0]({ type: "context", messages: [{ role: "user", content: "unchanged context" }] }, ctx);
+  assert(unchangedContext === undefined, `unchanged environment context should not inject: ${JSON.stringify(unchangedContext)}`);
   const rejectedEscalationConfirmCount = confirmations.length;
   const rejectedEscalation = await tools.get("exec_command").execute(
     "exec-escalation-rejected",
@@ -395,6 +436,53 @@ try {
     throw new Error(`workspace permissions did not apply preset defaults: ${JSON.stringify(workspaceSetup)}`);
   }
   const savedWorkspacePermission = parentEntries.filter((entry) => entry.customType === "taumel.permissions").at(-1);
+  const changedContextMessages = await runContext([{ role: "user", content: "changed permissions" }]);
+  const changedEnvironment = findEnvironmentMessage(changedContextMessages);
+  assert(
+    changedContextMessages[0] === changedEnvironment &&
+    changedContextMessages[1]?.role === "user" &&
+    changedEnvironment?.content?.includes("<sandbox_mode>workspace-write</sandbox_mode>") &&
+    changedEnvironment.content.includes("<approval_policy>on-request</approval_policy>") &&
+    changedEnvironment.content.includes("<network_access>restricted</network_access>") &&
+    changedEnvironment.content.includes("<root>") &&
+    !changedEnvironment.content.includes("<shell>"),
+    `changed environment context was not injected as a diff: ${JSON.stringify(changedContextMessages)}`,
+  );
+  const directTimedOutApproval = globalThis.taumel.call("finishExecApproval", [{ outcome: "timed_out" }]);
+  const directUnavailableApproval = globalThis.taumel.call("finishExecApproval", [{ outcome: "unavailable" }]);
+  assert(
+    directTimedOutApproval?.result?.content?.[0]?.text === "Sandbox: command blocked (approval timed out)" &&
+    directTimedOutApproval?.result?.details?.approvalOutcome === "timed_out" &&
+    directUnavailableApproval?.result?.content?.[0]?.text === "Sandbox: command blocked (approval unavailable)" &&
+    directUnavailableApproval?.result?.details?.approvalOutcome === "unavailable",
+    `approval outcome bridge did not preserve timeout/unavailable: ${JSON.stringify({ directTimedOutApproval, directUnavailableApproval })}`,
+  );
+  confirmBehavior = async () => false;
+  const deniedExecCallCount = execCalls.length;
+  const deniedExecConfirmCount = confirmations.length;
+  const deniedParams = { cmd: "echo denied", sandbox_permissions: "require_escalated", justification: "test denial" };
+  const deniedExec = await tools.get("exec_command").execute("exec-escalation-denied", deniedParams, undefined, undefined, ctx);
+  confirmBehavior = async () => true;
+  assert(
+    execCalls.length === deniedExecCallCount &&
+    confirmations.length === deniedExecConfirmCount + 1 &&
+    confirmations.at(-1)?.options?.signal !== undefined &&
+    !("timeout" in confirmations.at(-1).options) &&
+    deniedExec.content?.[0]?.text === "Sandbox: command blocked (approval denied by user)" &&
+    deniedExec.details?.approvalOutcome === "denied_by_user",
+    `explicit approval denial was not classified: ${JSON.stringify({ deniedExec, confirmations: confirmations.at(-1) })}`,
+  );
+  const interruptedSignal = new AbortController();
+  interruptedSignal.abort();
+  const interruptedConfirmCount = confirmations.length;
+  const interruptedParams = { cmd: "echo interrupted", sandbox_permissions: "require_escalated", justification: "test interruption" };
+  const interruptedExec = await tools.get("exec_command").execute("exec-escalation-interrupted", interruptedParams, interruptedSignal.signal, undefined, ctx);
+  assert(
+    confirmations.length === interruptedConfirmCount &&
+    interruptedExec.content?.[0]?.text === "Sandbox: command blocked (approval interrupted)" &&
+    interruptedExec.details?.approvalOutcome === "interrupted",
+    `interrupted approval was not classified: ${JSON.stringify({ interruptedExec, confirmations })}`,
+  );
   const networkPermission = await commands.get("network").handler("enabled", ctx);
   const networkEntry = parentEntries.filter((entry) => entry.customType === "taumel.permissions").at(-1);
   if (

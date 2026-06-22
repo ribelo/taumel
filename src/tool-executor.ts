@@ -32,6 +32,7 @@ import {
   validateWorkspaceMutationPaths,
   writePatchFiles,
 } from "./util.ts";
+import { shellRenderersForTool } from "./shell-renderer.ts";
 
 function preparedToolResult(core: CoreBridge, prepared: Record<string, unknown>, extraDetails: Record<string, unknown> = {}) {
   const result = coreCall(core, "toolResultEnvelope", [{ prepared, extraDetails }]);
@@ -54,10 +55,33 @@ function hostToolResult(core: CoreBridge, action: string, details: unknown): Rec
   return result;
 }
 
-function mutationApprovalDenied(core: CoreBridge, action: string): Record<string, unknown> {
-  return errorToolResult(core, `Error: ${action} was not approved`, {
+type ApprovalOutcome =
+  | "approved"
+  | "denied_by_user"
+  | "timed_out"
+  | "unavailable"
+  | "interrupted";
+
+function approvalOutcomeMessage(action: string, outcome: ApprovalOutcome): string {
+  switch (outcome) {
+    case "denied_by_user":
+      return `Error: ${action} approval denied by user`;
+    case "timed_out":
+      return `Error: ${action} approval timed out`;
+    case "unavailable":
+      return `Error: ${action} approval unavailable`;
+    case "interrupted":
+      return `Error: ${action} approval interrupted`;
+    case "approved":
+      return "";
+  }
+}
+
+function mutationApprovalDenied(core: CoreBridge, action: string, outcome: ApprovalOutcome): Record<string, unknown> {
+  return errorToolResult(core, approvalOutcomeMessage(action, outcome), {
     ok: false,
     approvalRequired: true,
+    approvalOutcome: outcome,
   });
 }
 
@@ -162,7 +186,8 @@ async function confirmExecApproval(
   core: CoreBridge,
   prepared: Record<string, unknown>,
   ctx: unknown,
-): Promise<boolean> {
+  signal?: AbortSignal,
+): Promise<ApprovalOutcome> {
   const ui = isRecord(ctx) && isRecord(ctx["ui"]) ? ctx["ui"] : {};
   const confirm = ui["confirm"];
   const plan = coreCall(core, "planExecApprovalPrompt", [prepared, {
@@ -171,18 +196,59 @@ async function confirmExecApproval(
   if (!isRecord(plan)) throw new Error("Invalid Taumel exec approval prompt plan");
   const action = stringField(plan, "action");
   if (action === "unavailable") {
-    return false;
+    return "unavailable";
   }
   if (action !== "confirm" || typeof confirm !== "function") {
     throw new Error("Invalid Taumel exec approval prompt plan");
   }
-  const approved = await confirm.call(
-    ui,
-    stringField(plan, "title"),
-    stringField(plan, "prompt"),
-    isRecord(plan["options"]) ? plan["options"] : {},
-  );
-  return approved === true;
+  if (signal?.aborted === true) return "interrupted";
+
+  const options = isRecord(plan["options"]) ? plan["options"] : {};
+  const timeoutMs = optionalNumberField(options, "timeout");
+  const controller = new AbortController();
+  let outcome: ApprovalOutcome | undefined;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let removeAbortListener: (() => void) | undefined;
+
+  if (timeoutMs !== undefined && timeoutMs > 0) {
+    timeoutId = setTimeout(() => {
+      outcome = "timed_out";
+      controller.abort();
+    }, timeoutMs);
+  }
+
+  if (signal !== undefined) {
+    const abort = () => {
+      if (outcome === undefined) outcome = "interrupted";
+      controller.abort();
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    removeAbortListener = () => signal.removeEventListener("abort", abort);
+  }
+
+  const confirmOptions: Record<string, unknown> = {
+    ...options,
+    signal: controller.signal,
+  };
+  delete confirmOptions["timeout"];
+
+  try {
+    const approved = await confirm.call(
+      ui,
+      stringField(plan, "title"),
+      stringField(plan, "prompt"),
+      confirmOptions,
+    );
+    if (approved === true) return "approved";
+    if (controller.signal.aborted) return outcome ?? "interrupted";
+    return "denied_by_user";
+  } catch (error) {
+    if (controller.signal.aborted) return outcome ?? "interrupted";
+    throw error;
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+    removeAbortListener?.();
+  }
 }
 
 async function validatePreparedMutationPath(
@@ -621,9 +687,10 @@ export async function executeTool(
     case "exec_command":
       return runPreparedExec(core, prepared, ctx, signal);
     case "exec_command_approval": {
+      const outcome = await confirmExecApproval(core, prepared, ctx, signal);
       const approvalPlan = coreCall(core, "finishExecApproval", [{
         prepared,
-        approved: await confirmExecApproval(core, prepared, ctx),
+        outcome,
       }]);
       if (!isRecord(approvalPlan)) throw new Error("Invalid Taumel exec approval result");
       if (stringField(approvalPlan, "action") === "result") {
@@ -638,9 +705,10 @@ export async function executeTool(
     }
     case "write_stdin":
       return writePreparedStdin(core, prepared, ctx);
-    case "write_approval":
-      if (!(await confirmExecApproval(core, prepared, ctx))) {
-        return mutationApprovalDenied(core, "write");
+    case "write_approval": {
+      const outcome = await confirmExecApproval(core, prepared, ctx, signal);
+      if (outcome !== "approved") {
+        return mutationApprovalDenied(core, "write", outcome);
       }
       return executeLegacyWrite(core, {
         ...prepared,
@@ -648,9 +716,11 @@ export async function executeTool(
         filesystemApproval: true,
         validateWorkspacePaths: false,
       });
-    case "edit_approval":
-      if (!(await confirmExecApproval(core, prepared, ctx))) {
-        return mutationApprovalDenied(core, "edit");
+    }
+    case "edit_approval": {
+      const outcome = await confirmExecApproval(core, prepared, ctx, signal);
+      if (outcome !== "approved") {
+        return mutationApprovalDenied(core, "edit", outcome);
       }
       return executeLegacyEdit(core, {
         ...prepared,
@@ -658,9 +728,11 @@ export async function executeTool(
         filesystemApproval: true,
         validateWorkspacePaths: false,
       });
-    case "apply_patch_approval":
-      if (!(await confirmExecApproval(core, prepared, ctx))) {
-        return mutationApprovalDenied(core, "apply_patch");
+    }
+    case "apply_patch_approval": {
+      const outcome = await confirmExecApproval(core, prepared, ctx, signal);
+      if (outcome !== "approved") {
+        return mutationApprovalDenied(core, "apply_patch", outcome);
       }
       return executeApplyPatch(pi, core, name, rawParams, {
         ...prepared,
@@ -668,6 +740,7 @@ export async function executeTool(
         filesystemApproval: true,
         validateWorkspacePaths: false,
       }, ctx);
+    }
     case "write":
       return executeLegacyWrite(core, prepared);
     case "edit":
@@ -704,6 +777,7 @@ export function registerGatewayTools(
       promptSnippet: stringField(spec, "promptSnippet"),
       promptGuidelines: stringArrayField(spec, "promptGuidelines"),
       parameters,
+      ...shellRenderersForTool(name),
       execute: async (...args) => {
         const { params, signal, ctx } = readInvocation(args);
         return executeTool(pi, core, childSessions, name, params, ctx, signal);

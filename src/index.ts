@@ -38,6 +38,39 @@ function installSandboxToolActivation(pi: PiLike, core: CoreBridge): void {
   pi.on("session_resume", sync);
 }
 
+function insertBeforeCurrentUserMessage(
+  messages: readonly unknown[],
+  message: Record<string, unknown>,
+): unknown[] {
+  const lastIndex = messages.length - 1;
+  const last = messages[lastIndex];
+  if (isRecord(last) && last["role"] === "user") {
+    return [...messages.slice(0, lastIndex), message, last];
+  }
+  return [...messages, message];
+}
+
+function installEnvironmentContext(pi: PiLike, core: CoreBridge): void {
+  pi.on("context", async (event, ctx) => {
+    if (!isRecord(event) || !Array.isArray(event["messages"])) return undefined;
+    const plan = coreCall(core, "planEnvironmentContext", [
+      ctx,
+      { shell: process.env.SHELL ?? "" },
+    ]);
+    if (!isRecord(plan)) throw new Error("Invalid Taumel environment context plan");
+    const action = plan["action"];
+    if (action === "none") return undefined;
+    if (action !== "inject") throw new Error("Invalid Taumel environment context plan");
+    const message = {
+      role: "custom",
+      customType: typeof plan["customType"] === "string" ? plan["customType"] : "taumel.environment_context",
+      content: typeof plan["content"] === "string" ? plan["content"] : "",
+      display: plan["display"] === true,
+    };
+    return { messages: insertBeforeCurrentUserMessage(event["messages"], message) };
+  });
+}
+
 export default async function taumel(pi: PiLike) {
   const artifact = new URL("../dist/taumel.cjs", import.meta.url);
   const require = createRequire(import.meta.url);
@@ -53,4 +86,5 @@ export default async function taumel(pi: PiLike) {
   registerGatewayCommands(pi, core, childSessions, composer);
   installGoalContinuationLoop(pi, core);
   installSandboxToolActivation(pi, core);
+  installEnvironmentContext(pi, core);
 }

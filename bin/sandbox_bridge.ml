@@ -175,7 +175,17 @@ let format_exec_result prepared result sandboxed escalated =
     (Taumel.Sandbox.exec_result_details ~sandboxed ~escalated ?diagnostic result)
 
 let finish_exec_approval params =
-  match Taumel.Sandbox.exec_approval_outcome ~approved:(get_bool params "approved") with
+  let outcome =
+    match
+      Taumel.Sandbox.approval_prompt_outcome_of_string
+        (get_string params "outcome")
+    with
+    | Some outcome -> outcome
+    | None ->
+        if get_bool params "approved" then Taumel.Sandbox.Approval_approved
+        else Taumel.Sandbox.Approval_denied_by_user
+  in
+  match Taumel.Sandbox.exec_approval_outcome ~outcome with
   | Taumel.Sandbox.Approval_granted ->
       ok_obj [ ("action", js_string "exec_command"); ("forceUnsandboxed", js_bool true) ]
   | Taumel.Sandbox.Approval_denied denied ->

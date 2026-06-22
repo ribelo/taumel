@@ -47,6 +47,12 @@
  (libraries taumel))
 
 (test
+ (name test_environment_context)
+ (modules test_environment_context)
+ (package taumel)
+ (libraries taumel))
+
+(test
  (name test_request_user_input)
  (modules test_request_user_input)
  (package taumel)

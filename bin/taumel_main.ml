@@ -18,6 +18,8 @@ let core_call name_js args_js =
   | "commandSpecs" -> Tool_catalog_bridge.command_specs_js ()
   | "planActiveToolsSync" ->
       Tool_catalog_bridge.plan_active_tools_sync_js (arg 0) (arg 1)
+  | "planEnvironmentContext" ->
+      Environment_context_bridge.plan_context (arg 0) (arg 1)
   | "sandboxMetadataDirNames" -> Sandbox_bridge.sandbox_metadata_dir_names ()
   | "validateWorkspaceMutationPaths" ->
       Sandbox_bridge.validate_workspace_mutation_paths (arg 0)

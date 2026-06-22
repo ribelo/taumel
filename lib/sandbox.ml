@@ -70,6 +70,13 @@ type approval_outcome =
       details : Shared.json;
     }
 
+type approval_prompt_outcome =
+  | Approval_approved
+  | Approval_denied_by_user
+  | Approval_timed_out
+  | Approval_unavailable
+  | Approval_interrupted
+
 type approval_prompt_plan =
   | Approval_prompt_unavailable
   | Approval_prompt_confirm of approval_prompt
@@ -695,19 +702,46 @@ let plan_exec_approval_prompt ~ui_available prompt =
           }
     | _ -> Approval_prompt_unavailable
 
-let exec_approval_outcome ~approved =
-  if approved then Approval_granted
-  else
-    Approval_denied
-      {
-        message = "Sandbox: command blocked (approval denied)";
-        details =
-          Shared.Object
-            [
-              ("ok", Shared.Bool false);
-              ("approvalRequired", Shared.Bool true);
-            ];
-      }
+let approval_prompt_outcome_to_string = function
+  | Approval_approved -> "approved"
+  | Approval_denied_by_user -> "denied_by_user"
+  | Approval_timed_out -> "timed_out"
+  | Approval_unavailable -> "unavailable"
+  | Approval_interrupted -> "interrupted"
+
+let approval_prompt_outcome_of_string = function
+  | "approved" -> Some Approval_approved
+  | "denied_by_user" | "denied" -> Some Approval_denied_by_user
+  | "timed_out" | "timeout" -> Some Approval_timed_out
+  | "unavailable" -> Some Approval_unavailable
+  | "interrupted" | "aborted" -> Some Approval_interrupted
+  | _ -> None
+
+let approval_denial_message = function
+  | Approval_approved -> ""
+  | Approval_denied_by_user ->
+      "Sandbox: command blocked (approval denied by user)"
+  | Approval_timed_out -> "Sandbox: command blocked (approval timed out)"
+  | Approval_unavailable -> "Sandbox: command blocked (approval unavailable)"
+  | Approval_interrupted -> "Sandbox: command blocked (approval interrupted)"
+
+let exec_approval_outcome ~outcome =
+  match outcome with
+  | Approval_approved -> Approval_granted
+  | Approval_denied_by_user | Approval_timed_out | Approval_unavailable
+  | Approval_interrupted ->
+      Approval_denied
+        {
+          message = approval_denial_message outcome;
+          details =
+            Shared.Object
+              [
+                ("ok", Shared.Bool false);
+                ("approvalRequired", Shared.Bool true);
+                ( "approvalOutcome",
+                  Shared.String (approval_prompt_outcome_to_string outcome) );
+              ];
+        }
 
 let filesystem_approval_prompt ~tool ~path =
   {

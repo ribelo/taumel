@@ -52,6 +52,8 @@ export type ToolDefinition = {
   readonly promptGuidelines?: readonly string[];
   readonly parameters: Record<string, unknown>;
   readonly execute: (...args: unknown[]) => Promise<unknown>;
+  readonly renderCall?: (...args: unknown[]) => unknown;
+  readonly renderResult?: (...args: unknown[]) => unknown;
 };
 
 export type CommandDefinition = {

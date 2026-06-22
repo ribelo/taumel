@@ -235,19 +235,30 @@ let test_sandbox_workspace_metadata_protection () =
     (List.mem "/repo/.hg" invocation.args);
   assert_bool "unrelated hidden dirs are ignored"
     (not (List.mem "/repo/.idea/workspace.xml" invocation.args));
-  (match Sandbox.exec_approval_outcome ~approved:false with
-  | Sandbox.Approval_denied denied ->
-      assert_equal "approval denied text"
-        "Sandbox: command blocked (approval denied)" denied.message;
-      assert_bool "approval denied details"
-        (denied.details
-        = Shared.Object
-            [
-              ("ok", Shared.Bool false);
-              ("approvalRequired", Shared.Bool true);
-            ])
-  | Sandbox.Approval_granted ->
-      fail "approval denied outcome" "expected denied result");
+  let expect_approval_denied label outcome expected_message expected_outcome =
+    match Sandbox.exec_approval_outcome ~outcome with
+    | Sandbox.Approval_denied denied ->
+        assert_equal (label ^ " text") expected_message denied.message;
+        assert_bool (label ^ " details")
+          (denied.details
+          = Shared.Object
+              [
+                ("ok", Shared.Bool false);
+                ("approvalRequired", Shared.Bool true);
+                ("approvalOutcome", Shared.String expected_outcome);
+              ])
+    | Sandbox.Approval_granted ->
+        fail (label ^ " outcome") "expected denied result"
+  in
+  (match Sandbox.exec_approval_outcome ~outcome:Sandbox.Approval_approved with
+  | Sandbox.Approval_granted -> ()
+  | Sandbox.Approval_denied _ ->
+      fail "approval granted outcome" "expected granted result");
+  expect_approval_denied "approval denied by user" Sandbox.Approval_denied_by_user
+    "Sandbox: command blocked (approval denied by user)" "denied_by_user";
+  expect_approval_denied "approval timed out" Sandbox.Approval_timed_out "Sandbox: command blocked (approval timed out)" "timed_out";
+  expect_approval_denied "approval unavailable" Sandbox.Approval_unavailable "Sandbox: command blocked (approval unavailable)" "unavailable";
+  expect_approval_denied "approval interrupted" Sandbox.Approval_interrupted "Sandbox: command blocked (approval interrupted)" "interrupted";
   let prompt = Sandbox.exec_approval_prompt ~cmd:"pwd" "needs escalation" in
   (match Sandbox.plan_exec_approval_prompt ~ui_available:true prompt with
   | Sandbox.Approval_prompt_confirm planned ->
