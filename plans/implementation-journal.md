@@ -348,9 +348,66 @@ wrappers described in Entry 5.
 
 - `nix develop -c dune build bin/taumel.bc.js`
 - `nix develop -c dune runtest`
+
+## Entry 6 — TypeBox tool-contract bridge rewrite
+
+**Current goal:** Make TypeScript the Pi-facing tool contract owner and keep
+OCaml focused on policy/domain planning.
+
+**Changes made:**
+
+- Added `src/tool-contracts.ts` as the source of Pi-facing model-callable tool
+  names, descriptions, prompt snippets, and TypeBox parameter schemas.
+- Added `scripts/generate-contract-bindings.mjs`, which emits concrete `.d.ts`
+  interfaces from the TypeBox schemas, runs `ts2ocaml`, and runs `gen_js_api`.
+  Generated OCaml bindings live under `bin/generated/` and are ignored.
+- Tool execution now validates params in TypeScript before calling OCaml.
+  OCaml receives trusted JS objects through generated `Ojs.t` getters.
+- Removed live model-param `json_from_js` decoding and the old OCaml-emitted
+  tool schema surface. OCaml tool specs now carry only policy metadata:
+  name and effect kind.
+- Registration now uses TS tool contracts, asks OCaml for policy/allowed tool
+  names, and fails fast if the TS/OCaml tool-name sets drift.
+- `apply_patch` is object-shaped at the Pi contract boundary (`input` or
+  `patch`); the patch engine still owns tolerant patch-body parsing.
+
+**Verified so far:**
+
+- `nix develop -c sh -c 'node scripts/generate-contract-bindings.mjs && dune runtest'`
+- `npm run build:ocaml && npm run smoke:artifact && npm run smoke:entrypoint`
 - `nix develop -c sh scripts/build-ocaml.sh`
 - `nix develop -c node test/smoke_artifact.mjs`
 - `bun test/smoke_entrypoint.mjs`
 - `nix develop -c npm run gate`
 
 **What remains:** Nothing for this objective.
+
+## Entry 7 — Exa tools on the TypeBox bridge
+
+**Current goal:** Port Tau's Exa tool names to Taumel without reviving the old
+bridge shape.
+
+**Changes made:**
+
+- Added TypeBox contracts for the Exa core tools and Agent endpoint tools in
+  `src/tool-contracts.ts`.
+- Added `lib/exa.ml` for Exa tool policy names, network effect registration,
+  approval prompt text, missing-key results, and normalized result rendering.
+- Added `bin/exa_bridge.ml`, which executes Exa HTTP requests through Eta HTTP
+  in the js_of_ocaml target and re-checks gateway authorization before
+  execution.
+- Wired Exa through `prepareTool`/`executeExa` and the existing TS executor
+  action switch. TS still only parses params and routes UI approval.
+- `exa_agent_create_run` always returns an approval action before the HTTP
+  request can run. It uses the existing approval outcome taxonomy:
+  `denied_by_user`, `timed_out`, `unavailable`, and `interrupted`.
+- Omitted deprecated Exa request fields (`context`, `livecrawl`,
+  `livecrawlTimeout`) and did not expose the Agent delete endpoint.
+
+**Verified so far:**
+
+- `nix develop -c sh -c 'node scripts/generate-contract-bindings.mjs && dune runtest'`
+- `bun test/smoke_exa_contracts.mjs`
+- `npm run gate`
+
+**What remains:** Commit for this objective.

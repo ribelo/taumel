@@ -20,5 +20,7 @@
   eta_http
   eta_http_js
   eta_jsoo
+  gen_js_api
   (js_of_ocaml (>= 5.0))
+  ojs
   yojson))

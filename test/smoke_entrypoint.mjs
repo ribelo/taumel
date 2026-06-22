@@ -52,6 +52,7 @@ const assistantMessage = (stopReason = "stop", errorMessage = undefined) => ({
   ...(errorMessage === undefined ? {} : { errorMessage }),
 });
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
+const patchInput = (input) => ({ input });
 
 globalThis.fetch = async (url, options = {}) => {
   fetchCalls.push({ url: String(url), options });
@@ -584,14 +585,14 @@ try {
   await symlink(metadataDir, join(cwd, "gitlink"), "dir");
   const metadataSymlinkPatchResult = await tools.get("apply_patch").execute(
     "patch-metadata-symlink",
-    [
+    patchInput([
       "*** Begin Patch",
       "*** Update File: gitlink/config",
       "@@",
       "-safe metadata",
       "+pwned metadata",
       "*** End Patch",
-    ].join("\n"),
+    ].join("\n")),
     undefined,
     undefined,
     ctx,
@@ -652,7 +653,7 @@ try {
     const patchConfirmCount = confirmations.length;
     const approvedPatchResult = await tools.get("apply_patch").execute(
       "patch-outside-approved",
-      ["*** Begin Patch", `*** Add File: ${outsidePatchTarget}`, "+outside patch", "*** End Patch"].join("\n"),
+      patchInput(["*** Begin Patch", `*** Add File: ${outsidePatchTarget}`, "+outside patch", "*** End Patch"].join("\n")),
       undefined,
       undefined,
       ctx,
@@ -674,7 +675,7 @@ try {
   const target = join(cwd, "patched.txt");
   const patchResult = await tools.get("apply_patch").execute(
     "patch-call",
-    ["*** Begin Patch", `*** Add File: ${target}`, "+patched", "*** End Patch"].join("\n"),
+    patchInput(["*** Begin Patch", `*** Add File: ${target}`, "+patched", "*** End Patch"].join("\n")),
     undefined,
     undefined,
     ctx,
@@ -686,7 +687,7 @@ try {
   const relativeTarget = join(cwd, "relative.txt");
   const relativePatchResult = await tools.get("apply_patch").execute(
     "patch-relative",
-    ["*** Begin Patch", "*** Add File: relative.txt", "+relative content", "*** End Patch"].join("\n"),
+    patchInput(["*** Begin Patch", "*** Add File: relative.txt", "+relative content", "*** End Patch"].join("\n")),
     undefined,
     undefined,
     ctx,
@@ -704,14 +705,14 @@ try {
   // Relative update: modify the relative file in place.
   const relativeUpdateResult = await tools.get("apply_patch").execute(
     "patch-relative-update",
-    [
+    patchInput([
       "*** Begin Patch",
       "*** Update File: relative.txt",
       "@@",
       "-relative content",
       "+updated relative content",
       "*** End Patch",
-    ].join("\n"),
+    ].join("\n")),
     undefined,
     undefined,
     ctx,
@@ -727,7 +728,7 @@ try {
   const movedTarget = join(cwd, "moved.txt");
   const relativeMoveResult = await tools.get("apply_patch").execute(
     "patch-relative-move",
-    [
+    patchInput([
       "*** Begin Patch",
       "*** Update File: relative.txt",
       "*** Move to: moved.txt",
@@ -735,7 +736,7 @@ try {
       "-updated relative content",
       "+moved content",
       "*** End Patch",
-    ].join("\n"),
+    ].join("\n")),
     undefined,
     undefined,
     ctx,
@@ -758,7 +759,7 @@ try {
   await writeFile(deleteTarget, "delete me\n", "utf8");
   const relativeDeleteResult = await tools.get("apply_patch").execute(
     "patch-relative-delete",
-    ["*** Begin Patch", "*** Delete File: to-delete.txt", "*** End Patch"].join("\n"),
+    patchInput(["*** Begin Patch", "*** Delete File: to-delete.txt", "*** End Patch"].join("\n")),
     undefined,
     undefined,
     ctx,
@@ -781,7 +782,7 @@ try {
     await symlink(outsideDir, linkPath, "dir");
     const escapePatchResult = await tools.get("apply_patch").execute(
       "patch-symlink-escape",
-      ["*** Begin Patch", "*** Add File: outside-link/pwned.txt", "+escaped", "*** End Patch"].join("\n"),
+      patchInput(["*** Begin Patch", "*** Add File: outside-link/pwned.txt", "+escaped", "*** End Patch"].join("\n")),
       undefined,
       undefined,
       ctx,
@@ -854,7 +855,7 @@ try {
     const fullAccessTarget = join(outsideDir, "full-access.txt");
     const fullAccessResult = await tools.get("apply_patch").execute(
       "patch-full-access-outside",
-      ["*** Begin Patch", `*** Add File: ${fullAccessTarget}`, "+allowed", "*** End Patch"].join("\n"),
+      patchInput(["*** Begin Patch", `*** Add File: ${fullAccessTarget}`, "+allowed", "*** End Patch"].join("\n")),
       undefined,
       undefined,
       ctx,

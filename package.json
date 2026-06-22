@@ -10,13 +10,19 @@
   "scripts": {
     "ocaml:init": "nix develop -c taumel-opam-init",
     "build:ocaml": "nix develop -c sh scripts/build-ocaml.sh",
-    "test:ocaml": "nix develop -c dune runtest",
+    "test:ocaml": "nix develop -c sh -c 'node scripts/generate-contract-bindings.mjs && dune runtest'",
     "smoke:artifact": "nix develop -c node test/smoke_artifact.mjs",
+    "smoke:exa-contracts": "bun test/smoke_exa_contracts.mjs",
     "smoke:entrypoint": "bun test/smoke_entrypoint.mjs",
-    "gate": "npm run build:ocaml && npm run test:ocaml && npm run smoke:artifact && npm run smoke:entrypoint"
+    "gate": "npm run build:ocaml && npm run test:ocaml && npm run smoke:artifact && npm run smoke:exa-contracts && npm run smoke:entrypoint"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.79.9",
-    "@earendil-works/pi-tui": "^0.79.9"
+    "@earendil-works/pi-tui": "^0.79.9",
+    "typebox": "^1.1.38"
+  },
+  "devDependencies": {
+    "@ocsigen/ts2ocaml": "^1.4.6",
+    "typescript": "^6.0.3"
   }
 }

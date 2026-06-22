@@ -8,10 +8,7 @@ type effect_kind =
 
 type spec = {
   name : string;
-  description : string;
   effect_kind : effect_kind;
-  strict : bool;
-  parameters : Shared.json;
 }
 
 type error =
@@ -42,8 +39,6 @@ let effect_to_string = function
   | Spawn_agent -> "spawn_agent"
   | Ask_user -> "ask_user"
 
-let string_list values = Shared.Array (List.map (fun value -> Shared.String value) values)
-
 let text_result_json ?(details = Shared.Null) text =
   Shared.Object
     [
@@ -58,46 +53,6 @@ let text_result_json ?(details = Shared.Null) text =
           ] );
       ("details", details);
     ]
-
-let add_optional name value fields =
-  match value with None -> fields | Some value -> (name, value) :: fields
-
-let string_schema ?description ?enum ?min_length ?max_length () =
-  [ ("type", Shared.String "string") ]
-  |> add_optional "description" (Option.map (fun value -> Shared.String value) description)
-  |> add_optional "enum" (Option.map string_list enum)
-  |> add_optional "minLength" (Option.map (fun value -> Shared.Number (float_of_int value)) min_length)
-  |> add_optional "maxLength" (Option.map (fun value -> Shared.Number (float_of_int value)) max_length)
-  |> List.rev |> fun fields -> Shared.Object fields
-
-let number_schema ?description () =
-  [ ("type", Shared.String "number") ]
-  |> add_optional "description" (Option.map (fun value -> Shared.String value) description)
-  |> List.rev |> fun fields -> Shared.Object fields
-
-let boolean_schema ?description () =
-  [ ("type", Shared.String "boolean") ]
-  |> add_optional "description" (Option.map (fun value -> Shared.String value) description)
-  |> List.rev |> fun fields -> Shared.Object fields
-
-let array_schema ?description ?min_items ?max_items items =
-  [ ("type", Shared.String "array"); ("items", items) ]
-  |> add_optional "description" (Option.map (fun value -> Shared.String value) description)
-  |> add_optional "minItems" (Option.map (fun value -> Shared.Number (float_of_int value)) min_items)
-  |> add_optional "maxItems" (Option.map (fun value -> Shared.Number (float_of_int value)) max_items)
-  |> List.rev |> fun fields -> Shared.Object fields
-
-let object_schema ?(additional_properties = false) ?(required = []) properties =
-  Shared.Object
-    [
-      ("type", Shared.String "object");
-      ("additionalProperties", Shared.Bool additional_properties);
-      ("required", string_list required);
-      ("properties", Shared.Object properties);
-    ]
-
-let empty_parameters = object_schema ~additional_properties:false []
-let loose_parameters = object_schema ~additional_properties:true []
 
 let authorize registry context ~name =
   match Shared.String_map.find_opt name registry with

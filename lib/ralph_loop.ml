@@ -94,19 +94,6 @@ let ralph_continue actor task =
 let ralph_finish actor task =
   ensure_child task actor |> Result.map (fun () -> { task with status = Finished })
 
-let child_tool_task_id_of_json ~tool json =
-  let ( let* ) = Result.bind in
-  let* fields = Shared.json_object_fields tool json in
-  let* task_id = Shared.json_optional_string tool fields "task_id" in
-  let* id = Shared.json_optional_string tool fields "id" in
-  match
-    match task_id with
-    | Some value -> Shared.trim_non_empty value
-    | None -> Option.bind id Shared.trim_non_empty
-  with
-  | Some value -> Ok value
-  | None -> Error (tool ^ ".task_id is required")
-
 let child_prompt task =
   String.concat "\n"
     [
@@ -381,26 +368,8 @@ let tasks_of_json = function
 
 let codec = { Shared.encode = tasks_to_json; decode = tasks_of_json }
 
-let task_parameters =
-  Tool_gateway.object_schema ~required:[ "task_id" ]
-    [
-      ("task_id", Tool_gateway.string_schema ());
-    ]
-
 let tool_specs =
   [
-    {
-      Tool_gateway.name = "ralph_continue";
-      description = "Advance an owned Ralph child session by one iteration.";
-      effect_kind = Tool_gateway.Pure;
-      strict = false;
-      parameters = task_parameters;
-    };
-    {
-      Tool_gateway.name = "ralph_finish";
-      description = "Finish an owned Ralph child session.";
-      effect_kind = Tool_gateway.Pure;
-      strict = false;
-      parameters = task_parameters;
-    };
+    { Tool_gateway.name = "ralph_continue"; effect_kind = Tool_gateway.Pure };
+    { Tool_gateway.name = "ralph_finish"; effect_kind = Tool_gateway.Pure };
   ]

@@ -26,7 +26,7 @@ establish a concrete task order.
 - Thread tools.
 - Usage.
 - Shared infrastructure.
-- Exa later, after Eta HTTP supports js_of_ocaml.
+- Exa.
 
 ## Omitted Scope
 
@@ -59,7 +59,7 @@ currently has shared utilities, schemas, services, or UI paths for them.
 10. Thread tools.
 11. Usage.
 12. Footer integration updates.
-13. Exa after Eta HTTP supports js_of_ocaml.
+13. Exa through Eta HTTP in the js_of_ocaml target.
 
 ## Acceptance
 

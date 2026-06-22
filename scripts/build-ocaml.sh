@@ -1,5 +1,6 @@
 set -eu
 
+node scripts/generate-contract-bindings.mjs
 dune build bin/taumel_main.bc.js
 mkdir -p dist
 rm -f dist/taumel.cjs

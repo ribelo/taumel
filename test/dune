@@ -71,7 +71,7 @@
  (libraries taumel))
 
 (test
- (name test_tool_param_decoders)
- (modules test_tool_param_decoders)
+ (name test_exa_plan)
+ (modules test_exa_plan)
  (package taumel)
  (libraries taumel))

@@ -9,6 +9,7 @@ let inject = Unsafe.inject
 let js_string value = inject (Js.string value)
 let js_number value = inject (Js.number_of_float value)
 let js_bool value = inject (Js.bool value)
+let ojs_of_js value : Ojs.t = Obj.magic value
 
 let call0 obj name = Unsafe.fun_call (Unsafe.get obj name) [||]
 let call1 obj name a = Unsafe.fun_call (Unsafe.get obj name) [| a |]

@@ -17,17 +17,12 @@ type active_tools_sync = {
   changed : bool;
 }
 
-type tool_prompt = {
-  snippet : string;
-  guidelines : string list;
-}
-
 let tool_specs =
   Sandbox.canonical_tool_specs
   @ [ Subagents.tool_spec ]
   @ Goal.tool_specs @ Ralph_loop.tool_specs
   @ [ Request_user_input.tool_spec ]
-  @ Thread_tools.tool_specs
+  @ Thread_tools.tool_specs @ Exa.tool_specs
 
 let command_specs =
   [
@@ -47,40 +42,6 @@ let command_names = List.map (fun spec -> spec.name) command_specs
 
 let has_tool name = List.exists (( = ) name) tool_names
 let has_command name = List.exists (( = ) name) command_names
-
-let tool_prompt (spec : Tool_gateway.spec) =
-  match spec.name with
-  | "exec_command" ->
-      {
-        snippet =
-          "Run shell commands, returning output or a session ID for ongoing interaction.";
-        guidelines =
-          [
-            "Use exec_command for file operations like ls, rg, find, builds, tests, and development commands.";
-            "Use tty=true for interactive commands or commands that need terminal behavior, then use write_stdin to send input.";
-            "Use write_stdin with empty chars to poll or wait for an active session.";
-          ];
-      }
-  | "write_stdin" ->
-      { snippet = "Send input to or poll an active shell session."; guidelines = [] }
-  | "write" ->
-      {
-        snippet = "Create or overwrite files";
-        guidelines = [ "Use write only for new files or complete rewrites." ];
-      }
-  | "edit" ->
-      {
-        snippet =
-          "Make precise file edits with exact text replacement, including multiple disjoint edits in one call";
-        guidelines =
-          [
-            "Use edit for precise changes (edits[].oldText must match exactly)";
-            "When changing multiple separate locations in one file, use one edit call with multiple entries in edits[] instead of multiple edit calls";
-            "Each edits[].oldText is matched against the original file, not after earlier edits are applied. Do not emit overlapping or nested edits. Merge nearby changes into one edit.";
-            "Keep edits[].oldText as small as possible while still being unique in the file. Do not pad with large unchanged regions.";
-          ];
-      }
-  | _ -> { snippet = ""; guidelines = [] }
 
 let command_notification ~command_name ~ok ~message ~error =
   let message =

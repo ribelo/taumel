@@ -182,10 +182,20 @@ let current_owner ctx =
   | _ -> root_owner ()
 
 let request_from_params params =
-  Result.bind (json_from_js params)
-    (Taumel.Subagents.request_of_json
-       ~workspace_roots:(if state.cwd = "" then [] else [ state.cwd ])
-       ~default_id:(Taumel.Subagents.default_worker_id !workers))
+  let params = Tool_contracts.AgentParams.t_of_js (ojs_of_js params) in
+  Taumel.Subagents.request_of_values
+    ~workspace_roots:(if state.cwd = "" then [] else [ state.cwd ])
+    ~default_id:(Taumel.Subagents.default_worker_id !workers)
+    ?action:(Tool_contracts.AgentParams.get_action params)
+    ?id:(Tool_contracts.AgentParams.get_id params)
+    ?agent:(Tool_contracts.AgentParams.get_agent params)
+    ?prompt:(Tool_contracts.AgentParams.get_prompt params)
+    ?model_id:(Tool_contracts.AgentParams.get_model_id params)
+    ?thinking_level:(Tool_contracts.AgentParams.get_thinking_level params)
+    ?sandbox_preset:(Tool_contracts.AgentParams.get_sandbox_preset params)
+    ?tools:(Tool_contracts.AgentParams.get_tools params)
+    ?no_sandbox:(Tool_contracts.AgentParams.get_no_sandbox params)
+    ()
 
 let render_plan plan =
   match plan.Taumel.Subagents.worker with

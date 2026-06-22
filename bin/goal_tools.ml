@@ -85,27 +85,35 @@ let prepare_get () =
 
 let prepare_create params ctx =
   with_gateway_authorized "create_goal" (fun _ ->
-      match Result.bind (json_from_js params) Taumel.Goal.create_request_of_json with
-      | Error message -> error_obj message
-      | Ok request -> (
+      let params = Tool_contracts.CreateGoalParams.t_of_js (ojs_of_js params) in
+      let objective = Tool_contracts.CreateGoalParams.get_objective params in
+      let token_budget =
+        Option.map int_of_float
+          (Tool_contracts.CreateGoalParams.get_token_budget params)
+      in
           match
-            Taumel.Goal.create ?token_budget:request.token_budget
-              ~thread_id:(thread_id ()) ~now:(now_seconds ()) request.objective
+            Taumel.Goal.create ?token_budget
+              ~thread_id:(thread_id ()) ~now:(now_seconds ()) objective
               !current_goal
           with
       | Error message -> error_obj message
       | Ok goal ->
           current_goal := Some goal;
           Session_sync.save_goal_state ctx;
-          tool_result (Some goal) "Goal created."))
+          tool_result (Some goal) "Goal created.")
 
 let prepare_update params ctx =
   with_gateway_authorized "update_goal" (fun _ ->
-      match Result.bind (json_from_js params) Taumel.Goal.update_request_of_json with
-      | Error message -> error_obj message
-      | Ok request -> (
+      let params = Tool_contracts.UpdateGoalParams.t_of_js (ojs_of_js params) in
+      let status = Tool_contracts.UpdateGoalParams.get_status params in
+      let status =
+        match status with
+        | "complete" -> Taumel.Goal.Complete
+        | "blocked" -> Taumel.Goal.Blocked
+        | _ -> failwith "invalid parsed update_goal.status"
+      in
           match
-            Taumel.Goal.update_status ~now:(now_seconds ()) request.status
+            Taumel.Goal.update_status ~now:(now_seconds ()) status
               !current_goal
           with
         | Error message -> error_obj message
@@ -114,7 +122,7 @@ let prepare_update params ctx =
             Session_sync.save_goal_state ctx;
             tool_result
               ?completion_report:(Taumel.Goal.completion_budget_report goal)
-              (Some goal) "Goal updated."))
+              (Some goal) "Goal updated.")
 
 let handle_command args ctx =
   match

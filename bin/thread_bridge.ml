@@ -3,7 +3,11 @@ open App_state
 
 let prepare_find params =
   with_gateway_authorized "find_thread" (fun _ ->
-      match Result.bind (json_from_js params) Taumel.Thread_tools.find_request_of_json with
+      let params = Tool_contracts.FindThreadParams.t_of_js (ojs_of_js params) in
+      match
+        Taumel.Thread_tools.prepare_find_request
+          (Tool_contracts.FindThreadParams.get_query params)
+      with
       | Error message -> error_obj message
       | Ok request ->
           ok_obj
@@ -14,7 +18,18 @@ let prepare_find params =
 
 let prepare_read params =
   with_gateway_authorized "read_thread" (fun _ ->
-      match Result.bind (json_from_js params) Taumel.Thread_tools.read_request_of_json with
+      let params = Tool_contracts.ReadThreadParams.t_of_js (ojs_of_js params) in
+      match
+        Taumel.Thread_tools.prepare_read_request
+          {
+            thread_id = Some (Tool_contracts.ReadThreadParams.get_threadID params);
+            thread_id_snake = None;
+            id = None;
+            goal =
+              Option.value (Tool_contracts.ReadThreadParams.get_goal params)
+                ~default:"";
+          }
+      with
       | Error message -> error_obj message
       | Ok request ->
           ok_obj
@@ -97,7 +112,11 @@ let catalog_from_js catalog =
   |> Taumel.Thread_tools.unique_by_id
 
 let run_find params catalog =
-  match Result.bind (json_from_js params) Taumel.Thread_tools.find_request_of_json with
+  let params = Tool_contracts.FindThreadParams.t_of_js (ojs_of_js params) in
+  match
+    Taumel.Thread_tools.prepare_find_request
+      (Tool_contracts.FindThreadParams.get_query params)
+  with
   | Error message -> error_obj message
   | Ok request ->
   let plan =
@@ -117,7 +136,18 @@ let run_find params catalog =
     ]
 
 let run_read params catalog =
-  match Result.bind (json_from_js params) Taumel.Thread_tools.read_request_of_json with
+  let params = Tool_contracts.ReadThreadParams.t_of_js (ojs_of_js params) in
+  match
+    Taumel.Thread_tools.prepare_read_request
+      {
+        thread_id = Some (Tool_contracts.ReadThreadParams.get_threadID params);
+        thread_id_snake = None;
+        id = None;
+        goal =
+          Option.value (Tool_contracts.ReadThreadParams.get_goal params)
+            ~default:"";
+      }
+  with
   | Error message -> error_obj message
   | Ok request ->
   let plan =

@@ -32,13 +32,6 @@ type set_request = {
   token_budget : int option option;
 }
 
-type create_request = {
-  objective : string;
-  token_budget : int option;
-}
-
-type update_request = { status : status }
-
 let status_to_string = function
   | Active -> "active"
   | Paused -> "paused"
@@ -70,29 +63,6 @@ let validate_objective objective =
 let validate_budget = function
   | Some budget when budget <= 0 -> Error "goal budgets must be positive when provided"
   | _ -> Ok ()
-
-let ( let* ) = Result.bind
-
-let create_request_of_json json =
-  let tool = "create_goal" in
-  let* fields = Shared.json_object_fields tool json in
-  let* objective = Shared.json_required_string tool fields "objective" in
-  let* objective = validate_objective objective in
-  let* token_budget = Shared.json_optional_number tool fields "token_budget" in
-  let token_budget = Option.map int_of_float token_budget in
-  let* () = validate_budget token_budget in
-  Ok { objective; token_budget }
-
-let update_request_of_json json =
-  let tool = "update_goal" in
-  let* fields = Shared.json_object_fields tool json in
-  let* status_name = Shared.json_required_string tool fields "status" in
-  match status_of_string status_name with
-  | Some status when List.mem status [ Complete; Blocked ] -> Ok { status }
-  | Some _ ->
-      Error
-        "update_goal.status must be complete or blocked; other status changes are controlled by the user or system"
-  | None -> Error ("unknown goal status: " ^ status_name)
 
 let next_goal_id thread_id now =
   Printf.sprintf "%s:%d" thread_id now
@@ -534,43 +504,9 @@ let codec =
     decode = of_json;
   }
 
-let create_goal_parameters =
-  Tool_gateway.object_schema ~required:[ "objective" ]
-    [
-      ("objective", Tool_gateway.string_schema ());
-      ("token_budget", Tool_gateway.number_schema ());
-    ]
-
-let update_goal_parameters =
-  Tool_gateway.object_schema ~required:[ "status" ]
-    [
-      ("status", Tool_gateway.string_schema ~enum:[ "complete"; "blocked" ] ());
-    ]
-
 let tool_specs =
   [
-    {
-      Tool_gateway.name = "get_goal";
-      description =
-        "Get the current goal for this thread, including status, budgets, token and elapsed-time usage, and remaining token budget.";
-      effect_kind = Tool_gateway.Pure;
-      strict = false;
-      parameters = Tool_gateway.empty_parameters;
-    };
-    {
-      Tool_gateway.name = "create_goal";
-      description =
-        "Create a goal only when explicitly requested by the user or system/developer instructions.";
-      effect_kind = Tool_gateway.Mutate;
-      strict = false;
-      parameters = create_goal_parameters;
-    };
-    {
-      Tool_gateway.name = "update_goal";
-      description =
-        "Update the existing goal only to mark it complete or genuinely blocked.";
-      effect_kind = Tool_gateway.Mutate;
-      strict = false;
-      parameters = update_goal_parameters;
-    };
+    { Tool_gateway.name = "get_goal"; effect_kind = Tool_gateway.Pure };
+    { Tool_gateway.name = "create_goal"; effect_kind = Tool_gateway.Mutate };
+    { Tool_gateway.name = "update_goal"; effect_kind = Tool_gateway.Mutate };
   ]

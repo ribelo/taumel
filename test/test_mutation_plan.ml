@@ -111,43 +111,7 @@ let test_exec_plan () =
     Sandbox.Untrusted
     "approval policy is UnlessTrusted; reject command — you cannot ask for escalated permissions if the approval policy is UnlessTrusted"
 
-let test_exec_request_parser () =
-  let request =
-    expect_ok "exec decode"
-      (Mutation.exec_request_of_json ~default_workdir:"/repo"
-         (Shared.Object
-            [
-              ("cmd", String "echo hi");
-              ("tty", Bool true);
-              ("login", Bool false);
-              ("sandbox_permissions", String "require_escalated");
-              ("justification", String "need host");
-              ("prefix_rule", Array [ String "git"; String "status" ]);
-            ]))
-  in
-  assert_equal "exec decoded cmd" "echo hi" request.cmd;
-  assert_equal "exec decoded default workdir" "/repo" request.default_workdir;
-  assert_bool "exec decoded tty" request.tty;
-  assert_false "exec decoded login" request.login;
-  (match request.sandbox_permissions with
-  | Sandbox.Require_escalated { justification; prefix_rule = Some prefix_rule } ->
-      assert_equal "exec decoded justification" "need host" justification;
-      assert_equal "exec decoded prefix head" "git" (List.hd prefix_rule)
-  | _ -> fail "exec decoded permissions" "expected escalation");
-  expect_error "exec wrong cmd type" "exec_command.cmd must be a string, got number"
-    (Mutation.exec_request_of_json ~default_workdir:"/repo"
-       (Shared.Object [ ("cmd", Number 42.0) ]));
-  expect_error "exec missing cmd" "exec_command.cmd is required"
-    (Mutation.exec_request_of_json ~default_workdir:"/repo" (Shared.Object []))
-
 let test_write_edit_plan () =
-  expect_error "write missing path" "write.path is required"
-    (Mutation.write_request_of_json
-       (Shared.Object [ ("content", String "x") ]));
-  expect_error "write wrong content type"
-    "write.content must be a string, got boolean"
-    (Mutation.write_request_of_json
-       (Shared.Object [ ("path", String "file.txt"); ("content", Bool true) ]));
   let write =
     match
       Mutation.plan_write sandbox
@@ -162,18 +126,7 @@ let test_write_edit_plan () =
   (match write.approval with
   | Some approval ->
       assert_equal "write approval action field" "write" approval.action
-  | None -> fail "write approval" "expected approval");
-  expect_error "edit missing newText" "edit.edits[0].newText is required"
-    (Mutation.edit_request_of_json
-       (Shared.Object
-          [
-            ("path", String "file.txt");
-            ("edits", Array [ Object [ ("oldText", String "old") ] ]);
-          ]));
-  expect_error "edit edits wrong type" "edit.edits must be an array, got string"
-    (Mutation.edit_request_of_json
-       (Shared.Object
-          [ ("path", String "file.txt"); ("edits", String "old") ]))
+  | None -> fail "write approval" "expected approval")
 
 let test_workspace_validation_policy () =
   assert_bool "workspace-write validates resolved mutation paths"
@@ -194,8 +147,7 @@ let test_apply_patch_plan () =
   in
   let request =
     expect_ok "apply patch decode"
-      (Mutation.patch_request_of_json
-         (Shared.Object [ ("input", String patch) ]))
+      (Mutation.patch_request_of_values ~input:patch ())
   in
   let plan =
     match Mutation.plan_apply_patch sandbox request with
@@ -221,11 +173,10 @@ let test_apply_patch_plan () =
   assert_equal "patch write contents" "hello\n" contents;
   expect_error "apply patch missing input"
     "apply_patch.input or apply_patch.patch is required"
-    (Mutation.patch_request_of_json (Shared.Object []))
+    (Mutation.patch_request_of_values ())
 
 let () =
   test_exec_plan ();
-  test_exec_request_parser ();
   test_write_edit_plan ();
   test_workspace_validation_policy ();
   test_apply_patch_plan ()

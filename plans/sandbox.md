@@ -66,18 +66,19 @@ that all execution and mutation paths use.
 - Separate shell execution from policy decisions.
 - Separate approval policy from execution.
 - Separate filesystem policy from patch parsing/application.
-- Implement `apply_patch` as a compatibility/tolerance layer: accept Codex
-  patch bodies plus Tau-style heredocs, missing end markers, git/unified diffs,
-  rename/add/delete forms, loose hunks, CRLF preservation, and fallback context
-  matching, while still enforcing the same sandbox policy at authorization and
-  host mutation time.
+- Implement `apply_patch` as an object-shaped Pi tool contract whose `input` or
+  `patch` field contains a patch body. The OCaml patch engine may still accept
+  Tau-style heredocs, missing end markers, git/unified diffs, rename/add/delete
+  forms, loose hunks, CRLF preservation, and fallback context matching, while
+  enforcing the same sandbox policy at authorization and host mutation time.
 - Rename Tau's `/approval` command to `/permissions`.
 - Let `/permissions` edit sandbox/capability-profile state rather than global
   Tau state.
 - Feed sandbox mode flags into the initial sandbox config.
 - Allow `--no-sandbox` only for top-level orchestrator sessions.
 - Make `--no-sandbox` visible in footer/sandbox state.
-- Keep tool specs separate from tool implementations.
+- Keep Pi-facing tool schemas in TypeScript and OCaml policy registrations
+  separate from tool implementations.
 - Keep Pi rendering at the edge.
 - Keep child-agent sandbox inheritance explicit.
 - Keep Codex behavior as the behavioral reference where applicable.

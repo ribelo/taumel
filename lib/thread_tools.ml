@@ -513,23 +513,6 @@ let prepare_read_request (input : read_request_input) =
   | None -> Error "read_thread requires threadID"
   | Some thread_id -> Ok { thread_id; goal = input.goal }
 
-let find_request_of_json json =
-  let tool = "find_thread" in
-  let ( let* ) = Result.bind in
-  let* fields = Shared.json_object_fields tool json in
-  let* query = Shared.json_required_string tool fields "query" in
-  prepare_find_request query
-
-let read_request_of_json json =
-  let tool = "read_thread" in
-  let ( let* ) = Result.bind in
-  let* fields = Shared.json_object_fields tool json in
-  let* thread_id = Shared.json_optional_string tool fields "threadID" in
-  let* thread_id_snake = Shared.json_optional_string tool fields "thread_id" in
-  let* id = Shared.json_optional_string tool fields "id" in
-  let* goal = Shared.json_string_default tool fields "goal" "" in
-  prepare_read_request { thread_id; thread_id_snake; id; goal }
-
 let summarize (thread : thread) =
   {
     id = thread.id;
@@ -582,33 +565,8 @@ let plan_read ~id ~goal_only catalog =
   | Found thread ->
       empty_result ~thread:(summarize thread) (transcript ~goal_only thread)
 
-let find_parameters =
-  Tool_gateway.object_schema ~required:[ "query" ]
-    [
-      ("query", Tool_gateway.string_schema ~min_length:1 ~max_length:500 ());
-    ]
-
-let read_parameters =
-  Tool_gateway.object_schema ~required:[ "threadID" ]
-    [
-      ("threadID", Tool_gateway.string_schema ~min_length:1 ());
-      ("goal", Tool_gateway.string_schema ~max_length:500 ());
-    ]
-
 let tool_specs =
   [
-    {
-      Tool_gateway.name = "find_thread";
-      description = "Search thread ids, titles, and transcript content.";
-      effect_kind = Tool_gateway.Pure;
-      strict = false;
-      parameters = find_parameters;
-    };
-    {
-      Tool_gateway.name = "read_thread";
-      description = "Read a thread by exact id or unique id prefix.";
-      effect_kind = Tool_gateway.Pure;
-      strict = false;
-      parameters = read_parameters;
-    };
+    { Tool_gateway.name = "find_thread"; effect_kind = Tool_gateway.Pure };
+    { Tool_gateway.name = "read_thread"; effect_kind = Tool_gateway.Pure };
   ]

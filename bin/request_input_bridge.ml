@@ -27,11 +27,38 @@ let js_input_question (question : Taumel.Request_user_input.question) =
 
 let prepare params =
   with_gateway_authorized "request_user_input" (fun _ ->
-      match
-        Result.bind (json_from_js params) Taumel.Request_user_input.request_of_json
-      with
+      let params = Tool_contracts.RequestUserInputParams.t_of_js (ojs_of_js params) in
+      let option_from_params option =
+        {
+          Taumel.Request_user_input.label =
+            Tool_contracts.RequestInputOption.get_label option;
+          description = Tool_contracts.RequestInputOption.get_description option;
+        }
+      in
+      let question_from_params question =
+        {
+          Taumel.Request_user_input.id =
+            Tool_contracts.RequestInputQuestion.get_id question;
+          header = Tool_contracts.RequestInputQuestion.get_header question;
+          question = Tool_contracts.RequestInputQuestion.get_question question;
+          options =
+            Tool_contracts.RequestInputQuestion.get_options question
+            |> List.map option_from_params;
+        }
+      in
+      let request =
+        {
+          Taumel.Request_user_input.questions =
+            Tool_contracts.RequestUserInputParams.get_questions params
+            |> List.map question_from_params;
+          auto_resolution_ms =
+            Option.map int_of_float
+              (Tool_contracts.RequestUserInputParams.get_autoResolutionMs params);
+        }
+      in
+      match Taumel.Request_user_input.validate request with
       | Error message -> error_obj message
-      | Ok request ->
+      | Ok () ->
           ok_obj
             [
               ("action", js_string "request_user_input");

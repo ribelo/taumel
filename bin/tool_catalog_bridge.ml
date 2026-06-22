@@ -1,20 +1,5 @@
 open Jsoo_bridge
 
-let js_tool_spec (spec : Taumel.Tool_gateway.spec) =
-  let prompt = Taumel.Tool_catalog.tool_prompt spec in
-  Unsafe.obj
-    [|
-      ("name", js_string spec.name);
-      ("label", js_string spec.name);
-      ("description", js_string spec.description);
-      ("promptSnippet", js_string prompt.snippet);
-      ( "promptGuidelines",
-        js_array (List.map js_string prompt.guidelines) );
-      ("effectKind", js_string (effect_kind_to_string spec.effect_kind));
-      ("strict", js_bool spec.strict);
-      ("parameters", json_to_js spec.parameters);
-    |]
-
 let js_command_spec (spec : Taumel.Tool_catalog.command_spec) =
   Unsafe.obj
     [|
@@ -85,8 +70,14 @@ let plan_active_tools_sync_js tool_names ctx =
       ("tools", js_array (List.map js_string plan.tools));
     ]
 
-let tool_specs_js () =
-  js_array (List.map js_tool_spec Taumel.Tool_catalog.tool_specs)
+let tool_policy_names_js () =
+  js_array (List.map js_string Taumel.Tool_catalog.tool_names)
+
+let allowed_tool_names_js () =
+  Taumel.Tool_gateway.exposeable_specs (App_state.active_profile ())
+    Taumel.Runtime_policy.gateway_registry
+  |> List.map (fun (spec : Taumel.Tool_gateway.spec) -> spec.name)
+  |> js_array_of_strings
 
 let command_specs_js () =
   js_array (List.map js_command_spec Taumel.Tool_catalog.command_specs)

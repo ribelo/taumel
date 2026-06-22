@@ -6,6 +6,11 @@ import type {
   PiLike,
   SessionInfo,
 } from "./types.ts";
+import {
+  parseToolParams,
+  toolContracts,
+  toolNames,
+} from "./tool-contracts.ts";
 
 import {
   applyChildActiveTools,
@@ -25,7 +30,6 @@ import {
   requiredError,
   sessionInfoFromContext,
   sessionInfoFromManager,
-  stringArrayField,
   stringArrayFromUnknown,
   stringField,
   threadSources,
@@ -112,6 +116,21 @@ async function executeOpenAiUsageInCore(
   }
   if (rendered["ok"] !== true) {
     return errorToolResult(core, requiredError(rendered, "OpenAI usage"), rendered);
+  }
+  return preparedToolResult(core, rendered);
+}
+
+async function executeExaInCore(
+  core: CoreBridge,
+  prepared: Record<string, unknown>,
+  ctx: unknown,
+) {
+  const rendered = await coreCall(core, "executeExa", [prepared, ctx]);
+  if (!isRecord(rendered)) {
+    throw new Error("Invalid Exa result");
+  }
+  if (rendered["ok"] !== true) {
+    return errorToolResult(core, requiredError(rendered, "Exa"), rendered);
   }
   return preparedToolResult(core, rendered);
 }
@@ -611,7 +630,11 @@ export async function executeTool(
   ctx: unknown,
   signal?: AbortSignal,
 ) {
-  const prepared = preparedAction(core, name, rawParams, ctx);
+  const parsed = parseToolParams(name, rawParams);
+  if (!parsed.ok) {
+    return errorToolResult(core, parsed.error, { ok: false, error: parsed.error });
+  }
+  const prepared = preparedAction(core, name, parsed.params, ctx);
   if (prepared["ok"] !== true) {
     return errorToolResult(core, requiredError(prepared, "tool preparation"), prepared);
   }
@@ -622,6 +645,15 @@ export async function executeTool(
       return preparedToolResult(core, prepared);
     case "openai_usage_fetch":
       return executeOpenAiUsageWithHostAuth(pi, core, prepared, ctx);
+    case "exa_fetch":
+      return executeExaInCore(core, prepared, ctx);
+    case "exa_agent_create_run_approval": {
+      const outcome = await confirmExecApproval(core, prepared, ctx, signal);
+      if (outcome !== "approved") {
+        return mutationApprovalDenied(core, "exa_agent_create_run", outcome);
+      }
+      return executeExaInCore(core, prepared, ctx);
+    }
     case "agent_spawn": {
       const currentActiveToolNames = typeof pi.getActiveTools === "function" ? pi.getActiveTools() : undefined;
       const spawnPlan = coreCall(core, "planAgentSpawn", [{
@@ -734,7 +766,7 @@ export async function executeTool(
       if (outcome !== "approved") {
         return mutationApprovalDenied(core, "apply_patch", outcome);
       }
-      return executeApplyPatch(pi, core, name, rawParams, {
+      return executeApplyPatch(pi, core, name, parsed.params, {
         ...prepared,
         action: "apply_patch",
         filesystemApproval: true,
@@ -746,9 +778,23 @@ export async function executeTool(
     case "edit":
       return executeLegacyEdit(core, prepared);
     case "apply_patch":
-      return executeApplyPatch(pi, core, name, rawParams, prepared, ctx);
+      return executeApplyPatch(pi, core, name, parsed.params, prepared, ctx);
     default:
       throw new Error(`${name} is registered by Taumel, but its executor is not connected yet.`);
+  }
+}
+
+function sorted(values: readonly string[]): string[] {
+  return [...values].sort((left, right) => left.localeCompare(right));
+}
+
+function assertToolCatalogMatchesCore(core: CoreBridge): void {
+  const coreToolNames = stringArrayFromUnknown(coreCall(core, "toolPolicyNames"));
+  if (coreToolNames === undefined) throw new Error("Invalid Taumel tool policy names");
+  const expected = sorted(toolNames);
+  const actual = sorted(coreToolNames);
+  if (expected.length !== actual.length || expected.some((name, index) => name !== actual[index])) {
+    throw new Error(`Taumel tool catalog drift: TS=[${expected.join(", ")}] OCaml=[${actual.join(", ")}]`);
   }
 }
 
@@ -762,21 +808,20 @@ export function registerGatewayTools(
     const ownerId = sessionInfoFromContext(ctx).sessionId;
     if (ownerId !== undefined) coreCall(core, "shutdownExecOwner", [ownerId]);
   });
-  const specs = coreCall(core, "toolSpecs");
-  if (!Array.isArray(specs) || !specs.every(isRecord)) {
-    throw new Error("Invalid Taumel tool specs");
-  }
-  for (const spec of specs) {
-    const name = stringField(spec, "name");
-    const parameters = spec["parameters"];
-    if (!isRecord(parameters)) throw new Error("Invalid Taumel tool specs");
+  assertToolCatalogMatchesCore(core);
+  const allowedToolNames = stringArrayFromUnknown(coreCall(core, "allowedToolNames"));
+  if (allowedToolNames === undefined) throw new Error("Invalid Taumel allowed tool names");
+  const allowed = new Set(allowedToolNames);
+  for (const spec of toolContracts) {
+    const name = spec.name;
+    if (!allowed.has(name)) continue;
     pi.registerTool({
       name,
-      label: stringField(spec, "label"),
-      description: stringField(spec, "description"),
-      promptSnippet: stringField(spec, "promptSnippet"),
-      promptGuidelines: stringArrayField(spec, "promptGuidelines"),
-      parameters,
+      label: spec.label,
+      description: spec.description,
+      promptSnippet: spec.promptSnippet,
+      promptGuidelines: spec.promptGuidelines ?? [],
+      parameters: spec.parameters,
       ...shellRenderersForTool(name),
       execute: async (...args) => {
         const { params, signal, ctx } = readInvocation(args);

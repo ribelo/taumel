@@ -86,125 +86,15 @@ type patch_output = {
 let approval ?(message = "") action prompt =
   { action; message; title = prompt.Sandbox.title; prompt = prompt.prompt; timeout_ms = prompt.timeout_ms }
 
-let ( let* ) = Result.bind
-
-let non_empty_field tool field value =
-  match Shared.trim_non_empty value with
-  | Some value -> Ok value
-  | None -> Error (tool ^ "." ^ field ^ " must not be empty")
-
-let decode_sandbox_permissions tool fields =
-  let* mode = Shared.json_optional_string tool fields "sandbox_permissions" in
-  match mode with
-  | None -> Ok Sandbox.Use_default
-  | Some "require_escalated" ->
-      let* justification =
-        Shared.json_string_default tool fields "justification"
-          "command requested escalation"
-      in
-      let* prefix_rule =
-        Shared.json_optional_string_list tool fields "prefix_rule"
-      in
-      let prefix_rule =
-        match prefix_rule with
-        | Some (_ :: _ as values) -> Some values
-        | Some [] | None -> None
-      in
-      Ok (Sandbox.Require_escalated { justification; prefix_rule })
-  | Some _ ->
-      Error
-        (tool ^ ".sandbox_permissions must be \"require_escalated\" when provided")
-
-let exec_request_of_json ~default_workdir json : (exec_request, string) result =
-  let tool = "exec_command" in
-  let* fields = Shared.json_object_fields tool json in
-  let* cmd = Shared.json_required_string tool fields "cmd" in
-  let* workdir = Shared.json_string_default tool fields "workdir" "" in
-  let* sandbox_permissions = decode_sandbox_permissions tool fields in
-  let* yield_time_ms = Shared.json_optional_number tool fields "yield_time_ms" in
-  let* max_output_tokens = Shared.json_optional_number tool fields "max_output_tokens" in
-  let* tty = Shared.json_bool_default tool fields "tty" false in
-  let* shell = Shared.json_string_default tool fields "shell" "" in
-  let* login = Shared.json_bool_default tool fields "login" true in
-  Ok
-    {
-      cmd;
-      workdir;
-      default_workdir;
-      sandbox_permissions;
-      yield_time_ms;
-      max_output_tokens;
-      tty;
-      shell;
-      login;
-    }
-
-let write_stdin_request_of_json json : (write_stdin_request, string) result =
-  let tool = "write_stdin" in
-  let* fields = Shared.json_object_fields tool json in
-  let* session_id = Shared.json_required_int tool fields "session_id" in
-  let* chars = Shared.json_string_default tool fields "chars" "" in
-  let* yield_time_ms = Shared.json_optional_number tool fields "yield_time_ms" in
-  let* max_output_tokens = Shared.json_optional_number tool fields "max_output_tokens" in
-  Ok
-    ({
-       session_id;
-       chars;
-       yield_time_ms;
-       max_output_tokens;
-     } : write_stdin_request)
-
-let write_request_of_json json : (write_request, string) result =
-  let tool = "write" in
-  let* fields = Shared.json_object_fields tool json in
-  let* path = Shared.json_required_string tool fields "path" in
-  let* path = non_empty_field tool "path" path in
-  let* contents = Shared.json_required_string tool fields "content" in
-  Ok { path; contents }
-
-let edit_replacement_of_fields tool index fields =
-  let path = Printf.sprintf "%s.edits[%d]" tool index in
-  let* old_text = Shared.json_required_string path fields "oldText" in
-  let* new_text = Shared.json_required_string path fields "newText" in
-  Ok { Sandbox.old_text; new_text }
-
-let edit_replacements_of_json tool fields =
-  let* entries = Shared.json_required_object_list tool fields "edits" in
-  match entries with
-  | [] -> Error (tool ^ ".edits must contain at least one replacement")
-  | _ ->
-      let rec loop acc index = function
-        | [] -> Ok (List.rev acc)
-        | fields :: rest ->
-            let* edit = edit_replacement_of_fields tool index fields in
-            loop (edit :: acc) (index + 1) rest
-      in
-      loop [] 0 entries
-
-let edit_request_of_json json : (edit_request, string) result =
-  let tool = "edit" in
-  let* fields = Shared.json_object_fields tool json in
-  let* path = Shared.json_required_string tool fields "path" in
-  let* path = non_empty_field tool "path" path in
-  let* edits = edit_replacements_of_json tool fields in
-  Ok { path; edits }
-
-let patch_request_of_json json : (patch_request, string) result =
-  let tool = "apply_patch" in
-  match json with
-  | Shared.String patch -> Ok { patch }
-  | _ ->
-      let* fields = Shared.json_object_fields tool json in
-      let* input = Shared.json_optional_string tool fields "input" in
-      let* patch_field = Shared.json_optional_string tool fields "patch" in
-      let patch =
-        match input with
-        | Some value when value <> "" -> Some value
-        | _ -> patch_field
-      in
-      (match patch with
-      | Some patch -> Ok { patch }
-      | None -> Error "apply_patch.input or apply_patch.patch is required")
+let patch_request_of_values ?input ?patch () =
+  let patch =
+    match input with
+    | Some value when value <> "" -> Some value
+    | _ -> patch
+  in
+  match patch with
+  | Some patch -> Ok { patch }
+  | None -> Error "apply_patch.input or apply_patch.patch is required"
 
 let plan_exec (sandbox : Sandbox.config) (request : exec_request) =
   let cmd = request.cmd in

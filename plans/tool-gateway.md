@@ -22,7 +22,7 @@ through `CapabilityProfile` and sandbox policy.
 
 ## Responsibilities
 
-- Register tool specs with Pi.
+- Provide policy-owned tool names/effects to the TypeScript registration layer.
 - Enforce `CapabilityProfile` before execution.
 - Route execution and mutation tools through sandbox.
 - Normalize tool errors and results.
@@ -32,11 +32,13 @@ through `CapabilityProfile` and sandbox policy.
 
 ## Redesign
 
-- Tools should be described as data plus an executor.
-- The gateway checks authorization before calling an executor.
-- The gateway can expose/hide tools in Pi, but exposure is not enforcement.
-- Feature modules provide tool definitions; they do not directly become the
-  security boundary.
+- Pi-facing tool descriptions and parameter schemas live in TypeScript TypeBox
+  contracts.
+- OCaml keeps only policy metadata: tool name and effect kind.
+- The gateway checks authorization before any tool planner runs.
+- The gateway can expose/hide tool names in Pi, but exposure is not enforcement.
+- Feature modules provide policy registrations; they do not directly become the
+  only security boundary.
 - The sandbox owns process/filesystem policy, but the gateway owns tool-call
   authorization.
 
@@ -52,3 +54,4 @@ through `CapabilityProfile` and sandbox policy.
 - Sub-agent tool calls are authorized against the child capability profile.
 - Execution/mutation tools cannot run without sandbox routing.
 - All kept tools have an obvious gateway registration path.
+- TypeScript and OCaml tool catalogs fail fast if their tool-name sets drift.

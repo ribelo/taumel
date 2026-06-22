@@ -14,7 +14,8 @@ let core_call name_js args_js =
   let args = Option.value (array_value args_js) ~default:[||] in
   let arg = arg_at args in
   match name with
-  | "toolSpecs" -> Tool_catalog_bridge.tool_specs_js ()
+  | "toolPolicyNames" -> Tool_catalog_bridge.tool_policy_names_js ()
+  | "allowedToolNames" -> Tool_catalog_bridge.allowed_tool_names_js ()
   | "commandSpecs" -> Tool_catalog_bridge.command_specs_js ()
   | "planActiveToolsSync" ->
       Tool_catalog_bridge.plan_active_tools_sync_js (arg 0) (arg 1)
@@ -75,6 +76,7 @@ let core_call name_js args_js =
   | "openAiUsageHostAuth" -> Usage_bridge.openai_host_auth ()
   | "openAiUsageHostParams" -> Usage_bridge.openai_host_params (arg 0)
   | "executeOpenAiUsage" -> Usage_bridge.execute_openai (arg 0) (arg 1)
+  | "executeExa" -> Exa_bridge.execute (arg 0) (arg 1)
   | other -> failwith ("unknown Taumel core method: " ^ other)
 
 let () =

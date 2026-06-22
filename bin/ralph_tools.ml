@@ -38,12 +38,11 @@ let tool_result task message =
 
 let prepare_child_tool name params ctx =
   with_gateway_authorized name (fun _ ->
-      match
-        Result.bind (json_from_js params)
-          (Taumel.Ralph_loop.child_tool_task_id_of_json ~tool:name)
-      with
-      | Error message -> error_obj message
-      | Ok task_id -> (
+      let params = Tool_contracts.RalphTaskParams.t_of_js (ojs_of_js params) in
+      let task_id = Tool_contracts.RalphTaskParams.get_task_id params in
+      match Taumel.Shared.trim_non_empty task_id with
+      | None -> error_obj (name ^ ".task_id is required")
+      | Some task_id -> (
         match Taumel.Ralph_loop.find_task task_id !ralph_tasks with
         | None -> error_obj ("unknown Ralph task: " ^ task_id)
         | Some task -> (

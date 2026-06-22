@@ -3,4 +3,6 @@ _opam/
 *.install
 node_modules/
 dist/
-
+bin/generated/*.d.ts
+bin/generated/*.ml
+bin/generated/*.mli

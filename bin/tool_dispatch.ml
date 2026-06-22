@@ -19,4 +19,12 @@ let prepare name params ctx =
   | "read_thread" -> Thread_bridge.prepare_read params
   | "agent" -> Agent_tools.prepare params ctx
   | "ralph_continue" | "ralph_finish" -> Ralph_tools.prepare_child_tool name params ctx
+  | "web_search_exa" -> Exa_bridge.prepare_web_search params
+  | "crawling_exa" -> Exa_bridge.prepare_crawling params
+  | "get_code_context_exa" -> Exa_bridge.prepare_code_context params
+  | "exa_agent_create_run" -> Exa_bridge.prepare_agent_create_run params
+  | "exa_agent_get_run" -> Exa_bridge.prepare_agent_get_run params
+  | "exa_agent_list_runs" -> Exa_bridge.prepare_agent_list_runs params
+  | "exa_agent_cancel_run" -> Exa_bridge.prepare_agent_cancel_run params
+  | "exa_agent_list_events" -> Exa_bridge.prepare_agent_list_events params
   | other -> error_obj ("tool executor is not connected yet: " ^ other)

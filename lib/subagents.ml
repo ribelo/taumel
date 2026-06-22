@@ -333,109 +333,63 @@ let apply_request ~parent_profile ~(owner : owner) workers = function
       in
       Ok (plan ~listed_workers:owned workers "tool_result" message)
 
-let parse_sandbox_preset tool fields =
-  let ( let* ) = Result.bind in
-  let* value = Shared.json_optional_string tool fields "sandbox_preset" in
-  match value with
-  | None -> Ok None
-  | Some value -> (
-      match Capability_profile.sandbox_of_string value with
-      | Some preset -> Ok (Some preset)
-      | None -> Error (tool ^ ".sandbox_preset is invalid: " ^ value))
-
-let parse_tool_allowlist tool fields =
-  let ( let* ) = Result.bind in
-  let* tools = Shared.json_optional_string_list tool fields "tools" in
-  match tools with
-  | Some (_ :: _ as tools) -> Ok (Some (Capability_profile.of_list tools))
-  | Some [] | None -> Ok None
-
-let optional_trimmed_string tool fields name =
-  let ( let* ) = Result.bind in
-  let* value = Shared.json_optional_string tool fields name in
-  Ok (Option.bind value Shared.trim_non_empty)
-
-let required_trimmed_string tool fields name =
-  let ( let* ) = Result.bind in
-  let* value = Shared.json_required_string tool fields name in
-  match Shared.trim_non_empty value with
-  | Some value -> Ok value
-  | None -> Error (tool ^ "." ^ name ^ " must not be empty")
-
-let request_of_json ~workspace_roots ~default_id json =
-  let tool = "agent" in
-  let ( let* ) = Result.bind in
-  let* fields = Shared.json_object_fields tool json in
-  let* action = Shared.json_string_default tool fields "action" "list" in
-  match String.trim action with
+let request_of_values ~workspace_roots ~default_id ?action ?id ?agent ?prompt
+    ?model_id ?thinking_level ?sandbox_preset ?tools ?(no_sandbox = false) () =
+  let opt_trim = Option.bind in
+  match String.trim (Option.value action ~default:"list") with
   | "" | "list" -> Ok List
   | "spawn" ->
-      let* name =
-        let* value = Shared.json_string_default tool fields "agent" "worker" in
-        match Shared.trim_non_empty value with
-        | Some value -> Ok value
-        | None -> Ok "worker"
+      let name =
+        match opt_trim agent Shared.trim_non_empty with
+        | Some value -> value
+        | None -> "worker"
       in
-      let* id =
-        let* value = Shared.json_string_default tool fields "id" default_id in
-        match Shared.trim_non_empty value with
-        | Some value -> Ok value
-        | None -> Ok default_id
+      let id =
+        match opt_trim id Shared.trim_non_empty with
+        | Some value -> value
+        | None -> default_id
       in
-      let* prompt = Shared.json_string_default tool fields "prompt" "" in
-      let* model_id = optional_trimmed_string tool fields "model_id" in
-      let* thinking_level = optional_trimmed_string tool fields "thinking_level" in
-      let* sandbox_preset = parse_sandbox_preset tool fields in
-      let* tools = parse_tool_allowlist tool fields in
-      let* no_sandbox = Shared.json_bool_default tool fields "no_sandbox" false in
+      let sandbox_preset =
+        match sandbox_preset with
+        | None -> Ok None
+        | Some value -> (
+            match Capability_profile.sandbox_of_string value with
+            | Some preset -> Ok (Some preset)
+            | None -> Error ("agent.sandbox_preset is invalid: " ^ value))
+      in
+      let ( let* ) = Result.bind in
+      let* sandbox_preset = sandbox_preset in
+      let tools =
+        match tools with
+        | Some (_ :: _ as tools) -> Some (Capability_profile.of_list tools)
+        | Some [] | None -> None
+      in
       Ok
         (Spawn
            {
              id;
              name;
-             prompt;
-             model_id;
-             thinking_level;
+             prompt = Option.value prompt ~default:"";
+             model_id = opt_trim model_id Shared.trim_non_empty;
+             thinking_level = opt_trim thinking_level Shared.trim_non_empty;
              sandbox_preset;
              tools;
              workspace_roots;
              no_sandbox;
            })
-  | "send" ->
-      let* id = required_trimmed_string tool fields "id" in
-      let* prompt = Shared.json_string_default tool fields "prompt" "" in
-      Ok (Send { id; prompt })
-  | "wait" ->
-      let* id = required_trimmed_string tool fields "id" in
-      Ok (Wait { id })
-  | "close" ->
-      let* id = required_trimmed_string tool fields "id" in
-      Ok (Close { id })
+  | "send" -> (
+      match opt_trim id Shared.trim_non_empty with
+      | Some id -> Ok (Send { id; prompt = Option.value prompt ~default:"" })
+      | None -> Error "agent.id must not be empty")
+  | "wait" -> (
+      match opt_trim id Shared.trim_non_empty with
+      | Some id -> Ok (Wait { id })
+      | None -> Error "agent.id must not be empty")
+  | "close" -> (
+      match opt_trim id Shared.trim_non_empty with
+      | Some id -> Ok (Close { id })
+      | None -> Error "agent.id must not be empty")
   | _ -> Error "agent action must be spawn, send, wait, close, or list"
 
-let parameters =
-  Tool_gateway.object_schema
-    [
-      ( "action",
-        Tool_gateway.string_schema
-          ~enum:[ "spawn"; "send"; "wait"; "close"; "list" ] () );
-      ("id", Tool_gateway.string_schema ());
-      ("agent", Tool_gateway.string_schema ());
-      ("prompt", Tool_gateway.string_schema ());
-      ( "sandbox_preset",
-        Tool_gateway.string_schema
-          ~enum:[ "read-only"; "workspace-write"; "danger-full-access"; "full-access" ]
-          () );
-      ("tools", Tool_gateway.array_schema (Tool_gateway.string_schema ()));
-      ("no_sandbox", Tool_gateway.boolean_schema ());
-    ]
-
 let tool_spec =
-  {
-    Tool_gateway.name = "agent";
-    description =
-      "Spawn, send to, wait for, list, or close a sandbox-clamped Taumel sub-agent.";
-    effect_kind = Tool_gateway.Spawn_agent;
-    strict = false;
-    parameters;
-  }
+  { Tool_gateway.name = "agent"; effect_kind = Tool_gateway.Spawn_agent }

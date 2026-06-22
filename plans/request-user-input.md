@@ -33,7 +33,8 @@ turning every clarification into unstructured chat.
 
 ## Redesign
 
-- Keep schema and validation pure in OCaml.
+- Keep the Pi-facing parameter schema in the TypeScript TypeBox contract.
+- Keep domain validation pure in OCaml.
 - Keep Pi UI interaction at the adapter edge.
 - Control availability through `CapabilityProfile`.
 - Keep renderer separate from tool execution.

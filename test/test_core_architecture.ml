@@ -70,10 +70,7 @@ let test_gateway_enforces_profile_and_sandbox () =
   let spec =
     {
       Gateway.name = "exec_command";
-      description = "test executor";
       effect_kind = Gateway.Execute;
-      strict = false;
-      parameters = Gateway.empty_parameters;
     }
   in
   let registry = Gateway.empty |> Gateway.register spec in
@@ -771,20 +768,7 @@ let test_tool_catalog_scope () =
     ];
   List.iter
     (fun name -> assert_bool ("omitted tool " ^ name) (not (Tool_catalog.has_tool name)))
-    [ "backlog"; "memory"; "skill_manage"; "web_search_exa"; "dream_finish" ];
-  let exec_spec =
-    List.find
-      (fun (spec : Gateway.spec) -> spec.name = "exec_command")
-      Tool_catalog.tool_specs
-  in
-  let exec_prompt = Tool_catalog.tool_prompt exec_spec in
-  assert_equal "exec prompt snippet"
-    "Run shell commands, returning output or a session ID for ongoing interaction."
-    exec_prompt.snippet;
-  assert_bool "exec prompt guidelines"
-    (List.mem
-       "Use write_stdin with empty chars to poll or wait for an active session."
-       exec_prompt.guidelines);
+    [ "backlog"; "memory"; "skill_manage"; "dream_finish" ];
   assert_bool "normal active tools hide scoped controls"
     (Tool_catalog.rewrite_active_tools ~provider:"openai-codex"
        [

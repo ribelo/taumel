@@ -16,7 +16,11 @@ if (JSON.stringify(exportedKeys) !== JSON.stringify(["call", "init"])) {
   throw new Error(`unexpected Taumel artifact exports: ${JSON.stringify(exportedKeys)}`);
 }
 
-if (!Array.isArray(core.call("toolSpecs", [])) || !Array.isArray(core.call("commandSpecs", []))) {
+if (
+  !Array.isArray(core.call("toolPolicyNames", [])) ||
+  !Array.isArray(core.call("allowedToolNames", [])) ||
+  !Array.isArray(core.call("commandSpecs", []))
+) {
   throw new Error("Taumel artifact specs did not return arrays");
 }
 
