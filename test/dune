@@ -53,12 +53,6 @@
  (libraries taumel))
 
 (test
- (name test_request_user_input)
- (modules test_request_user_input)
- (package taumel)
- (libraries taumel))
-
-(test
  (name test_runtime_policy)
  (modules test_runtime_policy)
  (package taumel)
@@ -73,5 +67,11 @@
 (test
  (name test_exa_plan)
  (modules test_exa_plan)
+ (package taumel)
+ (libraries taumel))
+
+(test
+ (name test_goal_prd)
+ (modules test_goal_prd)
  (package taumel)
  (libraries taumel))

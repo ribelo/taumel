@@ -1,5 +1,12 @@
 import { readFile } from "node:fs/promises";
 
+import {
+  createAgentSession as createPiAgentSession,
+  DefaultResourceLoader,
+  getAgentDir,
+  SessionManager,
+} from "@earendil-works/pi-coding-agent";
+
 import type {
   ChildSessionBridge,
   CoreBridge,
@@ -14,7 +21,6 @@ import {
 
 import {
   applyChildActiveTools,
-  applyChildModelThinking,
   childBridgeFacts,
   childSessionStartPlan,
   coreCall,
@@ -26,7 +32,6 @@ import {
   optionalStringField,
   openAiCredentialRaw,
   openAiUsageTokenRaw,
-  recordArrayField,
   requiredError,
   sessionInfoFromContext,
   sessionInfoFromManager,
@@ -59,6 +64,186 @@ function hostToolResult(core: CoreBridge, action: string, details: unknown): Rec
   return result;
 }
 
+async function callOptionalAsync(receiver: unknown, names: readonly string[], args: readonly unknown[] = []): Promise<string | undefined> {
+  if (!isRecord(receiver)) return undefined;
+  for (const name of names) {
+    const method = receiver[name];
+    if (typeof method !== "function") continue;
+    await method.apply(receiver, args);
+    return name;
+  }
+  return undefined;
+}
+
+function cwdFromContext(ctx: unknown): string {
+  return isRecord(ctx) && typeof ctx["cwd"] === "string" && ctx["cwd"] !== "" ? ctx["cwd"] : process.cwd();
+}
+
+function currentModelFromContext(ctx: unknown): unknown {
+  if (!isRecord(ctx)) return undefined;
+  const getModel = ctx["getModel"];
+  if (typeof getModel === "function") {
+    try {
+      const model = getModel.call(ctx);
+      if (model !== undefined && model !== null) return model;
+    } catch {
+      // Fall through to the exposed model snapshot.
+    }
+  }
+  return ctx["model"];
+}
+
+function splitProviderModelId(modelId: string | undefined): { readonly provider: string; readonly model: string } | undefined {
+  if (modelId === undefined) return undefined;
+  const separator = modelId.indexOf("/");
+  if (separator <= 0 || separator >= modelId.length - 1) return undefined;
+  return { provider: modelId.slice(0, separator), model: modelId.slice(separator + 1) };
+}
+
+function resolveChildModel(pi: PiLike, ctx: unknown, modelId: string | undefined): { readonly model?: unknown; readonly applied: boolean } {
+  const registry = modelRegistryFrom(pi, ctx);
+  const requested = splitProviderModelId(modelId);
+  if (requested !== undefined && isRecord(registry) && typeof registry["find"] === "function") {
+    const model = registry["find"].call(registry, requested.provider, requested.model);
+    if (model !== undefined && model !== null) {
+      return { model, applied: true };
+    }
+  }
+  if (modelId !== undefined) {
+    return { applied: false };
+  }
+  const inherited = currentModelFromContext(ctx);
+  return inherited === undefined || inherited === null ? { applied: false } : { model: inherited, applied: true };
+}
+
+function appendSetupEntries(sessionManager: unknown, entries: readonly Record<string, unknown>[]): SessionInfo {
+  if (isRecord(sessionManager) && typeof sessionManager["appendCustomEntry"] === "function") {
+    for (const entry of entries) {
+      const customType = stringField(entry, "customType");
+      if (customType === "") continue;
+      sessionManager["appendCustomEntry"].call(sessionManager, customType, entry["data"]);
+    }
+  }
+  return sessionInfoFromManager(sessionManager);
+}
+
+function agentSystemPromptFromMetadata(metadata: Record<string, unknown>): string | undefined {
+  const value = metadata["agentSystemPrompt"];
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
+}
+
+function assistantTextFromMessage(message: unknown): string | undefined {
+  if (!isRecord(message)) return undefined;
+  const content = message["content"];
+  if (typeof content === "string") return content.trim() === "" ? undefined : content;
+  if (!Array.isArray(content)) return undefined;
+  const text = content
+    .map((part) => isRecord(part) && typeof part["text"] === "string" ? part["text"] : "")
+    .filter((part) => part.trim() !== "")
+    .join("\n");
+  return text === "" ? undefined : text;
+}
+
+function completionFromAgentEndEvent(event: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(event) || event["type"] !== "agent_end" || !Array.isArray(event["messages"])) {
+    return undefined;
+  }
+  const messages = event["messages"];
+  const assistant = [...messages].reverse().find((message) => isRecord(message) && message["role"] === "assistant");
+  const finalOutput = assistantTextFromMessage(assistant);
+  if (finalOutput === undefined) return undefined;
+  const stopReason = isRecord(assistant) && typeof assistant["stopReason"] === "string" ? assistant["stopReason"] : "";
+  const errorMessage = isRecord(assistant) && typeof assistant["errorMessage"] === "string" ? assistant["errorMessage"] : undefined;
+  const status =
+    errorMessage !== undefined || stopReason === "error" ? "failed" :
+    stopReason === "cancelled" || stopReason === "aborted" ? "cancelled" :
+    "completed";
+  return {
+    status,
+    finalOutput,
+    ...(errorMessage !== undefined ? { reason: errorMessage } : {}),
+  };
+}
+
+async function sendToSdkAgentSession(session: unknown, prompt: string, options: Record<string, unknown>): Promise<unknown> {
+  if (!isRecord(session)) return undefined;
+  const subscribe = session["subscribe"];
+  let completion: Record<string, unknown> | undefined;
+  const unsubscribe =
+    typeof subscribe === "function"
+      ? subscribe.call(session, (event: unknown) => {
+        completion = completionFromAgentEndEvent(event) ?? completion;
+      })
+      : undefined;
+  try {
+    const deliverAs = typeof options["deliverAs"] === "string" ? options["deliverAs"] : "followUp";
+    const isStreaming = session["isStreaming"] === true;
+    if (isStreaming && deliverAs === "steer" && typeof session["steer"] === "function") {
+      const result = await session["steer"].call(session, prompt);
+      return completion ?? result;
+    }
+    if (isStreaming && typeof session["followUp"] === "function") {
+      const result = await session["followUp"].call(session, prompt);
+      return completion ?? result;
+    }
+    if (typeof session["prompt"] === "function") {
+      const result = await session["prompt"].call(session, prompt, {
+        streamingBehavior: deliverAs === "steer" ? "steer" : "followUp",
+      });
+      return completion ?? result;
+    }
+    return undefined;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { status: "failed", finalOutput: message, reason: message };
+  } finally {
+    if (typeof unsubscribe === "function") unsubscribe();
+  }
+}
+
+async function stopChildSession(child: ChildSessionBridge | undefined, reason: string): Promise<void> {
+  if (child?.stop !== undefined) {
+    await child.stop(reason);
+    return;
+  }
+  const ctx = child?.ctx;
+  const manager = isRecord(ctx) ? ctx["sessionManager"] : undefined;
+  try {
+    const stopped = await callOptionalAsync(ctx, ["abort", "cancel", "stop"], [reason]);
+    if (stopped !== undefined) return;
+    await callOptionalAsync(manager, ["abort", "cancel", "stop"], [reason]);
+  } catch {
+    // Closing/stopping an already-settled child is best effort; persisted state
+    // remains the source of truth for parent-visible lifecycle.
+  }
+}
+
+async function closeChildSession(child: ChildSessionBridge | undefined, reason: string): Promise<void> {
+  if (child?.close !== undefined) {
+    await child.close(reason);
+    return;
+  }
+  const ctx = child?.ctx;
+  const manager = isRecord(ctx) ? ctx["sessionManager"] : undefined;
+  await stopChildSession(child, reason);
+  try {
+    const closed = await callOptionalAsync(ctx, ["close", "dispose", "shutdown"], [reason]);
+    if (closed !== undefined) return;
+    await callOptionalAsync(manager, ["close", "dispose", "shutdown"], [reason]);
+  } catch {
+    // See stopChildSession: host cleanup is intentionally non-fatal.
+  }
+}
+
+async function withGoalClockPaused<T>(core: CoreBridge, run: () => Promise<T>): Promise<T> {
+  coreCall(core, "goalClockPauseStart", []);
+  try {
+    return await run();
+  } finally {
+    coreCall(core, "goalClockPauseEnd", []);
+  }
+}
+
 type ApprovalOutcome =
   | "approved"
   | "denied_by_user"
@@ -87,6 +272,40 @@ function mutationApprovalDenied(core: CoreBridge, action: string, outcome: Appro
     approvalRequired: true,
     approvalOutcome: outcome,
   });
+}
+
+function childSessionMetadataFromContext(ctx: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(ctx) || !isRecord(ctx["sessionManager"])) return undefined;
+  const getEntries = ctx["sessionManager"]["getEntries"];
+  if (typeof getEntries !== "function") return undefined;
+  try {
+    const entries = getEntries.call(ctx["sessionManager"]);
+    if (!Array.isArray(entries)) return undefined;
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const entry = entries[index];
+      if (!isRecord(entry) || entry["type"] !== "custom" || entry["customType"] !== "taumel.childSession") {
+        continue;
+      }
+      return isRecord(entry["data"]) ? entry["data"] : undefined;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+function approvalRequesterLabel(ctx: unknown): string | undefined {
+  const metadata = childSessionMetadataFromContext(ctx);
+  if (metadata === undefined || metadata["kind"] !== "agent") return undefined;
+  const workerId = typeof metadata["workerId"] === "string" ? metadata["workerId"].trim() : "";
+  const profile =
+    typeof metadata["profileName"] === "string" ? metadata["profileName"].trim() :
+    typeof metadata["definitionName"] === "string" ? metadata["definitionName"].trim() :
+    "";
+  if (workerId === "" && profile === "") return undefined;
+  if (workerId === "") return `agent profile ${profile}`;
+  if (profile === "") return `agent ${workerId}`;
+  return `agent ${workerId} (${profile})`;
 }
 
 function openAiUsageHostAuth(core: CoreBridge): Record<string, unknown> {
@@ -252,11 +471,22 @@ async function confirmExecApproval(
   delete confirmOptions["timeout"];
 
   try {
-    const approved = await confirm.call(
-      ui,
-      stringField(plan, "title"),
-      stringField(plan, "prompt"),
-      confirmOptions,
+    const requester = approvalRequesterLabel(ctx);
+    const title =
+      requester === undefined
+        ? stringField(plan, "title")
+        : `${stringField(plan, "title")} - ${requester}`;
+    const prompt =
+      requester === undefined
+        ? stringField(plan, "prompt")
+        : `Requesting ${requester}\n\n${stringField(plan, "prompt")}`;
+    const approved = await withGoalClockPaused(core, async () =>
+      await confirm.call(
+        ui,
+        title,
+        prompt,
+        confirmOptions,
+      )
     );
     if (approved === true) return "approved";
     if (controller.signal.aborted) return outcome ?? "interrupted";
@@ -287,79 +517,86 @@ async function validatePreparedMutationPath(
 }
 
 export async function createChildSession(
+  pi: PiLike,
   core: CoreBridge,
   ctx: unknown,
   metadata: Record<string, unknown>,
 ): Promise<ChildSessionBridge | undefined> {
-  if (!isRecord(ctx) || typeof ctx["newSession"] !== "function") return undefined;
-
   const parent = sessionInfoFromContext(ctx);
   const plan = childSessionStartPlan(core, metadata, parent);
-  let setupInfo: SessionInfo = {};
-  let replacementCtx: unknown;
-  let activeToolsApplied = false;
   const activeTools = stringArrayFromUnknown(plan["activeTools"]);
   const modelId = optionalStringField(plan, "modelId");
   const thinkingLevel = optionalStringField(plan, "thinkingLevel");
-  const parentSession = optionalStringField(plan, "parentSession");
   const setupEntriesRaw = plan["setupEntries"];
   if (!Array.isArray(setupEntriesRaw) || !setupEntriesRaw.every(isRecord)) {
     throw new Error("Invalid Taumel child session start plan");
   }
   const setupEntries = setupEntriesRaw;
-  let modelApplied = false;
-  let thinkingApplied = false;
-  const options = {
-    ...(parentSession !== undefined ? { parentSession } : {}),
-    ...(modelId !== undefined ? { modelId, model: modelId } : {}),
-    ...(thinkingLevel !== undefined ? { thinkingLevel, thinking: thinkingLevel } : {}),
-    setup: async (sessionManager: unknown) => {
-      setupInfo = sessionInfoFromManager(sessionManager);
-      if (isRecord(sessionManager) && typeof sessionManager["appendCustomEntry"] === "function") {
-        for (const entry of setupEntries) {
-          const customType = stringField(entry, "customType");
-          if (customType === "") continue;
-          sessionManager["appendCustomEntry"].call(sessionManager, customType, entry["data"]);
-        }
-      }
-    },
-    withSession: async (nextCtx: unknown) => {
-      replacementCtx = nextCtx;
-      if (activeTools !== undefined) {
-        activeToolsApplied = applyChildActiveTools(nextCtx, activeTools);
-      }
-      const applied = applyChildModelThinking(nextCtx, modelId, thinkingLevel);
-      modelApplied = applied.modelApplied;
-      thinkingApplied = applied.thinkingApplied;
-    },
-  };
-
+  const cwd = cwdFromContext(ctx);
+  const model = resolveChildModel(pi, ctx, modelId);
+  const systemPrompt = agentSystemPromptFromMetadata(metadata);
+  const sessionManager = SessionManager.inMemory(cwd);
+  const resourceLoader =
+    systemPrompt === undefined
+      ? undefined
+      : new DefaultResourceLoader({
+        cwd,
+        agentDir: getAgentDir(),
+        appendSystemPromptOverride: (base) => [...base, systemPrompt],
+      });
   try {
-    const result = await ctx["newSession"].call(ctx, options);
-    if (isRecord(result) && result["cancelled"] === true) {
-      return { cancelled: true };
+    await resourceLoader?.reload();
+    const options = {
+      cwd,
+      sessionManager,
+      ...(model.model !== undefined ? { model: model.model } : {}),
+      ...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
+      ...(activeTools !== undefined ? { tools: [...activeTools] } : {}),
+      ...(resourceLoader !== undefined ? { resourceLoader } : {}),
+    };
+    const result =
+      typeof pi.createAgentSession === "function"
+        ? await pi.createAgentSession(options)
+        : await createPiAgentSession(options as Parameters<typeof createPiAgentSession>[0]);
+    const session = isRecord(result) ? result["session"] : undefined;
+    if (!isRecord(session)) return { error: "createAgentSession did not return a session" };
+    const setupInfo = appendSetupEntries(session["sessionManager"] ?? sessionManager, setupEntries);
+    const sessionId =
+      typeof session["sessionId"] === "string" && session["sessionId"] !== ""
+        ? session["sessionId"]
+        : setupInfo.sessionId;
+    const sessionFile =
+      typeof session["sessionFile"] === "string" && session["sessionFile"] !== ""
+        ? session["sessionFile"]
+        : setupInfo.sessionFile;
+    if (!sessionId && !sessionFile) {
+      return { missingSessionIdentifier: true };
     }
+    const activeToolsApplied = activeTools === undefined ? false : applyChildActiveTools(session, activeTools);
+    return {
+      sessionId: sessionId ?? sessionFile,
+      sessionFile,
+      session,
+      activeTools,
+      activeToolsApplied,
+      modelId,
+      modelApplied: model.applied,
+      thinkingLevel,
+      thinkingApplied: thinkingLevel !== undefined,
+      sendUserMessage: (content, options = {}) => sendToSdkAgentSession(session, content, options),
+      stop: async (reason) => {
+        if (typeof session["abort"] === "function") await session["abort"].call(session, reason);
+      },
+      close: async (reason) => {
+        const closed = await callOptionalAsync(session, ["close", "shutdown"], [reason]);
+        if (closed !== undefined) return;
+        if (typeof session["abort"] === "function") await session["abort"].call(session, reason);
+        if (typeof session["dispose"] === "function") session["dispose"].call(session);
+      },
+    };
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) };
   }
-
-  const replacementInfo = sessionInfoFromContext(replacementCtx);
-  const sessionId = replacementInfo.sessionId ?? setupInfo.sessionId;
-  const sessionFile = replacementInfo.sessionFile ?? setupInfo.sessionFile;
-  if (!sessionId && !sessionFile) {
-    return { missingSessionIdentifier: true };
-  }
-  return {
-    sessionId: sessionId ?? sessionFile,
-    sessionFile,
-    ctx: replacementCtx,
-    activeTools,
-    activeToolsApplied,
-    modelId,
-    modelApplied,
-    thinkingLevel,
-    thinkingApplied,
-  };
 }
 
 export async function sendToChildSession(
@@ -370,7 +607,9 @@ export async function sendToChildSession(
   emptyReason = "empty prompt",
 ): Promise<Record<string, unknown>> {
   const childCtx = child?.ctx;
-  const childSendAvailable = isRecord(childCtx) && typeof childCtx["sendUserMessage"] === "function";
+  const childSendAvailable =
+    typeof child?.sendUserMessage === "function" ||
+    (isRecord(childCtx) && typeof childCtx["sendUserMessage"] === "function");
   const hostSendAvailable = typeof pi.sendUserMessage === "function";
   const plan = coreCall(core, "planChildDispatch", [{
     ...childBridgeFacts(child),
@@ -389,38 +628,208 @@ export async function sendToChildSession(
   const deliverAs = stringField(plan, "deliverAs");
   if (deliverAs === "") throw new Error("Invalid Taumel child dispatch delivery mode");
   const options = { deliverAs };
+  if (typeof child?.sendUserMessage === "function") {
+    const hostResult = await child.sendUserMessage(dispatchPrompt, options);
+    return dispatchResultWithHostCompletion(result, hostResult);
+  }
   if (isRecord(childCtx) && typeof childCtx["sendUserMessage"] === "function") {
-    await childCtx["sendUserMessage"].call(childCtx, dispatchPrompt, options);
-    return result;
+    const hostResult = await childCtx["sendUserMessage"].call(childCtx, dispatchPrompt, options);
+    return dispatchResultWithHostCompletion(result, hostResult);
   }
   if (typeof pi.sendUserMessage === "function") {
-    await pi.sendUserMessage(dispatchPrompt, options);
-    return result;
+    const hostResult = await pi.sendUserMessage(dispatchPrompt, options);
+    return dispatchResultWithHostCompletion(result, hostResult);
   }
   return result;
 }
 
-export function applyChildSessionUpdate(
+function completionTextFromContent(content: unknown): string | undefined {
+  if (!Array.isArray(content)) return undefined;
+  const parts = content
+    .map((item) => isRecord(item) && typeof item["text"] === "string" ? item["text"] : "")
+    .filter((text) => text.trim() !== "");
+  return parts.length === 0 ? undefined : parts.join("\n");
+}
+
+function dispatchCompletionFromHostResult(hostResult: unknown): Record<string, unknown> | undefined {
+  if (typeof hostResult === "string" && hostResult.trim() !== "") {
+    return { status: "completed", finalOutput: hostResult };
+  }
+  if (!isRecord(hostResult)) return undefined;
+  const finalOutput =
+    typeof hostResult["finalOutput"] === "string" ? hostResult["finalOutput"] :
+    typeof hostResult["output"] === "string" ? hostResult["output"] :
+    typeof hostResult["result"] === "string" ? hostResult["result"] :
+    completionTextFromContent(hostResult["content"]);
+  if (finalOutput === undefined || finalOutput.trim() === "") return undefined;
+  const rawStatus = typeof hostResult["status"] === "string" ? hostResult["status"] : "";
+  const status = rawStatus === "failed" || hostResult["isError"] === true ? "failed" :
+    rawStatus === "cancelled" || rawStatus === "aborted" ? "cancelled" :
+    rawStatus === "timed_out" ? "timed_out" :
+    "completed";
+  const reason =
+    typeof hostResult["reason"] === "string" ? hostResult["reason"] :
+    typeof hostResult["error"] === "string" ? hostResult["error"] :
+    typeof hostResult["stopReason"] === "string" ? hostResult["stopReason"] :
+    undefined;
+  return {
+    status,
+    finalOutput,
+    ...(reason !== undefined ? { reason } : {}),
+  };
+}
+
+function dispatchResultWithHostCompletion(
+  result: Record<string, unknown>,
+  hostResult: unknown,
+): Record<string, unknown> {
+  const completion = dispatchCompletionFromHostResult(hostResult);
+  return completion === undefined ? result : { ...result, completion };
+}
+
+async function deliverAgentCompletion(
+  pi: PiLike,
+  result: Record<string, unknown>,
+): Promise<void> {
+  if (result["notify"] !== true) return;
+  const content = stringField(result, "content");
+  const deliverAs = stringField(result, "deliverAs");
+  if (typeof pi.sendMessage === "function") {
+    await pi.sendMessage({
+      customType: stringField(result, "customType"),
+      content,
+      display: result["display"] === true,
+    }, {
+      triggerTurn: result["triggerTurn"] === true,
+      deliverAs,
+    });
+    return;
+  }
+  if (typeof pi.sendUserMessage === "function") {
+    await pi.sendUserMessage(content, { deliverAs });
+  }
+}
+
+async function recordAgentDispatchCompletion(
+  pi: PiLike,
+  core: CoreBridge,
+  prepared: Record<string, unknown>,
+  dispatch: Record<string, unknown>,
+  ctx: unknown,
+): Promise<void> {
+  const completion = dispatch["completion"];
+  if (!isRecord(completion)) return;
+  const result = coreCall(core, "recordAgentDispatchCompletion", [{
+    prepared,
+    completion,
+  }, ctx]);
+  if (!isRecord(result) || result["ok"] !== true) {
+    throw new Error("Invalid Taumel agent completion update");
+  }
+  await deliverAgentCompletion(pi, result);
+}
+
+function recordAgentChildSessionStart(
+  core: CoreBridge,
+  prepared: Record<string, unknown>,
+  bridge: ChildSessionBridge | undefined,
+  ctx: unknown,
+): void {
+  const result = coreCall(core, "recordAgentChildSessionStart", [{
+    prepared,
+    bridge: childBridgeFacts(bridge),
+  }, ctx]);
+  if (!isRecord(result) || result["ok"] !== true) {
+    throw new Error("Invalid Taumel agent child session update");
+  }
+}
+
+function preparedInterruptedActiveRun(prepared: Record<string, unknown>): boolean {
+  const details = isRecord(prepared["details"]) ? prepared["details"] : undefined;
+  return typeof details?.["previousRunStatus"] === "string" &&
+    details["previousRunStatus"] !== "" &&
+    details["deliveryKind"] === "started";
+}
+
+async function createAgentChildSessionForPrepared(
+  pi: PiLike,
+  core: CoreBridge,
+  childSessions: Map<string, ChildSessionBridge>,
+  prepared: Record<string, unknown>,
+  ctx: unknown,
+): Promise<{ readonly workerId: string; readonly bridge: ChildSessionBridge | undefined; readonly prompt: string }> {
+  const currentActiveToolNames = typeof pi.getActiveTools === "function" ? pi.getActiveTools() : undefined;
+  const spawnPlan = coreCall(core, "planAgentSpawn", [{
+    prepared,
+    currentActiveToolsAvailable: currentActiveToolNames !== undefined,
+    currentActiveTools: currentActiveToolNames ?? [],
+  }]);
+  if (!isRecord(spawnPlan)) throw new Error("Invalid Taumel agent spawn plan");
+  if (spawnPlan["ok"] !== true) {
+    throw new Error(requiredError(spawnPlan, "agent spawn plan"));
+  }
+  const workerId = stringField(spawnPlan, "workerId");
+  const metadata = isRecord(spawnPlan["metadata"]) ? spawnPlan["metadata"] : {};
+  const bridge = await createChildSession(pi, core, ctx, metadata);
+  await applyChildSessionUpdate(
+    childSessions,
+    coreCall(core, "planAgentBridgeUpdate", [{
+      prepared,
+      workerId,
+      bridge: childBridgeFacts(bridge),
+    }]),
+    bridge,
+  );
+  recordAgentChildSessionStart(core, prepared, bridge, ctx);
+  return { workerId, bridge, prompt: stringField(spawnPlan, "prompt") };
+}
+
+export async function applyChildSessionUpdate(
   childSessions: Map<string, ChildSessionBridge>,
   update: unknown,
   bridge: ChildSessionBridge | undefined,
-): void {
+): Promise<void> {
   if (!isRecord(update)) throw new Error("Invalid Taumel child session update");
-  const key = stringField(update, "key");
   switch (stringField(update, "action")) {
     case "none":
       return;
-    case "store_child_session":
+    case "store_child_session": {
+      const key = stringField(update, "key");
       if (key === "" || !bridge) throw new Error("Invalid Taumel child session update");
       childSessions.set(key, bridge);
       return;
-    case "delete_child_session":
+    }
+    case "stop_child_session": {
+      const key = stringField(update, "key");
       if (key === "") throw new Error("Invalid Taumel child session update");
+      await stopChildSession(childSessions.get(key) ?? bridge, optionalStringField(update, "reason") ?? "stopped_by_parent");
+      return;
+    }
+    case "delete_child_session": {
+      const key = stringField(update, "key");
+      if (key === "") throw new Error("Invalid Taumel child session update");
+      await closeChildSession(childSessions.get(key) ?? bridge, optionalStringField(update, "reason") ?? "closed_by_parent");
       childSessions.delete(key);
       return;
+    }
     default:
       throw new Error("Invalid Taumel child session update");
   }
+}
+
+async function applyChildSessionUpdatesFromDetails(
+  childSessions: Map<string, ChildSessionBridge>,
+  result: unknown,
+): Promise<boolean> {
+  if (!isRecord(result)) return false;
+  const details = isRecord(result["details"]) ? result["details"] : undefined;
+  const updates = Array.isArray(details?.["childSessionUpdates"])
+    ? details["childSessionUpdates"]
+    : [];
+  for (const update of updates) {
+    if (isRecord(update)) await applyChildSessionUpdate(childSessions, update, undefined);
+  }
+  return updates.length > 0;
 }
 
 function readInvocation(args: unknown[]) {
@@ -440,71 +849,67 @@ function preparedAction(core: CoreBridge, name: string, params: unknown, ctx: un
   return prepared;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const activeAgentRunStatuses = new Set(["queued", "running", "suspended"]);
+
+function agentWaitHasActiveRuns(prepared: Record<string, unknown>): boolean {
+  const details = isRecord(prepared["details"]) ? prepared["details"] : {};
+  const runs = Array.isArray(details["runs"]) ? details["runs"] : [];
+  return runs.some((run) =>
+    isRecord(run) &&
+    typeof run["status"] === "string" &&
+    activeAgentRunStatuses.has(run["status"])
+  );
+}
+
+async function executeAgentWait(
+  core: CoreBridge,
+  params: unknown,
+  ctx: unknown,
+  signal: AbortSignal | undefined,
+  initialPrepared: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const timeoutSeconds = isRecord(params) ? optionalNumberField(params, "timeout_seconds") : undefined;
+  let prepared = initialPrepared;
+  if (timeoutSeconds === 0 || !agentWaitHasActiveRuns(prepared)) {
+    return preparedToolResult(core, prepared);
+  }
+
+  const startedAt = Date.now();
+  const deadline =
+    timeoutSeconds !== undefined ? startedAt + Math.max(0, timeoutSeconds) * 1000 : undefined;
+
+  while (agentWaitHasActiveRuns(prepared)) {
+    if (signal?.aborted === true) {
+      return preparedToolResult(core, prepared, {
+        waitInterrupted: true,
+        status: "interrupted",
+      });
+    }
+    const now = Date.now();
+    if (deadline !== undefined && now >= deadline) {
+      return preparedToolResult(core, prepared, {
+        waitTimedOut: true,
+        status: "timed_out",
+      });
+    }
+    const delay = Math.min(250, Math.max(10, (deadline ?? (now + 250)) - now));
+    await sleep(delay);
+    prepared = preparedAction(core, "agent_wait", params, ctx);
+    if (prepared["ok"] !== true) {
+      return errorToolResult(core, requiredError(prepared, "tool preparation"), prepared);
+    }
+  }
+  return preparedToolResult(core, prepared);
+}
+
 async function runThreadTool(core: CoreBridge, name: string, prepared: Record<string, unknown>, ctx: unknown) {
   const result = coreCall(core, "runThreadTool", [name, prepared, await threadSources(core, ctx), ctx]);
   if (!isRecord(result)) throw new Error("Invalid Taumel thread tool result");
   return result;
-}
-
-function finishRequestUserInput(core: CoreBridge, params: Record<string, unknown>) {
-  const result = coreCall(core, "finishRequestUserInput", [params]);
-  if (!isRecord(result)) throw new Error("Invalid request_user_input result");
-  return result;
-}
-
-async function answerRequestUserInput(core: CoreBridge, prepared: Record<string, unknown>, ctx: unknown) {
-  const ui = isRecord(ctx) && isRecord(ctx["ui"]) ? ctx["ui"] : {};
-  const inputMethod = ui["input"];
-  const plan = coreCall(core, "planRequestUserInput", [{
-    prepared,
-    uiAvailable: typeof inputMethod === "function",
-    nowMs: Date.now(),
-  }]);
-  if (!isRecord(plan)) {
-    throw new Error("Invalid request_user_input UI plan");
-  }
-  if (stringField(plan, "action") === "result") {
-    const result = plan["result"];
-    if (!isRecord(result)) throw new Error("Invalid request_user_input planned result");
-    return result;
-  }
-  if (stringField(plan, "action") !== "ask" || typeof inputMethod !== "function") {
-    throw new Error("Invalid request_user_input UI plan");
-  }
-
-  const outcomes: Record<string, unknown>[] = [];
-  const deadlineMs = optionalNumberField(plan, "deadlineMs");
-  for (const prompt of recordArrayField(plan, "prompts")) {
-    const id = stringField(prompt, "id");
-    const defaultAnswer = stringField(prompt, "defaultAnswer");
-    const input = inputMethod.call(
-      ui,
-      stringField(prompt, "prompt"),
-      stringField(prompt, "placeholder"),
-    );
-    const remainingMs = deadlineMs === undefined ? undefined : Math.max(0, deadlineMs - Date.now());
-    const result =
-      remainingMs === undefined
-        ? { timedOut: false, answer: await input }
-        : await Promise.race([
-            Promise.resolve(input).then((answer) => ({ timedOut: false, answer })),
-            new Promise<{ readonly timedOut: true; readonly answer: undefined }>((resolve) => {
-              setTimeout(() => resolve({ timedOut: true, answer: undefined }), remainingMs);
-            }),
-          ]);
-    if (result.timedOut) {
-      outcomes.push({ id, defaultAnswer, timedOut: true });
-      continue;
-    }
-    const answer = result.answer;
-    if (answer === undefined || answer === null) {
-      outcomes.push({ id, defaultAnswer, cancelled: true });
-      return finishRequestUserInput(core, { outcomes });
-    }
-    outcomes.push({ id, defaultAnswer, answer: String(answer) });
-  }
-
-  return finishRequestUserInput(core, { outcomes });
 }
 
 async function executeLegacyWrite(
@@ -638,6 +1043,9 @@ export async function executeTool(
   if (prepared["ok"] !== true) {
     return errorToolResult(core, requiredError(prepared, "tool preparation"), prepared);
   }
+  if (name === "agent_wait") {
+    return executeAgentWait(core, parsed.params, ctx, signal, prepared);
+  }
 
   const action = stringField(prepared, "action");
   switch (action) {
@@ -655,30 +1063,15 @@ export async function executeTool(
       return executeExaInCore(core, prepared, ctx);
     }
     case "agent_spawn": {
-      const currentActiveToolNames = typeof pi.getActiveTools === "function" ? pi.getActiveTools() : undefined;
-      const spawnPlan = coreCall(core, "planAgentSpawn", [{
-        prepared,
-        currentActiveToolsAvailable: currentActiveToolNames !== undefined,
-        currentActiveTools: currentActiveToolNames ?? [],
-      }]);
-      if (!isRecord(spawnPlan)) throw new Error("Invalid Taumel agent spawn plan");
-      if (spawnPlan["ok"] !== true) {
-        return errorToolResult(core, requiredError(spawnPlan, "agent spawn plan"), spawnPlan);
-      }
-      const workerId = stringField(spawnPlan, "workerId");
-      const metadata = isRecord(spawnPlan["metadata"]) ? spawnPlan["metadata"] : {};
-      const bridge = await createChildSession(core, ctx, metadata);
-      applyChildSessionUpdate(
+      const { bridge, prompt } = await createAgentChildSessionForPrepared(
+        pi,
+        core,
         childSessions,
-        coreCall(core, "planAgentBridgeUpdate", [{
-          prepared,
-          workerId,
-          bridge: childBridgeFacts(bridge),
-        }]),
-        bridge,
+        prepared,
+        ctx,
       );
-      const prompt = stringField(spawnPlan, "prompt");
       const dispatch = await sendToChildSession(pi, core, bridge, prompt, "no initial prompt");
+      await recordAgentDispatchCompletion(pi, core, prepared, dispatch, ctx);
       const result = coreCall(core, "finishAgentAction", [{
         prepared,
         bridge: childBridgeFacts(bridge),
@@ -689,12 +1082,37 @@ export async function executeTool(
     }
     case "agent_send": {
       const workerId = stringField(prepared, "workerId");
+      if (preparedInterruptedActiveRun(prepared)) {
+        await applyChildSessionUpdate(
+          childSessions,
+          {
+            action: "stop_child_session",
+            key: workerId,
+            reason: "interrupted_by_parent",
+          },
+          undefined,
+        );
+        childSessions.delete(workerId);
+      }
+      let bridge = childSessions.get(workerId);
+      if (bridge === undefined) {
+        bridge = (
+          await createAgentChildSessionForPrepared(
+            pi,
+            core,
+            childSessions,
+            prepared,
+            ctx,
+          )
+        ).bridge;
+      }
       const dispatch = await sendToChildSession(
         pi,
         core,
-        childSessions.get(workerId),
+        bridge,
         stringField(prepared, "prompt"),
       );
+      await recordAgentDispatchCompletion(pi, core, prepared, dispatch, ctx);
       const result = coreCall(core, "finishAgentAction", [{ prepared, dispatch }]);
       if (!isRecord(result)) throw new Error("Invalid Taumel agent result");
       return result;
@@ -702,15 +1120,16 @@ export async function executeTool(
     case "agent_wait":
       return preparedToolResult(core, prepared);
     case "agent_close": {
-      applyChildSessionUpdate(
-        childSessions,
-        coreCall(core, "planAgentBridgeUpdate", [{ prepared }]),
-        undefined,
-      );
+      const applied = await applyChildSessionUpdatesFromDetails(childSessions, prepared);
+      if (!applied) {
+        await applyChildSessionUpdate(
+          childSessions,
+          coreCall(core, "planAgentBridgeUpdate", [{ prepared }]),
+          undefined,
+        );
+      }
       return preparedToolResult(core, prepared);
     }
-    case "request_user_input":
-      return answerRequestUserInput(core, prepared, ctx);
     case "find_thread":
     case "read_thread": {
       const result = await runThreadTool(core, name, prepared, ctx);
@@ -798,12 +1217,29 @@ function assertToolCatalogMatchesCore(core: CoreBridge): void {
   }
 }
 
+export const agentGatewayToolNames = [
+  "agent_spawn",
+  "agent_send",
+  "agent_wait",
+  "agent_list",
+  "agent_close",
+  "agent_profiles",
+] as const;
+
+const agentGatewayToolNameSet = new Set<string>(agentGatewayToolNames);
+
+export type GatewayToolRegistration = {
+  readonly registerAgentTools: () => void;
+};
+
 export function registerGatewayTools(
   pi: PiLike,
   core: CoreBridge,
   childSessions: Map<string, ChildSessionBridge>,
-): void {
-  if (typeof pi.registerTool !== "function") return;
+): GatewayToolRegistration {
+  if (typeof pi.registerTool !== "function") {
+    return { registerAgentTools: () => undefined };
+  }
   pi.on("session_shutdown", (_event, ctx) => {
     const ownerId = sessionInfoFromContext(ctx).sessionId;
     if (ownerId !== undefined) coreCall(core, "shutdownExecOwner", [ownerId]);
@@ -812,21 +1248,28 @@ export function registerGatewayTools(
   const allowedToolNames = stringArrayFromUnknown(coreCall(core, "allowedToolNames"));
   if (allowedToolNames === undefined) throw new Error("Invalid Taumel allowed tool names");
   const allowed = new Set(allowedToolNames);
-  for (const spec of toolContracts) {
-    const name = spec.name;
-    if (!allowed.has(name)) continue;
-    pi.registerTool({
-      name,
-      label: spec.label,
-      description: spec.description,
-      promptSnippet: spec.promptSnippet,
-      promptGuidelines: spec.promptGuidelines ?? [],
-      parameters: spec.parameters,
-      ...renderersForTool(name),
-      execute: async (...args) => {
-        const { params, signal, ctx } = readInvocation(args);
-        return executeTool(pi, core, childSessions, name, params, ctx, signal);
-      },
-    });
-  }
+  const registered = new Set<string>();
+  const registerMatching = (agentTools: boolean) => {
+    for (const spec of toolContracts) {
+      const name = spec.name;
+      if (!allowed.has(name) || registered.has(name)) continue;
+      if (agentGatewayToolNameSet.has(name) !== agentTools) continue;
+      pi.registerTool({
+        name,
+        label: spec.label,
+        description: spec.description,
+        promptSnippet: spec.promptSnippet,
+        promptGuidelines: spec.promptGuidelines ?? [],
+        parameters: spec.parameters,
+        ...renderersForTool(name),
+        execute: async (...args) => {
+          const { params, signal, ctx } = readInvocation(args);
+          return executeTool(pi, core, childSessions, name, params, ctx, signal);
+        },
+      });
+      registered.add(name);
+    }
+  };
+  registerMatching(false);
+  return { registerAgentTools: () => registerMatching(true) };
 }

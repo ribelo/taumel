@@ -81,7 +81,21 @@ let load_goal_state ctx =
   | Some data -> (
       match Result.bind (json_from_js data) Taumel.Goal.codec.decode with
       | Ok goal -> current_goal := goal
-      | Error _ -> current_goal := None)
+      | Error message ->
+          report_session_sync_error "goal load"
+            (Failure ("Ignoring incompatible saved Taumel goal entry: " ^ message));
+          current_goal := None)
+
+let load_goal_automation_state ctx =
+  match Session_store.custom_entry_data ctx "taumel.goal_automation" with
+  | None -> goal_automation := Taumel.Goal.Automation_enabled
+  | Some data -> (
+      match Result.bind (json_from_js data) Taumel.Goal.automation_codec.decode with
+      | Ok automation -> goal_automation := automation
+      | Error message ->
+          report_session_sync_error "goal automation load"
+            (Failure ("Ignoring incompatible saved Taumel goal automation entry: " ^ message));
+          goal_automation := Taumel.Goal.Automation_enabled)
 
 let apply_active_permissions (resolved : Taumel.Permissions.active) =
   active_profile_state := resolved.profile;
@@ -124,16 +138,34 @@ let load_ralph_state ctx =
       | Ok tasks -> ralph_tasks := tasks
       | Error _ -> ralph_tasks := [])
 
+let load_agent_state ctx =
+  match Session_store.custom_entry_data ctx "taumel.agents" with
+  | None -> agent_state := Taumel.Subagents.empty_session_state
+  | Some data -> (
+      match Result.bind (json_from_js data) Taumel.Subagents.session_state_codec.decode with
+      | Ok state -> agent_state := Taumel.Subagents.mark_active_runs_lost state
+      | Error message ->
+          report_session_sync_error "agent state load"
+            (Failure ("Ignoring incompatible saved Taumel agents entry: " ^ message));
+          agent_state := Taumel.Subagents.empty_session_state)
+
 let load_session_state ctx =
   load_goal_state ctx;
+  load_goal_automation_state ctx;
   load_permissions_state ctx;
   load_ralph_state ctx;
-  last_goal_accounting_key := None
+  load_agent_state ctx;
+  last_goal_accounting_key := None;
+  goal_turn_clock := Taumel.Goal.empty_clock;
+  goal_retrying := false;
+  goal_compacting := false
 
 let has_persisted_component_entry ctx =
   Session_store.custom_entry_data ctx "taumel.goal" <> None
+  || Session_store.custom_entry_data ctx "taumel.goal_automation" <> None
   || Session_store.custom_entry_data ctx "taumel.permissions" <> None
   || Session_store.custom_entry_data ctx "taumel.ralph" <> None
+  || Session_store.custom_entry_data ctx "taumel.agents" <> None
 
 let sync_persisted_session ?(reset_missing = true) ctx =
   let session_id = Session_store.session_id_from_ctx ctx in
@@ -154,6 +186,18 @@ let save_goal_state ctx =
   Session_store.append_custom_entry ctx "taumel.goal"
     (Taumel.Goal.codec.encode !current_goal)
 
+let save_goal_automation_state ctx =
+  Session_store.append_custom_entry ctx "taumel.goal_automation"
+    (Taumel.Goal.automation_codec.encode !goal_automation)
+
+let set_goal_automation ctx automation =
+  if !goal_automation <> automation then (
+    goal_automation := automation;
+    save_goal_automation_state ctx)
+
+let clear_goal_automation ctx =
+  set_goal_automation ctx Taumel.Goal.Automation_enabled
+
 let save_permissions_state ctx =
   let workspace_roots = if state.cwd = "" then [] else [ state.cwd ] in
   match
@@ -170,14 +214,40 @@ let save_ralph_state ctx =
   Session_store.append_custom_entry ctx "taumel.ralph"
     (Taumel.Ralph_loop.codec.encode !ralph_tasks)
 
+let save_agent_state ctx =
+  Session_store.append_custom_entry ctx "taumel.agents"
+    (Taumel.Subagents.session_state_codec.encode !agent_state)
+
 let account_goal_turn_end ctx =
+  let active_time_seconds, next_clock =
+    Taumel.Goal.finish_turn_clock ~now_ms:(now_milliseconds ()) !goal_turn_clock
+  in
+  goal_turn_clock := next_clock;
   let result =
     Taumel.Goal.account_turn_end
-      ~session_id:(Session_store.session_id_from_ctx ctx)
-      ~now:(now_seconds ()) ~last_accounting_key:!last_goal_accounting_key
+      ~session_id:(Session_store.session_id_from_ctx ctx) ~now:(now_seconds ())
+      ~active_time_seconds ~last_accounting_key:!last_goal_accounting_key
       ~branch:(Session_store.branch_json_entries ctx) !current_goal
   in
   if result.changed then (
     current_goal := result.goal;
     last_goal_accounting_key := result.accounting_key;
     save_goal_state ctx)
+
+let start_goal_turn () =
+  goal_turn_clock :=
+    Taumel.Goal.start_turn_clock ~now_ms:(now_milliseconds ()) !goal_turn_clock
+
+let goal_clock_pause_start () =
+  goal_turn_clock :=
+    Taumel.Goal.pause_clock_start ~now_ms:(now_milliseconds ()) !goal_turn_clock
+
+let goal_clock_pause_end () =
+  goal_turn_clock :=
+    Taumel.Goal.pause_clock_end ~now_ms:(now_milliseconds ()) !goal_turn_clock
+
+let interrupt_goal_automation ctx =
+  set_goal_automation ctx Taumel.Goal.Automation_interrupted
+
+let clear_interrupted_goal_automation ctx =
+  clear_goal_automation ctx

@@ -9,7 +9,6 @@ module Global_settings = Global_settings
 module Mutation_plan = Mutation_plan
 module Permissions = Permissions
 module Ralph_loop = Ralph_loop
-module Request_user_input = Request_user_input
 module Runtime_policy = Runtime_policy
 module Sandbox = Sandbox
 module Shared = Shared

@@ -63,6 +63,7 @@ export type CommandDefinition = {
 
 export type PiLike = {
   readonly on: (event: string, handler: EventHandler) => void;
+  readonly subscribe?: (handler: EventHandler) => Unsubscribe;
   readonly events: {
     readonly on: (event: string, handler: InternalHandler) => Unsubscribe;
     readonly emit: (event: string, payload: unknown) => void;
@@ -74,6 +75,7 @@ export type PiLike = {
   ) => Promise<HostExecResult>;
   readonly getThinkingLevel?: () => string | null | undefined;
   readonly getFlag?: (name: string) => unknown;
+  readonly getAllTools?: () => readonly unknown[];
   readonly getActiveTools?: () => readonly string[];
   readonly setActiveTools?: (toolNames: string[]) => void;
   readonly registerTool?: (tool: ToolDefinition) => void;
@@ -97,6 +99,7 @@ export type PiLike = {
     options?: Record<string, unknown>,
   ) => Promise<unknown> | unknown;
   readonly modelRegistry?: unknown;
+  readonly createAgentSession?: (options?: Record<string, unknown>) => Promise<{ readonly session?: unknown }>;
 };
 
 export type SessionInfo = {
@@ -106,6 +109,7 @@ export type SessionInfo = {
 
 export type ChildSessionBridge = SessionInfo & {
   readonly ctx?: unknown;
+  readonly session?: unknown;
   readonly cancelled?: boolean;
   readonly error?: string;
   readonly missingSessionIdentifier?: boolean;
@@ -115,6 +119,9 @@ export type ChildSessionBridge = SessionInfo & {
   readonly modelApplied?: boolean;
   readonly thinkingLevel?: string;
   readonly thinkingApplied?: boolean;
+  readonly sendUserMessage?: (content: string, options?: Record<string, unknown>) => Promise<unknown>;
+  readonly stop?: (reason: string) => Promise<void>;
+  readonly close?: (reason: string) => Promise<void>;
 };
 
 export type ComposerController = {
@@ -122,6 +129,11 @@ export type ComposerController = {
   settings: {
     readonly composer: {
       readonly enabled: boolean;
+    };
+    readonly taumel: {
+      readonly agents: {
+        readonly builtins: Record<string, unknown>;
+      };
     };
   };
   latestTui?: unknown;

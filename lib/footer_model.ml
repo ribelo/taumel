@@ -16,6 +16,7 @@ type snapshot = {
   total_cost : float;
   context_percent : float;
   context_window : float;
+  goal_status : string option;
 }
 
 let empty_git_delta = { added = 0; removed = 0 }
@@ -181,6 +182,11 @@ let render_line ~colorize ~width snapshot =
     let model_and_meta = model ^ " • " ^ thinking in
     let middle_raw =
       if provider = "" then model_and_meta else provider ^ " • " ^ model_and_meta
+    in
+    let middle_raw =
+      match snapshot.goal_status with
+      | None -> middle_raw
+      | Some goal_status -> goal_status ^ " • " ^ middle_raw
     in
     let cost = Printf.sprintf "$%.3f" snapshot.total_cost in
     let right_raw =

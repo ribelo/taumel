@@ -49,19 +49,43 @@ let core_call name_js args_js =
   | "planCommandExecution" ->
       Command_bridge.plan_execution (string_arg args 0) (string_arg args 1) (arg 2)
   | "planGoalContinuation" ->
-      Goal_tools.plan_continuation (bool_arg args 0) (arg 1)
+      Goal_tools.plan_continuation (bool_arg args 0) (arg 1) (arg 2) (arg 3)
+  | "startGoalTurn" ->
+      Session_sync.start_goal_turn ();
+      ok_obj []
+  | "goalClockPauseStart" ->
+      Session_sync.goal_clock_pause_start ();
+      ok_obj []
+  | "goalClockPauseEnd" ->
+      Session_sync.goal_clock_pause_end ();
+      ok_obj []
+  | "interruptGoalAutomation" ->
+      Session_sync.interrupt_goal_automation (arg 0);
+      ok_obj []
+  | "clearInterruptedGoalAutomation" ->
+      Session_sync.clear_interrupted_goal_automation (arg 0);
+      ok_obj []
   | "planCommandChildSession" -> Command_bridge.plan_child_session (arg 0)
   | "planCommandChildDispatch" -> Command_bridge.plan_child_dispatch (arg 0)
   | "finishCommandChildDispatch" -> Command_bridge.finish_child_dispatch (arg 0)
   | "planAgentSpawn" -> Agent_tools.plan_spawn (arg 0)
   | "finishAgentAction" -> Agent_tools.finish_action (arg 0)
+  | "recordAgentDispatchCompletion" ->
+      Agent_tools.record_dispatch_completion (arg 0) (arg 1)
+  | "recordAgentChildSessionStart" ->
+      Agent_tools.record_child_session_start (arg 0) (arg 1)
   | "planAgentBridgeUpdate" -> Agent_tools.plan_bridge_update (arg 0)
+  | "refreshAgentProfileCatalog" -> Agent_tools.refresh_profile_catalog (arg 0)
   | "handleCommand" ->
       Command_bridge.handle (string_arg args 0) (string_arg args 1) (arg 2)
   | "handleComposerCommand" -> Composer_commands.handle (string_arg args 0) (arg 1)
   | "planCommandNotification" ->
       Tool_catalog_bridge.plan_command_notification (Unsafe.coerce (arg 0)) (arg 1)
         (arg 2)
+  | "planAgentsPrompt" -> Agent_tools.plan_agents_prompt (arg 0) (arg 1)
+  | "finishAgentsPrompt" -> Agent_tools.finish_agents_prompt (arg 0) (arg 1) (arg 2)
+  | "planAgentRunsPrompt" -> Agent_tools.plan_agent_runs_prompt (arg 0) (arg 1)
+  | "finishAgentRunsPrompt" -> Agent_tools.finish_agent_runs_prompt (arg 0) (arg 1) (arg 2)
   | "planPermissionsPrompt" -> Permissions_commands.plan_prompt (arg 0) (arg 1)
   | "finishPermissionsPrompt" ->
       Permissions_commands.finish_prompt (arg 0) (arg 1) (arg 2)
@@ -71,8 +95,6 @@ let core_call name_js args_js =
   | "runThreadTool" -> Thread_bridge.run (string_arg args 0) (arg 1) (arg 2) (arg 3)
   | "planThreadCatalogScans" -> Thread_bridge.plan_catalog_scans (arg 0)
   | "currentThreadSource" -> Thread_bridge.current_source (arg 0)
-  | "planRequestUserInput" -> Request_input_bridge.plan (arg 0)
-  | "finishRequestUserInput" -> Request_input_bridge.finish (arg 0)
   | "openAiUsageHostAuth" -> Usage_bridge.openai_host_auth ()
   | "openAiUsageHostParams" -> Usage_bridge.openai_host_params (arg 0)
   | "executeOpenAiUsage" -> Usage_bridge.execute_openai (arg 0) (arg 1)

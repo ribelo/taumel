@@ -177,16 +177,27 @@ function inlineForTool(name: string, args: Record<string, unknown>, expanded: bo
       return truncate(stringField(args, "path") ?? "", maxChars);
     case "apply_patch":
       return truncate(oneLine(stringField(args, "input") ?? stringField(args, "patch") ?? "patch"), maxChars);
-    case "agent":
-      return truncate([stringField(args, "action") ?? "list", stringField(args, "id") ?? stringField(args, "agent")].filter(Boolean).join(" "), maxChars);
+    case "agent_spawn":
+      return truncate([stringField(args, "agent_id"), stringField(args, "profile"), stringField(args, "objective")].filter(Boolean).join(" "), maxChars);
+    case "agent_send":
+      return truncate([stringField(args, "agent_id"), stringField(args, "objective")].filter(Boolean).join(" "), maxChars);
+    case "agent_wait": {
+      const agentIds = Array.isArray(args["agent_ids"]) ? args["agent_ids"].length : 0;
+      const runIds = Array.isArray(args["run_ids"]) ? args["run_ids"].length : 0;
+      if (runIds > 0) return `${runIds} run${runIds === 1 ? "" : "s"}`;
+      if (agentIds > 0) return `${agentIds} agent${agentIds === 1 ? "" : "s"}`;
+      return "active runs";
+    }
+    case "agent_list":
+      return args["include_closed"] === true ? "including closed" : "open agents";
+    case "agent_close":
+      return args["all"] === true ? "all" : `${Array.isArray(args["agent_ids"]) ? args["agent_ids"].length : 0} agent(s)`;
+    case "agent_profiles":
+      return "profiles";
     case "create_goal":
       return truncate(oneLine(stringField(args, "objective") ?? ""), maxChars);
     case "update_goal":
       return stringField(args, "status") ?? "";
-    case "request_user_input": {
-      const questions = Array.isArray(args["questions"]) ? args["questions"].length : 0;
-      return `${questions} question${questions === 1 ? "" : "s"}`;
-    }
     case "find_thread":
       return truncate(oneLine(stringField(args, "query") ?? ""), maxChars);
     case "read_thread":
@@ -269,19 +280,6 @@ function renderGoalResult(name: string, result: unknown, options: unknown, theme
   return new Text(lines.join("\n"), 0, 0);
 }
 
-function renderRequestInputResult(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Text {
-  const expanded = expandedFromOptions(options);
-  const details = detailsRecord(result);
-  const answers = recordField(details, "answers") ?? {};
-  const lines = [header(name, inlineForTool(name, args, expanded), statusFromDetails(details), theme)];
-  for (const [id, value] of Object.entries(answers)) {
-    const answer = isRecord(value) ? stringField(value, "answer") : undefined;
-    lines.push(`  ${themeFg(theme, "accent", `${id}:`)} ${themeFg(theme, "toolOutput", answer ?? compactJson(value))}`);
-  }
-  if (expanded && lines.length === 1) lines.push(limitedText(textContent(result), true, theme));
-  return new Text(lines.join("\n"), 0, 0);
-}
-
 function renderThreadResult(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Text {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
@@ -356,7 +354,6 @@ function renderGenericResult(name: string, result: unknown, options: unknown, th
 }
 
 function progressText(name: string): string {
-  if (name === "request_user_input") return "waiting for user input";
   if (name.startsWith("exa_") || name.endsWith("_exa")) return "waiting for Exa";
   if (name === "find_thread") return "searching threads";
   if (name === "read_thread") return "reading thread";
@@ -377,9 +374,8 @@ export function renderersForTool(name: string) {
       if (name === "exec_command" || name === "write_stdin") return renderShellResult(name, result, options, theme, args);
       if (name === "write" || name === "edit" || name === "apply_patch") return renderMutationResult(name, result, options, theme, args);
       if (name === "get_goal" || name === "create_goal" || name === "update_goal") return renderGoalResult(name, result, options, theme, args);
-      if (name === "request_user_input") return renderRequestInputResult(name, result, options, theme, args);
       if (name === "find_thread" || name === "read_thread") return renderThreadResult(name, result, options, theme, args);
-      if (name === "agent") return renderAgentResult(name, result, options, theme, args);
+      if (name.startsWith("agent_")) return renderAgentResult(name, result, options, theme, args);
       if (name === "ralph_continue" || name === "ralph_finish") return renderRalphResult(name, result, options, theme, args);
       if (name.endsWith("_exa") || name.startsWith("exa_agent_")) return renderExaResult(name, result, options, theme, args);
       return renderGenericResult(name, result, options, theme, args);

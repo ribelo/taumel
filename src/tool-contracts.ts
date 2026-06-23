@@ -70,24 +70,6 @@ const EditReplacementSchema = Type.Object(
   { $id: "EditReplacement", additionalProperties: false },
 );
 
-const RequestInputOptionSchema = Type.Object(
-  {
-    label: Type.String(),
-    description: Type.String(),
-  },
-  { $id: "RequestInputOption", additionalProperties: false },
-);
-
-const RequestInputQuestionSchema = Type.Object(
-  {
-    id: Type.String(),
-    header: Type.String({ maxLength: 12 }),
-    question: Type.String(),
-    options: Type.Array(RequestInputOptionSchema, { minItems: 2, maxItems: 3 }),
-  },
-  { $id: "RequestInputQuestion", additionalProperties: false },
-);
-
 const EmptyParamsSchema = Type.Object({}, { $id: "EmptyParams", additionalProperties: false });
 
 const ExecCommandParamsSchema = Type.Object(
@@ -154,7 +136,7 @@ const EditParamsSchema = Type.Object(
 const CreateGoalParamsSchema = Type.Object(
   {
     objective: Type.String(),
-    token_budget: Type.Optional(Type.Integer()),
+    time_limit_seconds: Type.Optional(Type.Integer({ minimum: 1 })),
   },
   { $id: "CreateGoalParams", additionalProperties: false },
 );
@@ -164,14 +146,6 @@ const UpdateGoalParamsSchema = Type.Object(
     status: Type.Union([Type.Literal("complete"), Type.Literal("blocked")]),
   },
   { $id: "UpdateGoalParams", additionalProperties: false },
-);
-
-const RequestUserInputParamsSchema = Type.Object(
-  {
-    questions: Type.Array(RequestInputQuestionSchema, { minItems: 1, maxItems: 3 }),
-    autoResolutionMs: Type.Optional(Type.Integer()),
-  },
-  { $id: "RequestUserInputParams", additionalProperties: false },
 );
 
 const FindThreadParamsSchema = Type.Object(
@@ -189,32 +163,47 @@ const ReadThreadParamsSchema = Type.Object(
   { $id: "ReadThreadParams", additionalProperties: false },
 );
 
-const AgentParamsSchema = Type.Object(
+const AgentSpawnParamsSchema = Type.Object(
   {
-    action: Type.Optional(Type.Union([
-      Type.Literal("spawn"),
-      Type.Literal("send"),
-      Type.Literal("wait"),
-      Type.Literal("close"),
-      Type.Literal("list"),
-    ])),
-    id: Type.Optional(Type.String()),
-    agent: Type.Optional(Type.String()),
-    prompt: Type.Optional(Type.String()),
-    model_id: Type.Optional(Type.String()),
-    thinking_level: Type.Optional(Type.String()),
-    sandbox_preset: Type.Optional(
-      Type.Union([
-        Type.Literal("read-only"),
-        Type.Literal("workspace-write"),
-        Type.Literal("danger-full-access"),
-        Type.Literal("full-access"),
-      ]),
-    ),
-    tools: Type.Optional(stringArray),
-    no_sandbox: Type.Optional(Type.Boolean()),
+    profile: Type.String({ minLength: 1 }),
+    objective: Type.String({ minLength: 1 }),
+    description: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
+    agent_id: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
   },
-  { $id: "AgentParams", additionalProperties: false },
+  { $id: "AgentSpawnParams", additionalProperties: false },
+);
+
+const AgentSendParamsSchema = Type.Object(
+  {
+    agent_id: Type.String({ minLength: 1 }),
+    objective: Type.String({ minLength: 1 }),
+    interrupt: Type.Optional(Type.Boolean()),
+  },
+  { $id: "AgentSendParams", additionalProperties: false },
+);
+
+const AgentWaitParamsSchema = Type.Object(
+  {
+    run_ids: Type.Optional(stringArray),
+    agent_ids: Type.Optional(stringArray),
+    timeout_seconds: Type.Optional(Type.Number({ minimum: 0 })),
+  },
+  { $id: "AgentWaitParams", additionalProperties: false },
+);
+
+const AgentListParamsSchema = Type.Object(
+  {
+    include_closed: Type.Optional(Type.Boolean()),
+  },
+  { $id: "AgentListParams", additionalProperties: false },
+);
+
+const AgentCloseParamsSchema = Type.Object(
+  {
+    agent_ids: Type.Optional(stringArray),
+    all: Type.Optional(Type.Boolean()),
+  },
+  { $id: "AgentCloseParams", additionalProperties: false },
 );
 
 const RalphTaskParamsSchema = Type.Object(
@@ -320,8 +309,6 @@ const ExaAgentListEventsParamsSchema = Type.Object(
 export const dtsSchemas = [
   ["EmptyParams", EmptyParamsSchema],
   ["EditReplacement", EditReplacementSchema],
-  ["RequestInputOption", RequestInputOptionSchema],
-  ["RequestInputQuestion", RequestInputQuestionSchema],
   ["ExecCommandParams", ExecCommandParamsSchema],
   ["WriteStdinParams", WriteStdinParamsSchema],
   ["ApplyPatchParams", ApplyPatchParamsSchema],
@@ -329,10 +316,13 @@ export const dtsSchemas = [
   ["EditParams", EditParamsSchema],
   ["CreateGoalParams", CreateGoalParamsSchema],
   ["UpdateGoalParams", UpdateGoalParamsSchema],
-  ["RequestUserInputParams", RequestUserInputParamsSchema],
   ["FindThreadParams", FindThreadParamsSchema],
   ["ReadThreadParams", ReadThreadParamsSchema],
-  ["AgentParams", AgentParamsSchema],
+  ["AgentSpawnParams", AgentSpawnParamsSchema],
+  ["AgentSendParams", AgentSendParamsSchema],
+  ["AgentWaitParams", AgentWaitParamsSchema],
+  ["AgentListParams", AgentListParamsSchema],
+  ["AgentCloseParams", AgentCloseParamsSchema],
   ["RalphTaskParams", RalphTaskParamsSchema],
   ["ExaAgentCreateRunParams", ExaAgentCreateRunParamsSchema],
   ["ExaAgentRunIdParams", ExaAgentRunIdParamsSchema],
@@ -346,11 +336,15 @@ export const toolParamSchemas = [
   { name: "apply_patch", interfaceName: "ApplyPatchParams", schema: ApplyPatchParamsSchema },
   { name: "write", interfaceName: "WriteParams", schema: WriteParamsSchema },
   { name: "edit", interfaceName: "EditParams", schema: EditParamsSchema },
-  { name: "agent", interfaceName: "AgentParams", schema: AgentParamsSchema },
+  { name: "agent_spawn", interfaceName: "AgentSpawnParams", schema: AgentSpawnParamsSchema },
+  { name: "agent_send", interfaceName: "AgentSendParams", schema: AgentSendParamsSchema },
+  { name: "agent_wait", interfaceName: "AgentWaitParams", schema: AgentWaitParamsSchema },
+  { name: "agent_list", interfaceName: "AgentListParams", schema: AgentListParamsSchema },
+  { name: "agent_close", interfaceName: "AgentCloseParams", schema: AgentCloseParamsSchema },
+  { name: "agent_profiles", interfaceName: "EmptyParams", schema: EmptyParamsSchema },
   { name: "get_goal", interfaceName: "EmptyParams", schema: EmptyParamsSchema },
   { name: "create_goal", interfaceName: "CreateGoalParams", schema: CreateGoalParamsSchema },
   { name: "update_goal", interfaceName: "UpdateGoalParams", schema: UpdateGoalParamsSchema },
-  { name: "request_user_input", interfaceName: "RequestUserInputParams", schema: RequestUserInputParamsSchema },
   { name: "find_thread", interfaceName: "FindThreadParams", schema: FindThreadParamsSchema },
   { name: "read_thread", interfaceName: "ReadThreadParams", schema: ReadThreadParamsSchema },
   { name: "ralph_continue", interfaceName: "RalphTaskParams", schema: RalphTaskParamsSchema },
@@ -417,6 +411,85 @@ export type ToolContract = {
   readonly parameters: Record<string, unknown>;
 };
 
+const schemaMetaKeys = new Set([
+  "$schema",
+  "$id",
+  "$anchor",
+  "$dynamicAnchor",
+  "$vocabulary",
+  "$comment",
+  "$defs",
+  "definitions",
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function primitiveType(value: unknown): string | undefined {
+  switch (typeof value) {
+    case "string":
+      return "string";
+    case "number":
+      return Number.isInteger(value) ? "integer" : "number";
+    case "boolean":
+      return "boolean";
+    default:
+      return undefined;
+  }
+}
+
+function collapseAnyOfEnum(anyOf: unknown): Record<string, unknown> | undefined {
+  if (!Array.isArray(anyOf) || anyOf.length === 0) return undefined;
+  const values: unknown[] = [];
+  const types = new Set<string>();
+  for (const item of anyOf) {
+    if (!isRecord(item) || !Array.isArray(item["enum"]) || item["enum"].length !== 1) {
+      return undefined;
+    }
+    const value = item["enum"][0];
+    const type = typeof item["type"] === "string" ? item["type"] : primitiveType(value);
+    if (type === undefined) return undefined;
+    values.push(value);
+    types.add(type);
+  }
+  if (types.size !== 1) return undefined;
+  return { type: [...types][0], enum: values };
+}
+
+function modelToolSchema(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => modelToolSchema(item));
+  }
+  if (isRecord(value)) {
+    const result: Record<string, unknown> = {};
+    const constValue = value["const"];
+    for (const [key, item] of Object.entries(value)) {
+      if (schemaMetaKeys.has(key) || key === "const") continue;
+      result[key] = modelToolSchema(item);
+    }
+    if (constValue !== undefined) {
+      result["enum"] = [constValue];
+      if (result["type"] === undefined) {
+        const type = primitiveType(constValue);
+        if (type !== undefined) result["type"] = type;
+      }
+    }
+    const collapsedAnyOf = collapseAnyOfEnum(result["anyOf"]);
+    if (collapsedAnyOf !== undefined) {
+      delete result["anyOf"];
+      result["type"] = collapsedAnyOf["type"];
+      result["enum"] = collapsedAnyOf["enum"];
+    }
+    return result;
+  }
+  return value;
+}
+
+function toolParameters(schema: Record<string, unknown>): Record<string, unknown> {
+  return modelToolSchema(schema) as Record<string, unknown>;
+}
+
 export const toolContracts: readonly ToolContract[] = [
   {
     name: "exec_command",
@@ -428,21 +501,21 @@ export const toolContracts: readonly ToolContract[] = [
       "Use tty=true for interactive commands or commands that need terminal behavior, then use write_stdin to send input.",
       "Use write_stdin with empty chars to poll or wait for an active session.",
     ],
-    parameters: ExecCommandParamsSchema,
+    parameters: toolParameters(ExecCommandParamsSchema),
   },
   {
     name: "write_stdin",
     label: "write_stdin",
     description: "Writes characters to an existing unified exec session and returns recent output.",
     promptSnippet: "Send input to or poll an active shell session.",
-    parameters: WriteStdinParamsSchema,
+    parameters: toolParameters(WriteStdinParamsSchema),
   },
   {
     name: "apply_patch",
     label: "apply_patch",
     description: "Use the apply_patch tool to edit files.",
     promptSnippet: "Apply a patch to files in the workspace.",
-    parameters: ApplyPatchParamsSchema,
+    parameters: toolParameters(ApplyPatchParamsSchema),
   },
   {
     name: "write",
@@ -450,7 +523,7 @@ export const toolContracts: readonly ToolContract[] = [
     description: "Write content to a file. Creates the file if it doesn't exist, overwrites if it does.",
     promptSnippet: "Create or overwrite files",
     promptGuidelines: ["Use write only for new files or complete rewrites."],
-    parameters: WriteParamsSchema,
+    parameters: toolParameters(WriteParamsSchema),
   },
   {
     name: "edit",
@@ -463,70 +536,98 @@ export const toolContracts: readonly ToolContract[] = [
       "Each edits[].oldText is matched against the original file, not after earlier edits are applied. Do not emit overlapping or nested edits. Merge nearby changes into one edit.",
       "Keep edits[].oldText as small as possible while still being unique in the file. Do not pad with large unchanged regions.",
     ],
-    parameters: EditParamsSchema,
+    parameters: toolParameters(EditParamsSchema),
   },
   {
-    name: "agent",
-    label: "agent",
-    description: "Spawn, send to, wait for, list, or close a sandbox-clamped Taumel sub-agent.",
+    name: "agent_spawn",
+    label: "agent.spawn",
+    description: "Create a durable Taumel agent identity from a profile and start one asynchronous run.",
     promptSnippet: "",
-    parameters: AgentParamsSchema,
+    parameters: toolParameters(AgentSpawnParamsSchema),
+  },
+  {
+    name: "agent_send",
+    label: "agent.send",
+    description: "Send an additional objective to an existing open Taumel agent.",
+    promptSnippet: "",
+    parameters: toolParameters(AgentSendParamsSchema),
+  },
+  {
+    name: "agent_wait",
+    label: "agent.wait",
+    description: "Wait for active Taumel agent runs or poll their current status.",
+    promptSnippet: "",
+    parameters: toolParameters(AgentWaitParamsSchema),
+  },
+  {
+    name: "agent_list",
+    label: "agent.list",
+    description: "List Taumel agent identities owned by the current parent session and their latest state.",
+    promptSnippet: "",
+    parameters: toolParameters(AgentListParamsSchema),
+  },
+  {
+    name: "agent_close",
+    label: "agent.close",
+    description: "Permanently close Taumel agent identities, cancelling active work when needed.",
+    promptSnippet: "",
+    parameters: toolParameters(AgentCloseParamsSchema),
+  },
+  {
+    name: "agent_profiles",
+    label: "agent.profiles",
+    description: "Return the valid Taumel agent profile catalog and per-session enabled state.",
+    promptSnippet: "",
+    parameters: toolParameters(EmptyParamsSchema),
   },
   {
     name: "get_goal",
     label: "get_goal",
-    description: "Get the current goal for this thread, including status, budgets, token and elapsed-time usage, and remaining token budget.",
+    description: "Get the current goal for this thread, including status, automation state, token telemetry, elapsed active time, and optional time limit.",
     promptSnippet: "",
-    parameters: EmptyParamsSchema,
+    parameters: toolParameters(EmptyParamsSchema),
   },
   {
     name: "create_goal",
     label: "create_goal",
-    description: "Create a goal only when explicitly requested by the user or system/developer instructions.",
+    description: "Create a goal only when explicitly requested by the user or system/developer instructions. Set time_limit_seconds only when the user explicitly requests a time limit; do not invent or extend a time limit yourself.",
     promptSnippet: "",
-    parameters: CreateGoalParamsSchema,
+    parameters: toolParameters(CreateGoalParamsSchema),
   },
   {
     name: "update_goal",
     label: "update_goal",
     description: "Update the existing goal only to mark it complete or genuinely blocked.",
     promptSnippet: "",
-    parameters: UpdateGoalParamsSchema,
-  },
-  {
-    name: "request_user_input",
-    label: "request_user_input",
-    description: "Ask the user one to three structured questions and return structured answers.",
-    promptSnippet: "",
-    parameters: RequestUserInputParamsSchema,
+    parameters: toolParameters(UpdateGoalParamsSchema),
   },
   {
     name: "find_thread",
     label: "find_thread",
     description: "Search thread ids, titles, and transcript content.",
     promptSnippet: "",
-    parameters: FindThreadParamsSchema,
+    parameters: toolParameters(FindThreadParamsSchema),
   },
   {
     name: "read_thread",
     label: "read_thread",
     description: "Read a thread by exact id or unique id prefix.",
     promptSnippet: "",
-    parameters: ReadThreadParamsSchema,
+    parameters: toolParameters(ReadThreadParamsSchema),
   },
   {
     name: "ralph_continue",
     label: "ralph_continue",
     description: "Advance an owned Ralph child session by one iteration.",
     promptSnippet: "",
-    parameters: RalphTaskParamsSchema,
+    parameters: toolParameters(RalphTaskParamsSchema),
   },
   {
     name: "ralph_finish",
     label: "ralph_finish",
     description: "Finish an owned Ralph child session.",
     promptSnippet: "",
-    parameters: RalphTaskParamsSchema,
+    parameters: toolParameters(RalphTaskParamsSchema),
   },
   {
     name: "web_search_exa",
@@ -539,7 +640,7 @@ export const toolContracts: readonly ToolContract[] = [
       "Use contents.highlights or contents.summary before requesting full text.",
       "Use crawling_exa when you already have URLs or Exa document IDs.",
     ],
-    parameters: WebSearchExaParamsSchema,
+    parameters: toolParameters(WebSearchExaParamsSchema),
   },
   {
     name: "crawling_exa",
@@ -551,7 +652,7 @@ export const toolContracts: readonly ToolContract[] = [
       "Provide either urls or ids, not both.",
       "Request only the content fields needed for the task.",
     ],
-    parameters: CrawlingExaParamsSchema,
+    parameters: toolParameters(CrawlingExaParamsSchema),
   },
   {
     name: "get_code_context_exa",
@@ -559,7 +660,7 @@ export const toolContracts: readonly ToolContract[] = [
     description:
       "Get relevant code snippets and examples from Exa Code Context.",
     promptSnippet: "Search code, docs, GitHub, and Stack Overflow examples with Exa Code Context.",
-    parameters: GetCodeContextExaParamsSchema,
+    parameters: toolParameters(GetCodeContextExaParamsSchema),
   },
   {
     name: "exa_agent_create_run",
@@ -571,34 +672,34 @@ export const toolContracts: readonly ToolContract[] = [
       "Use this only when a normal Exa search or contents fetch is not enough.",
       "Prefer low or medium effort unless the user explicitly needs deep research.",
     ],
-    parameters: ExaAgentCreateRunParamsSchema,
+    parameters: toolParameters(ExaAgentCreateRunParamsSchema),
   },
   {
     name: "exa_agent_get_run",
     label: "exa.agent.get_run",
     description: "Retrieve an Exa Agent run by ID.",
     promptSnippet: "Poll or inspect an Exa Agent run by ID.",
-    parameters: ExaAgentRunIdParamsSchema,
+    parameters: toolParameters(ExaAgentRunIdParamsSchema),
   },
   {
     name: "exa_agent_list_runs",
     label: "exa.agent.list_runs",
     description: "List Exa Agent runs for the configured team.",
     promptSnippet: "List recent Exa Agent runs.",
-    parameters: ExaAgentListRunsParamsSchema,
+    parameters: toolParameters(ExaAgentListRunsParamsSchema),
   },
   {
     name: "exa_agent_cancel_run",
     label: "exa.agent.cancel_run",
     description: "Cancel a queued or running Exa Agent run.",
     promptSnippet: "Cancel an Exa Agent run by ID.",
-    parameters: ExaAgentRunIdParamsSchema,
+    parameters: toolParameters(ExaAgentRunIdParamsSchema),
   },
   {
     name: "exa_agent_list_events",
     label: "exa.agent.list_events",
     description: "List stored events for an Exa Agent run.",
     promptSnippet: "List Exa Agent run events.",
-    parameters: ExaAgentListEventsParamsSchema,
+    parameters: toolParameters(ExaAgentListEventsParamsSchema),
   },
 ];

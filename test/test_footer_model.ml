@@ -48,6 +48,7 @@ let test_render_line () =
         total_cost = 0.125;
         context_percent = 12.0;
         context_window = 200000.0;
+        goal_status = None;
       }
   in
   if not (String.contains line '$') then failwith "rendered line omits cost";
@@ -73,6 +74,7 @@ let test_render_workspace_sandbox_label () =
         total_cost = 0.0;
         context_percent = 0.0;
         context_window = 0.0;
+        goal_status = None;
       }
   in
   if not (contains_substring line "workspace-write") then
@@ -98,6 +100,7 @@ let test_render_missing_model_defaults () =
         total_cost = 0.0;
         context_percent = 0.0;
         context_window = 0.0;
+        goal_status = None;
       }
   in
   if not (contains_substring line "no-model • off") then
@@ -121,10 +124,35 @@ let test_render_no_sandbox () =
         total_cost = 0.0;
         context_percent = 0.0;
         context_window = 0.0;
+        goal_status = None;
       }
   in
   if not (contains_substring line "no-sandbox") then
     failwith "rendered line omits no-sandbox state"
+
+let test_render_goal_status () =
+  let line =
+    Footer.render_line
+      ~colorize:(fun _ text -> text)
+      ~width:160
+      {
+        cwd = "/repo";
+        branch = "main";
+        filesystem_mode = "danger-full-access";
+        network_mode = "enabled";
+        no_sandbox = false;
+        git_delta = { added = 0; removed = 0 };
+        provider = "openai-codex";
+        model = "gpt-test";
+        thinking = "medium";
+        total_cost = 0.0;
+        context_percent = 0.0;
+        context_window = 0.0;
+        goal_status = Some "Pursuing goal (12m/30m)";
+      }
+  in
+  if not (contains_substring line "Pursuing goal (12m/30m)") then
+    failwith "rendered line omits goal status"
 
 let () =
   test_parse_git_numstat ();
@@ -132,4 +160,5 @@ let () =
   test_render_line ();
   test_render_workspace_sandbox_label ();
   test_render_missing_model_defaults ();
-  test_render_no_sandbox ()
+  test_render_no_sandbox ();
+  test_render_goal_status ()

@@ -18,7 +18,6 @@ import {
   contextWithOverrides,
   coreCall,
   isRecord,
-  requiredError,
   stringArrayField,
   stringField,
 } from "./util.ts";
@@ -36,6 +35,12 @@ function hasPendingMessages(ctx: unknown): boolean {
   return hasPending.call(ctx) === true;
 }
 
+function hostIdle(_ctx: unknown): boolean {
+  // Pi emits agent_end before some host surfaces report idle; this lifecycle event
+  // is Taumel's idle boundary for goal continuation gating.
+  return true;
+}
+
 function latestAssistantStopReason(event: unknown): string {
   if (!isRecord(event) || !Array.isArray(event["messages"])) return "";
   for (let index = event["messages"].length - 1; index >= 0; index -= 1) {
@@ -44,12 +49,6 @@ function latestAssistantStopReason(event: unknown): string {
     return typeof message["stopReason"] === "string" ? message["stopReason"] : "";
   }
   return "";
-}
-
-function shouldSuppressGoalContinuation(event: unknown): boolean {
-  if (isRecord(event) && event["willRetry"] === true) return true;
-  const stopReason = latestAssistantStopReason(event);
-  return stopReason === "aborted" || stopReason === "error";
 }
 
 async function sendGoalMessage(
@@ -85,8 +84,10 @@ async function sendGoalContinuation(
   core: CoreBridge,
   ctx: unknown,
   initial: boolean,
+  facts: Record<string, unknown>,
+  event: unknown,
 ): Promise<void> {
-  const plan = coreCall(core, "planGoalContinuation", [initial, ctx]);
+  const plan = coreCall(core, "planGoalContinuation", [initial, facts, event, ctx]);
   if (!isRecord(plan)) throw new Error("Invalid Taumel goal continuation plan");
   const action = stringField(plan, "action");
   if (action === "none") return;
@@ -117,32 +118,40 @@ async function executeGoalCommandSideEffects(
   }
   await sendVisibleGoalResult(pi, result);
   if (result["goalFollowup"] === true) {
-    await sendGoalContinuation(pi, core, ctx, true);
+    await sendGoalContinuation(pi, core, ctx, true, {
+      hostIdle: true,
+      hasPendingMessages: false,
+      retrying: false,
+      compacting: false,
+    }, {});
   }
 }
 
-async function executePermissionsPrompt(
+async function executeSelectionPrompt(
   core: CoreBridge,
   prompt: Record<string, unknown>,
   ctx: unknown,
+  planMethod: string,
+  finishMethod: string,
+  label: string,
 ): Promise<unknown> {
   const finish = (selection: Record<string, unknown>) => {
-    return coreCall(core, "finishPermissionsPrompt", [prompt, selection, ctx]);
+    return coreCall(core, finishMethod, [prompt, selection, ctx]);
   };
 
   const ui = isRecord(ctx) && isRecord(ctx["ui"]) ? ctx["ui"] : {};
   const select = ui["select"];
-  const plan = coreCall(core, "planPermissionsPrompt", [prompt, {
+  const plan = coreCall(core, planMethod, [prompt, {
     uiAvailable: typeof select === "function",
   }]);
-  if (!isRecord(plan)) throw new Error("Invalid Taumel permissions prompt plan");
+  if (!isRecord(plan)) throw new Error(`Invalid Taumel ${label} prompt plan`);
   if (stringField(plan, "action") === "result") {
     const result = plan["result"];
-    if (!isRecord(result)) throw new Error("Invalid Taumel permissions prompt result");
+    if (!isRecord(result)) throw new Error(`Invalid Taumel ${label} prompt result`);
     return result;
   }
   if (stringField(plan, "action") !== "select" || typeof select !== "function") {
-    throw new Error("Invalid Taumel permissions prompt plan");
+    throw new Error(`Invalid Taumel ${label} prompt plan`);
   }
   const selected = await select.call(ui, stringField(plan, "title"), stringArrayField(plan, "labels"));
   if (selected === undefined || selected === null) {
@@ -150,6 +159,30 @@ async function executePermissionsPrompt(
   }
 
   return finish({ status: "selected", selected: String(selected) });
+}
+
+async function executePermissionsPrompt(
+  core: CoreBridge,
+  prompt: Record<string, unknown>,
+  ctx: unknown,
+): Promise<unknown> {
+  return executeSelectionPrompt(core, prompt, ctx, "planPermissionsPrompt", "finishPermissionsPrompt", "permissions");
+}
+
+async function executeAgentsPrompt(
+  core: CoreBridge,
+  prompt: Record<string, unknown>,
+  ctx: unknown,
+): Promise<unknown> {
+  return executeSelectionPrompt(core, prompt, ctx, "planAgentsPrompt", "finishAgentsPrompt", "agents");
+}
+
+async function executeAgentRunsPrompt(
+  core: CoreBridge,
+  prompt: Record<string, unknown>,
+  ctx: unknown,
+): Promise<unknown> {
+  return executeSelectionPrompt(core, prompt, ctx, "planAgentRunsPrompt", "finishAgentRunsPrompt", "agent runs");
 }
 
 async function executeCommandAction(
@@ -162,10 +195,30 @@ async function executeCommandAction(
   switch (stringField(result, "action")) {
     case "permissions_prompt":
       return executePermissionsPrompt(core, result, ctx);
+    case "agents_prompt":
+      return executeAgentsPrompt(core, result, ctx);
+    case "agent_runs_prompt":
+      return executeAgentRunsPrompt(core, result, ctx);
     case "openai_usage_fetch":
       return commandResultFromToolResult(core, await executeOpenAiUsageWithHostAuth(pi, core, result, ctx));
     default:
       return result;
+  }
+}
+
+async function applyChildSessionUpdatesFromCommandResult(
+  childSessions: Map<string, ChildSessionBridge>,
+  result: unknown,
+): Promise<void> {
+  if (!isRecord(result)) return;
+  const details = isRecord(result["details"]) ? result["details"] : undefined;
+  const updates = Array.isArray(details?.["childSessionUpdates"])
+    ? details["childSessionUpdates"]
+    : [];
+  for (const update of updates) {
+    if (isRecord(update)) {
+      await applyChildSessionUpdate(childSessions, update, undefined);
+    }
   }
 }
 
@@ -189,6 +242,7 @@ export async function executeGatewayCommand(
 
   if (stringField(plan, "action") !== "command_child_session") {
     const result = await executeCommandAction(pi, core, callCore(ctx), ctx);
+    await applyChildSessionUpdatesFromCommandResult(childSessions, result);
     await executeGoalCommandSideEffects(pi, core, name, result, ctx);
     return result;
   }
@@ -204,7 +258,7 @@ export async function executeGatewayCommand(
   if (!isRecord(childSessionPlan)) throw new Error("Invalid Taumel command child session plan");
   if (childSessionPlan["ok"] !== true) return childSessionPlan;
   const metadata = isRecord(childSessionPlan["metadata"]) ? childSessionPlan["metadata"] : {};
-  const bridge = await createChildSession(core, ctx, metadata);
+  const bridge = await createChildSession(pi, core, ctx, metadata);
 
   const childContextKey = stringField(plan, "childSessionContextKey");
   if (childContextKey !== "" && bridge?.sessionId && !bridge.cancelled && !bridge.error) {
@@ -223,7 +277,7 @@ export async function executeGatewayCommand(
     return plannedResult;
   }
 
-  applyChildSessionUpdate(childSessions, dispatchPlan["bridgeUpdate"], bridge);
+  await applyChildSessionUpdate(childSessions, dispatchPlan["bridgeUpdate"], bridge);
   const dispatch = await sendToChildSession(pi, core, bridge, stringField(dispatchPlan, "prompt"));
   const finished = coreCall(core, "finishCommandChildDispatch", [{
     result: plannedResult,
@@ -281,9 +335,43 @@ export function registerGatewayCommands(
 }
 
 export function installGoalContinuationLoop(pi: PiLike, core: CoreBridge): void {
+  let retrying = false;
+  let compacting = false;
+
+  const observeSessionEvent = (event: unknown) => {
+    if (!isRecord(event)) return;
+    switch (event["type"]) {
+      case "auto_retry_start":
+        retrying = true;
+        break;
+      case "auto_retry_end":
+        retrying = false;
+        break;
+      case "compaction_start":
+        compacting = true;
+        break;
+      case "compaction_end":
+        compacting = false;
+        if (event["willRetry"] === true) retrying = true;
+        break;
+    }
+  };
+
+  if (typeof pi.subscribe === "function") {
+    pi.subscribe(observeSessionEvent);
+  }
+
   pi.on("agent_end", async (event, ctx) => {
-    if (hasPendingMessages(ctx)) return;
-    if (shouldSuppressGoalContinuation(event)) return;
-    await sendGoalContinuation(pi, core, ctx, false);
+    observeSessionEvent(event);
+    const stopReason = latestAssistantStopReason(event);
+    if (stopReason === "aborted") {
+      coreCall(core, "interruptGoalAutomation", [ctx]);
+    }
+    await sendGoalContinuation(pi, core, ctx, false, {
+      hostIdle: hostIdle(ctx),
+      hasPendingMessages: hasPendingMessages(ctx),
+      retrying: retrying || (isRecord(event) && event["willRetry"] === true),
+      compacting,
+    }, event);
   });
 }

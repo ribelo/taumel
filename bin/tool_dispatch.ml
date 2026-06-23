@@ -14,10 +14,11 @@ let prepare name params ctx =
   | "get_goal" -> Goal_tools.prepare_get ()
   | "create_goal" -> Goal_tools.prepare_create params ctx
   | "update_goal" -> Goal_tools.prepare_update params ctx
-  | "request_user_input" -> Request_input_bridge.prepare params
   | "find_thread" -> Thread_bridge.prepare_find params
   | "read_thread" -> Thread_bridge.prepare_read params
-  | "agent" -> Agent_tools.prepare params ctx
+  | "agent_spawn" | "agent_send" | "agent_wait" | "agent_list" | "agent_close"
+  | "agent_profiles" ->
+      Agent_tools.prepare name params ctx
   | "ralph_continue" | "ralph_finish" -> Ralph_tools.prepare_child_tool name params ctx
   | "web_search_exa" -> Exa_bridge.prepare_web_search params
   | "crawling_exa" -> Exa_bridge.prepare_crawling params

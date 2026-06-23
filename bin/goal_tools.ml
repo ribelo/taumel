@@ -12,56 +12,82 @@ let js_goal (goal : Taumel.Goal.t) =
       ("threadId", js_string goal.thread_id);
       ("objective", js_string goal.objective);
       ("status", js_string (Taumel.Goal.status_to_string goal.status));
-      ("tokenBudget", js_optional_int goal.token_budget);
       ("tokensUsed", js_number (float_of_int goal.tokens_used));
       ("timeUsedSeconds", js_number (float_of_int goal.time_used_seconds));
+      ("timeLimitSeconds", js_optional_int goal.time_limit_seconds);
       ("createdAt", js_number (float_of_int goal.created_at));
       ("updatedAt", js_number (float_of_int goal.updated_at));
     |]
 
-let details goal report =
+let js_automation automation =
+  Unsafe.obj
+    [|
+      ("continuation", js_string (Taumel.Goal.automation_to_string automation));
+      ( "requiresUserInput",
+        js_bool (Taumel.Goal.automation_requires_user_input automation) );
+    |]
+
+let details goal automation =
   let goal_value =
     match goal with
     | None -> Unsafe.inject Js.null
     | Some goal -> inject (js_goal goal)
   in
-  let remaining =
-    match goal with
-    | None -> None
-    | Some goal -> Taumel.Goal.remaining_tokens goal
-  in
   Unsafe.obj
     [|
       ("goal", goal_value);
-      ("remainingTokens", js_optional_int remaining);
-      ( "completionBudgetReport",
-        match report with
-        | None -> Unsafe.inject Js.null
-        | Some message -> js_string message );
+      ("automation", inject (js_automation automation));
     |]
 
-let tool_result ?completion_report goal text =
+let tool_result goal text =
   ok_obj
     [
       ("action", js_string "tool_result");
       ("text", js_string text);
-      ("details", inject (details goal completion_report));
+      ("details", inject (details goal !goal_automation));
     ]
 
-let command_result ?completion_report ?(followup = false) goal message =
+let command_result ?(followup = false) goal message =
   ok_obj
     ([
        ("action", js_string "command_result");
        ("message", js_string message);
-       ("details", inject (details goal completion_report));
+       ("details", inject (details goal !goal_automation));
      ]
     @ if followup then [ ("goalFollowup", js_bool true) ] else [])
 
 let thread_id () = if state.cwd = "" then "current" else state.cwd
 
-let plan_continuation initial ctx =
+let latest_assistant_stop_reason event =
+  let messages = get_object_array event "messages" in
+  let rec loop = function
+    | [] -> None
+    | message :: rest ->
+        if get_string message "role" = "assistant" then
+          match get_string message "stopReason" with
+          | "" -> loop rest
+          | value -> Some value
+        else loop rest
+  in
+  loop (List.rev messages)
+
+let continuation_facts facts event ctx =
+  {
+    Taumel.Goal.goal = !current_goal;
+    automation = !goal_automation;
+    host_idle = get_bool facts "hostIdle";
+    has_pending_messages = get_bool facts "hasPendingMessages";
+    retrying = get_bool facts "retrying";
+    compacting = get_bool facts "compacting";
+    latest_assistant_stop_reason = latest_assistant_stop_reason event;
+  }
+
+let plan_continuation initial facts event ctx =
   Session_sync.sync_session_from_host ~scope:"goal continuation" ctx;
-  match Taumel.Goal.plan_continuation ~initial !current_goal with
+  match
+    Taumel.Goal.plan_continuation ~initial
+      (continuation_facts facts event ctx)
+  with
   | Taumel.Goal.Send_continuation plan ->
       ok_obj
         [
@@ -87,19 +113,20 @@ let prepare_create params ctx =
   with_gateway_authorized "create_goal" (fun _ ->
       let params = Tool_contracts.CreateGoalParams.t_of_js (ojs_of_js params) in
       let objective = Tool_contracts.CreateGoalParams.get_objective params in
-      let token_budget =
+      let time_limit_seconds =
         Option.map int_of_float
-          (Tool_contracts.CreateGoalParams.get_token_budget params)
+          (Tool_contracts.CreateGoalParams.get_time_limit_seconds params)
       in
-          match
-            Taumel.Goal.create ?token_budget
-              ~thread_id:(thread_id ()) ~now:(now_seconds ()) objective
-              !current_goal
-          with
+      match
+        Taumel.Goal.create ?time_limit_seconds ~thread_id:(thread_id ())
+          ~now:(now_seconds ()) objective !current_goal
+      with
       | Error message -> error_obj message
       | Ok goal ->
           current_goal := Some goal;
+          goal_automation := Taumel.Goal.Automation_enabled;
           Session_sync.save_goal_state ctx;
+          Session_sync.save_goal_automation_state ctx;
           tool_result (Some goal) "Goal created.")
 
 let prepare_update params ctx =
@@ -112,17 +139,12 @@ let prepare_update params ctx =
         | "blocked" -> Taumel.Goal.Blocked
         | _ -> failwith "invalid parsed update_goal.status"
       in
-          match
-            Taumel.Goal.update_status ~now:(now_seconds ()) status
-              !current_goal
-          with
-        | Error message -> error_obj message
-        | Ok goal ->
-            current_goal := Some goal;
-            Session_sync.save_goal_state ctx;
-            tool_result
-              ?completion_report:(Taumel.Goal.completion_budget_report goal)
-              (Some goal) "Goal updated.")
+      match Taumel.Goal.update_status ~now:(now_seconds ()) status !current_goal with
+      | Error message -> error_obj message
+      | Ok goal ->
+          current_goal := Some goal;
+          Session_sync.save_goal_state ctx;
+          tool_result (Some goal) "Goal updated.")
 
 let handle_command args ctx =
   match
@@ -133,21 +155,23 @@ let handle_command args ctx =
   | Ok plan ->
       if plan.changed then (
         current_goal := plan.goal;
-        Session_sync.save_goal_state ctx);
-      command_result ?completion_report:plan.completion_report
-        ~followup:plan.followup plan.goal plan.message
+        (match plan.automation with
+        | None -> ()
+        | Some automation -> goal_automation := automation);
+        Session_sync.save_goal_state ctx;
+        if Option.is_some plan.automation then
+          Session_sync.save_goal_automation_state ctx);
+      command_result ~followup:plan.followup plan.goal plan.message
 
 let goal_system_prompt event ctx =
   Session_sync.sync_session_from_host ~scope:"goal system prompt" ctx;
-  match !current_goal with
-  | Some goal
-    when goal.status = Taumel.Goal.Active
-         || goal.status = Taumel.Goal.Budget_limited ->
+  match (!current_goal, !goal_automation) with
+  | Some goal, Taumel.Goal.Automation_enabled when goal.status = Taumel.Goal.Active
+    ->
       let base = get_string event "systemPrompt" in
-      let goal_prompt =
-        match goal.status with
-        | Taumel.Goal.Budget_limited -> Taumel.Goal.budget_limit_prompt goal
-        | _ -> Taumel.Goal.continuation_prompt goal
-      in
+      let goal_prompt = Taumel.Goal.continuation_prompt goal in
       Unsafe.obj [| ("systemPrompt", js_string (base ^ "\n\n" ^ goal_prompt)) |]
+  | Some _, Taumel.Goal.Automation_interrupted ->
+      Session_sync.clear_interrupted_goal_automation ctx;
+      Unsafe.inject Js.undefined
   | _ -> Unsafe.inject Js.undefined

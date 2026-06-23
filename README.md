@@ -5,8 +5,8 @@ extension. It does not depend on the Tau codebase.
 
 The OCaml core owns policy and domain behavior: capability profiles, tool
 authorization, sandbox policy, mutation planning, sub-agents, goals, Ralph-loop
-state, structured user input, thread lookup, OpenAI usage rendering, Exa HTTP
-tools, and the footer model. TypeScript owns the Pi-facing tool contracts with
+state, thread lookup, OpenAI usage rendering, Exa HTTP tools, and the footer
+model. TypeScript owns the Pi-facing tool contracts with
 TypeBox schemas, validates tool arguments before calling OCaml, and stays
 otherwise focused on Pi loading and host-adapter side effects.
 

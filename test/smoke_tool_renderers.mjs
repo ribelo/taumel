@@ -38,14 +38,22 @@ function argsFor(name) {
       return { objective: "ship renderer coverage" };
     case "update_goal":
       return { status: "complete" };
-    case "request_user_input":
-      return { questions: [{ id: "choice", header: "Choice", question: "Pick?", options: [] }] };
     case "find_thread":
       return { query: "renderer" };
     case "read_thread":
       return { threadID: "thread-1" };
-    case "agent":
-      return { action: "spawn", id: "worker-1" };
+    case "agent_spawn":
+      return { profile: "finder", objective: "inspect renderer coverage", agent_id: "worker-1" };
+    case "agent_send":
+      return { agent_id: "worker-1", objective: "continue" };
+    case "agent_wait":
+      return { agent_ids: ["worker-1"], timeout_seconds: 0 };
+    case "agent_list":
+      return { include_closed: false };
+    case "agent_close":
+      return { agent_ids: ["worker-1"] };
+    case "agent_profiles":
+      return {};
     case "ralph_continue":
     case "ralph_finish":
       return { task_id: "task-1" };
@@ -82,16 +90,13 @@ function resultFor(name) {
   if (name === "get_goal" || name === "create_goal" || name === "update_goal") {
     return { content: [{ type: "text", text: "Goal updated." }], details: { ok: true, goal: { objective: "ship renderer coverage", status: "active", tokensUsed: 10, timeUsedSeconds: 2 } } };
   }
-  if (name === "request_user_input") {
-    return { content: [{ type: "text", text: "{}" }], details: { ok: true, answers: { choice: { answer: "Yes" } } } };
-  }
   if (name === "find_thread") {
     return { content: [{ type: "text", text: "threads" }], details: { ok: true, threads: threadSummaries } };
   }
   if (name === "read_thread") {
     return { content: [{ type: "text", text: longLines }], details: { ok: true, thread: { id: "thread-1", title: "Thread 1" } } };
   }
-  if (name === "agent") {
+  if (name.startsWith("agent_")) {
     return { content: [{ type: "text", text: "Spawned worker" }], details: { ok: true, worker: { id: "worker-1", lifecycle: "running", sandbox: "workspace-write" } } };
   }
   if (name === "ralph_continue" || name === "ralph_finish") {

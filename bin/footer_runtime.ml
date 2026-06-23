@@ -73,6 +73,13 @@ let register_handlers host =
   ignore (call2 host "on" (js_string "session_switch") (inject (update_handler false)));
   ignore (call2 host "on" (js_string "model_select") (inject (update_handler false)));
   ignore
+    (call2 host "on" (js_string "turn_start")
+       (inject
+          (Js.wrap_callback (fun _event _ctx ->
+               Session_sync.start_goal_turn ();
+               ensure_refresh_loop host;
+               emit_changed host))));
+  ignore
     (call2 host "on" (js_string "turn_end")
        (inject
           (Js.wrap_callback (fun _event ctx ->

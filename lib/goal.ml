@@ -3,7 +3,7 @@ type status =
   | Paused
   | Blocked
   | Usage_limited
-  | Budget_limited
+  | Time_limited
   | Complete
 
 type t = {
@@ -11,9 +11,9 @@ type t = {
   thread_id : string;
   objective : string;
   status : status;
-  token_budget : int option;
   tokens_used : int;
   time_used_seconds : int;
+  time_limit_seconds : int option;
   created_at : int;
   updated_at : int;
 }
@@ -26,10 +26,31 @@ type token_usage = {
   output_tokens : int;
 }
 
+type automation =
+  | Automation_enabled
+  | Automation_interrupted
+
+type turn_clock = {
+  turn_started_at_ms : int option;
+  pause_depth : int;
+  current_pause_started_at_ms : int option;
+  paused_accumulated_ms : int;
+}
+
 type set_request = {
   objective : string option;
   status : status option;
-  token_budget : int option option;
+  time_limit_seconds : int option option;
+}
+
+type continuation_facts = {
+  goal : store;
+  automation : automation;
+  host_idle : bool;
+  has_pending_messages : bool;
+  retrying : bool;
+  compacting : bool;
+  latest_assistant_stop_reason : string option;
 }
 
 let status_to_string = function
@@ -37,7 +58,7 @@ let status_to_string = function
   | Paused -> "paused"
   | Blocked -> "blocked"
   | Usage_limited -> "usage_limited"
-  | Budget_limited -> "budget_limited"
+  | Time_limited -> "time_limited"
   | Complete -> "complete"
 
 let status_of_string = function
@@ -45,39 +66,41 @@ let status_of_string = function
   | "paused" -> Some Paused
   | "blocked" -> Some Blocked
   | "usage_limited" -> Some Usage_limited
-  | "budget_limited" -> Some Budget_limited
+  | "time_limited" -> Some Time_limited
   | "complete" -> Some Complete
   | _ -> None
 
 let terminal = function
-  | Blocked | Usage_limited | Budget_limited | Complete -> true
+  | Blocked | Usage_limited | Time_limited | Complete -> true
   | Active | Paused -> false
 
 let unfinished = function
   | Complete -> false
-  | Active | Paused | Blocked | Usage_limited | Budget_limited -> true
+  | Active | Paused | Blocked | Usage_limited | Time_limited -> true
 
 let validate_objective objective =
   Shared.require_non_empty "goal objective" objective
 
-let validate_budget = function
-  | Some budget when budget <= 0 -> Error "goal budgets must be positive when provided"
+let validate_time_limit = function
+  | Some limit when limit <= 0 ->
+      Error "goal time limits must be positive when provided"
   | _ -> Ok ()
 
 let next_goal_id thread_id now =
   Printf.sprintf "%s:%d" thread_id now
 
-let create ?token_budget ~thread_id ~now objective (store : store) =
+let create ?time_limit_seconds ~thread_id ~now objective (store : store) =
   match validate_objective objective with
   | Error _ as error -> error
   | Ok objective -> (
-      match validate_budget token_budget with
+      match validate_time_limit time_limit_seconds with
       | Error _ as error -> error
       | Ok () -> (
           match store with
           | Some goal when unfinished goal.status ->
               Error
-                "cannot create a new goal because this thread has an unfinished goal; complete the existing goal first"
+                "cannot create a new goal because this thread has an unfinished \
+                 goal; complete or clear the existing goal first"
           | None | Some _ ->
               Ok
                 {
@@ -85,9 +108,9 @@ let create ?token_budget ~thread_id ~now objective (store : store) =
                   thread_id;
                   objective;
                   status = Active;
-                  token_budget;
                   tokens_used = 0;
                   time_used_seconds = 0;
+                  time_limit_seconds;
                   created_at = now;
                   updated_at = now;
                 }))
@@ -99,8 +122,23 @@ let update_status ~now status (store : store) =
   | None -> Error "cannot update goal because this thread has no goal"
   | Some goal when not (List.mem status [ Complete; Blocked ]) ->
       Error
-        "update_goal can only mark the existing goal complete or blocked; pause, resume, budget-limited, and usage-limited status changes are controlled by the user or system"
+        "update_goal can only mark the existing goal complete or blocked; pause, \
+         resume, usage-limited, and time-limited status changes are controlled \
+         by the user or system"
   | Some goal -> Ok { goal with status; updated_at = now }
+
+let user_set_status ~now status (store : store) =
+  match store with
+  | None -> Error "cannot update goal because this thread has no goal"
+  | Some goal -> Ok { goal with status; updated_at = now }
+
+let update_time_limit ~now time_limit_seconds (store : store) =
+  match store with
+  | None -> Error "cannot update goal because this thread has no goal"
+  | Some goal -> (
+      match validate_time_limit time_limit_seconds with
+      | Error _ as error -> error
+      | Ok () -> Ok { goal with time_limit_seconds; updated_at = now })
 
 let set ~thread_id ~now (request : set_request) store =
   let objective = Option.map String.trim request.objective in
@@ -115,15 +153,17 @@ let set ~thread_id ~now (request : set_request) store =
   match validation with
   | Error _ as error -> error
   | Ok () -> (
-      match request.token_budget with
-      | Some value -> validate_budget value
+      match request.time_limit_seconds with
+      | Some value -> validate_time_limit value
       | None -> Ok ())
     |> (function
     | Error _ as error -> error
     | Ok () -> (
         match (objective, (store : store)) with
         | Some objective, None ->
-            create ?token_budget:(Option.value request.token_budget ~default:None)
+            create
+              ?time_limit_seconds:
+                (Option.value request.time_limit_seconds ~default:None)
               ~thread_id ~now objective None
         | Some objective, Some goal ->
             Ok
@@ -131,9 +171,9 @@ let set ~thread_id ~now (request : set_request) store =
                 goal with
                 objective;
                 status = Option.value request.status ~default:goal.status;
-                token_budget =
-                  (match request.token_budget with
-                  | None -> goal.token_budget
+                time_limit_seconds =
+                  (match request.time_limit_seconds with
+                  | None -> goal.time_limit_seconds
                   | Some value -> value);
                 updated_at = now;
               }
@@ -143,9 +183,9 @@ let set ~thread_id ~now (request : set_request) store =
               {
                 goal with
                 status = Option.value request.status ~default:goal.status;
-                token_budget =
-                  (match request.token_budget with
-                  | None -> goal.token_budget
+                time_limit_seconds =
+                  (match request.time_limit_seconds with
+                  | None -> goal.time_limit_seconds
                   | Some value -> value);
                 updated_at = now;
               }))
@@ -153,13 +193,19 @@ let set ~thread_id ~now (request : set_request) store =
 let token_delta usage =
   max 0 (usage.input_tokens - usage.cached_input_tokens) + max 0 usage.output_tokens
 
+let time_limit_reached (goal : t) time_used_seconds =
+  match goal.time_limit_seconds with
+  | Some limit when time_used_seconds >= limit -> true
+  | _ -> false
+
+let over_time_limit (goal : t) time_used_seconds =
+  goal.status = Active && time_limit_reached goal time_used_seconds
+
 let account_usage ~now ~time_delta_seconds usage (goal : t) =
   let tokens_used = goal.tokens_used + token_delta usage in
   let time_used_seconds = goal.time_used_seconds + max 0 time_delta_seconds in
   let status =
-    match goal.token_budget with
-    | Some budget when tokens_used >= budget && goal.status = Active -> Budget_limited
-    | _ -> goal.status
+    if over_time_limit goal time_used_seconds then Time_limited else goal.status
   in
   { goal with tokens_used; time_used_seconds; status; updated_at = now }
 
@@ -268,43 +314,137 @@ let account_turn_key ~session_id ~branch_length usage =
   Printf.sprintf "%s:%d:%d:%d:%d" session_id branch_length usage.input_tokens
     usage.cached_input_tokens usage.output_tokens
 
-let account_turn_end ~session_id ~now ~last_accounting_key ~branch (store : store) =
+let account_turn_end ~session_id ~now ~active_time_seconds ~last_accounting_key
+    ~branch (store : store) =
   match (store, latest_assistant_usage branch) with
-  | Some goal, Some (branch_length, usage)
-    when goal.status = Active || goal.status = Budget_limited ->
+  | Some goal, Some (branch_length, usage) when goal.status = Active ->
       let accounting_key = account_turn_key ~session_id ~branch_length usage in
       if last_accounting_key = Some accounting_key then
         { goal = store; accounting_key = last_accounting_key; changed = false }
       else
-        let time_delta_seconds = max 0 (now - goal.updated_at) in
-        let updated = account_usage ~now ~time_delta_seconds usage goal in
+        let updated =
+          account_usage ~now ~time_delta_seconds:active_time_seconds usage goal
+        in
         { goal = Some updated; accounting_key = Some accounting_key; changed = true }
   | _ -> { goal = store; accounting_key = last_accounting_key; changed = false }
 
-let remaining_tokens (goal : t) =
-  Option.map (fun budget -> max 0 (budget - goal.tokens_used)) goal.token_budget
+let empty_clock =
+  {
+    turn_started_at_ms = None;
+    pause_depth = 0;
+    current_pause_started_at_ms = None;
+    paused_accumulated_ms = 0;
+  }
 
-let completion_budget_report (goal : t) =
-  if goal.status <> Complete then None
-  else if goal.token_budget = None && goal.time_used_seconds <= 0 then None
+let start_turn_clock ~now_ms _clock =
+  { empty_clock with turn_started_at_ms = Some now_ms }
+
+let pause_clock_start ~now_ms clock =
+  if clock.pause_depth = 0 then
+    {
+      clock with
+      pause_depth = 1;
+      current_pause_started_at_ms = Some now_ms;
+    }
+  else { clock with pause_depth = clock.pause_depth + 1 }
+
+let pause_clock_end ~now_ms clock =
+  if clock.pause_depth <= 0 then clock
+  else if clock.pause_depth > 1 then
+    { clock with pause_depth = clock.pause_depth - 1 }
   else
-    Some
-      "Goal achieved. Report final usage from this tool result's structured goal fields."
+    let elapsed =
+      match clock.current_pause_started_at_ms with
+      | None -> 0
+      | Some started -> max 0 (now_ms - started)
+    in
+    {
+      clock with
+      pause_depth = 0;
+      current_pause_started_at_ms = None;
+      paused_accumulated_ms = clock.paused_accumulated_ms + elapsed;
+    }
+
+let finalize_open_pause ~now_ms clock =
+  let rec loop clock =
+    if clock.pause_depth <= 0 then clock else loop (pause_clock_end ~now_ms clock)
+  in
+  loop clock
+
+let finish_turn_clock ~now_ms clock =
+  match clock.turn_started_at_ms with
+  | None -> (0, empty_clock)
+  | Some started ->
+      let clock = finalize_open_pause ~now_ms clock in
+      let elapsed_ms = max 0 (now_ms - started - clock.paused_accumulated_ms) in
+      (elapsed_ms / 1000, empty_clock)
+
+let automation_to_string = function
+  | Automation_enabled -> "enabled"
+  | Automation_interrupted -> "interrupted"
+
+let automation_of_string = function
+  | "enabled" -> Some Automation_enabled
+  | "interrupted" -> Some Automation_interrupted
+  | _ -> None
+
+let automation_requires_user_input = function
+  | Automation_enabled -> false
+  | Automation_interrupted -> true
+
+let automation_to_json = function
+  | Automation_enabled -> Shared.Null
+  | Automation_interrupted ->
+      Shared.Object
+        [
+          ("continuation", Shared.String "interrupted");
+          ("requiresUserInput", Shared.Bool true);
+        ]
+
+let automation_of_json = function
+  | Shared.Null -> Ok Automation_enabled
+  | Shared.Object fields -> (
+      match List.assoc_opt "continuation" fields with
+      | Some (Shared.String value) -> (
+          match automation_of_string value with
+          | Some Automation_interrupted -> Ok Automation_interrupted
+          | Some Automation_enabled -> Ok Automation_enabled
+          | None -> Error ("unknown goal automation: " ^ value))
+      | _ -> Error "goal automation continuation must be a string")
+  | _ -> Error "goal automation must be an object or null"
+
+let automation_codec =
+  { Shared.encode = automation_to_json; decode = automation_of_json }
 
 type command_plan = {
   goal : store;
+  automation : automation option;
   message : string;
   followup : bool;
-  completion_report : string option;
   changed : bool;
 }
+
+let format_duration seconds =
+  let seconds = max 0 seconds in
+  if seconds mod 3600 = 0 && seconds >= 3600 then
+    Printf.sprintf "%dh" (seconds / 3600)
+  else if seconds mod 60 = 0 && seconds >= 60 then
+    Printf.sprintf "%dm" (seconds / 60)
+  else Printf.sprintf "%ds" seconds
+
+let goal_usage (goal : t) =
+  match goal.time_limit_seconds with
+  | None -> format_duration goal.time_used_seconds
+  | Some limit ->
+      Printf.sprintf "%s/%s" (format_duration goal.time_used_seconds)
+        (format_duration limit)
 
 let summary (store : store) =
   match store with
   | None -> "No active goal."
   | Some goal ->
-      Printf.sprintf "Goal %s: %s" (status_to_string goal.status)
-        goal.objective
+      Printf.sprintf "Goal %s: %s (%s)" (status_to_string goal.status)
+        goal.objective (goal_usage goal)
 
 let split_command input =
   let input = String.trim input in
@@ -320,32 +460,116 @@ let split_command input =
         in
         (command, rest)
 
-let command_plan ?completion_report ?(followup = false) ?(changed = false) goal =
-  {
-    goal;
-    message = summary goal;
-    followup;
-    completion_report;
-    changed;
-  }
+let command_plan ?automation ?(followup = false) ?(changed = false) goal =
+  { goal; automation; message = summary goal; followup; changed }
 
-let command_usage = "usage: /goal [show|status|complete|blocked|<objective>]"
+let command_usage =
+  "usage: /goal [show|status|pause|resume|complete|blocked|clear|<objective> \
+   [--time-limit 30m]]"
 
-let apply_command_set ~thread_id ~now objective store =
-  let objective = String.trim objective in
-  if objective = "" then Error command_usage
+let parse_duration value =
+  let value = String.trim value in
+  if value = "" then Error "time limit must not be empty"
   else
-    let request =
-      { objective = Some objective; status = Some Active; token_budget = None }
+    let last = value.[String.length value - 1] in
+    let number, multiplier =
+      match last with
+      | 's' -> (String.sub value 0 (String.length value - 1), 1)
+      | 'm' -> (String.sub value 0 (String.length value - 1), 60)
+      | 'h' -> (String.sub value 0 (String.length value - 1), 3600)
+      | _ -> (value, 1)
     in
-    set ~thread_id ~now request store
-    |> Result.map (fun goal -> command_plan ~followup:true ~changed:true (Some goal))
+    try
+      let parsed = int_of_string (String.trim number) in
+      let seconds = parsed * multiplier in
+      if seconds <= 0 then Error "time limit must be positive"
+      else Ok seconds
+    with Failure _ ->
+      Error "time limit must be a duration like 90s, 30m, or 2h"
+
+let parse_time_limit_args args =
+  let words =
+    args |> String.split_on_char ' ' |> List.map String.trim
+    |> List.filter (fun word -> word <> "")
+  in
+  let rec loop objective_parts time_limit = function
+    | [] -> Ok (String.concat " " (List.rev objective_parts), time_limit)
+    | "--time-limit" :: value :: rest -> (
+        match parse_duration value with
+        | Error _ as error -> error
+        | Ok seconds -> loop objective_parts (Some (Some seconds)) rest)
+    | [ "--time-limit" ] ->
+        Error "time limit must be a duration like 90s, 30m, or 2h"
+    | "--no-time-limit" :: rest -> loop objective_parts (Some None) rest
+    | flag :: rest when String.starts_with ~prefix:"--time-limit=" flag ->
+        let value =
+          String.sub flag 13 (String.length flag - 13)
+        in
+        (match parse_duration value with
+        | Error _ as error -> error
+        | Ok seconds -> loop objective_parts (Some (Some seconds)) rest)
+    | flag :: rest when flag = "--no-time-limit" ->
+        loop objective_parts time_limit rest
+    | word :: rest -> loop (word :: objective_parts) time_limit rest
+  in
+  loop [] None words
+
+let apply_command_create ~thread_id ~now args store =
+  match parse_time_limit_args args with
+  | Error _ as error -> error
+  | Ok (objective, time_limit) ->
+      let objective = String.trim objective in
+      if objective = "" then Error command_usage
+      else
+        create
+          ?time_limit_seconds:(Option.value time_limit ~default:None)
+          ~thread_id ~now objective store
+        |> Result.map (fun goal ->
+               command_plan ~automation:Automation_enabled ~followup:true
+                 ~changed:true (Some goal))
 
 let apply_command_status ~now status store =
   update_status ~now status store
+  |> Result.map (fun goal -> command_plan ~changed:true (Some goal))
+
+let apply_command_pause ~now store =
+  user_set_status ~now Paused store
   |> Result.map (fun goal ->
-         command_plan ?completion_report:(completion_budget_report goal)
-           ~changed:true (Some goal))
+         command_plan ~automation:Automation_enabled ~changed:true (Some goal))
+
+let apply_command_clear _store =
+  Ok (command_plan ~automation:Automation_enabled ~changed:true None)
+
+let apply_command_resume ~now args store =
+  match parse_time_limit_args args with
+  | Error _ as error -> error
+  | Ok (extra, time_limit) ->
+      if String.trim extra <> "" then Error command_usage
+      else (
+        let update_limit goal =
+          match time_limit with
+          | None -> Ok goal
+          | Some value -> update_time_limit ~now value (Some goal)
+        in
+        match store with
+        | None -> Error "cannot resume goal because this thread has no goal"
+        | Some goal -> (
+            match update_limit goal with
+            | Error _ as error -> error
+            | Ok goal ->
+                if
+                  goal.status = Time_limited
+                  && time_limit_reached goal goal.time_used_seconds
+                then
+                  Error
+                    "cannot resume goal because its time limit is already \
+                     reached; use /goal resume --time-limit <duration> or \
+                     /goal resume --no-time-limit"
+                else
+                  Ok
+                    (command_plan ~automation:Automation_enabled ~followup:true
+                       ~changed:true
+                       (Some { goal with status = Active; updated_at = now }))))
 
 let apply_command ~thread_id ~now args store =
   let command, rest = split_command args in
@@ -353,8 +577,11 @@ let apply_command ~thread_id ~now args store =
   | "" | "show" | "status" -> Ok (command_plan store)
   | "complete" -> apply_command_status ~now Complete store
   | "blocked" -> apply_command_status ~now Blocked store
-  | "set" | "start" | "create" -> apply_command_set ~thread_id ~now rest store
-  | _ -> apply_command_set ~thread_id ~now args store
+  | "pause" -> apply_command_pause ~now store
+  | "resume" -> apply_command_resume ~now rest store
+  | "clear" | "cancel" -> apply_command_clear store
+  | "set" | "start" | "create" -> apply_command_create ~thread_id ~now rest store
+  | _ -> apply_command_create ~thread_id ~now args store
 
 type continuation = {
   custom_type : string;
@@ -376,7 +603,10 @@ let initial_followup_prompt (goal : t) =
       "Objective:";
       goal.objective;
       "";
-      "Work toward this objective. Before declaring completion, audit concrete evidence: files, command output, tests, and other current state. If the goal is achieved and no required work remains, call update_goal with status \"complete\". Otherwise continue with the next concrete action.";
+      "Work toward this objective. Before declaring completion, audit concrete \
+       evidence: files, command output, tests, and other current state. If the \
+       goal is achieved and no required work remains, call update_goal with \
+       status \"complete\". Otherwise continue with the next concrete action.";
     ]
 
 let continuation_followup_prompt (goal : t) =
@@ -387,22 +617,43 @@ let continuation_followup_prompt (goal : t) =
       "Objective:";
       goal.objective;
       "";
-      "Do not repeat completed work. Use the conversation history and concrete evidence. Call update_goal with status \"complete\" only when the objective is actually complete and no required work remains. Otherwise continue with the next concrete action.";
+      "Do not repeat completed work. Use the conversation history and concrete \
+       evidence. Call update_goal with status \"complete\" only when the \
+       objective is actually complete and no required work remains. Otherwise \
+       continue with the next concrete action.";
     ]
 
-let plan_continuation ~initial (store : store) =
-  match store with
-  | Some goal when goal.status = Active ->
-      Send_continuation
-        {
-          custom_type = "taumel.goal.continue";
-          content =
-            (if initial then initial_followup_prompt goal
-             else continuation_followup_prompt goal);
-          display = false;
-          trigger_turn = true;
-          deliver_as = "followUp";
-        }
+let latest_stop_reason_blocks = function
+  | Some "error" | Some "aborted" -> true
+  | _ -> false
+
+let should_continue (facts : continuation_facts) =
+  match facts.goal with
+  | Some goal ->
+      goal.status = Active
+      && facts.automation = Automation_enabled
+      && facts.host_idle
+      && not facts.has_pending_messages
+      && not facts.retrying
+      && not facts.compacting
+      && not (latest_stop_reason_blocks facts.latest_assistant_stop_reason)
+  | None -> false
+
+let continuation_for_goal ~initial goal =
+  {
+    custom_type = "taumel.goal.continue";
+    content =
+      (if initial then initial_followup_prompt goal
+       else continuation_followup_prompt goal);
+    display = false;
+    trigger_turn = true;
+    deliver_as = "followUp";
+  }
+
+let plan_continuation ~initial (facts : continuation_facts) =
+  match facts.goal with
+  | Some goal when should_continue facts ->
+      Send_continuation (continuation_for_goal ~initial goal)
   | _ -> No_continuation
 
 let escape_xml_text input =
@@ -411,20 +662,18 @@ let escape_xml_text input =
   |> String.split_on_char '>' |> String.concat "&gt;"
 
 let continuation_prompt (goal : t) =
-  let token_budget =
-    goal.token_budget |> Option.map string_of_int |> Option.value ~default:"none"
-  in
-  let remaining =
-    remaining_tokens goal |> Option.map string_of_int |> Option.value ~default:"unbounded"
+  let time_limit =
+    goal.time_limit_seconds
+    |> Option.map string_of_int |> Option.value ~default:"none"
   in
   Printf.sprintf
-    "<goal>\n<objective>%s</objective>\n<status>%s</status>\n<tokens_used>%d</tokens_used>\n<token_budget>%s</token_budget>\n<remaining_tokens>%s</remaining_tokens>\n</goal>"
+    "<goal>\n<objective>%s</objective>\n<status>%s</status>\n<tokens_used>%d</tokens_used>\n<time_used_seconds>%d</time_used_seconds>\n<time_limit_seconds>%s</time_limit_seconds>\n<automation>enabled</automation>\n</goal>"
     (escape_xml_text goal.objective) (status_to_string goal.status) goal.tokens_used
-    token_budget remaining
+    goal.time_used_seconds time_limit
 
-let budget_limit_prompt (goal : t) =
+let time_limit_prompt (goal : t) =
   Printf.sprintf
-    "<goal_budget_limit objective=\"%s\" tokens_used=\"%d\" time_used_seconds=\"%d\" />"
+    "<goal_time_limit objective=\"%s\" tokens_used=\"%d\" time_used_seconds=\"%d\" />"
     (escape_xml_text goal.objective) goal.tokens_used goal.time_used_seconds
 
 let objective_updated_prompt = continuation_prompt
@@ -433,6 +682,14 @@ let option_int_to_json = function
   | None -> Shared.Null
   | Some value -> Shared.Number (float_of_int value)
 
+let automation_details automation =
+  Shared.Object
+    [
+      ("continuation", Shared.String (automation_to_string automation));
+      ( "requiresUserInput",
+        Shared.Bool (automation_requires_user_input automation) );
+    ]
+
 let to_json goal =
   Shared.Object
     [
@@ -440,9 +697,9 @@ let to_json goal =
       ("threadId", Shared.String goal.thread_id);
       ("objective", Shared.String goal.objective);
       ("status", Shared.String (status_to_string goal.status));
-      ("tokenBudget", option_int_to_json goal.token_budget);
       ("tokensUsed", Shared.Number (float_of_int goal.tokens_used));
       ("timeUsedSeconds", Shared.Number (float_of_int goal.time_used_seconds));
+      ("timeLimitSeconds", option_int_to_json goal.time_limit_seconds);
       ("createdAt", Shared.Number (float_of_int goal.created_at));
       ("updatedAt", Shared.Number (float_of_int goal.updated_at));
     ]
@@ -468,7 +725,13 @@ let of_json = function
             Ok (Some (int_of_float value))
         | _ -> Error (name ^ " must be null or a number")
       in
+      let reject_legacy name =
+        match List.assoc_opt name fields with
+        | None -> Ok ()
+        | Some _ -> Error "incompatible saved Taumel goal entry"
+      in
       let ( let* ) = Result.bind in
+      let* () = reject_legacy "tokenBudget" in
       let* status_name = string_field "status" in
       let* status =
         match status_of_string status_name with
@@ -478,9 +741,9 @@ let of_json = function
       let* goal_id = string_field "goalId" in
       let* thread_id = string_field "threadId" in
       let* objective = string_field "objective" in
-      let* token_budget = option_int_field "tokenBudget" in
       let* tokens_used = int_field "tokensUsed" in
       let* time_used_seconds = int_field "timeUsedSeconds" in
+      let* time_limit_seconds = option_int_field "timeLimitSeconds" in
       let* created_at = int_field "createdAt" in
       let* updated_at = int_field "updatedAt" in
       Ok
@@ -490,9 +753,9 @@ let of_json = function
              thread_id;
              objective;
              status;
-             token_budget;
              tokens_used;
              time_used_seconds;
+             time_limit_seconds;
              created_at;
              updated_at;
            })

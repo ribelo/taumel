@@ -30,6 +30,10 @@ let state =
 let runtime : unit Runtime.t option ref = ref None
 let active_host : Unsafe.any option ref = ref None
 let current_goal : Taumel.Goal.t option ref = ref None
+let goal_automation = ref Taumel.Goal.Automation_enabled
+let goal_turn_clock = ref Taumel.Goal.empty_clock
+let goal_retrying = ref false
+let goal_compacting = ref false
 let active_profile_state = ref Taumel.Capability_profile.default
 let active_network_mode = ref Taumel.Sandbox.Network_disabled
 let active_no_sandbox = ref false
@@ -39,6 +43,10 @@ let host_network_mode : Taumel.Sandbox.network_mode option ref = ref None
 let host_no_sandbox : bool option ref = ref None
 let ralph_tasks : Taumel.Ralph_loop.task list ref = ref []
 let workers : Taumel.Subagents.worker list ref = ref []
+let agent_state : Taumel.Subagents.session_state ref =
+  ref Taumel.Subagents.empty_session_state
+let agent_catalog : Taumel.Subagents.profile_catalog ref =
+  ref Taumel.Subagents.default_profile_catalog
 let loaded_session_id : string option ref = ref None
 let last_goal_accounting_key : string option ref = ref None
 let footer_event = "taumel:footer:changed"
@@ -57,6 +65,15 @@ let now_seconds () =
   | Some now -> (
     match float_value (Unsafe.fun_call now [||]) with
     | Some milliseconds -> int_of_float (milliseconds /. 1000.0)
+    | None -> 0)
+  | _ -> 0
+
+let now_milliseconds () =
+  let date = Unsafe.get Unsafe.global "Date" in
+  match function_field date "now" with
+  | Some now -> (
+    match float_value (Unsafe.fun_call now [||]) with
+    | Some milliseconds -> int_of_float milliseconds
     | None -> 0)
   | _ -> 0
 

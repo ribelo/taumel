@@ -2,7 +2,6 @@ module Capability = Taumel.Capability_profile
 module Child_session = Taumel.Child_session
 module Gateway = Taumel.Tool_gateway
 module Goal = Taumel.Goal
-module Input = Taumel.Request_user_input
 module Permissions = Taumel.Permissions
 module Ralph = Taumel.Ralph_loop
 module Sandbox = Taumel.Sandbox
@@ -92,7 +91,7 @@ let test_component_codecs () =
   assert_bool "permissions subagent round trip" child_permissions.sandbox.subagent;
   let goal =
     expect_ok "goal codec create"
-      (Goal.create ~token_budget:42 ~thread_id:"thread" ~now:10 "persist goal" None)
+      (Goal.create ~time_limit_seconds:42 ~thread_id:"thread" ~now:10 "persist goal" None)
   in
   let decoded_goal =
     expect_ok "goal codec" (Goal.codec.decode (Goal.codec.encode (Some goal)))
@@ -100,8 +99,8 @@ let test_component_codecs () =
   (match decoded_goal with
   | Some decoded ->
       assert_equal "goal objective round trip" "persist goal" decoded.objective;
-      assert_int "goal budget round trip" 42
-        (Option.value decoded.token_budget ~default:0)
+      assert_int "goal time limit round trip" 42
+        (Option.value decoded.time_limit_seconds ~default:0)
   | None -> fail "goal codec" "expected goal");
   let task =
     expect_ok "ralph codec start"
@@ -616,7 +615,7 @@ let test_gateway_wraps_legacy_mutation_tools () =
 let test_goal_turn_accounting () =
   let goal =
     expect_ok "goal create"
-      (Goal.create ~token_budget:15 ~thread_id:"thread" ~now:10 "ship core"
+      (Goal.create ~time_limit_seconds:10 ~thread_id:"thread" ~now:10 "ship core"
          None)
   in
   let branch =
@@ -660,7 +659,7 @@ let test_goal_turn_accounting () =
   in
   let accounted =
     Goal.account_turn_end ~session_id:"session" ~now:20
-      ~last_accounting_key:None ~branch (Some goal)
+      ~active_time_seconds:10 ~last_accounting_key:None ~branch (Some goal)
   in
   assert_bool "goal accounting changed" accounted.changed;
   let updated =
@@ -670,11 +669,12 @@ let test_goal_turn_accounting () =
   in
   assert_int "goal accounting token delta" 15 updated.tokens_used;
   assert_int "goal accounting time delta" 10 updated.time_used_seconds;
-  assert_bool "goal accounting budget limit"
-    (updated.status = Goal.Budget_limited);
+  assert_bool "goal accounting time limit"
+    (updated.status = Goal.Time_limited);
   let repeated =
     Goal.account_turn_end ~session_id:"session" ~now:30
-      ~last_accounting_key:accounted.accounting_key ~branch accounted.goal
+      ~active_time_seconds:10 ~last_accounting_key:accounted.accounting_key
+      ~branch accounted.goal
   in
   assert_bool "goal accounting dedupes same turn" (not repeated.changed);
   let repeated_goal =
@@ -769,7 +769,7 @@ let test_goal_command_planning () =
     | Some goal -> goal
     | None -> fail "goal command create" "expected goal"
   in
-  assert_equal "goal command create summary" "Goal active: ship the thing"
+  assert_equal "goal command create summary" "Goal active: ship the thing (0s)"
     created.message;
   assert_equal "goal command create objective" "ship the thing" active.objective;
   let shown =
@@ -777,24 +777,35 @@ let test_goal_command_planning () =
       (Goal.apply_command ~thread_id:"thread" ~now:11 "status" created.goal)
   in
   assert_bool "goal command show no followup" (not shown.followup);
-  assert_equal "goal command show summary" "Goal active: ship the thing"
+  assert_equal "goal command show summary" "Goal active: ship the thing (0s)"
     shown.message;
   let completed =
     expect_ok "goal command complete"
       (Goal.apply_command ~thread_id:"thread" ~now:12 "complete" shown.goal)
   in
   assert_bool "goal command complete no followup" (not completed.followup);
-  assert_equal "goal command complete summary" "Goal complete: ship the thing"
+  assert_equal "goal command complete summary" "Goal complete: ship the thing (0s)"
     completed.message;
-  assert_bool "goal command completion report absent without usage"
-    (completed.completion_report = None)
+  assert_bool "goal command complete no automation"
+    (completed.automation = None)
 
 let test_goal_continuation_planning () =
   let goal =
     expect_ok "goal continuation create"
       (Goal.create ~thread_id:"thread" ~now:10 "continue me" None)
   in
-  (match Goal.plan_continuation ~initial:true (Some goal) with
+  let facts goal =
+    {
+      Goal.goal = Some goal;
+      automation = Goal.Automation_enabled;
+      host_idle = true;
+      has_pending_messages = false;
+      retrying = false;
+      compacting = false;
+      latest_assistant_stop_reason = None;
+    }
+  in
+  (match Goal.plan_continuation ~initial:true (facts goal) with
   | Goal.Send_continuation plan ->
       assert_equal "initial continuation custom type" "taumel.goal.continue"
         plan.custom_type;
@@ -806,7 +817,7 @@ let test_goal_continuation_planning () =
   | Goal.No_continuation ->
       fail "goal continuation" "expected active continuation");
   let complete = { goal with status = Goal.Complete } in
-  (match Goal.plan_continuation ~initial:false (Some complete) with
+  (match Goal.plan_continuation ~initial:false (facts complete) with
   | Goal.No_continuation -> ()
   | Goal.Send_continuation _ ->
       fail "goal continuation complete" "expected no continuation")
@@ -880,6 +891,8 @@ let test_subagent_tool_planning () =
         id = "w1";
         name = "worker";
         prompt = "do work";
+        description = None;
+        system_prompt = "";
         model_id = None;
         thinking_level = None;
         sandbox_preset = None;
@@ -908,7 +921,7 @@ let test_subagent_tool_planning () =
   let sent =
     expect_ok "agent send"
       (Subagents.apply_request ~parent_profile ~owner spawned.workers
-         (Subagents.Send { id = "w1"; prompt = "next" }))
+         (Subagents.Send { id = "w1"; prompt = "next"; interrupt = false }))
   in
   assert_equal "agent send action" "agent_send" sent.action;
   assert_equal "agent send prompt" "next" sent.prompt;

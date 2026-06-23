@@ -32,7 +32,7 @@ type dispatch_plan = {
 }
 
 let missing_session_identifier_error =
-  "newSession did not expose a child session id"
+  "createAgentSession did not expose a child session id"
 
 let option_string_to_json = function
   | None -> Shared.Null
@@ -152,7 +152,7 @@ let bridge_details = function
             Shared.Object
               [
                 ("created", Shared.Bool false);
-                ("reason", Shared.String "host newSession unavailable");
+                ("reason", Shared.String "host createAgentSession unavailable");
               ] );
         ]
   | Some bridge ->

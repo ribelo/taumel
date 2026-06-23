@@ -51,7 +51,7 @@ let gateway_error_message = function
   | Denied_effect (_, message) -> message
 
 let authorize_ralph_start ~profile ~sandbox =
-  match gateway_authorized ~profile ~sandbox "agent" with
+  match gateway_authorized ~profile ~sandbox "agent_spawn" with
   | Error error -> Error (gateway_error_message error)
   | Ok _ ->
       if Capability_profile.allow_agent profile "ralph" then Ok ()

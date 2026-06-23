@@ -1,12 +1,16 @@
 import { createRequire } from "node:module";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { ChildSessionBridge, CoreBridge, PiLike, TaumelGlobal } from "./types.ts";
 import { coreCall, isRecord, stringArrayFromUnknown } from "./util.ts";
 import { createComposerController } from "./composer.ts";
 import { makeHost } from "./host.ts";
-import { registerGatewayTools } from "./tool-executor.ts";
+import { agentGatewayToolNames, registerGatewayTools, type GatewayToolRegistration } from "./tool-executor.ts";
 import { installGoalContinuationLoop, registerGatewayCommands } from "./command-executor.ts";
+import { toolNames } from "./tool-contracts.ts";
 
 function requireCoreBridge(core: CoreBridge | undefined): CoreBridge {
   if (!core) {
@@ -34,6 +38,93 @@ function syncSandboxToolActivation(pi: PiLike, core: CoreBridge, ctx?: unknown):
 
 function installSandboxToolActivation(pi: PiLike, core: CoreBridge): void {
   const sync = (_event: unknown, ctx?: unknown) => syncSandboxToolActivation(pi, core, ctx);
+  pi.on("session_start", sync);
+  pi.on("session_resume", sync);
+}
+
+function userAgentProfileDir(): string {
+  return process.env.TAUMEL_AGENT_PROFILE_DIR ?? join(homedir(), ".pi", "agent", "taumel", "agents");
+}
+
+function readUserAgentProfiles(): Record<string, unknown>[] {
+  const root = userAgentProfileDir();
+  if (!existsSync(root)) return [];
+  return readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
+    .map((entry) => {
+      const path = join(root, entry.name);
+      return { path, text: readFileSync(path, "utf8") };
+    });
+}
+
+function toolNameFromUnknown(value: unknown): string | undefined {
+  if (typeof value === "string" && value !== "") return value;
+  if (isRecord(value) && typeof value["name"] === "string" && value["name"] !== "") return value["name"];
+  return undefined;
+}
+
+function liveToolNames(pi: PiLike): string[] {
+  const fromRegistry =
+    typeof pi.getAllTools === "function"
+      ? pi.getAllTools().map(toolNameFromUnknown).filter((name): name is string => name !== undefined)
+      : [];
+  return [...new Set([...toolNames, ...fromRegistry])];
+}
+
+function removeActiveAgentTools(pi: PiLike): void {
+  if (typeof pi.getActiveTools !== "function" || typeof pi.setActiveTools !== "function") return;
+  const next = pi.getActiveTools().filter((name) => !agentGatewayToolNames.includes(name as typeof agentGatewayToolNames[number]));
+  pi.setActiveTools([...next]);
+}
+
+function notifyInvalidAgentProfileCatalog(result: Record<string, unknown>, ctx?: unknown): void {
+  const ui = isRecord(ctx) && isRecord(ctx["ui"]) ? ctx["ui"] : undefined;
+  const notify = isRecord(ui) ? ui["notify"] : undefined;
+  if (typeof notify !== "function") return;
+  const errors = Array.isArray(result["errors"])
+    ? result["errors"].filter((error): error is string => typeof error === "string" && error !== "")
+    : [];
+  const message = errors.length === 0
+    ? "Taumel agent profile catalog is invalid."
+    : `Taumel agent profile catalog is invalid:\n${errors.join("\n")}`;
+  notify.call(ui, message, "warning");
+}
+
+function refreshAgentProfileCatalog(
+  pi: PiLike,
+  core: CoreBridge,
+  settings: unknown,
+  tools: GatewayToolRegistration,
+  ctx?: unknown,
+): void {
+  const builtins =
+    isRecord(settings) &&
+    isRecord(settings["taumel"]) &&
+    isRecord(settings["taumel"]["agents"]) &&
+    isRecord(settings["taumel"]["agents"]["builtins"])
+      ? settings["taumel"]["agents"]["builtins"]
+      : {};
+  const result = coreCall(core, "refreshAgentProfileCatalog", [{
+    liveTools: liveToolNames(pi),
+    profiles: readUserAgentProfiles(),
+    builtinOverrides: builtins,
+  }]);
+  if (!isRecord(result)) throw new Error("Invalid Taumel agent profile catalog result");
+  if (result["valid"] !== true) {
+    removeActiveAgentTools(pi);
+    notifyInvalidAgentProfileCatalog(result, ctx);
+    return;
+  }
+  tools.registerAgentTools();
+}
+
+function installAgentProfileCatalog(
+  pi: PiLike,
+  core: CoreBridge,
+  settings: unknown,
+  tools: GatewayToolRegistration,
+): void {
+  const sync = (_event: unknown, ctx?: unknown) => refreshAgentProfileCatalog(pi, core, settings, tools, ctx);
   pi.on("session_start", sync);
   pi.on("session_resume", sync);
 }
@@ -82,9 +173,10 @@ export default async function taumel(pi: PiLike) {
   core.init(makeHost(pi));
   const childSessions = new Map<string, ChildSessionBridge>();
   const composer = await createComposerController(pi);
-  registerGatewayTools(pi, core, childSessions);
+  const gatewayTools = registerGatewayTools(pi, core, childSessions);
   registerGatewayCommands(pi, core, childSessions, composer);
   installGoalContinuationLoop(pi, core);
+  installAgentProfileCatalog(pi, core, composer?.settings, gatewayTools);
   installSandboxToolActivation(pi, core);
   installEnvironmentContext(pi, core);
 }

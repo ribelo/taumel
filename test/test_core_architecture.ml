@@ -2,7 +2,6 @@ module Capability = Taumel.Capability_profile
 module Child_session = Taumel.Child_session
 module Gateway = Taumel.Tool_gateway
 module Goal = Taumel.Goal
-module Input = Taumel.Request_user_input
 module Permissions = Taumel.Permissions
 module Ralph = Taumel.Ralph_loop
 module Sandbox = Taumel.Sandbox
@@ -335,12 +334,12 @@ let test_child_session_setup_entries () =
   assert_bool "child start active tools"
     (plan.active_tools = Some [ "exec_command" ]);
   assert_equal "missing child session id error"
-    "newSession did not expose a child session id"
+    "createAgentSession did not expose a child session id"
     Child_session.missing_session_identifier_error;
   let parent_profile =
     {
       Capability.default with
-      tools = Capability.of_list [ "exec_command"; "ralph_continue"; "agent" ];
+      tools = Capability.of_list [ "exec_command"; "ralph_continue"; "agent_spawn" ];
       no_sandbox_allowed = true;
     }
   in
@@ -378,7 +377,7 @@ let test_child_session_setup_entries () =
             (Capability.allow_tool profile "exec_command"
             && Capability.allow_tool profile "ralph_continue"
             && not (Capability.allow_tool profile "ralph_finish")
-            && not (Capability.allow_tool profile "agent"))
+            && not (Capability.allow_tool profile "agent_spawn"))
       | _ -> fail "ralph metadata" "expected active tools and profile")
   | _ -> fail "ralph metadata" "expected object metadata");
   assert_int "child start setup entry count" 2 (List.length plan.setup_entries);
@@ -457,7 +456,7 @@ let test_child_session_setup_entries () =
   | _ -> fail "empty child dispatch result" "expected object")
 
 let test_goal_state_machine () =
-  let goal = expect_ok "create goal" (Goal.create ~token_budget:10 ~thread_id:"t1" ~now:1 " ship " None) in
+  let goal = expect_ok "create goal" (Goal.create ~time_limit_seconds:5 ~thread_id:"t1" ~now:1 " ship " None) in
   assert_equal "objective trimmed" "ship" goal.objective;
   expect_error "unfinished create denied"
     (Goal.create ~thread_id:"t1" ~now:2 "second" (Some goal));
@@ -467,10 +466,9 @@ let test_goal_state_machine () =
       goal
   in
   assert_int "tokens accounted" 11 goal.tokens_used;
-  assert_bool "budget limited" (goal.status = Goal.Budget_limited);
+  assert_bool "time limited" (goal.status = Goal.Time_limited);
   let complete = expect_ok "complete goal" (Goal.update_status ~now:4 Goal.Complete (Some goal)) in
-  assert_bool "complete status" (complete.status = Goal.Complete);
-  assert_bool "completion report" (Goal.completion_budget_report complete <> None)
+  assert_bool "complete status" (complete.status = Goal.Complete)
 
 let test_ralph_ownership () =
   let task =
@@ -486,94 +484,6 @@ let test_ralph_ownership () =
     (Ralph.child_prompt task);
   let paused = expect_ok "max iterations pauses" (Ralph.ralph_continue (Ralph.Child "child") task) in
   assert_bool "paused at limit" (paused.status = Ralph.Paused)
-
-let test_request_user_input_validation () =
-  let request =
-    {
-      Input.questions =
-        [
-          {
-            id = "mode";
-            header = "Mode";
-            question = "Pick a mode";
-            options =
-              [
-                { label = "Fast"; description = "Use the fast path." };
-                { label = "Careful"; description = "Use the careful path." };
-              ];
-          };
-        ];
-      auto_resolution_ms = Some 60000;
-    }
-  in
-  expect_ok "valid request input" (Input.validate request);
-  (match Input.plan_ui ~ui_available:true ~now_ms:1000 request with
-  | Input.Ui_ask { prompts = [ prompt ]; deadline_ms = Some 61000 } ->
-      assert_equal "input prompt text" "Mode: Pick a mode" prompt.Input.prompt;
-      assert_equal "input placeholder" "Fast - Use the fast path. | Careful - Use the careful path."
-        prompt.Input.placeholder;
-      assert_equal "input default" "Fast" prompt.Input.default_answer
-  | _ -> fail "request input UI plan" "expected one prompt with deadline");
-  (match Input.plan_ui ~ui_available:false ~now_ms:1000 request with
-  | Input.Ui_unavailable -> ()
-  | _ -> fail "request input unavailable plan" "expected unavailable");
-  let invalid = { request with auto_resolution_ms = Some 1 } in
-  expect_error "invalid timeout" (Input.validate invalid);
-  let answered =
-    Input.result_of_ui_outcomes
-      [
-        {
-          Input.id = "mode";
-          answer = Some "Careful";
-          default_answer = "Fast";
-          timed_out = false;
-          cancelled = false;
-        };
-      ]
-  in
-  (match answered with
-  | Input.Answered [ answer ] ->
-      assert_equal "answered value" "Careful" answer.Input.value
-  | _ -> fail "request input answered" "expected answered result");
-  let auto_resolved =
-    Input.result_of_ui_outcomes
-      [
-        {
-          Input.id = "mode";
-          answer = None;
-          default_answer = "Fast";
-          timed_out = true;
-          cancelled = false;
-        };
-      ]
-  in
-  (match auto_resolved with
-  | Input.Auto_resolved [ answer ] ->
-      assert_equal "auto default answer" "Fast" answer.Input.value
-  | _ -> fail "request input auto resolved" "expected auto-resolved result");
-  let cancelled =
-    Input.result_of_ui_outcomes
-      [
-        {
-          Input.id = "mode";
-          answer = Some "Careful";
-          default_answer = "Fast";
-          timed_out = false;
-          cancelled = false;
-        };
-        {
-          Input.id = "confirm";
-          answer = None;
-          default_answer = "Yes";
-          timed_out = false;
-          cancelled = true;
-        };
-      ]
-  in
-  match cancelled with
-  | Input.Cancelled [ answer ] ->
-      assert_equal "cancel keeps previous answers" "Careful" answer.Input.value
-  | _ -> fail "request input cancelled" "expected cancelled result"
 
 let test_thread_tools () =
   let scans =
@@ -756,19 +666,23 @@ let test_tool_catalog_scope () =
       "exec_command";
       "write_stdin";
       "apply_patch";
-      "agent";
+      "agent_spawn";
+      "agent_send";
+      "agent_wait";
+      "agent_list";
+      "agent_close";
+      "agent_profiles";
       "get_goal";
       "create_goal";
       "update_goal";
       "ralph_continue";
       "ralph_finish";
-      "request_user_input";
       "find_thread";
       "read_thread";
     ];
   List.iter
     (fun name -> assert_bool ("omitted tool " ^ name) (not (Tool_catalog.has_tool name)))
-    [ "backlog"; "memory"; "skill_manage"; "dream_finish" ];
+    [ "backlog"; "memory"; "skill_manage"; "dream_finish"; "request_user_input" ];
   assert_bool "normal active tools hide scoped controls"
     (Tool_catalog.rewrite_active_tools ~provider:"openai-codex"
        [
@@ -776,7 +690,6 @@ let test_tool_catalog_scope () =
          "write";
          "usage";
          "find_thread";
-         "request_user_input";
          "user_detection_tool";
          "ralph_continue";
          "ralph_finish";
@@ -976,7 +889,6 @@ let () =
   test_child_session_setup_entries ();
   test_goal_state_machine ();
   test_ralph_ownership ();
-  test_request_user_input_validation ();
   test_thread_tools ();
   test_usage_openai_rendering ();
   test_tool_catalog_scope ();

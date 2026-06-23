@@ -22,7 +22,6 @@ establish a concrete task order.
 - Sub-agents.
 - Goal.
 - Ralph-loop.
-- Request user input.
 - Thread tools.
 - Usage.
 - Shared infrastructure.
@@ -55,11 +54,10 @@ currently has shared utilities, schemas, services, or UI paths for them.
 6. Sub-agents.
 7. Goal.
 8. Ralph-loop.
-9. Request user input.
-10. Thread tools.
-11. Usage.
-12. Footer integration updates.
-13. Exa through Eta HTTP in the js_of_ocaml target.
+9. Thread tools.
+10. Usage.
+11. Footer integration updates.
+12. Exa through Eta HTTP in the js_of_ocaml target.
 
 ## Acceptance
 

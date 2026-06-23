@@ -12,10 +12,11 @@
     "build:ocaml": "nix develop -c sh scripts/build-ocaml.sh",
     "test:ocaml": "nix develop -c sh -c 'node scripts/generate-contract-bindings.mjs && dune runtest'",
     "smoke:artifact": "nix develop -c node test/smoke_artifact.mjs",
+    "smoke:tool-contracts": "bun test/smoke_tool_contracts.mjs",
     "smoke:exa-contracts": "bun test/smoke_exa_contracts.mjs",
     "smoke:tool-renderers": "bun test/smoke_tool_renderers.mjs",
     "smoke:entrypoint": "bun test/smoke_entrypoint.mjs",
-    "gate": "npm run build:ocaml && npm run test:ocaml && npm run smoke:artifact && npm run smoke:exa-contracts && npm run smoke:tool-renderers && npm run smoke:entrypoint"
+    "gate": "npm run build:ocaml && npm run test:ocaml && npm run smoke:artifact && npm run smoke:tool-contracts && npm run smoke:exa-contracts && npm run smoke:tool-renderers && npm run smoke:entrypoint"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.79.9",

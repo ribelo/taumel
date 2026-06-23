@@ -16,6 +16,7 @@ type snapshot = {
   total_cost : float;
   context_percent : float;
   context_window : float;
+  goal_status : string option;
 }
 
 val empty_git_delta : git_delta

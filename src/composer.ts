@@ -4,7 +4,7 @@ import { visibleWidth, type EditorTheme, type TUI } from "@earendil-works/pi-tui
 import type { ComposerController, CoreBridge, PiLike } from "./types.ts";
 import {
   defaultTaumelGlobalSettings,
-  readTaumelGlobalSettings,
+  ensureTaumelGlobalSettings,
   requireTaumelGlobalSettings,
   taumelGlobalSettingsPath,
   writeTaumelGlobalSettings,
@@ -120,7 +120,7 @@ export async function createComposerController(pi: PiLike): Promise<ComposerCont
   const path = taumelGlobalSettingsPath();
   const controller: ComposerController = {
     path,
-    settings: await readTaumelGlobalSettings(path),
+    settings: await ensureTaumelGlobalSettings(path),
   };
   const install = (_event: unknown, ctx?: unknown) => installComposerForContext(controller, ctx);
   pi.on("session_start", install);
