@@ -569,6 +569,26 @@ let test_agent_wait_state () =
          ~run_id:"finder-a1-run-1" ~status:Subagents.Run_completed
          ~final_output:"done" ())
   in
+  (match Subagents.find_run completed "finder-a1-run-1" with
+  | Some run ->
+      assert_bool "completion starts unnotified"
+        (not run.run_background_notified)
+  | None -> fail "completion run" "expected run");
+  let notified =
+    expect_ok "record background notification"
+      (Subagents.record_background_notification completed
+         ~run_id:"finder-a1-run-1")
+  in
+  let decoded_notified =
+    expect_ok "background notification codec"
+      (Subagents.session_state_codec.decode
+         (Subagents.session_state_codec.encode notified))
+  in
+  (match Subagents.find_run decoded_notified "finder-a1-run-1" with
+  | Some run ->
+      assert_bool "codec preserves background notification"
+        run.run_background_notified
+  | None -> fail "notified run" "expected run");
   let waited =
     Subagents.wait_for_selector completed ~parent_session_id:"parent"
       (Subagents.Wait_run_ids [ "finder-a1-run-1" ])
@@ -583,7 +603,10 @@ let test_agent_wait_state () =
   assert_bool "terminal wait has no active run ids"
     (waited.wait_active_run_ids = []);
   (match Subagents.find_run waited.wait_state "finder-a1-run-1" with
-  | Some run -> assert_bool "wait marks run consumed" run.run_consumed
+  | Some run ->
+      assert_bool "wait marks run consumed" run.run_consumed;
+      assert_bool "wait does not mark background notification"
+        (not run.run_background_notified)
   | None -> fail "wait consumed run" "expected run");
   let other_spawned =
     expect_ok "wait other spawn"

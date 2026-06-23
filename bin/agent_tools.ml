@@ -303,6 +303,21 @@ let record_dispatch_completion params ctx =
               in
               ok_obj fields))
 
+let record_background_notification params ctx =
+  let prepared = Unsafe.get params "prepared" in
+  match Taumel.Shared.trim_non_empty (get_string prepared "run_id") with
+  | None -> error_obj "missing agent run id"
+  | Some run_id -> (
+      Session_sync.load_agent_state ctx;
+      match
+        Taumel.Subagents.record_background_notification !agent_state ~run_id
+      with
+      | Error message -> error_obj message
+      | Ok state ->
+          agent_state := state;
+          Session_sync.save_agent_state ctx;
+          ok_obj [ ("ok", js_bool true) ])
+
 let record_child_session_start params ctx =
   let prepared = Unsafe.get params "prepared" in
   let bridge = Unsafe.get params "bridge" in
@@ -534,6 +549,26 @@ let run_elapsed_seconds ~now (run : Taumel.Subagents.agent_run) =
   in
   max 0 (ended - started)
 
+let compact_text max_length value =
+  let normalized =
+    value |> String.map (function '\n' | '\r' | '\t' -> ' ' | char -> char)
+    |> String.trim
+  in
+  if String.length normalized <= max_length then normalized
+  else String.sub normalized 0 (max_length - 3) ^ "..."
+
+let terminal_result_summary (run : Taumel.Subagents.agent_run) =
+  if Taumel.Subagents.active_run_status run.run_status then None
+  else
+    match run.run_final_output with
+    | Some output when String.trim output <> "" ->
+        Some ("final=" ^ compact_text 240 output)
+    | _ -> (
+        match run.run_reason with
+        | Some reason when String.trim reason <> "" ->
+            Some ("error=" ^ compact_text 240 reason)
+        | _ -> None)
+
 let js_run ~now (run : Taumel.Subagents.agent_run) =
   Unsafe.obj
     [|
@@ -545,6 +580,7 @@ let js_run ~now (run : Taumel.Subagents.agent_run) =
       ("reason", js_option_string run.run_reason);
       ("finalOutput", js_option_string run.run_final_output);
       ("consumed", js_bool run.run_consumed);
+      ("backgroundNotified", js_bool run.run_background_notified);
       ("createdAt", js_number (float_of_int run.run_created_at));
       ("startedAt", js_option_int run.run_started_at);
       ("completedAt", js_option_int run.run_completed_at);
@@ -579,7 +615,7 @@ let js_agent_identity ~now state (identity : Taumel.Subagents.agent_identity) =
         | Some run -> inject (js_run ~now run) );
     |]
 
-let agent_identity_summary state identity =
+let agent_identity_summary ~now state identity =
   let lifecycle =
     if Taumel.Subagents.identity_open identity then "open" else "closed"
   in
@@ -587,7 +623,19 @@ let agent_identity_summary state identity =
     match Taumel.Subagents.latest_run state identity.identity_agent_id with
     | None -> "no runs"
     | Some run ->
-        run.run_id ^ " [" ^ Taumel.Subagents.run_status_to_string run.run_status ^ "]"
+        let fields =
+          [
+            run.run_id;
+            "[" ^ Taumel.Subagents.run_status_to_string run.run_status ^ "]";
+            "elapsed=" ^ string_of_int (run_elapsed_seconds ~now run) ^ "s";
+          ]
+        in
+        let fields =
+          match terminal_result_summary run with
+          | None -> fields
+          | Some result -> fields @ [ result ]
+        in
+        String.concat " " fields
   in
   Printf.sprintf "%s [%s] profile=%s latest=%s" identity.identity_agent_id
     lifecycle identity.identity_profile_name run
@@ -605,7 +653,8 @@ let render_agent_list ~owner_id ~include_closed =
     match identities with
     | [] -> "No agents."
     | identities ->
-        String.concat "\n" (List.map (agent_identity_summary state) identities)
+        String.concat "\n"
+          (List.map (agent_identity_summary ~now state) identities)
   in
   ok_obj
     [
@@ -630,6 +679,7 @@ let js_wait_item (item : Taumel.Subagents.wait_item) =
       ("finalOutput", js_option_string item.wait_final_output);
       ("error", js_option_string item.wait_error);
       ("consumed", js_bool item.wait_consumed);
+      ("backgroundNotified", js_bool item.wait_background_notified);
     |]
 
 let js_wait_poll_params run_ids =
@@ -1114,8 +1164,9 @@ let agent_runs_summary ?(include_closed = false) owner_id =
   match agent_run_identities ~include_closed owner_id with
   | [] -> "No agents."
   | identities ->
+      let now = now_seconds () in
       String.concat "\n"
-        (List.map (agent_identity_summary !agent_state) identities)
+        (List.map (agent_identity_summary ~now !agent_state) identities)
 
 let latest_run_status state identity =
   Option.map

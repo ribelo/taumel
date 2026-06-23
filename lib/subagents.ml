@@ -953,6 +953,7 @@ type agent_run = {
   run_reason : string option;
   run_final_output : string option;
   run_consumed : bool;
+  run_background_notified : bool;
   run_created_at : int;
   run_started_at : int option;
   run_completed_at : int option;
@@ -988,6 +989,7 @@ type wait_item = {
   wait_final_output : string option;
   wait_error : string option;
   wait_consumed : bool;
+  wait_background_notified : bool;
 }
 
 type wait_result = {
@@ -1120,6 +1122,7 @@ let create_run ~now ~agent_id ?description objective =
       run_reason = None;
       run_final_output = None;
       run_consumed = false;
+      run_background_notified = false;
       run_created_at = now;
       run_started_at = Some now;
       run_completed_at = None;
@@ -1145,6 +1148,7 @@ let create_next_run state ~now ~agent_id ?description objective =
       run_reason = None;
       run_final_output = None;
       run_consumed = false;
+      run_background_notified = false;
       run_created_at = now;
       run_started_at = Some now;
       run_completed_at = None;
@@ -1422,10 +1426,20 @@ let record_run_completion state ~now ~run_id ~status ?reason ?final_output () =
             run_status = status;
             run_reason = reason;
             run_final_output = final_output;
+            run_background_notified = false;
             run_completed_at = Some now;
           }
         in
         Ok { state with runs = replace_run updated state.runs }
+
+let record_background_notification state ~run_id =
+  match find_run state run_id with
+  | None -> Error ("unknown run: " ^ run_id)
+  | Some run when active_run_status run.run_status ->
+      Error "background notification requires a terminal run"
+  | Some run ->
+      let updated = { run with run_background_notified = true } in
+      Ok { state with runs = replace_run updated state.runs }
 
 let run_owned_by_parent state ~parent_session_id run =
   match find_identity state run.run_agent_id with
@@ -1485,6 +1499,7 @@ let wait_item_of_run run =
     wait_final_output = run.run_final_output;
     wait_error = run.run_reason;
     wait_consumed = run.run_consumed || terminal_run run;
+    wait_background_notified = run.run_background_notified;
   }
 
 let no_active_wait_item agent_id =
@@ -1495,6 +1510,7 @@ let no_active_wait_item agent_id =
     wait_final_output = None;
     wait_error = None;
     wait_consumed = false;
+    wait_background_notified = false;
   }
 
 let unknown_run_wait_item run_id =
@@ -1505,6 +1521,7 @@ let unknown_run_wait_item run_id =
     wait_final_output = None;
     wait_error = Some ("unknown run: " ^ run_id);
     wait_consumed = false;
+    wait_background_notified = false;
   }
 
 let not_owned_run_wait_item run =
@@ -1515,6 +1532,7 @@ let not_owned_run_wait_item run =
     wait_final_output = None;
     wait_error = Some ("run is not owned by this session: " ^ run.run_id);
     wait_consumed = false;
+    wait_background_notified = false;
   }
 
 let wait_item_message item =
@@ -1859,6 +1877,7 @@ let run_to_json run =
       ("reason", string_option_json run.run_reason);
       ("final_output", string_option_json run.run_final_output);
       ("consumed", Shared.Bool run.run_consumed);
+      ("background_notified", Shared.Bool run.run_background_notified);
       ("created_at", int_json run.run_created_at);
       ("started_at", int_option_json run.run_started_at);
       ("completed_at", int_option_json run.run_completed_at);
@@ -1894,6 +1913,9 @@ let run_of_json path json =
   let* run_reason = Shared.json_optional_string path fields "reason" in
   let* run_final_output = Shared.json_optional_string path fields "final_output" in
   let* run_consumed = Shared.json_bool_default path fields "consumed" false in
+  let* run_background_notified =
+    Shared.json_bool_default path fields "background_notified" false
+  in
   let* run_created_at = Shared.json_required_int path fields "created_at" in
   let* run_started_at =
     Result.map (Option.map int_of_float)
@@ -1914,6 +1936,7 @@ let run_of_json path json =
       run_reason;
       run_final_output;
       run_consumed;
+      run_background_notified;
       run_created_at;
       run_started_at;
       run_completed_at;

@@ -80,13 +80,41 @@ function removeActiveAgentTools(pi: PiLike): string[] {
   return [...new Set(removed)];
 }
 
-function restoreActiveAgentTools(pi: PiLike, tools: Set<string>): void {
-  if (tools.size === 0 || typeof pi.getActiveTools !== "function" || typeof pi.setActiveTools !== "function") return;
+function childSessionMetadataFromContext(ctx: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(ctx) || !isRecord(ctx["sessionManager"])) return undefined;
+  const getEntries = ctx["sessionManager"]["getEntries"];
+  if (typeof getEntries !== "function") return undefined;
+  try {
+    const entries = getEntries.call(ctx["sessionManager"]);
+    if (!Array.isArray(entries)) return undefined;
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const entry = entries[index];
+      if (!isRecord(entry) || entry["type"] !== "custom" || entry["customType"] !== "taumel.childSession") {
+        continue;
+      }
+      return isRecord(entry["data"]) ? entry["data"] : undefined;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+function isSubagentContext(ctx: unknown): boolean {
+  const metadata = childSessionMetadataFromContext(ctx);
+  if (metadata === undefined) return false;
+  return metadata["subagent"] === true || metadata["kind"] === "agent" || metadata["kind"] === "ralph";
+}
+
+function activateAgentTools(pi: PiLike, restoredTools: Set<string>): void {
+  if (typeof pi.getActiveTools !== "function" || typeof pi.setActiveTools !== "function") return;
   const current = pi.getActiveTools();
-  const restored = [...tools].filter((name) => agentGatewayToolNames.includes(name as typeof agentGatewayToolNames[number]));
-  if (restored.length === 0) return;
-  pi.setActiveTools([...new Set([...current, ...restored])]);
-  tools.clear();
+  const restored = [...restoredTools].filter((name) => agentGatewayToolNames.includes(name as typeof agentGatewayToolNames[number]));
+  const next = [...new Set([...current, ...restored, ...agentGatewayToolNames])];
+  if (next.length !== current.length || next.some((name, index) => current[index] !== name)) {
+    pi.setActiveTools(next);
+  }
+  restoredTools.clear();
 }
 
 function notifyInvalidAgentProfileCatalog(result: Record<string, unknown>, ctx?: unknown): void {
@@ -129,7 +157,7 @@ function refreshAgentProfileCatalog(
     return;
   }
   tools.registerAgentTools();
-  restoreActiveAgentTools(pi, removedActiveAgentTools);
+  if (!isSubagentContext(ctx)) activateAgentTools(pi, removedActiveAgentTools);
 }
 
 function installAgentProfileCatalog(

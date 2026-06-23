@@ -72,6 +72,8 @@ let core_call name_js args_js =
   | "finishAgentAction" -> Agent_tools.finish_action (arg 0) (arg 1)
   | "recordAgentDispatchCompletion" ->
       Agent_tools.record_dispatch_completion (arg 0) (arg 1)
+  | "recordAgentBackgroundNotification" ->
+      Agent_tools.record_background_notification (arg 0) (arg 1)
   | "recordAgentChildSessionStart" ->
       Agent_tools.record_child_session_start (arg 0) (arg 1)
   | "recordAgentActiveToolsSnapshot" ->

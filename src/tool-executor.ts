@@ -156,8 +156,9 @@ function completionFromAgentEndEvent(event: unknown): Record<string, unknown> | 
   const status =
     errorMessage !== undefined || stopReason === "error" ? "failed" :
     stopReason === "cancelled" || stopReason === "aborted" ? "cancelled" :
+    stopReason === "timed_out" ? "timed_out" :
     "completed";
-  const reason = errorMessage ?? (status === "cancelled" && stopReason !== "" ? stopReason : undefined);
+  const reason = errorMessage ?? (status !== "completed" && stopReason !== "" ? stopReason : undefined);
   return {
     status,
     ...(finalOutput !== undefined ? { finalOutput } : {}),
@@ -712,7 +713,7 @@ function dispatchCompletionFromHostResult(hostResult: unknown): Record<string, u
   const stopReason = typeof hostResult["stopReason"] === "string" ? hostResult["stopReason"] : "";
   const status = rawStatus === "failed" || hostResult["isError"] === true || stopReason === "error" ? "failed" :
     rawStatus === "cancelled" || rawStatus === "aborted" || stopReason === "cancelled" || stopReason === "aborted" ? "cancelled" :
-    rawStatus === "timed_out" ? "timed_out" :
+    rawStatus === "timed_out" || stopReason === "timed_out" ? "timed_out" :
     "completed";
   const reason =
     typeof hostResult["reason"] === "string" ? hostResult["reason"] :
@@ -741,8 +742,8 @@ function dispatchResultWithHostCompletion(
 async function deliverAgentCompletion(
   pi: PiLike,
   result: Record<string, unknown>,
-): Promise<void> {
-  if (result["notify"] !== true) return;
+): Promise<boolean> {
+  if (result["notify"] !== true) return false;
   const content = stringField(result, "content");
   const deliverAs = stringField(result, "deliverAs");
   if (typeof pi.sendMessage === "function") {
@@ -754,10 +755,23 @@ async function deliverAgentCompletion(
       triggerTurn: result["triggerTurn"] === true,
       deliverAs,
     });
-    return;
+    return true;
   }
   if (typeof pi.sendUserMessage === "function") {
     await pi.sendUserMessage(content, { deliverAs });
+    return true;
+  }
+  return false;
+}
+
+function recordAgentBackgroundNotification(
+  core: CoreBridge,
+  prepared: Record<string, unknown>,
+  ctx: unknown,
+): void {
+  const result = coreCall(core, "recordAgentBackgroundNotification", [{ prepared }, ctx]);
+  if (!isRecord(result) || result["ok"] !== true) {
+    throw new Error("Invalid Taumel agent background notification update");
   }
 }
 
@@ -777,7 +791,9 @@ async function recordAgentDispatchCompletion(
   if (!isRecord(result) || result["ok"] !== true) {
     throw new Error("Invalid Taumel agent completion update");
   }
-  await deliverAgentCompletion(pi, result);
+  if (await deliverAgentCompletion(pi, result)) {
+    recordAgentBackgroundNotification(core, prepared, ctx);
+  }
 }
 
 function recordAgentChildSessionStart(

@@ -198,12 +198,14 @@ const pi = {
       childDispatchCalls.push({ sessionId: childId, method, content, options });
       const response = await childSendResponses.shift();
       if (response !== undefined) {
-        const message = response.agentEndMessage ?? assistantMessage(
-          response.output ?? response.finalOutput ?? "stop",
-          response.errorMessage,
-        );
-        for (const listener of listeners) {
-          listener({ type: "agent_end", messages: [message] });
+        if (response.suppressAgentEndEvent !== true) {
+          const message = response.agentEndMessage ?? assistantMessage(
+            response.output ?? response.finalOutput ?? "stop",
+            response.errorMessage,
+          );
+          for (const listener of listeners) {
+            listener({ type: "agent_end", messages: [message] });
+          }
         }
       }
       return response;
@@ -373,6 +375,11 @@ try {
   if (tools.has("agent")) {
     throw new Error("legacy agent tool must not be registered");
   }
+  for (const name of ["agent_spawn", "agent_send", "agent_wait", "agent_list", "agent_close", "agent_profiles"]) {
+    if (!activeTools.includes(name)) {
+      throw new Error(`valid agent catalog did not activate model-facing agent tool ${name}: ${JSON.stringify(activeTools)}`);
+    }
+  }
   for (const name of ["exec_command", "write_stdin"]) {
     assert(typeof tools.get(name).renderCall === "function" && typeof tools.get(name).renderResult === "function", `${name} did not register compact shell renderers`);
   }
@@ -539,13 +546,16 @@ try {
     throw new Error(`goal agent_end queued after complete: ${JSON.stringify(sentMessages)}`);
   }
 
-  if (activeToolUpdates.length !== 1) {
+  if (activeToolUpdates.length === 0) {
     throw new Error(`active tool sync did not run after session_start: ${JSON.stringify(activeToolUpdates)}`);
   }
+  const startupActiveTools = activeToolUpdates.at(-1) ?? [];
   if (
-    activeToolUpdates[0].includes("write") ||
-    activeToolUpdates[0].includes("usage") ||
-    !activeToolUpdates[0].includes("apply_patch")
+    startupActiveTools.includes("write") ||
+    startupActiveTools.includes("usage") ||
+    !startupActiveTools.includes("apply_patch") ||
+    !startupActiveTools.includes("agent_spawn") ||
+    !startupActiveTools.includes("agent_wait")
   ) {
     throw new Error(`openai active tool sync did not select apply_patch: ${JSON.stringify(activeToolUpdates)}`);
   }
@@ -1232,6 +1242,66 @@ try {
     ctx,
   );
 
+  childSendResponses.push({ stopReason: "timed_out", suppressAgentEndEvent: true });
+  const hostTimeoutSpawn = await tools.get("agent_spawn").execute(
+    "agent-host-timeout-spawn",
+    { profile: "finder", objective: "host timeout only", agent_id: "host-timeout-worker" },
+    undefined,
+    undefined,
+    ctx,
+  );
+  const hostTimeout = await waitFor(() => {
+    const state = parentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
+    const run = state?.data?.runs?.find((candidate) => candidate.run_id === "host-timeout-worker-run-1");
+    return run?.status === "timed_out" ? { state, run } : undefined;
+  }, "host-result child timeout stopReason was not recorded");
+  if (
+    hostTimeoutSpawn.details?.ok !== true ||
+    hostTimeout.run?.reason !== "timed_out"
+  ) {
+    throw new Error(`agent_spawn classified host-result timed_out stopReason incorrectly: ${JSON.stringify({ hostTimeoutSpawn, hostTimeout })}`);
+  }
+  await tools.get("agent_close").execute(
+    "agent-host-timeout-close",
+    { agent_ids: ["host-timeout-worker"] },
+    undefined,
+    undefined,
+    ctx,
+  );
+
+  childSendResponses.push({
+    agentEndMessage: {
+      role: "assistant",
+      content: [],
+      stopReason: "timed_out",
+    },
+  });
+  const eventTimeoutSpawn = await tools.get("agent_spawn").execute(
+    "agent-event-timeout-spawn",
+    { profile: "finder", objective: "event timeout only", agent_id: "event-timeout-worker" },
+    undefined,
+    undefined,
+    ctx,
+  );
+  const eventTimeout = await waitFor(() => {
+    const state = parentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
+    const run = state?.data?.runs?.find((candidate) => candidate.run_id === "event-timeout-worker-run-1");
+    return run?.status === "timed_out" ? { state, run } : undefined;
+  }, "agent_end child timeout stopReason was not recorded");
+  if (
+    eventTimeoutSpawn.details?.ok !== true ||
+    eventTimeout.run?.reason !== "timed_out"
+  ) {
+    throw new Error(`agent_spawn classified agent_end timed_out stopReason incorrectly: ${JSON.stringify({ eventTimeoutSpawn, eventTimeout })}`);
+  }
+  await tools.get("agent_close").execute(
+    "agent-event-timeout-close",
+    { agent_ids: ["event-timeout-worker"] },
+    undefined,
+    undefined,
+    ctx,
+  );
+
   nextAgentSessionResult = {};
   const failedDispatchSpawn = await tools.get("agent_spawn").execute(
     "agent-dispatch-failed-spawn",
@@ -1410,6 +1480,19 @@ try {
   ) {
     throw new Error(`agent_wait did not surface textless terminal child error: ${JSON.stringify(terminalNoOutputWait)}`);
   }
+  const terminalErrorList = await tools.get("agent_list").execute(
+    "agent-list-terminal-error",
+    {},
+    undefined,
+    undefined,
+    ctx,
+  );
+  if (
+    !terminalErrorList.content?.[0]?.text?.includes("terminal-no-output-worker-run-1 [failed] elapsed=") ||
+    !terminalErrorList.content?.[0]?.text?.includes("error=provider returned error without assistant output")
+  ) {
+    throw new Error(`agent_list did not expose terminal error in model-visible text: ${JSON.stringify(terminalErrorList)}`);
+  }
   await tools.get("agent_close").execute(
     "agent-terminal-no-output-close",
     { agent_ids: ["terminal-no-output-worker"] },
@@ -1480,7 +1563,8 @@ try {
   );
   if (
     listedAgents.details?.agents?.find((agent) => agent.agent_id === "smoke-worker")?.run_state !== "running" ||
-    typeof listedAgents.details?.agents?.find((agent) => agent.agent_id === "smoke-worker")?.latestRun?.elapsedSeconds !== "number"
+    typeof listedAgents.details?.agents?.find((agent) => agent.agent_id === "smoke-worker")?.latestRun?.elapsedSeconds !== "number" ||
+    !listedAgents.content?.[0]?.text?.includes("smoke-worker-run-1 [running] elapsed=")
   ) {
     throw new Error(`agent_list did not report durable run metadata: ${JSON.stringify(listedAgents)}`);
   }
@@ -1679,6 +1763,19 @@ try {
   ) {
     throw new Error(`agent_send did not persist host-returned final output: ${JSON.stringify({ completedSend, completedAgentsState: completed.state })}`);
   }
+  const completedList = await tools.get("agent_list").execute(
+    "agent-list-completed-run",
+    {},
+    undefined,
+    undefined,
+    ctx,
+  );
+  if (
+    !completedList.content?.[0]?.text?.includes("smoke-worker-run-2 [completed] elapsed=") ||
+    !completedList.content?.[0]?.text?.includes("final=final smoke summary")
+  ) {
+    throw new Error(`agent_list did not expose terminal final output in model-visible text: ${JSON.stringify(completedList)}`);
+  }
   const completionMessage = await waitFor(() => {
     const message = sentMessages.at(-1);
     return sentMessages.length === completionMessageCount + 1 &&
@@ -1697,6 +1794,14 @@ try {
   ) {
     throw new Error(`agent completion was not delivered visibly to the parent: ${JSON.stringify(sentMessages.slice(completionMessageCount))}`);
   }
+  const backgroundNotified = await waitFor(() => {
+    const state = parentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
+    const run = state?.data?.runs?.find((candidate) => candidate.run_id === "smoke-worker-run-2");
+    return run?.background_notified === true ? { state, run } : undefined;
+  }, "agent completion delivery did not persist background notification metadata");
+  if (backgroundNotified.run?.consumed !== false) {
+    throw new Error(`background completion notification should not mark the run consumed: ${JSON.stringify(backgroundNotified)}`);
+  }
   const waitCompleted = await tools.get("agent_wait").execute(
     "agent-wait-completed-run",
     { run_ids: ["smoke-worker-run-2"], timeout_seconds: 0 },
@@ -1707,6 +1812,7 @@ try {
   if (
     waitCompleted.details?.runs?.find((run) => run.run_id === "smoke-worker-run-2")?.finalOutput !== "final smoke summary" ||
     waitCompleted.details?.runs?.find((run) => run.run_id === "smoke-worker-run-2")?.consumed !== true ||
+    waitCompleted.details?.runs?.find((run) => run.run_id === "smoke-worker-run-2")?.backgroundNotified !== true ||
     !waitCompleted.content?.[0]?.text?.includes("final smoke summary")
   ) {
     throw new Error(`agent_wait did not expose completed final output: ${JSON.stringify(waitCompleted)}`);
