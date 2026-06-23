@@ -71,10 +71,22 @@ function liveToolNames(pi: PiLike): string[] {
   return [...new Set([...toolNames, ...fromRegistry])];
 }
 
-function removeActiveAgentTools(pi: PiLike): void {
-  if (typeof pi.getActiveTools !== "function" || typeof pi.setActiveTools !== "function") return;
-  const next = pi.getActiveTools().filter((name) => !agentGatewayToolNames.includes(name as typeof agentGatewayToolNames[number]));
+function removeActiveAgentTools(pi: PiLike): string[] {
+  if (typeof pi.getActiveTools !== "function" || typeof pi.setActiveTools !== "function") return [];
+  const current = pi.getActiveTools();
+  const removed = current.filter((name) => agentGatewayToolNames.includes(name as typeof agentGatewayToolNames[number]));
+  const next = current.filter((name) => !agentGatewayToolNames.includes(name as typeof agentGatewayToolNames[number]));
   pi.setActiveTools([...next]);
+  return [...new Set(removed)];
+}
+
+function restoreActiveAgentTools(pi: PiLike, tools: Set<string>): void {
+  if (tools.size === 0 || typeof pi.getActiveTools !== "function" || typeof pi.setActiveTools !== "function") return;
+  const current = pi.getActiveTools();
+  const restored = [...tools].filter((name) => agentGatewayToolNames.includes(name as typeof agentGatewayToolNames[number]));
+  if (restored.length === 0) return;
+  pi.setActiveTools([...new Set([...current, ...restored])]);
+  tools.clear();
 }
 
 function notifyInvalidAgentProfileCatalog(result: Record<string, unknown>, ctx?: unknown): void {
@@ -95,6 +107,7 @@ function refreshAgentProfileCatalog(
   core: CoreBridge,
   settings: unknown,
   tools: GatewayToolRegistration,
+  removedActiveAgentTools: Set<string>,
   ctx?: unknown,
 ): void {
   const builtins =
@@ -111,11 +124,12 @@ function refreshAgentProfileCatalog(
   }]);
   if (!isRecord(result)) throw new Error("Invalid Taumel agent profile catalog result");
   if (result["valid"] !== true) {
-    removeActiveAgentTools(pi);
+    for (const name of removeActiveAgentTools(pi)) removedActiveAgentTools.add(name);
     notifyInvalidAgentProfileCatalog(result, ctx);
     return;
   }
   tools.registerAgentTools();
+  restoreActiveAgentTools(pi, removedActiveAgentTools);
 }
 
 function installAgentProfileCatalog(
@@ -124,7 +138,8 @@ function installAgentProfileCatalog(
   settings: unknown,
   tools: GatewayToolRegistration,
 ): void {
-  const sync = (_event: unknown, ctx?: unknown) => refreshAgentProfileCatalog(pi, core, settings, tools, ctx);
+  const removedActiveAgentTools = new Set<string>();
+  const sync = (_event: unknown, ctx?: unknown) => refreshAgentProfileCatalog(pi, core, settings, tools, removedActiveAgentTools, ctx);
   pi.on("session_start", sync);
   pi.on("session_resume", sync);
 }

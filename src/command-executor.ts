@@ -8,6 +8,7 @@ import type {
 import { executeComposerCommand } from "./composer.ts";
 import {
   applyChildSessionUpdate,
+  childSessionCacheKeyScopeFromContext,
   createChildSession,
   executeOpenAiUsageWithHostAuth,
   sendToChildSession,
@@ -209,6 +210,7 @@ async function executeCommandAction(
 async function applyChildSessionUpdatesFromCommandResult(
   childSessions: Map<string, ChildSessionBridge>,
   result: unknown,
+  keyScope?: string,
 ): Promise<void> {
   if (!isRecord(result)) return;
   const details = isRecord(result["details"]) ? result["details"] : undefined;
@@ -217,7 +219,7 @@ async function applyChildSessionUpdatesFromCommandResult(
     : [];
   for (const update of updates) {
     if (isRecord(update)) {
-      await applyChildSessionUpdate(childSessions, update, undefined);
+      await applyChildSessionUpdate(childSessions, update, undefined, keyScope);
     }
   }
 }
@@ -242,7 +244,11 @@ export async function executeGatewayCommand(
 
   if (stringField(plan, "action") !== "command_child_session") {
     const result = await executeCommandAction(pi, core, callCore(ctx), ctx);
-    await applyChildSessionUpdatesFromCommandResult(childSessions, result);
+    await applyChildSessionUpdatesFromCommandResult(
+      childSessions,
+      result,
+      name === "agent-runs" ? childSessionCacheKeyScopeFromContext(ctx) : undefined,
+    );
     await executeGoalCommandSideEffects(pi, core, name, result, ctx);
     return result;
   }

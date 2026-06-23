@@ -166,8 +166,14 @@ let approval_policy_of_profile = function
   | Capability_profile.Untrusted -> Untrusted
 
 let config_of_profile ?(workspace_roots = []) ?(network_mode = Network_disabled)
-    ?(no_sandbox = false) ?(subagent = false) profile =
+    ?(no_sandbox = false) ?(subagent = false)
+    (profile : Capability_profile.t) =
   if subagent && no_sandbox then Error "sub-agents cannot enable --no-sandbox"
+  else if
+    subagent
+    && profile.Capability_profile.sandbox_preset
+       = Capability_profile.Danger_full_access
+  then Error "danger-full-access is not allowed for subagents"
   else if no_sandbox && not profile.Capability_profile.no_sandbox_allowed then
     Error "--no-sandbox is not allowed by the active capability profile"
   else

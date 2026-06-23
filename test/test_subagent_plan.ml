@@ -336,6 +336,28 @@ let test_markdown_profile_validation () =
   | Error message when String.contains message 's' -> ()
   | Error message -> fail "tau key" ("unexpected error: " ^ message)
   | Ok _ -> fail "tau key" "expected error");
+  let full_access_profile =
+    String.concat "\n"
+      [
+        "---";
+        "name: full";
+        "description: Bad";
+        "provider: inherit";
+        "model: inherit";
+        "thinking: inherit";
+        "sandbox: danger-full-access";
+        "tools: inherit";
+        "---";
+        "Body";
+      ]
+  in
+  (match
+     Subagents.parse_markdown_profile ~path:"/profiles/full.md"
+       full_access_profile
+   with
+  | Error "/profiles/full.md: danger-full-access is not allowed for subagent profiles" -> ()
+  | Error message -> fail "full-access sandbox" ("unexpected error: " ^ message)
+  | Ok _ -> fail "full-access sandbox" "expected error");
   let override = { scout with Subagents.spec_name = "finder" } in
   let invalid =
     Subagents.build_profile_catalog ~live_tools:[ "exec_command" ] [ override ]
@@ -541,6 +563,8 @@ let test_agent_wait_state () =
       assert_equal "wait terminal status" "completed" item.wait_status;
       assert_bool "wait terminal consumed" item.wait_consumed
   | _ -> fail "wait terminal item" "expected one item");
+  assert_equal "wait terminal message includes output"
+    "finder-a1 finder-a1-run-1 [completed]\n\ndone" waited.wait_message;
   assert_bool "terminal wait has no active run ids"
     (waited.wait_active_run_ids = []);
   (match Subagents.find_run waited.wait_state "finder-a1-run-1" with

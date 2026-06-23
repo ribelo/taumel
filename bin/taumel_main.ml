@@ -69,7 +69,7 @@ let core_call name_js args_js =
   | "planCommandChildDispatch" -> Command_bridge.plan_child_dispatch (arg 0)
   | "finishCommandChildDispatch" -> Command_bridge.finish_child_dispatch (arg 0)
   | "planAgentSpawn" -> Agent_tools.plan_spawn (arg 0)
-  | "finishAgentAction" -> Agent_tools.finish_action (arg 0)
+  | "finishAgentAction" -> Agent_tools.finish_action (arg 0) (arg 1)
   | "recordAgentDispatchCompletion" ->
       Agent_tools.record_dispatch_completion (arg 0) (arg 1)
   | "recordAgentChildSessionStart" ->

@@ -270,9 +270,9 @@ let test_sandbox_workspace_metadata_protection () =
   | Sandbox.Approval_prompt_confirm _ ->
       fail "approval prompt unavailable" "expected unavailable plan")
 
-let test_subagent_spawn_clamps_sandbox () =
-  let parent = { Capability.default with sandbox_preset = Capability.Workspace_write } in
-  let profile =
+let test_subagent_spawn_rejects_full_access_sandbox () =
+  let parent = { Capability.default with sandbox_preset = Capability.Danger_full_access } in
+  let explicit_full_access_profile =
     {
       Capability.name = "worker";
       enabled = true;
@@ -285,23 +285,47 @@ let test_subagent_spawn_clamps_sandbox () =
       allow_no_sandbox = true;
     }
   in
-  let definition = Subagents.create_definition ~max_depth:2 profile in
-  let worker =
-    expect_ok "spawn worker"
-      (Subagents.spawn parent
-         {
-           id = "w1";
-           parent_id = Some "root";
-           parent_is_subagent = false;
-           parent_depth = 0;
-           workspace_roots = [ "/repo" ];
-           definition;
-         })
+  let definition = Subagents.create_definition ~max_depth:2 explicit_full_access_profile in
+  let spawn definition id =
+    Subagents.spawn parent
+      {
+        id;
+        parent_id = Some "root";
+        parent_is_subagent = false;
+        parent_depth = 0;
+        workspace_roots = [ "/repo" ];
+        definition;
+      }
   in
-  assert_bool "worker sandbox clamped"
-    (worker.profile.sandbox_preset = Capability.Workspace_write);
-  assert_bool "worker is sandboxed" (not worker.sandbox.no_sandbox);
-  assert_bool "worker config is subagent" worker.sandbox.subagent
+  (match spawn definition "w1" with
+  | Error "danger-full-access is not allowed for subagents" -> ()
+  | Error message -> fail "explicit full access" ("unexpected error: " ^ message)
+  | Ok _ -> fail "explicit full access" "expected rejection");
+  let inherited_full_access_profile =
+    { explicit_full_access_profile with Capability.name = "inherited"; sandbox_preset = None }
+  in
+  let inherited_definition =
+    Subagents.create_definition ~max_depth:2 inherited_full_access_profile
+  in
+  (match spawn inherited_definition "w2" with
+  | Error "danger-full-access is not allowed for subagents" -> ()
+  | Error message -> fail "inherited full access" ("unexpected error: " ^ message)
+  | Ok _ -> fail "inherited full access" "expected rejection");
+  let workspace_profile =
+    {
+      explicit_full_access_profile with
+      Capability.name = "workspace";
+      sandbox_preset = Some Capability.Workspace_write;
+    }
+  in
+  let workspace_worker =
+    expect_ok "spawn workspace worker"
+      (spawn (Subagents.create_definition ~max_depth:2 workspace_profile) "w3")
+  in
+  assert_bool "workspace worker is sandboxed" (not workspace_worker.sandbox.no_sandbox);
+  assert_bool "workspace worker config is subagent" workspace_worker.sandbox.subagent;
+  assert_bool "workspace worker config filesystem"
+    (workspace_worker.sandbox.filesystem_mode = Sandbox.Workspace_write)
 
 let test_child_session_setup_entries () =
   let metadata =
@@ -890,7 +914,7 @@ let () =
   test_gateway_enforces_profile_and_sandbox ();
   test_sandbox_patch_policy ();
   test_sandbox_workspace_metadata_protection ();
-  test_subagent_spawn_clamps_sandbox ();
+  test_subagent_spawn_rejects_full_access_sandbox ();
   test_child_session_setup_entries ();
   test_goal_state_machine ();
   test_ralph_ownership ();

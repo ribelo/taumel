@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 
 import taumel from "../src/index.ts";
 import { renderComposerInput } from "../src/composer.ts";
+import { applyChildSessionUpdate } from "../src/tool-executor.ts";
 
 const cwd = await mkdtemp(join(tmpdir(), "taumel-entrypoint-"));
 const originalFetch = globalThis.fetch;
@@ -75,6 +76,7 @@ let pendingMessages = false;
 let renderRequests = 0;
 let confirmBehavior = async () => true;
 let selectBehavior = async (_title, labels) => labels[0];
+let nextAgentSessionResult = undefined;
 
 const pushHandler = (map, event, handler) => {
   const list = map.get(event) ?? [];
@@ -171,6 +173,12 @@ const pi = {
   },
   createAgentSession: async (options = {}) => {
     agentSessionCalls.push(options);
+    if (nextAgentSessionResult !== undefined) {
+      const result = nextAgentSessionResult;
+      nextAgentSessionResult = undefined;
+      if (result instanceof Error) throw result;
+      return result;
+    }
     childCounter += 1;
     const childId = `child-${childCounter}`;
     const childEntries = [];
@@ -190,8 +198,12 @@ const pi = {
       childDispatchCalls.push({ sessionId: childId, method, content, options });
       const response = await childSendResponses.shift();
       if (response !== undefined) {
+        const message = response.agentEndMessage ?? assistantMessage(
+          response.output ?? response.finalOutput ?? "stop",
+          response.errorMessage,
+        );
         for (const listener of listeners) {
-          listener({ type: "agent_end", messages: [assistantMessage(response.output ?? response.finalOutput ?? "stop")] });
+          listener({ type: "agent_end", messages: [message] });
         }
       }
       return response;
@@ -229,6 +241,40 @@ const pi = {
     return { session };
   },
 };
+
+const scopedCacheCalls = [];
+const scopedCache = new Map();
+await applyChildSessionUpdate(
+  scopedCache,
+  { action: "store_child_session", key: "shared-worker" },
+  { sessionId: "scoped-child-a", close: async (reason) => scopedCacheCalls.push({ sessionId: "scoped-child-a", reason }) },
+  "parent-a",
+);
+await applyChildSessionUpdate(
+  scopedCache,
+  { action: "store_child_session", key: "shared-worker" },
+  { sessionId: "scoped-child-b", close: async (reason) => scopedCacheCalls.push({ sessionId: "scoped-child-b", reason }) },
+  "parent-b",
+);
+await applyChildSessionUpdate(
+  scopedCache,
+  { action: "delete_child_session", key: "shared-worker", reason: "closed_by_parent" },
+  undefined,
+  "parent-b",
+);
+await applyChildSessionUpdate(
+  scopedCache,
+  { action: "delete_child_session", key: "shared-worker", reason: "closed_by_parent" },
+  undefined,
+  "parent-a",
+);
+if (
+  scopedCacheCalls.length !== 2 ||
+  scopedCacheCalls[0]?.sessionId !== "scoped-child-b" ||
+  scopedCacheCalls[1]?.sessionId !== "scoped-child-a"
+) {
+  throw new Error(`child session cache keys are not parent scoped: ${JSON.stringify(scopedCacheCalls)}`);
+}
 
 try {
   await taumel(pi);
@@ -1180,6 +1226,140 @@ try {
     ctx,
   );
 
+  nextAgentSessionResult = {};
+  const failedDispatchSpawn = await tools.get("agent_spawn").execute(
+    "agent-dispatch-failed-spawn",
+    { profile: "finder", objective: "cannot start child", agent_id: "failed-dispatch-worker" },
+    undefined,
+    undefined,
+    ctx,
+  );
+  const failedDispatchSpawnState = parentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
+  const failedDispatchSpawnRun = failedDispatchSpawnState?.data?.runs?.find((run) => run.run_id === "failed-dispatch-worker-run-1");
+  if (
+    failedDispatchSpawn.details?.ok !== false ||
+    failedDispatchSpawn.details?.dispatchFailed !== true ||
+    failedDispatchSpawn.details?.dispatch?.dispatched !== false ||
+    failedDispatchSpawn.details?.dispatch?.reason !== "createAgentSession did not return a session" ||
+    failedDispatchSpawnRun?.status !== "failed" ||
+    failedDispatchSpawnRun?.reason !== "createAgentSession did not return a session"
+  ) {
+    throw new Error(`agent_spawn dispatch failure did not fail the persisted run: ${JSON.stringify({ failedDispatchSpawn, failedDispatchSpawnState })}`);
+  }
+  const failedDispatchWait = await tools.get("agent_wait").execute(
+    "agent-dispatch-failed-wait",
+    { run_ids: ["failed-dispatch-worker-run-1"], timeout_seconds: 0 },
+    undefined,
+    undefined,
+    ctx,
+  );
+  if (
+    failedDispatchWait.details?.runs?.find((run) => run.run_id === "failed-dispatch-worker-run-1")?.status !== "failed" ||
+    failedDispatchWait.details?.runs?.find((run) => run.run_id === "failed-dispatch-worker-run-1")?.error !== "createAgentSession did not return a session" ||
+    failedDispatchWait.details?.runs?.find((run) => run.run_id === "failed-dispatch-worker-run-1")?.consumed !== true
+  ) {
+    throw new Error(`agent_wait did not observe failed dispatch as terminal: ${JSON.stringify(failedDispatchWait)}`);
+  }
+  await tools.get("agent_close").execute(
+    "agent-dispatch-failed-close",
+    { agent_ids: ["failed-dispatch-worker"] },
+    undefined,
+    undefined,
+    ctx,
+  );
+
+  const failedSendWorker = await tools.get("agent_spawn").execute(
+    "agent-send-dispatch-failure-spawn",
+    { profile: "finder", objective: "start before failed send", agent_id: "failed-send-worker" },
+    undefined,
+    undefined,
+    ctx,
+  );
+  if (failedSendWorker.details?.ok !== true || failedSendWorker.details?.run_id !== "failed-send-worker-run-1") {
+    throw new Error(`agent_send dispatch failure setup spawn failed: ${JSON.stringify(failedSendWorker)}`);
+  }
+  nextAgentSessionResult = {};
+  const failedDispatchSend = await tools.get("agent_send").execute(
+    "agent-send-dispatch-failure",
+    { agent_id: "failed-send-worker", objective: "replace with failed dispatch", interrupt: true },
+    undefined,
+    undefined,
+    ctx,
+  );
+  const failedDispatchSendState = parentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
+  const failedDispatchOldRun = failedDispatchSendState?.data?.runs?.find((run) => run.run_id === "failed-send-worker-run-1");
+  const failedDispatchNewRun = failedDispatchSendState?.data?.runs?.find((run) => run.run_id === "failed-send-worker-run-2");
+  if (
+    failedDispatchSend.details?.ok !== false ||
+    failedDispatchSend.details?.run_id !== "failed-send-worker-run-2" ||
+    failedDispatchSend.details?.dispatchFailed !== true ||
+    failedDispatchSend.details?.dispatch?.dispatched !== false ||
+    failedDispatchOldRun?.status !== "cancelled" ||
+    failedDispatchNewRun?.status !== "failed" ||
+    failedDispatchNewRun?.reason !== "createAgentSession did not return a session"
+  ) {
+    throw new Error(`agent_send dispatch failure did not fail the replacement run: ${JSON.stringify({ failedDispatchSend, failedDispatchSendState })}`);
+  }
+  await tools.get("agent_close").execute(
+    "agent-send-dispatch-failure-close",
+    { agent_ids: ["failed-send-worker"] },
+    undefined,
+    undefined,
+    ctx,
+  );
+
+  childSendResponses.push({
+    agentEndMessage: {
+      role: "assistant",
+      content: [],
+      stopReason: "error",
+      errorMessage: "provider returned error without assistant output",
+    },
+  });
+  const terminalNoOutputSpawn = await tools.get("agent_spawn").execute(
+    "agent-terminal-no-output-spawn",
+    { profile: "finder", objective: "terminal no output", agent_id: "terminal-no-output-worker" },
+    undefined,
+    undefined,
+    ctx,
+  );
+  const terminalNoOutput = await waitFor(() => {
+    const state = parentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
+    const run = state?.data?.runs?.find((candidate) => candidate.run_id === "terminal-no-output-worker-run-1");
+    return run?.status === "failed" &&
+      run?.reason === "provider returned error without assistant output"
+      ? { state, run }
+      : undefined;
+  }, "terminal child error without assistant output was not recorded");
+  if (
+    terminalNoOutputSpawn.details?.ok !== true ||
+    terminalNoOutput.run?.final_output !== null
+  ) {
+    throw new Error(`agent_spawn did not persist textless terminal child error correctly: ${JSON.stringify({ terminalNoOutputSpawn, terminalNoOutput })}`);
+  }
+  const terminalNoOutputWait = await tools.get("agent_wait").execute(
+    "agent-terminal-no-output-wait",
+    { run_ids: ["terminal-no-output-worker-run-1"], timeout_seconds: 0 },
+    undefined,
+    undefined,
+    ctx,
+  );
+  const terminalNoOutputWaitRun = terminalNoOutputWait.details?.runs?.find((run) => run.run_id === "terminal-no-output-worker-run-1");
+  if (
+    terminalNoOutputWaitRun?.status !== "failed" ||
+    terminalNoOutputWaitRun?.error !== "provider returned error without assistant output" ||
+    terminalNoOutputWaitRun?.consumed !== true
+  ) {
+    throw new Error(`agent_wait did not surface textless terminal child error: ${JSON.stringify(terminalNoOutputWait)}`);
+  }
+  await tools.get("agent_close").execute(
+    "agent-terminal-no-output-close",
+    { agent_ids: ["terminal-no-output-worker"] },
+    undefined,
+    undefined,
+    ctx,
+  );
+
   const agentSessionCountBeforeSmoke = agentSessionCalls.length;
   const agentResult = await tools.get("agent_spawn").execute(
     "agent-call",
@@ -1468,7 +1648,8 @@ try {
   );
   if (
     waitCompleted.details?.runs?.find((run) => run.run_id === "smoke-worker-run-2")?.finalOutput !== "final smoke summary" ||
-    waitCompleted.details?.runs?.find((run) => run.run_id === "smoke-worker-run-2")?.consumed !== true
+    waitCompleted.details?.runs?.find((run) => run.run_id === "smoke-worker-run-2")?.consumed !== true ||
+    !waitCompleted.content?.[0]?.text?.includes("final smoke summary")
   ) {
     throw new Error(`agent_wait did not expose completed final output: ${JSON.stringify(waitCompleted)}`);
   }
@@ -1502,7 +1683,8 @@ try {
   if (
     defaultWaitResult.details?.runs?.find((run) => run.run_id === "default-wait-worker-run-1")?.status !== "completed" ||
     defaultWaitResult.details?.runs?.find((run) => run.run_id === "default-wait-worker-run-1")?.finalOutput !== "default wait final output" ||
-    defaultWaitResult.details?.runs?.find((run) => run.run_id === "default-wait-worker-run-1")?.consumed !== true
+    defaultWaitResult.details?.runs?.find((run) => run.run_id === "default-wait-worker-run-1")?.consumed !== true ||
+    !defaultWaitResult.content?.[0]?.text?.includes("default wait final output")
   ) {
     throw new Error(`default agent_wait did not keep selected runs through completion: ${JSON.stringify(defaultWaitResult)}`);
   }
@@ -1647,6 +1829,22 @@ try {
     undefined,
     ctx,
   );
+  const conflictingClose = await tools.get("agent_close").execute(
+    "agent-close-conflicting-selectors",
+    { all: true, agent_ids: ["multi-close-a"] },
+    undefined,
+    undefined,
+    ctx,
+  );
+  const conflictingCloseState = parentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
+  if (
+    conflictingClose.details?.ok === true ||
+    !conflictingClose.content?.[0]?.text?.includes("exactly one selector") ||
+    conflictingCloseState?.data?.agents?.find((agent) => agent.agent_id === "multi-close-a")?.closed_at !== null ||
+    conflictingCloseState?.data?.agents?.find((agent) => agent.agent_id === "multi-close-b")?.closed_at !== null
+  ) {
+    throw new Error(`agent_close accepted conflicting selectors: ${JSON.stringify({ conflictingClose, conflictingCloseState })}`);
+  }
   const multiClosed = await tools.get("agent_close").execute(
     "agent-multi-close",
     { agent_ids: ["multi-close-a", "multi-close-b"] },
@@ -1736,6 +1934,46 @@ try {
   ) {
     throw new Error(`invalid agent catalog did not notify and remove active agent tools: ${JSON.stringify({ notifications, activeTools, activeToolUpdates })}`);
   }
+  await writeFile(
+    join(process.env.TAUMEL_AGENT_PROFILE_DIR, "broken.md"),
+    [
+      "---",
+      "name: broken",
+      "description: Fixed profile for recovery",
+      "provider: inherit",
+      "model: inherit",
+      "thinking: inherit",
+      "sandbox: inherit",
+      "tools:",
+      "  - exec_command",
+      "---",
+      "This profile should pass startup validation.",
+    ].join("\n"),
+    "utf8",
+  );
+  for (const handler of handlers.get("session_resume") ?? []) {
+    handler({ type: "session_resume" }, ctx);
+  }
+  if (!activeTools.includes("agent_spawn") || !activeTools.includes("agent_wait")) {
+    throw new Error(`valid agent catalog recovery did not restore active agent tools: ${JSON.stringify({ activeTools, activeToolUpdates })}`);
+  }
+  await writeFile(
+    join(process.env.TAUMEL_AGENT_PROFILE_DIR, "broken.md"),
+    [
+      "---",
+      "name: broken",
+      "description: Invalid profile for diagnostics",
+      "provider: inherit",
+      "model: inherit",
+      "thinking: inherit",
+      "sandbox: inherit",
+      "tools:",
+      "  - not_a_real_tool",
+      "---",
+      "This profile should fail startup validation.",
+    ].join("\n"),
+    "utf8",
+  );
 
   const invalidHandlers = new Map();
   const invalidInternalHandlers = new Map();

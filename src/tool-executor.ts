@@ -151,17 +151,18 @@ function completionFromAgentEndEvent(event: unknown): Record<string, unknown> | 
   const messages = event["messages"];
   const assistant = [...messages].reverse().find((message) => isRecord(message) && message["role"] === "assistant");
   const finalOutput = assistantTextFromMessage(assistant);
-  if (finalOutput === undefined) return undefined;
   const stopReason = isRecord(assistant) && typeof assistant["stopReason"] === "string" ? assistant["stopReason"] : "";
   const errorMessage = isRecord(assistant) && typeof assistant["errorMessage"] === "string" ? assistant["errorMessage"] : undefined;
   const status =
     errorMessage !== undefined || stopReason === "error" ? "failed" :
     stopReason === "cancelled" || stopReason === "aborted" ? "cancelled" :
     "completed";
+  if (finalOutput === undefined && status === "completed") return undefined;
+  const reason = errorMessage ?? (status === "cancelled" && stopReason !== "" ? stopReason : undefined);
   return {
     status,
-    finalOutput,
-    ...(errorMessage !== undefined ? { reason: errorMessage } : {}),
+    ...(finalOutput !== undefined ? { finalOutput } : {}),
+    ...(reason !== undefined ? { reason } : {}),
   };
 }
 
@@ -708,7 +709,6 @@ function dispatchCompletionFromHostResult(hostResult: unknown): Record<string, u
     typeof hostResult["output"] === "string" ? hostResult["output"] :
     typeof hostResult["result"] === "string" ? hostResult["result"] :
     completionTextFromContent(hostResult["content"]);
-  if (finalOutput === undefined || finalOutput.trim() === "") return undefined;
   const rawStatus = typeof hostResult["status"] === "string" ? hostResult["status"] : "";
   const status = rawStatus === "failed" || hostResult["isError"] === true ? "failed" :
     rawStatus === "cancelled" || rawStatus === "aborted" ? "cancelled" :
@@ -716,12 +716,14 @@ function dispatchCompletionFromHostResult(hostResult: unknown): Record<string, u
     "completed";
   const reason =
     typeof hostResult["reason"] === "string" ? hostResult["reason"] :
+    typeof hostResult["errorMessage"] === "string" ? hostResult["errorMessage"] :
     typeof hostResult["error"] === "string" ? hostResult["error"] :
     typeof hostResult["stopReason"] === "string" ? hostResult["stopReason"] :
     undefined;
+  if ((finalOutput === undefined || finalOutput.trim() === "") && status === "completed") return undefined;
   return {
     status,
-    finalOutput,
+    ...(finalOutput !== undefined && finalOutput.trim() !== "" ? { finalOutput } : {}),
     ...(reason !== undefined ? { reason } : {}),
   };
 }
@@ -806,6 +808,18 @@ function recordAgentDispatchCompletionInBackground(
   };
 }
 
+export function childSessionCacheKeyScopeFromContext(ctx: unknown): string {
+  if (isRecord(ctx) && typeof ctx["taumelSessionId"] === "string") {
+    const value = ctx["taumelSessionId"].trim();
+    if (value !== "") return value;
+  }
+  return sessionInfoFromContext(ctx).sessionId ?? "current";
+}
+
+function childSessionCacheKey(key: string, keyScope: string | undefined): string {
+  return keyScope === undefined || keyScope === "" ? key : `${keyScope}\u0000${key}`;
+}
+
 async function createAgentChildSessionForPrepared(
   pi: PiLike,
   core: CoreBridge,
@@ -834,6 +848,7 @@ async function createAgentChildSessionForPrepared(
       bridge: childBridgeFacts(bridge),
     }]),
     bridge,
+    childSessionCacheKeyScopeFromContext(ctx),
   );
   recordAgentChildSessionStart(core, prepared, bridge, ctx);
   return { workerId, bridge, prompt: stringField(spawnPlan, "prompt") };
@@ -843,32 +858,35 @@ export async function applyChildSessionUpdate(
   childSessions: Map<string, ChildSessionBridge>,
   update: unknown,
   bridge: ChildSessionBridge | undefined,
+  keyScope?: string,
 ): Promise<void> {
   if (!isRecord(update)) throw new Error("Invalid Taumel child session update");
   switch (stringField(update, "action")) {
     case "none":
       return;
     case "store_child_session": {
-      const key = stringField(update, "key");
-      if (key === "" || !bridge) throw new Error("Invalid Taumel child session update");
-      childSessions.set(key, bridge);
+      const rawKey = stringField(update, "key");
+      if (rawKey === "" || !bridge) throw new Error("Invalid Taumel child session update");
+      childSessions.set(childSessionCacheKey(rawKey, keyScope), bridge);
       return;
     }
     case "stop_child_session": {
-      const key = stringField(update, "key");
-      if (key === "") throw new Error("Invalid Taumel child session update");
+      const rawKey = stringField(update, "key");
+      if (rawKey === "") throw new Error("Invalid Taumel child session update");
+      const key = childSessionCacheKey(rawKey, keyScope);
       await stopChildSession(childSessions.get(key) ?? bridge, optionalStringField(update, "reason") ?? "stopped_by_parent");
       return;
     }
     case "drop_child_session": {
-      const key = stringField(update, "key");
-      if (key === "") throw new Error("Invalid Taumel child session update");
-      childSessions.delete(key);
+      const rawKey = stringField(update, "key");
+      if (rawKey === "") throw new Error("Invalid Taumel child session update");
+      childSessions.delete(childSessionCacheKey(rawKey, keyScope));
       return;
     }
     case "delete_child_session": {
-      const key = stringField(update, "key");
-      if (key === "") throw new Error("Invalid Taumel child session update");
+      const rawKey = stringField(update, "key");
+      if (rawKey === "") throw new Error("Invalid Taumel child session update");
+      const key = childSessionCacheKey(rawKey, keyScope);
       await closeChildSession(childSessions.get(key) ?? bridge, optionalStringField(update, "reason") ?? "closed_by_parent");
       childSessions.delete(key);
       return;
@@ -881,6 +899,7 @@ export async function applyChildSessionUpdate(
 async function applyChildSessionUpdatesFromDetails(
   childSessions: Map<string, ChildSessionBridge>,
   result: unknown,
+  keyScope?: string,
 ): Promise<boolean> {
   if (!isRecord(result)) return false;
   const details = isRecord(result["details"]) ? result["details"] : undefined;
@@ -888,7 +907,7 @@ async function applyChildSessionUpdatesFromDetails(
     ? details["childSessionUpdates"]
     : [];
   for (const update of updates) {
-    if (isRecord(update)) await applyChildSessionUpdate(childSessions, update, undefined);
+    if (isRecord(update)) await applyChildSessionUpdate(childSessions, update, undefined, keyScope);
   }
   return updates.length > 0;
 }
@@ -1138,14 +1157,15 @@ export async function executeTool(
         prepared,
         bridge: childBridgeFacts(bridge),
         dispatch,
-      }]);
+      }, ctx]);
       if (!isRecord(result)) throw new Error("Invalid Taumel agent result");
       return result;
     }
     case "agent_send": {
       const workerId = stringField(prepared, "workerId");
-      await applyChildSessionUpdatesFromDetails(childSessions, prepared);
-      let bridge = childSessions.get(workerId);
+      const keyScope = childSessionCacheKeyScopeFromContext(ctx);
+      await applyChildSessionUpdatesFromDetails(childSessions, prepared, keyScope);
+      let bridge = childSessions.get(childSessionCacheKey(workerId, keyScope));
       if (bridge === undefined) {
         bridge = (
           await createAgentChildSessionForPrepared(
@@ -1169,19 +1189,21 @@ export async function executeTool(
           onCompletion: recordAgentDispatchCompletionInBackground(pi, core, prepared, ctx),
         },
       );
-      const result = coreCall(core, "finishAgentAction", [{ prepared, dispatch }]);
+      const result = coreCall(core, "finishAgentAction", [{ prepared, dispatch }, ctx]);
       if (!isRecord(result)) throw new Error("Invalid Taumel agent result");
       return result;
     }
     case "agent_wait":
       return preparedToolResult(core, prepared);
     case "agent_close": {
-      const applied = await applyChildSessionUpdatesFromDetails(childSessions, prepared);
+      const keyScope = childSessionCacheKeyScopeFromContext(ctx);
+      const applied = await applyChildSessionUpdatesFromDetails(childSessions, prepared, keyScope);
       if (!applied) {
         await applyChildSessionUpdate(
           childSessions,
           coreCall(core, "planAgentBridgeUpdate", [{ prepared }]),
           undefined,
+          keyScope,
         );
       }
       return preparedToolResult(core, prepared);

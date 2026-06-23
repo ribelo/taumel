@@ -40,6 +40,10 @@ let spawn parent_profile request =
     Error ("agent " ^ request.definition.name ^ " is disabled")
   else if request.parent_depth >= request.definition.max_depth then
     Error "nested agent limit reached"
+  else if
+    request.definition.profile.sandbox_preset
+    = Some Capability_profile.Danger_full_access
+  then Error "danger-full-access is not allowed for subagents"
   else
     match Capability_profile.child_profile parent_profile request.definition.profile with
     | Error _ as error -> error
@@ -217,6 +221,12 @@ let find_worker id workers =
   let id = String.trim id in
   List.find_opt (fun (worker : worker) -> worker.id = id) workers
 
+let find_worker_for_parent ~parent_id id workers =
+  let id = String.trim id in
+  List.find_opt
+    (fun (worker : worker) -> worker.id = id && worker.parent_id = Some parent_id)
+    workers
+
 type child_session_spawn_plan = {
   worker_id : string;
   prompt : string;
@@ -327,15 +337,17 @@ let find_owned_worker (owner : owner) workers id =
   let id = String.trim id in
   if id = "" then Error "worker id is required"
   else
-    match find_worker id workers with
-    | None -> Error ("unknown worker: " ^ id)
-    | Some worker when worker.parent_id <> Some owner.id ->
-        Error ("worker is not owned by this session: " ^ id)
+    match find_worker_for_parent ~parent_id:owner.id id workers with
     | Some worker -> Ok worker
+    | None when find_worker id workers <> None ->
+        Error ("worker is not owned by this session: " ^ id)
+    | None -> Error ("unknown worker: " ^ id)
 
 let replace_worker (updated : worker) workers =
   List.map
-    (fun (worker : worker) -> if worker.id = updated.id then updated else worker)
+    (fun (worker : worker) ->
+      if worker.id = updated.id && worker.parent_id = updated.parent_id then updated
+      else worker)
     workers
 
 let plan ?(prompt = "") ?worker ?(listed_workers = []) ?(changed = false) workers
@@ -349,7 +361,7 @@ let apply_spawn ~parent_profile ~(owner : owner) workers
   | Ok id ->
   let request = { request with id } in
   if request.no_sandbox then Error "sub-agents cannot enable --no-sandbox"
-  else if find_worker request.id workers <> None then
+  else if find_worker_for_parent ~parent_id:owner.id request.id workers <> None then
     Error ("worker already exists: " ^ String.trim request.id)
   else
     let definition_profile =
@@ -754,6 +766,8 @@ let parse_sandbox_setting path fields =
   | Ok "inherit" -> Ok Inherit_sandbox
   | Ok value -> (
       match Capability_profile.sandbox_of_string value with
+      | Some Capability_profile.Danger_full_access ->
+          Error (path ^ ": danger-full-access is not allowed for subagent profiles")
       | Some sandbox -> Ok (Concrete_sandbox sandbox)
       | None -> Error (path ^ ": invalid sandbox: " ^ value))
 
@@ -1484,21 +1498,24 @@ let unknown_run_wait_item run_id =
     wait_consumed = false;
   }
 
+let wait_item_message item =
+  let summary =
+    match item.wait_run_id with
+    | None -> item.wait_agent_id ^ " [no_active_run]"
+    | Some run_id ->
+        let agent =
+          if item.wait_agent_id = "" then "" else item.wait_agent_id ^ " "
+        in
+        agent ^ run_id ^ " [" ^ item.wait_status ^ "]"
+  in
+  match item.wait_final_output with
+  | None -> summary
+  | Some output -> summary ^ "\n\n" ^ output
+
 let wait_message items =
   match items with
   | [] -> "No active runs."
-  | items ->
-      String.concat "\n"
-        (List.map
-           (fun item ->
-             match item.wait_run_id with
-             | None -> item.wait_agent_id ^ " [no_active_run]"
-             | Some run_id ->
-                 let agent =
-                   if item.wait_agent_id = "" then "" else item.wait_agent_id ^ " "
-                 in
-                 agent ^ run_id ^ " [" ^ item.wait_status ^ "]")
-           items)
+  | items -> String.concat "\n\n" (List.map wait_item_message items)
 
 let active_wait_run_ids items =
   let rec loop seen acc = function

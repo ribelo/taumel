@@ -941,10 +941,49 @@ let test_subagent_tool_planning () =
   (match
      Subagents.apply_request ~parent_profile ~owner:other_owner sent.workers
        (Subagents.Close { id = "w1" })
-   with
+  with
   | Error "worker is not owned by this session: w1" -> ()
   | Error message -> fail "agent ownership" ("unexpected error: " ^ message)
-  | Ok _ -> fail "agent ownership" "expected ownership error")
+  | Ok _ -> fail "agent ownership" "expected ownership error");
+  let other_spawned =
+    expect_ok "other owner duplicate agent id"
+      (Subagents.apply_request ~parent_profile ~owner:other_owner sent.workers
+         spawn_request)
+  in
+  assert_int "duplicate agent ids can exist across owners" 2
+    (List.length
+       (List.filter
+          (fun (worker : Subagents.worker) -> worker.id = "w1")
+          other_spawned.workers));
+  let other_closed =
+    expect_ok "close other owner duplicate"
+      (Subagents.apply_request ~parent_profile ~owner:other_owner
+         other_spawned.workers (Subagents.Close { id = "w1" }))
+  in
+  let owner_worker =
+    match
+      List.find_opt
+        (fun (worker : Subagents.worker) ->
+          worker.id = "w1" && worker.parent_id = Some owner.id)
+        other_closed.workers
+    with
+    | Some worker -> worker
+    | None -> fail "owner worker" "expected owner worker"
+  in
+  let other_worker =
+    match
+      List.find_opt
+        (fun (worker : Subagents.worker) ->
+          worker.id = "w1" && worker.parent_id = Some other_owner.id)
+        other_closed.workers
+    with
+    | Some worker -> worker
+    | None -> fail "other worker" "expected other worker"
+  in
+  assert_bool "owner duplicate remains live"
+    (owner_worker.lifecycle = Subagents.Waiting);
+  assert_bool "other duplicate closes independently"
+    (other_worker.lifecycle = Subagents.Closed)
 
 let () =
   test_component_codecs ();

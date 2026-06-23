@@ -165,10 +165,58 @@ let plan_spawn facts =
               ("metadata", json_to_js plan.metadata);
             ])
 
-let finish_action params =
+let dispatch_failure_reason dispatch =
+  if has_property dispatch "dispatched" && not (get_bool dispatch "dispatched")
+  then
+    Some
+      (Option.value
+         (Option.bind (optional_string_field dispatch "reason")
+            Taumel.Shared.trim_non_empty)
+         ~default:"child dispatch did not start")
+  else None
+
+let record_dispatch_start_failure prepared dispatch ctx =
+  match (Taumel.Shared.trim_non_empty (get_string prepared "run_id"), dispatch_failure_reason dispatch) with
+  | Some run_id, Some reason -> (
+      Session_sync.load_agent_state ctx;
+      match
+        Taumel.Subagents.record_run_completion !agent_state
+          ~now:(now_seconds ()) ~run_id ~status:Taumel.Subagents.Run_failed
+          ~reason ()
+      with
+      | Ok state ->
+          agent_state := state;
+          Session_sync.save_agent_state ctx;
+          Unsafe.obj
+            [|
+              ("ok", js_bool false);
+              ("dispatchFailed", js_bool true);
+              ("status", js_string "failed");
+              ("error", js_string reason);
+            |]
+      | Error message ->
+          Unsafe.obj
+            [|
+              ("ok", js_bool false);
+              ("dispatchFailed", js_bool true);
+              ("status", js_string "failed");
+              ("error", js_string reason);
+              ("stateError", js_string message);
+            |])
+  | _ -> Unsafe.obj [||]
+
+let finish_action params ctx =
   let prepared = Unsafe.get params "prepared" in
   let action = get_string prepared "action" in
-  let dispatch_extra = Unsafe.obj [| ("dispatch", Unsafe.get params "dispatch") |] in
+  let dispatch = Unsafe.get params "dispatch" in
+  let dispatch_failure_extra =
+    record_dispatch_start_failure prepared dispatch ctx
+  in
+  let dispatch_extra =
+    merge_js_details
+      (Unsafe.obj [| ("dispatch", dispatch) |])
+      dispatch_failure_extra
+  in
   let extra =
     match action with
     | "agent_spawn" ->
@@ -303,11 +351,11 @@ let plan_bridge_update params =
       ok_obj
         [ ("action", js_string "delete_child_session"); ("key", js_string key) ]
 
-let find_worker id =
-  Taumel.Subagents.find_worker id !workers
+let find_worker_for_parent ~parent_id id =
+  Taumel.Subagents.find_worker_for_parent ~parent_id id !workers
 
-let ensure_worker_for_send owner agent_id =
-  match Taumel.Subagents.find_worker agent_id !workers with
+let ensure_worker_for_send (owner : Taumel.Subagents.owner) agent_id =
+  match Taumel.Subagents.find_worker_for_parent ~parent_id:owner.id agent_id !workers with
   | Some _ -> Ok ()
   | None -> (
       match Taumel.Subagents.find_identity !agent_state agent_id with
@@ -337,7 +385,12 @@ let current_owner ctx =
           match metadata_depth with
           | Some depth when depth > 0 -> depth
           | _ ->
-            match find_worker worker_id with
+            match
+              Option.bind
+                (Option.bind (optional_string_field data "parentSessionId")
+                   Taumel.Shared.trim_non_empty)
+                (fun parent_id -> find_worker_for_parent ~parent_id worker_id)
+            with
             | Some worker -> worker.depth
             | None -> 1
         in
@@ -737,8 +790,10 @@ let close_live_workers owner_id ids =
 let render_agent_close params (owner : Taumel.Subagents.owner) ctx now =
   let close_all = get_bool params "all" in
   let ids_result =
-    if close_all then Ok (owned_open_agent_ids owner.id !agent_state)
-    else requested_close_ids params
+    match (close_all, optional_string_array params "agent_ids") with
+    | true, Some _ -> Error "agent_close accepts exactly one selector kind"
+    | true, None -> Ok (owned_open_agent_ids owner.id !agent_state)
+    | false, _ -> requested_close_ids params
   in
   match ids_result with
   | Error message -> error_obj message
@@ -1126,7 +1181,7 @@ let handle_agent_runs_command args ctx =
       workers :=
         List.map
           (fun (worker : Taumel.Subagents.worker) ->
-            if List.mem worker.id closing_ids then
+            if worker.parent_id = Some owner.id && List.mem worker.id closing_ids then
               Taumel.Subagents.close worker
             else worker)
           !workers;
@@ -1153,8 +1208,11 @@ let handle_agent_runs_command args ctx =
       | Ok state ->
           agent_state := state;
           Session_sync.save_agent_state ctx;
-          (match Taumel.Subagents.find_worker id !workers with
-          | Some worker when worker.parent_id = Some owner.id ->
+          (match
+             Taumel.Subagents.find_worker_for_parent ~parent_id:owner.id id
+               !workers
+           with
+          | Some worker ->
               workers :=
                 Taumel.Subagents.replace_worker (Taumel.Subagents.close worker)
                   !workers

@@ -461,8 +461,8 @@ Field rules:
 - `provider`: `inherit` or concrete provider id.
 - `model`: `inherit` or concrete model id for the selected provider.
 - `thinking`: `inherit` or concrete Pi thinking level.
-- `sandbox`: `inherit`, `read-only`, `workspace-write`, or
-  `danger-full-access` before child clamping.
+- `sandbox`: `inherit`, `read-only`, or `workspace-write`.
+  `danger-full-access` is not a valid subagent profile value.
 - `tools`: `inherit` or a non-empty array of tool names.
 
 `provider` and `model` are an atomic routing pair. They must either both be
@@ -632,11 +632,13 @@ Profile `tools` is authoritative for the child tool surface.
 
 Sandbox is the execution authority.
 
-- Child sandbox is clamped to the parent/session sandbox.
+- Child sandbox cannot be more powerful than the parent/session sandbox.
 - `no_sandbox` is never allowed for subagents.
-- `sandbox: inherit` means inherit parent sandbox, then apply child clamp.
-- `danger-full-access` inherited into a subagent is clamped to
-  `workspace-write`.
+- `sandbox: inherit` means inherit the parent sandbox only if that sandbox is
+  valid for subagents.
+- `danger-full-access` is not valid for subagents. A profile that declares it,
+  or a subagent that would inherit it from a full-access parent/session, is a
+  validation error.
 - `workspace-write` stays `workspace-write`.
 - `read-only` stays `read-only`.
 - Child tool execution uses the child session sandbox.
