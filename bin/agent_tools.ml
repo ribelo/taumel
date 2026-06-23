@@ -188,6 +188,7 @@ let record_dispatch_completion params ctx =
   match Taumel.Shared.trim_non_empty (get_string prepared "run_id") with
   | None -> ok_obj [ ("ok", js_bool true) ]
   | Some run_id ->
+      Session_sync.load_agent_state ctx;
       let status = completion_status completion in
       let reason =
         Option.bind (optional_string_field completion "reason")
@@ -321,7 +322,7 @@ let current_owner ctx =
         { id = worker_id; is_subagent = true; depth }
   | _ -> root_owner ()
 
-let request_from_params name params =
+let request_from_params (owner : Taumel.Subagents.owner) name params =
   let workspace_roots = if state.cwd = "" then [] else [ state.cwd ] in
   let non_empty value = Option.bind value Taumel.Shared.trim_non_empty in
   let single_agent_id () =
@@ -333,7 +334,7 @@ let request_from_params name params =
   | "agent_spawn" ->
       let requested_profile = non_empty (optional_string_field params "profile") in
       let default_id =
-        Taumel.Subagents.default_agent_id !agent_state
+        Taumel.Subagents.default_agent_id ~scope:owner.id !agent_state
           (Option.value requested_profile ~default:"agent")
       in
       Taumel.Subagents.request_of_values ~workspace_roots ~default_id
@@ -778,7 +779,7 @@ let prepare name params ctx =
       if name = "agent_wait" then render_agent_wait params owner.id ctx
       else if name = "agent_close" then render_agent_close params owner ctx now
       else
-      match if name = "agent_profiles" then Ok Taumel.Subagents.List else request_from_params name params with
+      match if name = "agent_profiles" then Ok Taumel.Subagents.List else request_from_params owner name params with
       | Error message -> error_obj message
       | Ok Taumel.Subagents.List when name = "agent_profiles" -> render_profiles ()
       | Ok Taumel.Subagents.List when name = "agent_list" ->

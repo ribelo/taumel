@@ -308,7 +308,7 @@ let child_session_created = function
 
 let plan_child_session_bridge_update ~action ~prepared_worker_id ~worker_id ~bridge =
   match action with
-  | "agent_spawn" -> (
+  | "agent_spawn" | "agent_send" -> (
       let key =
         match Option.bind worker_id Shared.trim_non_empty with
         | Some value -> Some value
@@ -1015,11 +1015,11 @@ let find_identity state agent_id =
 
 let agent_id_used state agent_id = find_identity state agent_id <> None
 
-let default_agent_id state profile_name =
+let default_agent_id ?(scope = "") state profile_name =
   let prefix = sanitize_agent_id_prefix profile_name in
   let seed =
     stable_hash
-      (prefix ^ ":" ^ string_of_int (List.length state.identities)
+      (prefix ^ ":" ^ scope ^ ":" ^ string_of_int (List.length state.identities)
      ^ ":" ^ string_of_int (List.length state.runs))
   in
   let rec loop attempt =
@@ -1421,11 +1421,14 @@ let output_run_for_target state ~parent_session_id target =
         | Some _ -> Error ("agent is not owned by this session: " ^ target)
         | None -> Error ("unknown agent or run: " ^ target))
 
-let mark_active_runs_lost state =
+let mark_active_runs_lost ?(live_agent_ids = []) state =
   let runs =
     List.map
       (fun run ->
-        if active_run_status run.run_status then
+        if
+          active_run_status run.run_status
+          && not (List.mem run.run_agent_id live_agent_ids)
+        then
           {
             run with
             run_status = Run_lost;
@@ -1436,7 +1439,9 @@ let mark_active_runs_lost state =
   in
   let identities =
     List.map
-      (fun identity -> { identity with identity_child_session_id = None })
+      (fun identity ->
+        if List.mem identity.identity_agent_id live_agent_ids then identity
+        else { identity with identity_child_session_id = None })
       state.identities
   in
   { state with identities; runs }

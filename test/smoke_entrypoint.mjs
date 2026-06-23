@@ -63,6 +63,7 @@ const activeToolUpdates = [];
 const fetchCalls = [];
 const sentMessages = [];
 const childSendResponses = [];
+const childDispatchCalls = [];
 const childLifecycleCalls = [];
 const editorFactories = [];
 const childContexts = new Map();
@@ -95,6 +96,15 @@ const assistantMessage = (stopReason = "stop", errorMessage = undefined) => ({
 });
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
 const patchInput = (input) => ({ input });
+const waitFor = async (predicate, message, timeoutMs = 1000) => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const value = predicate();
+    if (value) return value;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(message);
+};
 
 globalThis.fetch = async (url, options = {}) => {
   fetchCalls.push({ url: String(url), options });
@@ -176,8 +186,9 @@ const pi = {
       getEntries: () => childEntries,
       getBranch: () => [],
     };
-    const prompt = async () => {
-      const response = childSendResponses.shift();
+    const dispatchChildMessage = async (method, content, options = {}) => {
+      childDispatchCalls.push({ sessionId: childId, method, content, options });
+      const response = await childSendResponses.shift();
       if (response !== undefined) {
         for (const listener of listeners) {
           listener({ type: "agent_end", messages: [assistantMessage(response.output ?? response.finalOutput ?? "stop")] });
@@ -201,9 +212,9 @@ const pi = {
       setActiveToolsByName: (toolNames) => {
         childActiveTools = [...toolNames];
       },
-      prompt,
-      followUp: prompt,
-      steer: prompt,
+      prompt: (content, options) => dispatchChildMessage("prompt", content, options),
+      followUp: (content, options) => dispatchChildMessage("followUp", content, options),
+      steer: (content, options) => dispatchChildMessage("steer", content, options),
       abort: async (reason) => {
         childLifecycleCalls.push({ sessionId: childId, method: "abort", reason });
       },
@@ -1137,6 +1148,38 @@ try {
   }
   selectBehavior = async (_title, labels) => labels[0];
 
+  let resolveAsyncSpawn;
+  childSendResponses.push(new Promise((resolve) => { resolveAsyncSpawn = resolve; }));
+  const asyncSpawn = await tools.get("agent_spawn").execute(
+    "agent-async-spawn",
+    { profile: "finder", objective: "finish later", agent_id: "async-worker" },
+    undefined,
+    undefined,
+    ctx,
+  );
+  const asyncSpawnState = parentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
+  const asyncSpawnRun = asyncSpawnState?.data?.runs?.find((run) => run.run_id === "async-worker-run-1");
+  if (
+    asyncSpawn.details?.ok !== true ||
+    asyncSpawn.details?.run_id !== "async-worker-run-1" ||
+    asyncSpawnRun?.status !== "running"
+  ) {
+    throw new Error(`agent_spawn did not return before delayed child completion: ${JSON.stringify({ asyncSpawn, asyncSpawnState })}`);
+  }
+  resolveAsyncSpawn({ output: "async spawn final output", status: "completed" });
+  await waitFor(() => {
+    const state = parentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
+    const run = state?.data?.runs?.find((candidate) => candidate.run_id === "async-worker-run-1");
+    return run?.status === "completed" && run?.final_output === "async spawn final output";
+  }, "agent_spawn delayed completion was not recorded");
+  await tools.get("agent_close").execute(
+    "agent-async-close",
+    { agent_ids: ["async-worker"] },
+    undefined,
+    undefined,
+    ctx,
+  );
+
   const agentSessionCountBeforeSmoke = agentSessionCalls.length;
   const agentResult = await tools.get("agent_spawn").execute(
     "agent-call",
@@ -1218,6 +1261,14 @@ try {
     sentRun?.submissions?.length !== 2
   ) {
     throw new Error(`agent_send did not steer and persist a submission: ${JSON.stringify({ sendAgent, sentAgentsState })}`);
+  }
+  if (
+    !childDispatchCalls.some((call) =>
+      call.sessionId === agentResult.details.childSession.sessionId &&
+      call.options?.streamingBehavior === "steer"
+    )
+  ) {
+    throw new Error(`agent_send did not dispatch the active send as steer: ${JSON.stringify(childDispatchCalls)}`);
   }
   const waitActive = await tools.get("agent_wait").execute(
     "agent-wait-active",
@@ -1376,16 +1427,27 @@ try {
     undefined,
     ctx,
   );
-  const completedAgentsState = parentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
-  const completedPersistedRun = completedAgentsState?.data?.runs?.find((run) => run.run_id === "smoke-worker-run-2");
+  const completed = await waitFor(() => {
+    const state = parentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
+    const run = state?.data?.runs?.find((candidate) => candidate.run_id === "smoke-worker-run-2");
+    return run?.status === "completed" && run?.final_output === "final smoke summary"
+      ? { state, run }
+      : undefined;
+  }, "agent_send did not persist host-returned final output");
   if (
     completedSend.details?.run_id !== "smoke-worker-run-2" ||
-    completedPersistedRun?.status !== "completed" ||
-    completedPersistedRun?.final_output !== "final smoke summary"
+    completed.run?.status !== "completed" ||
+    completed.run?.final_output !== "final smoke summary"
   ) {
-    throw new Error(`agent_send did not persist host-returned final output: ${JSON.stringify({ completedSend, completedAgentsState })}`);
+    throw new Error(`agent_send did not persist host-returned final output: ${JSON.stringify({ completedSend, completedAgentsState: completed.state })}`);
   }
-  const completionMessage = sentMessages.at(-1);
+  const completionMessage = await waitFor(() => {
+    const message = sentMessages.at(-1);
+    return sentMessages.length === completionMessageCount + 1 &&
+      message?.message?.customType === "taumel.agent.completion"
+      ? message
+      : undefined;
+  }, "agent completion notification was not delivered");
   if (
     sentMessages.length !== completionMessageCount + 1 ||
     completionMessage?.message?.customType !== "taumel.agent.completion" ||
@@ -1410,6 +1472,47 @@ try {
   ) {
     throw new Error(`agent_wait did not expose completed final output: ${JSON.stringify(waitCompleted)}`);
   }
+  const defaultWaitSpawn = await tools.get("agent_spawn").execute(
+    "agent-default-wait-spawn",
+    { profile: "finder", objective: "default wait worker", agent_id: "default-wait-worker" },
+    undefined,
+    undefined,
+    ctx,
+  );
+  if (defaultWaitSpawn.details?.ok !== true || defaultWaitSpawn.details?.run_id !== "default-wait-worker-run-1") {
+    throw new Error(`default agent_wait setup spawn failed: ${JSON.stringify(defaultWaitSpawn)}`);
+  }
+  const defaultWait = tools.get("agent_wait").execute(
+    "agent-default-wait-loop",
+    {},
+    undefined,
+    undefined,
+    ctx,
+  );
+  setTimeout(() => {
+    globalThis.taumel.call("recordAgentDispatchCompletion", [{
+      prepared: { run_id: "default-wait-worker-run-1" },
+      completion: { status: "completed", finalOutput: "default wait final output" },
+    }, ctx]);
+  }, 20);
+  const defaultWaitResult = await Promise.race([
+    defaultWait,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("default agent_wait did not return after completion")), 1000)),
+  ]);
+  if (
+    defaultWaitResult.details?.runs?.find((run) => run.run_id === "default-wait-worker-run-1")?.status !== "completed" ||
+    defaultWaitResult.details?.runs?.find((run) => run.run_id === "default-wait-worker-run-1")?.finalOutput !== "default wait final output" ||
+    defaultWaitResult.details?.runs?.find((run) => run.run_id === "default-wait-worker-run-1")?.consumed !== true
+  ) {
+    throw new Error(`default agent_wait did not keep selected runs through completion: ${JSON.stringify(defaultWaitResult)}`);
+  }
+  await tools.get("agent_close").execute(
+    "agent-default-wait-close",
+    { agent_ids: ["default-wait-worker"] },
+    undefined,
+    undefined,
+    ctx,
+  );
   const agentChildCtx = childContexts.get(agentResult.details.childSession.sessionId);
   if (agentChildCtx === undefined) {
     throw new Error(`agent child context was not captured: ${JSON.stringify(agentResult.details.childSession)}`);
@@ -1513,6 +1616,7 @@ try {
   ) {
     throw new Error(`agent_send interrupt did not cancel and replace the active run: ${JSON.stringify({ interruptSend, interruptedAgentsState, childLifecycleCalls })}`);
   }
+  const interruptReplacementSessionId = `child-${childCounter}`;
   await tools.get("agent_close").execute(
     "agent-interrupt-close",
     { agent_ids: ["interrupt-worker"] },
@@ -1520,6 +1624,15 @@ try {
     undefined,
     ctx,
   );
+  if (
+    !childLifecycleCalls.some((call) =>
+      call.sessionId === interruptReplacementSessionId &&
+      call.method === "close" &&
+      call.reason === "closed_by_parent"
+    )
+  ) {
+    throw new Error(`agent_close did not close the child session created by agent_send: ${JSON.stringify({ interruptReplacementSessionId, childLifecycleCalls })}`);
+  }
   const multiCloseA = await tools.get("agent_spawn").execute(
     "agent-multi-close-a",
     { profile: "finder", objective: "multi close a", agent_id: "multi-close-a" },

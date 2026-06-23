@@ -133,7 +133,7 @@ let rewrite_active_tools ?provider ?(ralph_child = false) tool_names =
 let plan_agent_child_active_tools ~worker_tools ~current_active_tools_available
     ~current_active_tools =
   match worker_tools with
-  | Some tools -> Some (rewrite_active_tools tools |> remove_tool_names Subagents.all_agent_tool_names)
+  | Some tools -> Some (remove_tool_names Subagents.all_agent_tool_names tools)
   | None when current_active_tools_available ->
       Some
         (rewrite_active_tools current_active_tools

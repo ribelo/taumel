@@ -83,7 +83,7 @@ let test_agent_child_metadata_uses_core_catalog_rules () =
       ~current_active_tools:[ "read_thread" ]
   in
   assert_bool "explicit worker tools win"
-    (active_tools = Some [ "exec_command"; "write_stdin"; "edit"; "write" ]);
+    (active_tools = Some [ "bash"; "apply_patch"; "usage" ]);
   let inherited =
     Tool_catalog.plan_agent_child_active_tools ~worker_tools:None
       ~current_active_tools_available:true
@@ -126,6 +126,11 @@ let ready_bridge =
 let test_agent_bridge_update_requires_created_child () =
   assert_bool "ready spawn stores child session"
     (Subagents.plan_child_session_bridge_update ~action:"agent_spawn"
+       ~prepared_worker_id:"worker-1" ~worker_id:(Some "worker-1")
+       ~bridge:(Some ready_bridge)
+    = Subagents.Store_child_session "worker-1");
+  assert_bool "ready send stores child session"
+    (Subagents.plan_child_session_bridge_update ~action:"agent_send"
        ~prepared_worker_id:"worker-1" ~worker_id:(Some "worker-1")
        ~bridge:(Some ready_bridge)
     = Subagents.Store_child_session "worker-1");
@@ -362,6 +367,15 @@ let test_agent_run_metadata_state () =
   assert_starts_with "generated id prefix" ~prefix:"finder-" generated_id;
   assert_bool "generated id length"
     (String.length generated_id = String.length "finder-" + 4);
+  let parent_a_id =
+    Subagents.default_agent_id ~scope:"parent-a" Subagents.empty_session_state
+      "finder"
+  in
+  let parent_b_id =
+    Subagents.default_agent_id ~scope:"parent-b" Subagents.empty_session_state
+      "finder"
+  in
+  assert_bool "generated id includes parent scope" (parent_a_id <> parent_b_id);
   let generated =
     expect_ok "record generated spawn"
       (Subagents.record_spawn state ~now:11 ~parent_session_id:"parent"
@@ -465,6 +479,17 @@ let test_agent_identity_snapshot_state () =
     (identity.identity_system_prompt = "Snapshot prompt");
   assert_bool "snapshot active tools persisted"
     (identity.identity_active_tools = Some [ "exec_command"; "write_stdin" ]);
+  let live = Subagents.mark_active_runs_lost ~live_agent_ids:[ "snapshot-a1" ] decoded in
+  (match Subagents.find_identity live "snapshot-a1" with
+  | Some identity ->
+      assert_bool "session switch keeps live child id"
+        (identity.identity_child_session_id = Some "child-1")
+  | None -> fail "live snapshot identity" "expected identity");
+  (match Subagents.find_run live "snapshot-a1-run-1" with
+  | Some run ->
+      assert_bool "session switch keeps live run running"
+        (run.run_status = Subagents.Run_running)
+  | None -> fail "live snapshot run" "expected run");
   let owner : Subagents.owner = { id = "parent"; is_subagent = false; depth = 0 } in
   let worker =
     expect_ok "worker from snapshot"

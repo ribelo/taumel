@@ -605,6 +605,11 @@ export async function sendToChildSession(
   child: ChildSessionBridge | undefined,
   prompt: string,
   emptyReason = "empty prompt",
+  options: {
+    readonly awaitCompletion?: boolean;
+    readonly deliverAs?: "followUp" | "steer";
+    readonly onCompletion?: (dispatch: Record<string, unknown>) => void | Promise<void>;
+  } = {},
 ): Promise<Record<string, unknown>> {
   const childCtx = child?.ctx;
   const childSendAvailable =
@@ -625,19 +630,60 @@ export async function sendToChildSession(
   if (plan["send"] !== true) return result;
 
   const dispatchPrompt = stringField(plan, "prompt");
-  const deliverAs = stringField(plan, "deliverAs");
+  const deliverAs = options.deliverAs ?? stringField(plan, "deliverAs");
   if (deliverAs === "") throw new Error("Invalid Taumel child dispatch delivery mode");
-  const options = { deliverAs };
+  const sendOptions = { deliverAs };
+  const awaitCompletion = options.awaitCompletion !== false;
+  const completeLater = (send: () => Promise<unknown> | unknown) => {
+    let hostResult: Promise<unknown> | unknown;
+    try {
+      hostResult = send();
+    } catch (error) {
+      const completed = dispatchResultWithHostCompletion(result, {
+        status: "failed",
+        finalOutput: error instanceof Error ? error.message : String(error),
+      });
+      void options.onCompletion?.(completed);
+      return completed;
+    }
+    void Promise.resolve(hostResult)
+      .then(async (value) => {
+        const completed = dispatchResultWithHostCompletion(result, value);
+        if (completed["completion"] !== undefined) {
+          await options.onCompletion?.(completed);
+        }
+      })
+      .catch(async (error) => {
+        await options.onCompletion?.({
+          ...result,
+          completion: {
+            status: "failed",
+            finalOutput: error instanceof Error ? error.message : String(error),
+            reason: error instanceof Error ? error.message : String(error),
+          },
+        });
+      });
+    return result;
+  };
   if (typeof child?.sendUserMessage === "function") {
-    const hostResult = await child.sendUserMessage(dispatchPrompt, options);
+    if (!awaitCompletion) {
+      return completeLater(() => child.sendUserMessage?.(dispatchPrompt, sendOptions));
+    }
+    const hostResult = await child.sendUserMessage(dispatchPrompt, sendOptions);
     return dispatchResultWithHostCompletion(result, hostResult);
   }
   if (isRecord(childCtx) && typeof childCtx["sendUserMessage"] === "function") {
-    const hostResult = await childCtx["sendUserMessage"].call(childCtx, dispatchPrompt, options);
+    if (!awaitCompletion) {
+      return completeLater(() => childCtx["sendUserMessage"].call(childCtx, dispatchPrompt, sendOptions));
+    }
+    const hostResult = await childCtx["sendUserMessage"].call(childCtx, dispatchPrompt, sendOptions);
     return dispatchResultWithHostCompletion(result, hostResult);
   }
   if (typeof pi.sendUserMessage === "function") {
-    const hostResult = await pi.sendUserMessage(dispatchPrompt, options);
+    if (!awaitCompletion) {
+      return completeLater(() => pi.sendUserMessage?.(dispatchPrompt, sendOptions));
+    }
+    const hostResult = await pi.sendUserMessage(dispatchPrompt, sendOptions);
     return dispatchResultWithHostCompletion(result, hostResult);
   }
   return result;
@@ -749,6 +795,26 @@ function preparedInterruptedActiveRun(prepared: Record<string, unknown>): boolea
   return typeof details?.["previousRunStatus"] === "string" &&
     details["previousRunStatus"] !== "" &&
     details["deliveryKind"] === "started";
+}
+
+function preparedDeliveryKind(prepared: Record<string, unknown>): string {
+  const details = isRecord(prepared["details"]) ? prepared["details"] : undefined;
+  return typeof details?.["deliveryKind"] === "string" ? details["deliveryKind"] : "";
+}
+
+function recordAgentDispatchCompletionInBackground(
+  pi: PiLike,
+  core: CoreBridge,
+  prepared: Record<string, unknown>,
+  ctx: unknown,
+): (dispatch: Record<string, unknown>) => void {
+  return (dispatch) => {
+    void recordAgentDispatchCompletion(pi, core, prepared, dispatch, ctx).catch((error) => {
+      // Background completion must not crash the parent turn; persistent run state
+      // will be reconciled by later wait/list commands if this notification fails.
+      console.warn("Taumel agent completion recording failed:", error);
+    });
+  };
 }
 
 async function createAgentChildSessionForPrepared(
@@ -865,6 +931,31 @@ function agentWaitHasActiveRuns(prepared: Record<string, unknown>): boolean {
   );
 }
 
+function preparedActiveRunIds(prepared: Record<string, unknown>): string[] {
+  const details = isRecord(prepared["details"]) ? prepared["details"] : {};
+  const runs = Array.isArray(details["runs"]) ? details["runs"] : [];
+  const runIds: string[] = [];
+  const seen = new Set<string>();
+  for (const run of runs) {
+    if (!isRecord(run)) continue;
+    const runId = stringField(run, "run_id");
+    const status = stringField(run, "status");
+    if (runId === "" || !activeAgentRunStatuses.has(status) || seen.has(runId)) continue;
+    seen.add(runId);
+    runIds.push(runId);
+  }
+  return runIds;
+}
+
+function pinnedAgentWaitParams(params: unknown, prepared: Record<string, unknown>): unknown {
+  if (isRecord(params) && Array.isArray(params["run_ids"])) return params;
+  const runIds = preparedActiveRunIds(prepared);
+  if (runIds.length === 0) return params;
+  const pinned = isRecord(params) ? { ...params } : {};
+  delete pinned["agent_ids"];
+  return { ...pinned, run_ids: runIds };
+}
+
 async function executeAgentWait(
   core: CoreBridge,
   params: unknown,
@@ -877,6 +968,7 @@ async function executeAgentWait(
   if (timeoutSeconds === 0 || !agentWaitHasActiveRuns(prepared)) {
     return preparedToolResult(core, prepared);
   }
+  const pollParams = pinnedAgentWaitParams(params, prepared);
 
   const startedAt = Date.now();
   const deadline =
@@ -898,7 +990,7 @@ async function executeAgentWait(
     }
     const delay = Math.min(250, Math.max(10, (deadline ?? (now + 250)) - now));
     await sleep(delay);
-    prepared = preparedAction(core, "agent_wait", params, ctx);
+    prepared = preparedAction(core, "agent_wait", pollParams, ctx);
     if (prepared["ok"] !== true) {
       return errorToolResult(core, requiredError(prepared, "tool preparation"), prepared);
     }
@@ -1070,8 +1162,10 @@ export async function executeTool(
         prepared,
         ctx,
       );
-      const dispatch = await sendToChildSession(pi, core, bridge, prompt, "no initial prompt");
-      await recordAgentDispatchCompletion(pi, core, prepared, dispatch, ctx);
+      const dispatch = await sendToChildSession(pi, core, bridge, prompt, "no initial prompt", {
+        awaitCompletion: false,
+        onCompletion: recordAgentDispatchCompletionInBackground(pi, core, prepared, ctx),
+      });
       const result = coreCall(core, "finishAgentAction", [{
         prepared,
         bridge: childBridgeFacts(bridge),
@@ -1106,13 +1200,19 @@ export async function executeTool(
           )
         ).bridge;
       }
+      const deliverAs = preparedDeliveryKind(prepared) === "steered" ? "steer" : "followUp";
       const dispatch = await sendToChildSession(
         pi,
         core,
         bridge,
         stringField(prepared, "prompt"),
+        "empty prompt",
+        {
+          awaitCompletion: false,
+          deliverAs,
+          onCompletion: recordAgentDispatchCompletionInBackground(pi, core, prepared, ctx),
+        },
       );
-      await recordAgentDispatchCompletion(pi, core, prepared, dispatch, ctx);
       const result = coreCall(core, "finishAgentAction", [{ prepared, dispatch }]);
       if (!isRecord(result)) throw new Error("Invalid Taumel agent result");
       return result;

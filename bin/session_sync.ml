@@ -138,12 +138,25 @@ let load_ralph_state ctx =
       | Ok tasks -> ralph_tasks := tasks
       | Error _ -> ralph_tasks := [])
 
+let live_agent_ids_for_ctx ctx =
+  let parent_id = Session_store.session_id_from_ctx ctx in
+  !workers
+  |> List.filter_map (fun (worker : Taumel.Subagents.worker) ->
+         if worker.parent_id <> Some parent_id then None
+         else
+           match worker.lifecycle with
+           | Taumel.Subagents.Closed -> None
+           | _ -> Some worker.id)
+
 let load_agent_state ctx =
   match Session_store.custom_entry_data ctx "taumel.agents" with
   | None -> agent_state := Taumel.Subagents.empty_session_state
   | Some data -> (
       match Result.bind (json_from_js data) Taumel.Subagents.session_state_codec.decode with
-      | Ok state -> agent_state := Taumel.Subagents.mark_active_runs_lost state
+      | Ok state ->
+          agent_state :=
+            Taumel.Subagents.mark_active_runs_lost
+              ~live_agent_ids:(live_agent_ids_for_ctx ctx) state
       | Error message ->
           report_session_sync_error "agent state load"
             (Failure ("Ignoring incompatible saved Taumel agents entry: " ^ message));
