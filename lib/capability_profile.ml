@@ -237,9 +237,7 @@ let child_profile (parent : t) (definition : agent_definition) =
         approval_policy =
           stricter_approval parent.approval_policy
             (Option.value definition.approval_policy ~default:parent.approval_policy);
-        tools =
-          allowlist_intersection parent.tools
-            (Option.value definition.tools ~default:parent.tools);
+        tools = Option.value definition.tools ~default:parent.tools;
         agents =
           allowlist_intersection parent.agents
             (Option.value definition.agents ~default:parent.agents);

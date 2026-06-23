@@ -1074,7 +1074,7 @@ let latest_run state agent_id =
       Some
         (List.fold_left
            (fun latest run ->
-             if run.run_created_at >= latest.run_created_at then run else latest)
+             if run.run_created_at > latest.run_created_at then run else latest)
            first rest)
 
 let active_run state agent_id =
@@ -1190,6 +1190,15 @@ let record_spawn state ~now ~parent_session_id ~agent_id ~profile_name
         delivery_kind = "started";
         delivery_previous_status = None;
       }
+
+let record_active_tools_snapshot state ~agent_id ~active_tools =
+  match find_identity state agent_id with
+  | None -> Error ("unknown agent: " ^ agent_id)
+  | Some identity ->
+      let updated =
+        { identity with identity_active_tools = Some active_tools }
+      in
+      Ok { state with identities = replace_identity updated state.identities }
 
 let record_send ?(interrupt = false) state ~now ~agent_id objective =
   match find_identity state agent_id with
@@ -1498,6 +1507,16 @@ let unknown_run_wait_item run_id =
     wait_consumed = false;
   }
 
+let not_owned_run_wait_item run =
+  {
+    wait_agent_id = run.run_agent_id;
+    wait_run_id = Some run.run_id;
+    wait_status = "not_owned";
+    wait_final_output = None;
+    wait_error = Some ("run is not owned by this session: " ^ run.run_id);
+    wait_consumed = false;
+  }
+
 let wait_item_message item =
   let summary =
     match item.wait_run_id with
@@ -1597,15 +1616,7 @@ let wait_for_selector state ~parent_session_id selector =
                           runs = replace_run consumed (!state_ref).runs;
                         };
                     wait_item_of_run consumed
-                | Some _ ->
-                    {
-                      (wait_item_of_run run) with
-                      wait_status = "not_owned";
-                      wait_error =
-                        Some
-                          ("run is not owned by this session: " ^ run.run_id);
-                    }
-                | None -> wait_item_of_run run))
+                | Some _ | None -> not_owned_run_wait_item run))
           run_ids
       in
       wait_result !state_ref items

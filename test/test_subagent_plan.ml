@@ -432,6 +432,16 @@ let test_agent_run_metadata_state () =
   assert_equal "send keeps run" spawned.delivery_run_id sent.delivery_run_id;
   assert_equal "send submission id" "finder-a1-run-1-submission-2"
     sent.delivery_submission_id;
+  let same_second_interrupted =
+    expect_ok "record same-second interrupted send"
+      (Subagents.record_send state ~now:10 ~agent_id:"finder-a1"
+         ~interrupt:true "replace in same second")
+  in
+  (match Subagents.latest_run same_second_interrupted.delivery_state "finder-a1" with
+  | Some run ->
+      assert_equal "same-second latest run prefers newest" "finder-a1-run-2"
+        run.run_id
+  | None -> fail "same-second latest run" "expected run");
   let interrupted =
     expect_ok "record interrupted send"
       (Subagents.record_send state ~now:12 ~agent_id:"finder-a1"
@@ -483,11 +493,16 @@ let test_agent_identity_snapshot_state () =
          ~profile_name:"finder" ~profile_snapshot:profile
          ~sandbox_snapshot:sandbox ~system_prompt:"Snapshot prompt" "inspect")
   in
+  let snapshotted =
+    expect_ok "record active tools snapshot"
+      (Subagents.record_active_tools_snapshot spawned.delivery_state
+         ~agent_id:"snapshot-a1"
+         ~active_tools:[ "exec_command"; "write_stdin" ])
+  in
   let started =
     expect_ok "record child session start"
-      (Subagents.record_child_session_start spawned.delivery_state
-         ~agent_id:"snapshot-a1" ~child_session_id:"child-1"
-         ~active_tools:[ "exec_command"; "write_stdin" ] ())
+      (Subagents.record_child_session_start snapshotted
+         ~agent_id:"snapshot-a1" ~child_session_id:"child-1" ())
   in
   let decoded =
     expect_ok "snapshot codec"
@@ -570,6 +585,28 @@ let test_agent_wait_state () =
   (match Subagents.find_run waited.wait_state "finder-a1-run-1" with
   | Some run -> assert_bool "wait marks run consumed" run.run_consumed
   | None -> fail "wait consumed run" "expected run");
+  let other_spawned =
+    expect_ok "wait other spawn"
+      (Subagents.record_spawn completed ~now:30 ~parent_session_id:"other"
+         ~agent_id:"finder-b1" ~profile_name:"finder" "inspect other")
+  in
+  let other_completed =
+    expect_ok "complete other run"
+      (Subagents.record_run_completion other_spawned.delivery_state ~now:40
+         ~run_id:"finder-b1-run-1" ~status:Subagents.Run_completed
+         ~final_output:"secret child answer" ())
+  in
+  let other_waited =
+    Subagents.wait_for_selector other_completed ~parent_session_id:"parent"
+      (Subagents.Wait_run_ids [ "finder-b1-run-1" ])
+  in
+  (match other_waited.wait_items with
+  | [ item ] ->
+      assert_equal "not-owned wait status" "not_owned" item.wait_status;
+      assert_bool "not-owned wait hides output" (item.wait_final_output = None)
+  | _ -> fail "not-owned wait item" "expected one item");
+  assert_equal "not-owned wait message hides output"
+    "finder-b1 finder-b1-run-1 [not_owned]" other_waited.wait_message;
   let no_active =
     Subagents.wait_for_selector waited.wait_state ~parent_session_id:"parent"
       (Subagents.Wait_agent_ids [ "finder-a1" ])

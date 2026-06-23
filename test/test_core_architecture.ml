@@ -62,8 +62,16 @@ let test_capability_child_profile () =
   let child = expect_ok "child profile" (Capability.child_profile parent definition) in
   assert_bool "sandbox clamp" (child.sandbox_preset = Capability.Read_only);
   assert_bool "allowed inherited tool survives" (Capability.allow_tool child "exec_command");
-  assert_bool "parent-denied tool stays denied" (not (Capability.allow_tool child "usage"));
-  assert_bool "child cannot enable no sandbox" (not child.no_sandbox_allowed)
+  assert_bool "explicit child tool survives parent restriction"
+    (Capability.allow_tool child "usage");
+  assert_bool "child cannot enable no sandbox" (not child.no_sandbox_allowed);
+  let inherited =
+    expect_ok "child inherits parent tools"
+      (Capability.child_profile parent { definition with Capability.tools = None })
+  in
+  assert_bool "inherited child tools use parent profile"
+    (Capability.allow_tool inherited "get_goal"
+    && not (Capability.allow_tool inherited "usage"))
 
 let test_gateway_enforces_profile_and_sandbox () =
   let spec =

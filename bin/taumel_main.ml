@@ -74,6 +74,8 @@ let core_call name_js args_js =
       Agent_tools.record_dispatch_completion (arg 0) (arg 1)
   | "recordAgentChildSessionStart" ->
       Agent_tools.record_child_session_start (arg 0) (arg 1)
+  | "recordAgentActiveToolsSnapshot" ->
+      Agent_tools.record_active_tools_snapshot (arg 0) (arg 1)
   | "planAgentBridgeUpdate" -> Agent_tools.plan_bridge_update (arg 0)
   | "refreshAgentProfileCatalog" -> Agent_tools.refresh_profile_catalog (arg 0)
   | "handleCommand" ->

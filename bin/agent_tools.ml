@@ -322,6 +322,20 @@ let record_child_session_start params ctx =
       Session_sync.save_agent_state ctx;
       ok_obj [ ("ok", js_bool true) ]
 
+let record_active_tools_snapshot params ctx =
+  let prepared = Unsafe.get params "prepared" in
+  let agent_id = get_string prepared "workerId" in
+  let active_tools = get_string_array params "activeTools" in
+  match
+    Taumel.Subagents.record_active_tools_snapshot !agent_state ~agent_id
+      ~active_tools
+  with
+  | Error message -> error_obj message
+  | Ok state ->
+      agent_state := state;
+      Session_sync.save_agent_state ctx;
+      ok_obj [ ("ok", js_bool true) ]
+
 let plan_bridge_update params =
   let prepared = Unsafe.get params "prepared" in
   let action = get_string prepared "action" in
@@ -686,13 +700,35 @@ let js_profile_spec state (profile : Taumel.Subagents.profile_spec) =
       ("tools", js_string (Taumel.Subagents.tools_setting_to_summary profile.spec_tools));
     |]
 
+let profile_summary state (profile : Taumel.Subagents.profile_spec) =
+  let enabled = Taumel.Subagents.profile_enabled state profile.spec_name in
+  let disabled =
+    if enabled then "" else "; disabledReason=disabled for this session"
+  in
+  Printf.sprintf "%s [enabled=%s] - %s%s; sandbox=%s; tools=%s"
+    profile.spec_name
+    (if enabled then "true" else "false")
+    profile.spec_description disabled
+    (Taumel.Subagents.sandbox_setting_to_summary profile.spec_sandbox)
+    (Taumel.Subagents.tools_setting_to_summary profile.spec_tools)
+
 let render_profiles () =
   let state = !agent_state in
   let catalog = !agent_catalog in
+  let profile_text =
+    match catalog.catalog_profiles with
+    | [] -> "No agent profiles."
+    | profiles -> String.concat "\n" (List.map (profile_summary state) profiles)
+  in
+  let text =
+    match catalog.catalog_errors with
+    | [] -> profile_text
+    | errors -> profile_text ^ "\nErrors:\n" ^ String.concat "\n" errors
+  in
   ok_obj
     [
       ("action", js_string "tool_result");
-      ("text", js_string "Available agent profiles: smart, deep, rush, finder, librarian, oracle, painter, review");
+      ("text", js_string text);
       ( "details",
         inject
           (Unsafe.obj

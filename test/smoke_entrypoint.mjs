@@ -1055,7 +1055,11 @@ try {
     agentProfiles.details?.ok !== true ||
     !agentProfiles.details?.profiles?.some((profile) => profile.name === "finder") ||
     !agentProfiles.details?.profiles?.some((profile) => profile.name === "scout") ||
-    agentProfiles.details?.profiles?.some((profile) => profile.name === "plan")
+    agentProfiles.details?.profiles?.some((profile) => profile.name === "plan") ||
+    !agentProfiles.content?.[0]?.text?.includes("scout [enabled=true]") ||
+    !agentProfiles.content?.[0]?.text?.includes("Temporary smoke-test scanner") ||
+    !agentProfiles.content?.[0]?.text?.includes("sandbox=read-only") ||
+    !agentProfiles.content?.[0]?.text?.includes("tools=exec_command")
   ) {
     throw new Error(`agent_profiles did not return the PRD built-in catalog: ${JSON.stringify(agentProfiles)}`);
   }
@@ -1107,7 +1111,9 @@ try {
     ctx,
   );
   if (
-    disabledProfiles.details?.profiles?.find((profile) => profile.name === "finder")?.enabled !== false
+    disabledProfiles.details?.profiles?.find((profile) => profile.name === "finder")?.enabled !== false ||
+    !disabledProfiles.content?.[0]?.text?.includes("finder [enabled=false]") ||
+    !disabledProfiles.content?.[0]?.text?.includes("disabledReason=disabled for this session")
   ) {
     throw new Error(`agent_profiles did not expose disabled profile state: ${JSON.stringify(disabledProfiles)}`);
   }
@@ -1235,12 +1241,15 @@ try {
     ctx,
   );
   const failedDispatchSpawnState = parentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
+  const failedDispatchSpawnAgent = failedDispatchSpawnState?.data?.agents?.find((agent) => agent.agent_id === "failed-dispatch-worker");
   const failedDispatchSpawnRun = failedDispatchSpawnState?.data?.runs?.find((run) => run.run_id === "failed-dispatch-worker-run-1");
   if (
     failedDispatchSpawn.details?.ok !== false ||
     failedDispatchSpawn.details?.dispatchFailed !== true ||
     failedDispatchSpawn.details?.dispatch?.dispatched !== false ||
     failedDispatchSpawn.details?.dispatch?.reason !== "createAgentSession did not return a session" ||
+    !Array.isArray(failedDispatchSpawnAgent?.active_tools) ||
+    !failedDispatchSpawnAgent.active_tools.includes("exec_command") ||
     failedDispatchSpawnRun?.status !== "failed" ||
     failedDispatchSpawnRun?.reason !== "createAgentSession did not return a session"
   ) {
@@ -1303,6 +1312,55 @@ try {
   await tools.get("agent_close").execute(
     "agent-send-dispatch-failure-close",
     { agent_ids: ["failed-send-worker"] },
+    undefined,
+    undefined,
+    ctx,
+  );
+
+  childSendResponses.push({
+    agentEndMessage: {
+      role: "assistant",
+      content: [],
+      stopReason: "stop",
+    },
+  });
+  const successfulNoOutputSpawn = await tools.get("agent_spawn").execute(
+    "agent-successful-no-output-spawn",
+    { profile: "finder", objective: "successful no output", agent_id: "successful-no-output-worker" },
+    undefined,
+    undefined,
+    ctx,
+  );
+  const successfulNoOutput = await waitFor(() => {
+    const state = parentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
+    const run = state?.data?.runs?.find((candidate) => candidate.run_id === "successful-no-output-worker-run-1");
+    return run?.status === "completed" ? { state, run } : undefined;
+  }, "successful terminal child without assistant output was not recorded");
+  if (
+    successfulNoOutputSpawn.details?.ok !== true ||
+    successfulNoOutput.run?.final_output !== null ||
+    successfulNoOutput.run?.reason !== null
+  ) {
+    throw new Error(`agent_spawn did not persist textless successful terminal child correctly: ${JSON.stringify({ successfulNoOutputSpawn, successfulNoOutput })}`);
+  }
+  const successfulNoOutputWait = await tools.get("agent_wait").execute(
+    "agent-successful-no-output-wait",
+    { run_ids: ["successful-no-output-worker-run-1"], timeout_seconds: 0 },
+    undefined,
+    undefined,
+    ctx,
+  );
+  const successfulNoOutputWaitRun = successfulNoOutputWait.details?.runs?.find((run) => run.run_id === "successful-no-output-worker-run-1");
+  if (
+    successfulNoOutputWaitRun?.status !== "completed" ||
+    successfulNoOutputWaitRun?.finalOutput !== null ||
+    successfulNoOutputWaitRun?.consumed !== true
+  ) {
+    throw new Error(`agent_wait did not surface textless successful terminal child: ${JSON.stringify(successfulNoOutputWait)}`);
+  }
+  await tools.get("agent_close").execute(
+    "agent-successful-no-output-close",
+    { agent_ids: ["successful-no-output-worker"] },
     undefined,
     undefined,
     ctx,

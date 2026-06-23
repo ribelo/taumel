@@ -157,7 +157,6 @@ function completionFromAgentEndEvent(event: unknown): Record<string, unknown> | 
     errorMessage !== undefined || stopReason === "error" ? "failed" :
     stopReason === "cancelled" || stopReason === "aborted" ? "cancelled" :
     "completed";
-  if (finalOutput === undefined && status === "completed") return undefined;
   const reason = errorMessage ?? (status === "cancelled" && stopReason !== "" ? stopReason : undefined);
   return {
     status,
@@ -710,20 +709,23 @@ function dispatchCompletionFromHostResult(hostResult: unknown): Record<string, u
     typeof hostResult["result"] === "string" ? hostResult["result"] :
     completionTextFromContent(hostResult["content"]);
   const rawStatus = typeof hostResult["status"] === "string" ? hostResult["status"] : "";
-  const status = rawStatus === "failed" || hostResult["isError"] === true ? "failed" :
-    rawStatus === "cancelled" || rawStatus === "aborted" ? "cancelled" :
+  const stopReason = typeof hostResult["stopReason"] === "string" ? hostResult["stopReason"] : "";
+  const status = rawStatus === "failed" || hostResult["isError"] === true || stopReason === "error" ? "failed" :
+    rawStatus === "cancelled" || rawStatus === "aborted" || stopReason === "cancelled" || stopReason === "aborted" ? "cancelled" :
     rawStatus === "timed_out" ? "timed_out" :
     "completed";
   const reason =
     typeof hostResult["reason"] === "string" ? hostResult["reason"] :
     typeof hostResult["errorMessage"] === "string" ? hostResult["errorMessage"] :
     typeof hostResult["error"] === "string" ? hostResult["error"] :
-    typeof hostResult["stopReason"] === "string" ? hostResult["stopReason"] :
+    stopReason !== "" ? stopReason :
     undefined;
-  if ((finalOutput === undefined || finalOutput.trim() === "") && status === "completed") return undefined;
+  const hasOutput = finalOutput !== undefined && finalOutput.trim() !== "";
+  const explicitTerminal = rawStatus !== "" || hostResult["isError"] === true || stopReason !== "";
+  if (!hasOutput && status === "completed" && !explicitTerminal) return undefined;
   return {
     status,
-    ...(finalOutput !== undefined && finalOutput.trim() !== "" ? { finalOutput } : {}),
+    ...(hasOutput ? { finalOutput } : {}),
     ...(reason !== undefined ? { reason } : {}),
   };
 }
@@ -793,6 +795,21 @@ function recordAgentChildSessionStart(
   }
 }
 
+function recordAgentActiveToolsSnapshot(
+  core: CoreBridge,
+  prepared: Record<string, unknown>,
+  activeTools: readonly string[],
+  ctx: unknown,
+): void {
+  const result = coreCall(core, "recordAgentActiveToolsSnapshot", [{
+    prepared,
+    activeTools: [...activeTools],
+  }, ctx]);
+  if (!isRecord(result) || result["ok"] !== true) {
+    throw new Error("Invalid Taumel agent active tools snapshot update");
+  }
+}
+
 function recordAgentDispatchCompletionInBackground(
   pi: PiLike,
   core: CoreBridge,
@@ -839,6 +856,10 @@ async function createAgentChildSessionForPrepared(
   }
   const workerId = stringField(spawnPlan, "workerId");
   const metadata = isRecord(spawnPlan["metadata"]) ? spawnPlan["metadata"] : {};
+  const activeTools = stringArrayFromUnknown(metadata["activeTools"]);
+  if (activeTools !== undefined) {
+    recordAgentActiveToolsSnapshot(core, prepared, activeTools, ctx);
+  }
   const bridge = await createChildSession(pi, core, ctx, metadata);
   await applyChildSessionUpdate(
     childSessions,
