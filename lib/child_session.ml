@@ -192,9 +192,14 @@ let dispatch_result ?session_id ?reason ~dispatched () =
   in
   Shared.Object fields
 
-let dispatch_plan ?(empty_reason = "empty prompt") ?bridge ~prompt
-    ~send_available () =
+let dispatch_plan ?(empty_reason = "empty prompt") ?(deliver_as = "followUp")
+    ?bridge ~prompt ~send_available () =
   let prompt = String.trim prompt in
+  let deliver_as =
+    match deliver_as with
+    | "steer" -> "steer"
+    | _ -> "followUp"
+  in
   let session_id = Option.bind bridge (fun bridge -> bridge.session_id) in
   let immediate ?session_id reason =
     {
@@ -215,6 +220,6 @@ let dispatch_plan ?(empty_reason = "empty prompt") ?bridge ~prompt
         {
           send = true;
           prompt;
-          deliver_as = "followUp";
+          deliver_as;
           result = dispatch_result ?session_id ~dispatched:true ();
         }

@@ -436,6 +436,11 @@ let test_child_session_setup_entries () =
   assert_bool "child dispatch sends" dispatch.send;
   assert_equal "child dispatch trims prompt" "hello child" dispatch.prompt;
   assert_equal "child dispatch delivery mode" "followUp" dispatch.deliver_as;
+  let steer_dispatch =
+    Child_session.dispatch_plan ~bridge ~deliver_as:"steer" ~prompt:"steer child"
+      ~send_available:true ()
+  in
+  assert_equal "child dispatch steer mode" "steer" steer_dispatch.deliver_as;
   (match dispatch.result with
   | Shared.Object fields ->
       assert_bool "child dispatch result sent"

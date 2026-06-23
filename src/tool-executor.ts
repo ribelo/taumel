@@ -607,7 +607,7 @@ export async function sendToChildSession(
   emptyReason = "empty prompt",
   options: {
     readonly awaitCompletion?: boolean;
-    readonly deliverAs?: "followUp" | "steer";
+    readonly deliverAs?: string;
     readonly onCompletion?: (dispatch: Record<string, unknown>) => void | Promise<void>;
   } = {},
 ): Promise<Record<string, unknown>> {
@@ -621,6 +621,7 @@ export async function sendToChildSession(
     prompt,
     emptyReason,
     sendAvailable: childSendAvailable || hostSendAvailable,
+    deliverAs: options.deliverAs ?? "",
   }]);
   if (!isRecord(plan)) {
     throw new Error("Invalid Taumel child dispatch plan");
@@ -630,7 +631,7 @@ export async function sendToChildSession(
   if (plan["send"] !== true) return result;
 
   const dispatchPrompt = stringField(plan, "prompt");
-  const deliverAs = options.deliverAs ?? stringField(plan, "deliverAs");
+  const deliverAs = stringField(plan, "deliverAs");
   if (deliverAs === "") throw new Error("Invalid Taumel child dispatch delivery mode");
   const sendOptions = { deliverAs };
   const awaitCompletion = options.awaitCompletion !== false;
@@ -790,18 +791,6 @@ function recordAgentChildSessionStart(
   }
 }
 
-function preparedInterruptedActiveRun(prepared: Record<string, unknown>): boolean {
-  const details = isRecord(prepared["details"]) ? prepared["details"] : undefined;
-  return typeof details?.["previousRunStatus"] === "string" &&
-    details["previousRunStatus"] !== "" &&
-    details["deliveryKind"] === "started";
-}
-
-function preparedDeliveryKind(prepared: Record<string, unknown>): string {
-  const details = isRecord(prepared["details"]) ? prepared["details"] : undefined;
-  return typeof details?.["deliveryKind"] === "string" ? details["deliveryKind"] : "";
-}
-
 function recordAgentDispatchCompletionInBackground(
   pi: PiLike,
   core: CoreBridge,
@@ -871,6 +860,12 @@ export async function applyChildSessionUpdate(
       await stopChildSession(childSessions.get(key) ?? bridge, optionalStringField(update, "reason") ?? "stopped_by_parent");
       return;
     }
+    case "drop_child_session": {
+      const key = stringField(update, "key");
+      if (key === "") throw new Error("Invalid Taumel child session update");
+      childSessions.delete(key);
+      return;
+    }
     case "delete_child_session": {
       const key = stringField(update, "key");
       if (key === "") throw new Error("Invalid Taumel child session update");
@@ -919,41 +914,14 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-const activeAgentRunStatuses = new Set(["queued", "running", "suspended"]);
-
 function agentWaitHasActiveRuns(prepared: Record<string, unknown>): boolean {
   const details = isRecord(prepared["details"]) ? prepared["details"] : {};
-  const runs = Array.isArray(details["runs"]) ? details["runs"] : [];
-  return runs.some((run) =>
-    isRecord(run) &&
-    typeof run["status"] === "string" &&
-    activeAgentRunStatuses.has(run["status"])
-  );
+  return details["hasActiveRuns"] === true;
 }
 
-function preparedActiveRunIds(prepared: Record<string, unknown>): string[] {
+function agentWaitPollParams(params: unknown, prepared: Record<string, unknown>): unknown {
   const details = isRecord(prepared["details"]) ? prepared["details"] : {};
-  const runs = Array.isArray(details["runs"]) ? details["runs"] : [];
-  const runIds: string[] = [];
-  const seen = new Set<string>();
-  for (const run of runs) {
-    if (!isRecord(run)) continue;
-    const runId = stringField(run, "run_id");
-    const status = stringField(run, "status");
-    if (runId === "" || !activeAgentRunStatuses.has(status) || seen.has(runId)) continue;
-    seen.add(runId);
-    runIds.push(runId);
-  }
-  return runIds;
-}
-
-function pinnedAgentWaitParams(params: unknown, prepared: Record<string, unknown>): unknown {
-  if (isRecord(params) && Array.isArray(params["run_ids"])) return params;
-  const runIds = preparedActiveRunIds(prepared);
-  if (runIds.length === 0) return params;
-  const pinned = isRecord(params) ? { ...params } : {};
-  delete pinned["agent_ids"];
-  return { ...pinned, run_ids: runIds };
+  return isRecord(details["pollParams"]) ? details["pollParams"] : params;
 }
 
 async function executeAgentWait(
@@ -968,7 +936,7 @@ async function executeAgentWait(
   if (timeoutSeconds === 0 || !agentWaitHasActiveRuns(prepared)) {
     return preparedToolResult(core, prepared);
   }
-  const pollParams = pinnedAgentWaitParams(params, prepared);
+  const pollParams = agentWaitPollParams(params, prepared);
 
   const startedAt = Date.now();
   const deadline =
@@ -1176,18 +1144,7 @@ export async function executeTool(
     }
     case "agent_send": {
       const workerId = stringField(prepared, "workerId");
-      if (preparedInterruptedActiveRun(prepared)) {
-        await applyChildSessionUpdate(
-          childSessions,
-          {
-            action: "stop_child_session",
-            key: workerId,
-            reason: "interrupted_by_parent",
-          },
-          undefined,
-        );
-        childSessions.delete(workerId);
-      }
+      await applyChildSessionUpdatesFromDetails(childSessions, prepared);
       let bridge = childSessions.get(workerId);
       if (bridge === undefined) {
         bridge = (
@@ -1200,7 +1157,6 @@ export async function executeTool(
           )
         ).bridge;
       }
-      const deliverAs = preparedDeliveryKind(prepared) === "steered" ? "steer" : "followUp";
       const dispatch = await sendToChildSession(
         pi,
         core,
@@ -1209,7 +1165,7 @@ export async function executeTool(
         "empty prompt",
         {
           awaitCompletion: false,
-          deliverAs,
+          deliverAs: optionalStringField(prepared, "dispatchDeliverAs") ?? "",
           onCompletion: recordAgentDispatchCompletionInBackground(pi, core, prepared, ctx),
         },
       );

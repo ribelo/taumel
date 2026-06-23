@@ -958,6 +958,10 @@ type submission_delivery = {
   delivery_previous_status : run_status option;
 }
 
+let dispatch_deliver_as_for_delivery_kind = function
+  | "steered" -> "steer"
+  | _ -> "followUp"
+
 type wait_selector =
   | Wait_all_active
   | Wait_run_ids of string list
@@ -976,6 +980,7 @@ type wait_result = {
   wait_state : session_state;
   wait_items : wait_item list;
   wait_message : string;
+  wait_active_run_ids : string list;
 }
 
 let empty_session_state = { profile_toggles = []; identities = []; runs = [] }
@@ -1495,6 +1500,26 @@ let wait_message items =
                  agent ^ run_id ^ " [" ^ item.wait_status ^ "]")
            items)
 
+let active_wait_run_ids items =
+  let rec loop seen acc = function
+    | [] -> List.rev acc
+    | item :: rest -> (
+        match (item.wait_run_id, run_status_of_string item.wait_status) with
+        | Some run_id, Ok status
+          when active_run_status status && not (List.mem run_id seen) ->
+            loop (run_id :: seen) (run_id :: acc) rest
+        | _ -> loop seen acc rest)
+  in
+  loop [] [] items
+
+let wait_result state items =
+  {
+    wait_state = state;
+    wait_items = items;
+    wait_message = wait_message items;
+    wait_active_run_ids = active_wait_run_ids items;
+  }
+
 let wait_for_selector state ~parent_session_id selector =
   let select_all_active () =
     state.runs
@@ -1510,7 +1535,7 @@ let wait_for_selector state ~parent_session_id selector =
   match selector with
   | Wait_all_active ->
       let items = List.map wait_item_of_run (select_all_active ()) in
-      { wait_state = state; wait_items = items; wait_message = wait_message items }
+      wait_result state items
   | Wait_agent_ids agent_ids ->
       let items =
         List.map
@@ -1535,7 +1560,7 @@ let wait_for_selector state ~parent_session_id selector =
                 })
           agent_ids
       in
-      { wait_state = state; wait_items = items; wait_message = wait_message items }
+      wait_result state items
   | Wait_run_ids run_ids ->
       let state_ref = ref state in
       let items =
@@ -1566,11 +1591,7 @@ let wait_for_selector state ~parent_session_id selector =
                 | None -> wait_item_of_run run))
           run_ids
       in
-      {
-        wait_state = !state_ref;
-        wait_items = items;
-        wait_message = wait_message items;
-      }
+      wait_result !state_ref items
 
 let profile_enabled state name =
   match

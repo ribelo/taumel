@@ -36,7 +36,17 @@ let js_worker (worker : Taumel.Subagents.worker) =
 let summary (worker : Taumel.Subagents.worker) =
   Taumel.Subagents.summary worker
 
+let js_child_session_update ?reason action key =
+  let fields = [ ("action", js_string action); ("key", js_string key) ] in
+  let fields =
+    match reason with
+    | None -> fields
+    | Some reason -> fields @ [ ("reason", js_string reason) ]
+  in
+  Unsafe.obj (Array.of_list fields)
+
 let result ?run_id ?submission_id ?delivery_kind ?previous_status
+    ?dispatch_deliver_as ?(child_session_updates = [])
     ?(action = "tool_result") ?(message = "") ?(prompt = "")
     (worker : Taumel.Subagents.worker) =
   let text = if message = "" then summary worker else message in
@@ -66,7 +76,12 @@ let result ?run_id ?submission_id ?delivery_kind ?previous_status
     | None -> detail_fields
     | Some value -> detail_fields @ [ ("previousRunStatus", js_string value) ]
   in
-  ok_obj
+  let detail_fields =
+    match child_session_updates with
+    | [] -> detail_fields
+    | updates -> detail_fields @ [ ("childSessionUpdates", js_array updates) ]
+  in
+  let fields =
     [
       ("action", js_string action);
       ("text", js_string text);
@@ -78,6 +93,13 @@ let result ?run_id ?submission_id ?delivery_kind ?previous_status
       ("prompt", js_string prompt);
       ("details", inject (Unsafe.obj (Array.of_list detail_fields)));
     ]
+  in
+  let fields =
+    match dispatch_deliver_as with
+    | None -> fields
+    | Some value -> ("dispatchDeliverAs", js_string value) :: fields
+  in
+  ok_obj fields
 
 let optional_worker_tool_names worker =
   Option.map
@@ -373,6 +395,17 @@ let request_from_params (owner : Taumel.Subagents.owner) name params =
 
 let delivery_run_status = Option.map Taumel.Subagents.run_status_to_string
 
+let delivery_child_session_updates worker_id
+    (delivery : Taumel.Subagents.submission_delivery) =
+  match (delivery.delivery_kind, delivery.delivery_previous_status) with
+  | "started", Some _ ->
+      [
+        js_child_session_update ~reason:"interrupted_by_parent"
+          "stop_child_session" worker_id;
+        js_child_session_update "drop_child_session" worker_id;
+      ]
+  | _ -> []
+
 let render_plan ?delivery plan =
   match plan.Taumel.Subagents.worker with
   | Some worker ->
@@ -385,12 +418,20 @@ let render_plan ?delivery plan =
           in
           result ?run_id ~action:plan.action ~prompt:plan.prompt
             ~message:plan.message worker
-      | Some delivery ->
+      | Some (delivery : Taumel.Subagents.submission_delivery) ->
+          let dispatch_deliver_as =
+            Taumel.Subagents.dispatch_deliver_as_for_delivery_kind
+              delivery.delivery_kind
+          in
+          let child_session_updates =
+            delivery_child_session_updates worker.id delivery
+          in
           result ~run_id:delivery.Taumel.Subagents.delivery_run_id
             ~submission_id:delivery.delivery_submission_id
             ~delivery_kind:delivery.delivery_kind
             ?previous_status:(delivery_run_status delivery.delivery_previous_status)
-            ~action:plan.action ~prompt:plan.prompt ~message:plan.message worker)
+            ~dispatch_deliver_as ~child_session_updates ~action:plan.action
+            ~prompt:plan.prompt ~message:plan.message worker)
   | None ->
       ok_obj
         [
@@ -524,6 +565,14 @@ let js_wait_item (item : Taumel.Subagents.wait_item) =
       ("consumed", js_bool item.wait_consumed);
     |]
 
+let js_wait_poll_params run_ids =
+  match run_ids with
+  | [] -> inject Js.null
+  | run_ids ->
+      inject
+        (Unsafe.obj
+           [| ("run_ids", js_array (List.map js_string run_ids)) |])
+
 let parse_wait_selector params =
   let run_ids = optional_string_array params "run_ids" in
   let agent_ids = optional_string_array params "agent_ids" in
@@ -557,7 +606,14 @@ let render_agent_wait params owner_id ctx =
                    ("ok", js_bool true);
                    ( "runs",
                      js_array (List.map js_wait_item result.wait_items) );
-                   ("status", js_string (if result.wait_items = [] then "no_active_runs" else "ok"));
+                   ( "hasActiveRuns",
+                     js_bool (result.wait_active_run_ids <> []) );
+                   ( "pollParams",
+                     js_wait_poll_params result.wait_active_run_ids );
+                   ( "status",
+                     js_string
+                       (if result.wait_items = [] then "no_active_runs"
+                        else "ok") );
                  |]) );
         ]
 
@@ -836,15 +892,6 @@ let js_agent_menu_option ~label ~value ~description ~selected =
       ("description", js_string description);
       ("selected", js_bool selected);
     |]
-
-let js_child_session_update ?reason action key =
-  let fields = [ ("action", js_string action); ("key", js_string key) ] in
-  let fields =
-    match reason with
-    | None -> fields
-    | Some reason -> fields @ [ ("reason", js_string reason) ]
-  in
-  Unsafe.obj (Array.of_list fields)
 
 let child_session_updates_details updates =
   Unsafe.obj

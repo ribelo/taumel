@@ -71,8 +71,12 @@ let plan_child_dispatch facts =
          Taumel.Shared.trim_non_empty)
       ~default:"empty prompt"
   in
+  let deliver_as =
+    Option.bind (optional_string_field facts "deliverAs")
+      Taumel.Shared.trim_non_empty
+  in
   Taumel.Child_session.dispatch_plan ?bridge ~empty_reason
-    ~prompt:(get_string facts "prompt")
+    ?deliver_as ~prompt:(get_string facts "prompt")
     ~send_available:(get_bool facts "sendAvailable")
     ()
   |> js_child_dispatch_plan

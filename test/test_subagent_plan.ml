@@ -405,6 +405,8 @@ let test_agent_run_metadata_state () =
       (Subagents.record_send state ~now:12 ~agent_id:"finder-a1" "continue")
   in
   assert_equal "send steers active run" "steered" sent.delivery_kind;
+  assert_equal "send steered delivery mode" "steer"
+    (Subagents.dispatch_deliver_as_for_delivery_kind sent.delivery_kind);
   assert_equal "send keeps run" spawned.delivery_run_id sent.delivery_run_id;
   assert_equal "send submission id" "finder-a1-run-1-submission-2"
     sent.delivery_submission_id;
@@ -416,6 +418,8 @@ let test_agent_run_metadata_state () =
   assert_equal "interrupted send starts next run" "finder-a1-run-2"
     interrupted.delivery_run_id;
   assert_equal "interrupted send delivery" "started" interrupted.delivery_kind;
+  assert_equal "started delivery mode" "followUp"
+    (Subagents.dispatch_deliver_as_for_delivery_kind interrupted.delivery_kind);
   assert_bool "interrupted send reports previous status"
     (interrupted.delivery_previous_status = Some Subagents.Run_running);
   (match Subagents.find_run interrupted.delivery_state "finder-a1-run-1" with
@@ -520,6 +524,8 @@ let test_agent_wait_state () =
   in
   assert_equal "wait active message" "finder-a1 finder-a1-run-1 [running]"
     active.wait_message;
+  assert_bool "wait pins active run ids"
+    (active.wait_active_run_ids = [ "finder-a1-run-1" ]);
   let completed =
     expect_ok "complete run"
       (Subagents.record_run_completion spawned.delivery_state ~now:20
@@ -535,6 +541,8 @@ let test_agent_wait_state () =
       assert_equal "wait terminal status" "completed" item.wait_status;
       assert_bool "wait terminal consumed" item.wait_consumed
   | _ -> fail "wait terminal item" "expected one item");
+  assert_bool "terminal wait has no active run ids"
+    (waited.wait_active_run_ids = []);
   (match Subagents.find_run waited.wait_state "finder-a1-run-1" with
   | Some run -> assert_bool "wait marks run consumed" run.run_consumed
   | None -> fail "wait consumed run" "expected run");
