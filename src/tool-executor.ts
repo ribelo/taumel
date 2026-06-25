@@ -775,7 +775,9 @@ function latestChildGoalStatus(bridge: ChildSessionBridge | undefined): string |
 }
 
 function isSpawnedObjectiveCompletion(prepared: Record<string, unknown>): boolean {
-  return stringField(prepared, "action") === "agent_spawn";
+  if (stringField(prepared, "action") === "agent_spawn") return true;
+  const details = isRecord(prepared["details"]) ? prepared["details"] : {};
+  return optionalStringField(details, "runInitialSubmissionKind") === "objective";
 }
 
 function completionStatus(completion: Record<string, unknown>): string {
@@ -1428,7 +1430,11 @@ export async function executeTool(
       const workerId = stringField(prepared, "workerId");
       const keyScope = childSessionCacheKeyScopeFromContext(ctx);
       await applyChildSessionUpdatesFromDetails(childSessions, prepared, keyScope);
-      if (agentDeliveryKind(prepared) === "suspended" && stringField(prepared, "prompt") === "") {
+      const deliveryKind = agentDeliveryKind(prepared);
+      if (
+        (deliveryKind === "suspended" || deliveryKind === "no_active_run") &&
+        stringField(prepared, "prompt") === ""
+      ) {
         return preparedToolResult(core, prepared);
       }
       let bridge = childSessions.get(childSessionCacheKey(workerId, keyScope));

@@ -84,11 +84,30 @@ let result ?run_id ?submission_id ?delivery_kind ?previous_status
     ?dispatch_deliver_as ?(child_session_updates = [])
     ?(action = "tool_result") ?(message = "") ?(prompt = "")
     (worker : Taumel.Subagents.worker) =
-  let run_id = Option.value run_id ~default:(worker.id ^ "-run-1") in
+  let no_active_run = delivery_kind = Some "no_active_run" in
+  let run_id =
+    match run_id with
+    | Some value -> value
+    | None when no_active_run -> ""
+    | None -> worker.id ^ "-run-1"
+  in
+  let run =
+    match Taumel.Shared.trim_non_empty run_id with
+    | None -> None
+    | Some id -> Taumel.Subagents.find_run !agent_state id
+  in
   let run_status =
-    match Taumel.Subagents.find_run !agent_state run_id with
-    | Some run -> Taumel.Subagents.run_status_to_string run.run_status
-    | None -> Taumel.Subagents.lifecycle_to_string worker.lifecycle
+    if no_active_run then "no_active_run"
+    else
+      match run with
+      | Some run -> Taumel.Subagents.run_status_to_string run.run_status
+      | None -> Taumel.Subagents.lifecycle_to_string worker.lifecycle
+  in
+  let run_initial_submission_kind =
+    Option.map
+      (fun (run : Taumel.Subagents.agent_run) ->
+        run.run_initial_submission_kind)
+      run
   in
   let text =
     match action with
@@ -102,41 +121,59 @@ let result ?run_id ?submission_id ?delivery_kind ?previous_status
             "</taumel_agent_spawn>";
           ]
     | "agent_send" ->
-        let submission =
-          match submission_id with
-          | None | Some "" -> []
-          | Some id ->
-              [
-                Printf.sprintf
-                  "  <submission id=\"%s\" kind=\"%s\" />"
-                  (xml_attr id)
-                  (xml_attr (Option.value delivery_kind ~default:"sent"));
-              ]
-        in
-        String.concat "\n"
-          ([
-             "<taumel_agent_send>";
-             xml_agent_line worker.id worker.definition_name;
-             xml_run_line run_id run_status;
-           ]
-          @ submission
-          @ [ "</taumel_agent_send>" ])
+        if no_active_run then
+          String.concat "\n"
+            [
+              "<taumel_agent_send>";
+              xml_agent_line worker.id worker.definition_name;
+              "  <summary status=\"no_active_run\" />";
+              "</taumel_agent_send>";
+            ]
+        else
+          let submission =
+            match submission_id with
+            | None | Some "" -> []
+            | Some id ->
+                [
+                  Printf.sprintf
+                    "  <submission id=\"%s\" kind=\"%s\" />"
+                    (xml_attr id)
+                    (xml_attr (Option.value delivery_kind ~default:"sent"));
+                ]
+          in
+          String.concat "\n"
+            ([
+               "<taumel_agent_send>";
+               xml_agent_line worker.id worker.definition_name;
+               xml_run_line run_id run_status;
+             ]
+            @ submission
+            @ [ "</taumel_agent_send>" ])
     | _ -> if message = "" then summary worker else message
   in
   let detail_fields =
     [
       ("worker", inject (js_worker worker));
       ("agent_id", js_string worker.id);
-      ("run_id", js_string run_id);
       ("profile", js_string worker.definition_name);
       ("status", js_string run_status);
       ("ok", js_bool true);
     ]
   in
   let detail_fields =
-    match submission_id with
+    match Taumel.Shared.trim_non_empty run_id with
     | None -> detail_fields
+    | Some value -> detail_fields @ [ ("run_id", js_string value) ]
+  in
+  let detail_fields =
+    match submission_id with
+    | None | Some "" -> detail_fields
     | Some value -> detail_fields @ [ ("submission_id", js_string value) ]
+  in
+  let detail_fields =
+    match run_initial_submission_kind with
+    | None -> detail_fields
+    | Some value -> detail_fields @ [ ("runInitialSubmissionKind", js_string value) ]
   in
   let detail_fields =
     match delivery_kind with
@@ -159,12 +196,16 @@ let result ?run_id ?submission_id ?delivery_kind ?previous_status
       ("text", js_string text);
       ("workerId", js_string worker.id);
       ("agent_id", js_string worker.id);
-      ("run_id", js_string run_id);
       ("profile", js_string worker.definition_name);
       ("status", js_string run_status);
       ("prompt", js_string prompt);
       ("details", inject (Unsafe.obj (Array.of_list detail_fields)));
     ]
+  in
+  let fields =
+    match Taumel.Shared.trim_non_empty run_id with
+    | None -> fields
+    | Some value -> fields @ [ ("run_id", js_string value) ]
   in
   let fields =
     match dispatch_deliver_as with
@@ -224,9 +265,14 @@ let plan_spawn facts =
   match worker_spawn_input worker active_tools with
   | Error message -> error_obj message
   | Ok input -> (
+      let initial_goal_objective =
+        if get_string prepared "action" = "agent_spawn" then
+          Taumel.Shared.trim_non_empty (get_string prepared "prompt")
+        else None
+      in
       match
         Taumel.Subagents.plan_child_session_spawn_from_input
-          ~prompt:(get_string prepared "prompt") input
+          ?initial_goal_objective ~prompt:(get_string prepared "prompt") input
       with
       | Error message -> error_obj message
       | Ok plan ->
@@ -338,7 +384,49 @@ let latest_submission_id (run : Taumel.Subagents.agent_run) =
   | submission :: _ -> Some submission.submission_id
   | [] -> None
 
+let run_with_completion_payload run ?reason ?final_output () =
+  {
+    run with
+    Taumel.Subagents.run_reason =
+      (match reason with
+      | Some _ -> reason
+      | None -> run.Taumel.Subagents.run_reason);
+    run_final_output =
+      (match final_output with
+      | Some _ -> final_output
+      | None -> run.run_final_output);
+    run_output_available = true;
+  }
+
+let merge_volatile_run_fields ~from run =
+  {
+    run with
+    Taumel.Subagents.run_reason =
+      (match run.Taumel.Subagents.run_reason with
+      | Some _ -> run.run_reason
+      | None -> from.Taumel.Subagents.run_reason);
+    run_final_output =
+      (match run.run_final_output with
+      | Some _ -> run.run_final_output
+      | None -> from.run_final_output);
+    run_output_available =
+      run.run_output_available || from.run_output_available
+      || Option.is_some from.run_final_output
+      || Option.is_some from.run_reason;
+  }
+
+let merge_volatile_run_into_state volatile_run state run_id =
+  match volatile_run with
+  | None -> state
+  | Some volatile -> (
+      match Taumel.Subagents.find_run state run_id with
+      | None -> state
+      | Some run ->
+          let updated = merge_volatile_run_fields ~from:volatile run in
+          { state with runs = Taumel.Subagents.replace_run updated state.runs })
+
 let record_dispatch_completion params ctx =
+  Session_sync.sync_persisted_session ctx;
   let prepared = Unsafe.get params "prepared" in
   let completion = Unsafe.get params "completion" in
   match Taumel.Shared.trim_non_empty (get_string prepared "run_id") with
@@ -379,6 +467,12 @@ let record_dispatch_completion params ctx =
       | Some run when run.run_status = Taumel.Subagents.Run_suspended ->
           ok_obj [ ("ok", js_bool true); ("notify", js_bool false) ]
       | Some run when not (Taumel.Subagents.active_run_status run.run_status) ->
+          let run = run_with_completion_payload run ?reason ?final_output () in
+          agent_state :=
+            {
+              !agent_state with
+              runs = Taumel.Subagents.replace_run run !agent_state.runs;
+            };
           ok_obj
             (completion_result_fields run run.run_status
                ?reason:
@@ -412,7 +506,12 @@ let record_dispatch_completion params ctx =
 
 let record_background_notification params ctx =
   let prepared = Unsafe.get params "prepared" in
-  match Taumel.Shared.trim_non_empty (get_string prepared "run_id") with
+  let run_id = Taumel.Shared.trim_non_empty (get_string prepared "run_id") in
+  let volatile_run =
+    Option.bind run_id (Taumel.Subagents.find_run !agent_state)
+  in
+  Session_sync.sync_persisted_session ctx;
+  match run_id with
   | None -> error_obj "missing agent run id"
   | Some run_id -> (
       match
@@ -420,7 +519,7 @@ let record_background_notification params ctx =
       with
       | Error message -> error_obj message
       | Ok state ->
-          agent_state := state;
+          agent_state := merge_volatile_run_into_state volatile_run state run_id;
           Session_sync.save_agent_state ctx;
           ok_obj [ ("ok", js_bool true) ])
 

@@ -1233,6 +1233,114 @@ try {
   }
   selectBehavior = async (_title, labels) => labels[0];
 
+  const otherParentEntries = [];
+  const otherParentCtx = {
+    ...ctx,
+    taumelSessionId: "other-parent-session",
+    sessionManager: {
+      getSessionId: () => "other-parent-session",
+      getSessionFile: () => join(cwd, "other-parent-session.json"),
+      appendCustomEntry: (type, value) => {
+        otherParentEntries.push({ type: "custom", customType: type, data: value });
+      },
+      getEntries: () => otherParentEntries,
+      getBranch: () => [],
+    },
+  };
+  let resolveCrossSessionCompletion;
+  childSendResponses.push(new Promise((resolve) => { resolveCrossSessionCompletion = resolve; }));
+  const crossSessionSpawn = await tools.get("agent_spawn").execute(
+    "agent-cross-session-async-spawn",
+    { profile: "finder", objective: "complete after parent session changed" },
+    undefined,
+    undefined,
+    ctx,
+  );
+  const crossSessionAgentId = crossSessionSpawn.details?.agent_id;
+  const crossSessionRunId = crossSessionSpawn.details?.run_id;
+  const crossSessionStarted = parentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
+  if (
+    crossSessionSpawn.details?.ok !== true ||
+    typeof crossSessionAgentId !== "string" ||
+    typeof crossSessionRunId !== "string" ||
+    crossSessionStarted?.data?.runs?.find((run) => run.run_id === crossSessionRunId)?.status !== "running"
+  ) {
+    throw new Error(`cross-session async completion setup failed: ${JSON.stringify({ crossSessionSpawn, crossSessionStarted })}`);
+  }
+  for (const handler of handlers.get("session_resume") ?? []) {
+    handler({ type: "session_resume" }, otherParentCtx);
+  }
+  const otherSessionCommand = await commands.get("agents").handler("disable finder", otherParentCtx);
+  const otherSessionStateBeforeCompletion = otherParentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
+  if (
+    otherSessionCommand.action !== "command_result" ||
+    otherSessionStateBeforeCompletion?.data?.agents?.length !== 0 ||
+    otherSessionStateBeforeCompletion?.data?.profiles?.find((profile) => profile.name === "finder")?.enabled !== false
+  ) {
+    throw new Error(`cross-session async completion did not switch global agent state: ${JSON.stringify({ otherSessionCommand, otherSessionStateBeforeCompletion })}`);
+  }
+  const crossSessionFinalOutput = longAgentOutput("cross-session async completion");
+  const crossSessionNotificationCount = sentMessages.length;
+  resolveCrossSessionCompletion({ output: crossSessionFinalOutput, status: "completed", goalStatus: "complete" });
+  await waitFor(() => {
+    const state = parentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
+    const run = state?.data?.runs?.find((candidate) => candidate.run_id === crossSessionRunId);
+    return run?.status === "completed" ? { state, run } : undefined;
+  }, "async completion did not reload captured session agent state");
+  for (const handler of handlers.get("session_resume") ?? []) {
+    handler({ type: "session_resume" }, otherParentCtx);
+  }
+  const crossSessionNotification = await waitFor(() => {
+    const message = sentMessages.at(-1);
+    return sentMessages.length === crossSessionNotificationCount + 1 &&
+      message?.message?.customType === "taumel.notification" &&
+      message?.message?.content?.includes(crossSessionRunId)
+      ? message
+      : undefined;
+  }, "async completion notification did not reload captured session agent state", 2500);
+  const crossSessionNotifiedState = parentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
+  const crossSessionNotifiedRun = crossSessionNotifiedState?.data?.runs?.find((run) => run.run_id === crossSessionRunId);
+  if (
+    crossSessionNotification?.options?.triggerTurn !== true ||
+    crossSessionNotifiedRun?.background_notified !== true ||
+    crossSessionNotifiedRun?.consumed !== false
+  ) {
+    throw new Error(`async completion notification did not update the captured parent session: ${JSON.stringify({ crossSessionNotification, crossSessionNotifiedState })}`);
+  }
+  const otherSessionStateAfterCompletion = otherParentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
+  if (
+    otherSessionStateAfterCompletion?.data?.agents?.length !== 0 ||
+    otherSessionStateAfterCompletion?.data?.runs?.length !== 0
+  ) {
+    throw new Error(`async completion updated the wrong parent session state: ${JSON.stringify(otherSessionStateAfterCompletion)}`);
+  }
+  for (const handler of handlers.get("session_resume") ?? []) {
+    handler({ type: "session_resume" }, ctx);
+  }
+  const crossSessionWait = await tools.get("agent_wait").execute(
+    "agent-cross-session-async-wait",
+    { run_ids: [crossSessionRunId], timeout_seconds: 0 },
+    undefined,
+    undefined,
+    ctx,
+  );
+  const crossSessionWaitRun = crossSessionWait.details?.runs?.find((run) => run.run_id === crossSessionRunId);
+  if (
+    crossSessionWaitRun?.status !== "completed" ||
+    crossSessionWaitRun?.finalOutput !== crossSessionFinalOutput ||
+    crossSessionWaitRun?.backgroundNotified !== true ||
+    crossSessionWaitRun?.consumed !== true
+  ) {
+    throw new Error(`agent_wait did not observe cross-session async completion: ${JSON.stringify(crossSessionWait)}`);
+  }
+  await tools.get("agent_close").execute(
+    "agent-cross-session-async-close",
+    { agent_ids: [crossSessionAgentId] },
+    undefined,
+    undefined,
+    ctx,
+  );
+
   let resolveAsyncSpawn;
   childSendResponses.push(new Promise((resolve) => { resolveAsyncSpawn = resolve; }));
   const asyncSpawn = await tools.get("agent_spawn").execute(
@@ -1305,6 +1413,99 @@ try {
   await tools.get("agent_close").execute(
     "agent-active-goal-prose-close",
     { agent_ids: [activeGoalProseAgentId] },
+    undefined,
+    undefined,
+    ctx,
+  );
+
+  childSendResponses.push(new Promise(() => undefined));
+  const activeGoalSteeredSpawn = await tools.get("agent_spawn").execute(
+    "agent-active-goal-steered-spawn",
+    { profile: "finder", objective: "do not complete from steered prose alone" },
+    undefined,
+    undefined,
+    ctx,
+  );
+  const activeGoalSteeredAgentId = activeGoalSteeredSpawn.details?.agent_id;
+  const activeGoalSteeredRunId = activeGoalSteeredSpawn.details?.run_id;
+  childSendResponses.push({ output: longAgentOutput("active child goal steered prose"), status: "completed" });
+  const activeGoalSteeredSend = await tools.get("agent_send").execute(
+    "agent-active-goal-steered-send",
+    { agent_id: activeGoalSteeredAgentId, message: "steer this spawned objective" },
+    undefined,
+    undefined,
+    ctx,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const activeGoalSteeredState = parentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
+  const activeGoalSteeredRun = activeGoalSteeredState?.data?.runs?.find((run) => run.run_id === activeGoalSteeredRunId);
+  if (
+    activeGoalSteeredSpawn.details?.ok !== true ||
+    activeGoalSteeredSend.details?.deliveryKind !== "steered" ||
+    activeGoalSteeredRun?.status !== "running" ||
+    activeGoalSteeredRun?.output_available === true
+  ) {
+    throw new Error(`agent_send completion bypassed spawned-run goal gating: ${JSON.stringify({ activeGoalSteeredSpawn, activeGoalSteeredSend, activeGoalSteeredState })}`);
+  }
+  await tools.get("agent_close").execute(
+    "agent-active-goal-steered-close",
+    { agent_ids: [activeGoalSteeredAgentId] },
+    undefined,
+    undefined,
+    ctx,
+  );
+
+  childSendResponses.push(new Promise(() => undefined));
+  const blockedGoalSteeredSpawn = await tools.get("agent_spawn").execute(
+    "agent-blocked-goal-steered-spawn",
+    { profile: "finder", objective: "fail from steered blocked goal" },
+    undefined,
+    undefined,
+    ctx,
+  );
+  const blockedGoalSteeredAgentId = blockedGoalSteeredSpawn.details?.agent_id;
+  const blockedGoalSteeredRunId = blockedGoalSteeredSpawn.details?.run_id;
+  const blockedGoalSteeredOutput = longAgentOutput("blocked steered child goal");
+  childSendResponses.push({ output: blockedGoalSteeredOutput, status: "completed", goalStatus: "blocked" });
+  const blockedGoalSteeredSend = await tools.get("agent_send").execute(
+    "agent-blocked-goal-steered-send",
+    { agent_id: blockedGoalSteeredAgentId, message: "steer into blocked goal" },
+    undefined,
+    undefined,
+    ctx,
+  );
+  const blockedGoalSteered = await waitFor(() => {
+    const state = parentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
+    const run = state?.data?.runs?.find((candidate) => candidate.run_id === blockedGoalSteeredRunId);
+    return run?.status === "failed" ? { state, run } : undefined;
+  }, "blocked goal after steered send did not fail the spawned run");
+  if (
+    blockedGoalSteeredSpawn.details?.ok !== true ||
+    blockedGoalSteeredSend.details?.deliveryKind !== "steered" ||
+    blockedGoalSteered.run?.reason !== "goal_blocked" ||
+    Object.hasOwn(blockedGoalSteered.run ?? {}, "final_output")
+  ) {
+    throw new Error(`agent_send completion bypassed blocked spawned-run goal state: ${JSON.stringify({ blockedGoalSteeredSpawn, blockedGoalSteeredSend, blockedGoalSteered })}`);
+  }
+  const blockedGoalSteeredWait = await tools.get("agent_wait").execute(
+    "agent-blocked-goal-steered-wait",
+    { run_ids: [blockedGoalSteeredRunId], timeout_seconds: 0 },
+    undefined,
+    undefined,
+    ctx,
+  );
+  const blockedGoalSteeredWaitRun = blockedGoalSteeredWait.details?.runs?.find((run) => run.run_id === blockedGoalSteeredRunId);
+  if (
+    blockedGoalSteeredWaitRun?.status !== "failed" ||
+    blockedGoalSteeredWaitRun?.error !== "goal_blocked" ||
+    blockedGoalSteeredWaitRun?.finalOutput !== blockedGoalSteeredOutput ||
+    blockedGoalSteeredWaitRun?.consumed !== true
+  ) {
+    throw new Error(`agent_wait did not expose blocked spawned-run state after steered send: ${JSON.stringify(blockedGoalSteeredWait)}`);
+  }
+  await tools.get("agent_close").execute(
+    "agent-blocked-goal-steered-close",
+    { agent_ids: [blockedGoalSteeredAgentId] },
     undefined,
     undefined,
     ctx,
@@ -1717,6 +1918,101 @@ try {
     Object.hasOwn(persistedSmokeRun ?? {}, "description")
   ) {
     throw new Error(`agent spawn did not persist agent/run metadata: ${JSON.stringify(spawnedAgentsState)}`);
+  }
+  const recreateAgentId = "finder-recreate";
+  const recreateEntries = [
+    {
+      type: "custom",
+      customType: "taumel.agents",
+      data: {
+        version: 1,
+        profiles: [{ name: "finder", enabled: true }],
+        agents: [{
+          agent_id: recreateAgentId,
+          parent_session_id: "recreate-session",
+          profile: "finder",
+          child_session_id: null,
+          profile_snapshot: persistedSmokeAgent.profile_snapshot,
+          sandbox_snapshot: persistedSmokeAgent.sandbox_snapshot,
+          active_tools: persistedSmokeAgent.active_tools,
+          created_at: 1,
+          closed_at: null,
+        }],
+        runs: [],
+      },
+    },
+  ];
+  const recreateCtx = {
+    ...ctx,
+    taumelSessionId: "recreate-session",
+    sessionManager: {
+      getSessionId: () => "recreate-session",
+      getSessionFile: () => join(cwd, "recreate-session.json"),
+      appendCustomEntry: (type, value) => {
+        recreateEntries.push({ type: "custom", customType: type, data: value });
+      },
+      getEntries: () => recreateEntries,
+      getBranch: () => [],
+    },
+  };
+  for (const handler of handlers.get("session_resume") ?? []) {
+    handler({ type: "session_resume" }, recreateCtx);
+  }
+  const idleInterruptChildBefore = childCounter;
+  const idleInterruptDispatchBefore = childDispatchCalls.length;
+  const idleInterruptRunCountBefore = recreateEntries
+    .filter((entry) => entry.customType === "taumel.agents")
+    .at(-1)?.data?.runs?.length ?? 0;
+  const idleInterruptSend = await tools.get("agent_send").execute(
+    "agent-send-idle-interrupt",
+    { agent_id: recreateAgentId, interrupt: true },
+    undefined,
+    undefined,
+    recreateCtx,
+  );
+  const idleInterruptState = recreateEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
+  if (
+    idleInterruptSend.details?.ok !== true ||
+    idleInterruptSend.details?.deliveryKind !== "no_active_run" ||
+    Object.hasOwn(idleInterruptSend.details ?? {}, "run_id") ||
+    idleInterruptSend.details?.status !== "no_active_run" ||
+    !idleInterruptSend.content?.[0]?.text?.includes('<summary status="no_active_run"') ||
+    childCounter !== idleInterruptChildBefore ||
+    childDispatchCalls.length !== idleInterruptDispatchBefore ||
+    (idleInterruptState?.data?.runs?.length ?? 0) !== idleInterruptRunCountBefore
+  ) {
+    throw new Error(`idle interrupt-only agent_send created work: ${JSON.stringify({ idleInterruptSend, idleInterruptState, childCounter, idleInterruptChildBefore, childDispatchCalls: childDispatchCalls.slice(idleInterruptDispatchBefore) })}`);
+  }
+  childSendResponses.push(new Promise(() => undefined));
+  const recreatedChildBefore = childCounter;
+  const recreateSend = await tools.get("agent_send").execute(
+    "agent-send-recreate-child",
+    { agent_id: recreateAgentId, message: "plain message after restart" },
+    undefined,
+    undefined,
+    recreateCtx,
+  );
+  const recreatedChildId = `child-${childCounter}`;
+  const recreatedChildEntries = customEntries.filter((entry) => entry.sessionId === recreatedChildId);
+  if (
+    recreateSend.details?.ok !== true ||
+    recreateSend.details?.deliveryKind !== "started" ||
+    childCounter !== recreatedChildBefore + 1 ||
+    !recreatedChildEntries.some((entry) => entry.type === "taumel.childSession") ||
+    recreatedChildEntries.some((entry) => entry.type === "taumel.goal") ||
+    recreatedChildEntries.some((entry) => entry.type === "taumel.goal_automation")
+  ) {
+    throw new Error(`agent_send recreated child session with goal state for a normal message: ${JSON.stringify({ recreateSend, recreatedChildEntries })}`);
+  }
+  await tools.get("agent_close").execute(
+    "agent-send-recreate-close",
+    { agent_ids: [recreateAgentId] },
+    undefined,
+    undefined,
+    recreateCtx,
+  );
+  for (const handler of handlers.get("session_resume") ?? []) {
+    handler({ type: "session_resume" }, ctx);
   }
   const listedAgents = await tools.get("agent_list").execute(
     "agent-list",

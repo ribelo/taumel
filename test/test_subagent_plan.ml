@@ -120,7 +120,24 @@ let test_agent_child_metadata_uses_core_catalog_rules () =
     = Some (Shared.String "inspect repo"));
   assert_bool "metadata active tools"
     (string_array (object_field "activeTools" child.metadata)
-    = [ "exec_command"; "write_stdin"; "update_goal" ])
+    = [ "exec_command"; "write_stdin"; "update_goal" ]);
+  let recreated_for_message =
+    expect_ok "message child session metadata"
+      (Subagents.plan_child_session_spawn_from_input ~prompt:"plain message"
+         {
+           worker_id = worker.id;
+           profile_name = worker.definition_name;
+           depth = worker.depth;
+           filesystem_mode = worker.sandbox.filesystem_mode;
+           no_sandbox = worker.sandbox.no_sandbox;
+           subagent = worker.sandbox.subagent;
+           profile = worker.profile;
+           system_prompt = worker.system_prompt;
+           active_tools = inherited;
+         })
+  in
+  assert_bool "message recreate has no child goal objective"
+    (object_field "initialGoalObjective" recreated_for_message.metadata = None)
 
 let ready_bridge =
   {
@@ -495,6 +512,23 @@ let test_agent_run_metadata_state () =
       assert_bool "resume appends submission"
         (List.length run.run_submissions = 2)
   | None -> fail "resumed run" "expected run");
+  let idle =
+    expect_ok "complete run for idle send"
+      (Subagents.record_run_completion state ~now:14
+         ~run_id:"finder-a1-run-1" ~status:Subagents.Run_completed ())
+  in
+  let idle_interrupt =
+    expect_ok "record idle interrupt-only send"
+      (Subagents.record_send idle ~now:15 ~agent_id:"finder-a1"
+         ~interrupt:true "")
+  in
+  assert_equal "idle interrupt has no run" "" idle_interrupt.delivery_run_id;
+  assert_equal "idle interrupt has no submission" ""
+    idle_interrupt.delivery_submission_id;
+  assert_equal "idle interrupt delivery" "no_active_run"
+    idle_interrupt.delivery_kind;
+  assert_bool "idle interrupt preserves run list"
+    (List.length idle_interrupt.delivery_state.runs = List.length idle.runs);
   let closed =
     expect_ok "record close"
       (Subagents.record_close sent.delivery_state ~now:13 ~agent_id:"finder-a1")

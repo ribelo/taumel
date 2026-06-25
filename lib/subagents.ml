@@ -264,38 +264,44 @@ let string_list_option_json = function
   | None -> Shared.Null
   | Some values -> Shared.Array (List.map (fun value -> Shared.String value) values)
 
-let plan_child_session_spawn_from_input ~prompt input =
+let plan_child_session_spawn_from_input ?initial_goal_objective ~prompt input =
   match Shared.trim_non_empty input.worker_id with
   | None -> Error "agent spawn plan requires worker details"
   | Some worker_id ->
+      let metadata_fields =
+        [
+          ("kind", Shared.String "agent");
+          ("workerId", Shared.String worker_id);
+          ("profileName", Shared.String input.profile_name);
+          ("depth", Shared.Number (float_of_int input.depth));
+          ( "sandbox",
+            Shared.String (Sandbox.filesystem_mode_to_string input.filesystem_mode)
+          );
+          ("noSandbox", Shared.Bool input.no_sandbox);
+          ("subagent", Shared.Bool input.subagent);
+          ("capabilityProfile", Capability_profile.to_json input.profile);
+          ("agentSystemPrompt", string_option_json (Some input.system_prompt));
+          ("modelId", string_option_json (Some input.profile.model_id));
+          ( "thinkingLevel",
+            string_option_json (Some input.profile.thinking_level) );
+          ("activeTools", string_list_option_json input.active_tools);
+        ]
+      in
+      let metadata_fields =
+        match Option.bind initial_goal_objective Shared.trim_non_empty with
+        | None -> metadata_fields
+        | Some objective ->
+            metadata_fields @ [ ("initialGoalObjective", Shared.String objective) ]
+      in
       Ok
         {
           worker_id;
           prompt;
-          metadata =
-            Shared.Object
-              [
-                ("kind", Shared.String "agent");
-                ("workerId", Shared.String worker_id);
-                ("profileName", Shared.String input.profile_name);
-                ("depth", Shared.Number (float_of_int input.depth));
-                ( "sandbox",
-                  Shared.String (Sandbox.filesystem_mode_to_string input.filesystem_mode)
-                );
-                ("noSandbox", Shared.Bool input.no_sandbox);
-                ("subagent", Shared.Bool input.subagent);
-                ("capabilityProfile", Capability_profile.to_json input.profile);
-                ("agentSystemPrompt", string_option_json (Some input.system_prompt));
-                ("modelId", string_option_json (Some input.profile.model_id));
-                ( "thinkingLevel",
-                  string_option_json (Some input.profile.thinking_level) );
-                ("activeTools", string_list_option_json input.active_tools);
-                ("initialGoalObjective", Shared.String prompt);
-              ];
+          metadata = Shared.Object metadata_fields;
         }
 
 let plan_child_session_spawn ~prompt (worker : worker) ~active_tools =
-  plan_child_session_spawn_from_input ~prompt
+  plan_child_session_spawn_from_input ~initial_goal_objective:prompt ~prompt
     {
       worker_id = worker.id;
       profile_name = worker.definition_name;
@@ -1290,6 +1296,15 @@ let record_send ?(interrupt = false) state ~now ~agent_id message =
               delivery_submission_id = submission.submission_id;
               delivery_kind = "steered";
               delivery_previous_status = Some previous_status;
+            }
+      | None when interrupt && message = "" ->
+          Ok
+            {
+              delivery_state = state;
+              delivery_run_id = "";
+              delivery_submission_id = "";
+              delivery_kind = "no_active_run";
+              delivery_previous_status = None;
             }
       | None ->
           let run, submission =
