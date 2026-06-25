@@ -1731,14 +1731,20 @@ let wait_for_selector state ~parent_session_id selector =
                 match find_identity !state_ref run.run_agent_id with
                 | Some identity
                   when identity.identity_parent_session_id = parent_session_id ->
-                    let consumed = consume_run_if_terminal run in
-                    if consumed != run then
+                    let delivered =
+                      terminal_run run
+                      && (run.run_consumed || run.run_background_notified)
+                    in
+                    let readback =
+                      if delivered then run else consume_run_if_terminal run
+                    in
+                    if readback != run then
                       state_ref :=
                         {
                           !state_ref with
-                          runs = replace_run consumed (!state_ref).runs;
+                          runs = replace_run readback (!state_ref).runs;
                         };
-                    wait_item_of_run consumed
+                    wait_item_of_run readback
                 | Some _ | None -> not_owned_run_wait_item run_id))
           run_ids
       in

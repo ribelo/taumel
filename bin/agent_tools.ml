@@ -466,6 +466,8 @@ let record_dispatch_completion params ctx =
           ok_obj [ ("ok", js_bool true); ("notify", js_bool false) ]
       | Some run when run.run_status = Taumel.Subagents.Run_suspended ->
           ok_obj [ ("ok", js_bool true); ("notify", js_bool false) ]
+      | Some run when run.run_status = Taumel.Subagents.Run_cancelled ->
+          ok_obj [ ("ok", js_bool true); ("notify", js_bool false) ]
       | Some run when not (Taumel.Subagents.active_run_status run.run_status) ->
           let run = run_with_completion_payload run ?reason ?final_output () in
           agent_state :=
@@ -507,10 +509,10 @@ let record_dispatch_completion params ctx =
 let record_background_notification params ctx =
   let prepared = Unsafe.get params "prepared" in
   let run_id = Taumel.Shared.trim_non_empty (get_string prepared "run_id") in
+  Session_sync.sync_persisted_session ctx;
   let volatile_run =
     Option.bind run_id (Taumel.Subagents.find_run !agent_state)
   in
-  Session_sync.sync_persisted_session ctx;
   match run_id with
   | None -> error_obj "missing agent run id"
   | Some run_id -> (

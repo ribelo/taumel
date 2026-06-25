@@ -685,6 +685,33 @@ let test_agent_wait_state () =
   in
   assert_equal "default wait ignores background-notified terminal runs"
     "No active runs." default_after_notification.wait_message;
+  let explicit_after_notification =
+    Subagents.wait_for_selector notified ~parent_session_id:"parent"
+      (Subagents.Wait_run_ids [ "finder-a1-run-1" ])
+  in
+  (match explicit_after_notification.wait_items with
+  | [ item ] ->
+      assert_equal "explicit notified readback status" "completed"
+        item.wait_status;
+      assert_bool "explicit notified readback reports delivered"
+        item.wait_consumed;
+      assert_bool "explicit notified readback preserves notification flag"
+        item.wait_background_notified
+  | _ -> fail "explicit notified readback" "expected one item");
+  assert_equal "explicit notified readback includes output"
+    "finder-a1 finder-a1-run-1 [completed]\n\ndone"
+    explicit_after_notification.wait_message;
+  (match
+     Subagents.find_run explicit_after_notification.wait_state
+       "finder-a1-run-1"
+   with
+  | Some run ->
+      assert_bool "explicit notified readback does not consume persisted run"
+        (not run.run_consumed);
+      assert_bool
+        "explicit notified readback keeps background notification metadata"
+        run.run_background_notified
+  | None -> fail "explicit notified run" "expected run");
   let waited =
     Subagents.wait_for_selector completed ~parent_session_id:"parent"
       (Subagents.Wait_run_ids [ "finder-a1-run-1" ])

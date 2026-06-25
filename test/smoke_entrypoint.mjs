@@ -1341,6 +1341,121 @@ try {
     ctx,
   );
 
+  const notificationCollisionAgentId = "finder-notification-collision";
+  const notificationCollisionRunId = `${notificationCollisionAgentId}-run-1`;
+  const notificationParentEntries = [{
+    type: "custom",
+    customType: "taumel.agents",
+    data: {
+      version: 1,
+      profiles: [{ name: "finder", enabled: true }],
+      agents: [],
+      runs: [{
+        run_id: notificationCollisionRunId,
+        agent_id: notificationCollisionAgentId,
+        initial_submission_kind: "objective",
+        submissions: [{
+          submission_id: `${notificationCollisionRunId}-submission-1`,
+          kind: "objective",
+          created_at: 1,
+        }],
+        status: "completed",
+        reason: null,
+        consumed: false,
+        background_notified: false,
+        created_at: 1,
+        started_at: 1,
+        completed_at: 2,
+      }],
+    },
+  }];
+  const notificationOtherEntries = [{
+    type: "custom",
+    customType: "taumel.agents",
+    data: {
+      version: 1,
+      profiles: [{ name: "finder", enabled: true }],
+      agents: [],
+      runs: [{
+        run_id: notificationCollisionRunId,
+        agent_id: notificationCollisionAgentId,
+        initial_submission_kind: "objective",
+        submissions: [{
+          submission_id: `${notificationCollisionRunId}-submission-1`,
+          kind: "objective",
+          created_at: 1,
+        }],
+        status: "running",
+        reason: null,
+        consumed: false,
+        background_notified: false,
+        created_at: 1,
+        started_at: 1,
+        completed_at: null,
+      }],
+    },
+  }];
+  const notificationParentCtx = {
+    ...ctx,
+    taumelSessionId: "notification-parent-session",
+    sessionManager: {
+      getSessionId: () => "notification-parent-session",
+      getSessionFile: () => join(cwd, "notification-parent-session.json"),
+      appendCustomEntry: (type, value) => {
+        notificationParentEntries.push({ type: "custom", customType: type, data: value });
+      },
+      getEntries: () => notificationParentEntries,
+      getBranch: () => [],
+    },
+  };
+  const notificationOtherCtx = {
+    ...ctx,
+    taumelSessionId: "notification-other-session",
+    sessionManager: {
+      getSessionId: () => "notification-other-session",
+      getSessionFile: () => join(cwd, "notification-other-session.json"),
+      appendCustomEntry: (type, value) => {
+        notificationOtherEntries.push({ type: "custom", customType: type, data: value });
+      },
+      getEntries: () => notificationOtherEntries,
+      getBranch: () => [],
+    },
+  };
+  for (const handler of handlers.get("session_resume") ?? []) {
+    handler({ type: "session_resume" }, notificationOtherCtx);
+  }
+  const notificationOtherCompletion = globalThis.taumel.call("recordAgentDispatchCompletion", [{
+    prepared: { run_id: notificationCollisionRunId },
+    completion: {
+      status: "failed",
+      reason: "goal_blocked",
+      finalOutput: longAgentOutput("wrong notification session"),
+    },
+  }, notificationOtherCtx]);
+  if (notificationOtherCompletion?.ok !== true || notificationOtherCompletion?.notify !== true) {
+    throw new Error(`notification collision setup did not complete other run: ${JSON.stringify(notificationOtherCompletion)}`);
+  }
+  const notificationMark = globalThis.taumel.call("recordAgentBackgroundNotification", [{
+    prepared: { run_id: notificationCollisionRunId },
+  }, notificationParentCtx]);
+  const notificationParentState = notificationParentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
+  const notificationParentRun = notificationParentState?.data?.runs?.find((run) => run.run_id === notificationCollisionRunId);
+  if (
+    notificationMark?.ok !== true ||
+    notificationParentRun?.background_notified !== true ||
+    notificationParentRun?.status !== "completed" ||
+    notificationParentRun?.reason != null
+  ) {
+    throw new Error(`background notification merged volatile run data from another session: ${JSON.stringify({
+      notificationMark,
+      notificationParentRun,
+      notificationOtherState: notificationOtherEntries.filter((entry) => entry.customType === "taumel.agents").at(-1),
+    })}`);
+  }
+  for (const handler of handlers.get("session_resume") ?? []) {
+    handler({ type: "session_resume" }, ctx);
+  }
+
   let resolveAsyncSpawn;
   childSendResponses.push(new Promise((resolve) => { resolveAsyncSpawn = resolve; }));
   const asyncSpawn = await tools.get("agent_spawn").execute(
@@ -1385,6 +1500,100 @@ try {
   await tools.get("agent_close").execute(
     "agent-async-close",
     { agent_ids: [asyncAgentId] },
+    undefined,
+    undefined,
+    ctx,
+  );
+
+  let resolveCloseStaleCompletion;
+  childSendResponses.push(new Promise((resolve) => { resolveCloseStaleCompletion = resolve; }));
+  const closeStaleSpawn = await tools.get("agent_spawn").execute(
+    "agent-close-stale-completion-spawn",
+    { profile: "finder", objective: "ignore completion after close" },
+    undefined,
+    undefined,
+    ctx,
+  );
+  const closeStaleAgentId = closeStaleSpawn.details?.agent_id;
+  const closeStaleRunId = closeStaleSpawn.details?.run_id;
+  if (
+    closeStaleSpawn.details?.ok !== true ||
+    typeof closeStaleAgentId !== "string" ||
+    typeof closeStaleRunId !== "string"
+  ) {
+    throw new Error(`stale close completion setup failed: ${JSON.stringify(closeStaleSpawn)}`);
+  }
+  const closeStaleMessageCount = sentMessages.length;
+  await tools.get("agent_close").execute(
+    "agent-close-stale-completion-close",
+    { agent_ids: [closeStaleAgentId] },
+    undefined,
+    undefined,
+    ctx,
+  );
+  const closeStaleOutput = longAgentOutput("late close completion");
+  resolveCloseStaleCompletion({ output: closeStaleOutput, status: "completed", goalStatus: "complete" });
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  const closeStaleState = parentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
+  const closeStaleRun = closeStaleState?.data?.runs?.find((run) => run.run_id === closeStaleRunId);
+  if (
+    closeStaleRun?.status !== "cancelled" ||
+    closeStaleRun?.reason !== "closed_by_parent" ||
+    Object.hasOwn(closeStaleRun ?? {}, "final_output") ||
+    closeStaleRun?.output_available === true ||
+    closeStaleRun?.background_notified === true ||
+    sentMessages.length !== closeStaleMessageCount
+  ) {
+    throw new Error(`late child completion after close was not ignored: ${JSON.stringify({
+      closeStaleRun,
+      messages: sentMessages.slice(closeStaleMessageCount),
+    })}`);
+  }
+
+  let resolveStopStaleCompletion;
+  childSendResponses.push(new Promise((resolve) => { resolveStopStaleCompletion = resolve; }));
+  const stopStaleSpawn = await tools.get("agent_spawn").execute(
+    "agent-stop-stale-completion-spawn",
+    { profile: "finder", objective: "ignore completion after stop" },
+    undefined,
+    undefined,
+    ctx,
+  );
+  const stopStaleAgentId = stopStaleSpawn.details?.agent_id;
+  const stopStaleRunId = stopStaleSpawn.details?.run_id;
+  if (
+    stopStaleSpawn.details?.ok !== true ||
+    typeof stopStaleAgentId !== "string" ||
+    typeof stopStaleRunId !== "string"
+  ) {
+    throw new Error(`stale stop completion setup failed: ${JSON.stringify(stopStaleSpawn)}`);
+  }
+  const stopStaleMessageCount = sentMessages.length;
+  const stopStaleCommand = await commands.get("agent-runs").handler(`stop ${stopStaleAgentId}`, ctx);
+  const stopStaleOutput = longAgentOutput("late stop completion");
+  resolveStopStaleCompletion({ output: stopStaleOutput, status: "completed", goalStatus: "complete" });
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  const stopStaleState = parentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
+  const stopStaleRun = stopStaleState?.data?.runs?.find((run) => run.run_id === stopStaleRunId);
+  if (
+    stopStaleCommand.action !== "command_result" ||
+    !stopStaleCommand.message.includes(`Stopped ${stopStaleAgentId}`) ||
+    stopStaleRun?.status !== "cancelled" ||
+    stopStaleRun?.reason !== "stopped_by_parent" ||
+    Object.hasOwn(stopStaleRun ?? {}, "final_output") ||
+    stopStaleRun?.output_available === true ||
+    stopStaleRun?.background_notified === true ||
+    sentMessages.length !== stopStaleMessageCount
+  ) {
+    throw new Error(`late child completion after stop was not ignored: ${JSON.stringify({
+      stopStaleCommand,
+      stopStaleRun,
+      messages: sentMessages.slice(stopStaleMessageCount),
+    })}`);
+  }
+  await tools.get("agent_close").execute(
+    "agent-stop-stale-completion-close",
+    { agent_ids: [stopStaleAgentId] },
     undefined,
     undefined,
     ctx,
@@ -2326,6 +2535,17 @@ try {
     !waitCompleted.content?.[0]?.text?.includes("final smoke summary")
   ) {
     throw new Error(`agent_wait did not expose completed final output: ${JSON.stringify(waitCompleted)}`);
+  }
+  const afterExplicitNotifiedWait = parentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
+  const afterExplicitNotifiedWaitRun = afterExplicitNotifiedWait?.data?.runs?.find((run) => run.run_id === `${smokeAgentId}-run-2`);
+  if (
+    afterExplicitNotifiedWaitRun?.consumed !== false ||
+    afterExplicitNotifiedWaitRun?.background_notified !== true
+  ) {
+    throw new Error(`explicit agent_wait mutated background-notified delivery state: ${JSON.stringify({
+      waitCompleted,
+      afterExplicitNotifiedWait,
+    })}`);
   }
   childSendResponses.push({ output: "fast wait final output", status: "completed" });
   const fastCompletionMessageCount = sentMessages.length;
