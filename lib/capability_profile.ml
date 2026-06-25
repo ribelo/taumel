@@ -224,9 +224,16 @@ let child_profile (parent : t) (definition : agent_definition) =
   if not definition.enabled then Error ("agent " ^ definition.name ^ " is disabled")
   else if not (allow_agent parent definition.name) then
     Error ("agent " ^ definition.name ^ " is not allowed by the parent profile")
+  else if definition.sandbox_preset = Some Danger_full_access then
+    Error "danger-full-access is not allowed for subagents"
   else
+    let inherited_sandbox =
+      match parent.sandbox_preset with
+      | Danger_full_access -> Workspace_write
+      | Read_only | Workspace_write -> parent.sandbox_preset
+    in
     let requested_sandbox =
-      Option.value definition.sandbox_preset ~default:parent.sandbox_preset
+      Option.value definition.sandbox_preset ~default:inherited_sandbox
     in
     Ok
       {

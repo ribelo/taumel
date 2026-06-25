@@ -561,7 +561,8 @@ export async function createChildSession(
         : await createPiAgentSession(options as Parameters<typeof createPiAgentSession>[0]);
     const session = isRecord(result) ? result["session"] : undefined;
     if (!isRecord(session)) return { error: "createAgentSession did not return a session" };
-    const setupInfo = appendSetupEntries(session["sessionManager"] ?? sessionManager, setupEntries);
+    const childSessionManager = session["sessionManager"] ?? sessionManager;
+    const setupInfo = appendSetupEntries(childSessionManager, setupEntries);
     const sessionId =
       typeof session["sessionId"] === "string" && session["sessionId"] !== ""
         ? session["sessionId"]
@@ -578,6 +579,7 @@ export async function createChildSession(
       sessionId: sessionId ?? sessionFile,
       sessionFile,
       session,
+      sessionManager: childSessionManager,
       activeTools,
       activeToolsApplied,
       modelId,
@@ -739,6 +741,113 @@ function dispatchResultWithHostCompletion(
   return completion === undefined ? result : { ...result, completion };
 }
 
+function sessionEntriesFromManager(sessionManager: unknown): unknown[] {
+  if (!isRecord(sessionManager) || typeof sessionManager["getEntries"] !== "function") return [];
+  try {
+    const entries = sessionManager["getEntries"].call(sessionManager);
+    return Array.isArray(entries) ? entries : [];
+  } catch {
+    return [];
+  }
+}
+
+function customEntryData(entry: unknown, customType: string): unknown {
+  if (!isRecord(entry)) return undefined;
+  if (entry["customType"] === customType) return entry["data"];
+  if (entry["type"] === customType) return entry["value"];
+  if (entry["type"] === "custom" && entry["customType"] === customType) return entry["data"];
+  return undefined;
+}
+
+function latestChildCustomEntry(bridge: ChildSessionBridge | undefined, customType: string): unknown {
+  const entries = sessionEntriesFromManager(bridge?.sessionManager);
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const data = customEntryData(entries[index], customType);
+    if (data !== undefined) return data;
+  }
+  return undefined;
+}
+
+function latestChildGoalStatus(bridge: ChildSessionBridge | undefined): string | undefined {
+  const goal = latestChildCustomEntry(bridge, "taumel.goal");
+  if (!isRecord(goal)) return undefined;
+  return typeof goal["status"] === "string" ? goal["status"] : undefined;
+}
+
+function isSpawnedObjectiveCompletion(prepared: Record<string, unknown>): boolean {
+  return stringField(prepared, "action") === "agent_spawn";
+}
+
+function completionStatus(completion: Record<string, unknown>): string {
+  return typeof completion["status"] === "string" && completion["status"] !== ""
+    ? completion["status"]
+    : "completed";
+}
+
+function completionFinalOutput(completion: Record<string, unknown>): string | undefined {
+  return typeof completion["finalOutput"] === "string" ? completion["finalOutput"] : undefined;
+}
+
+function withSpawnGoalStatus(
+  prepared: Record<string, unknown>,
+  bridge: ChildSessionBridge | undefined,
+  completion: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  if (!isSpawnedObjectiveCompletion(prepared)) return completion;
+  if (completionStatus(completion) !== "completed") return completion;
+  const goalStatus = latestChildGoalStatus(bridge);
+  if (goalStatus === "complete") return { ...completion, status: "completed" };
+  if (goalStatus === "blocked") {
+    return { ...completion, status: "failed", reason: "goal_blocked" };
+  }
+  if (goalStatus === undefined) return completion;
+  return undefined;
+}
+
+const TOO_BRIEF_AGENT_HANDOFF_PROMPT = `Your previous response was too brief. Please provide a more comprehensive summary that includes:
+
+1. Specific technical details and implementations
+2. Detailed findings and analysis
+3. All important information that the parent agent should know`;
+
+async function expandTooBriefSpawnCompletion(
+  pi: PiLike,
+  core: CoreBridge,
+  bridge: ChildSessionBridge | undefined,
+  prepared: Record<string, unknown>,
+  completion: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  if (!isSpawnedObjectiveCompletion(prepared) || completionStatus(completion) !== "completed") {
+    return completion;
+  }
+  const output = completionFinalOutput(completion) ?? "";
+  if (output.trim().length >= 200) return completion;
+  if (bridge === undefined) return completion;
+  const dispatch = await sendToChildSession(
+    pi,
+    core,
+    bridge,
+    TOO_BRIEF_AGENT_HANDOFF_PROMPT,
+    "too-brief follow-up prompt missing",
+    { awaitCompletion: true },
+  );
+  const followup = isRecord(dispatch["completion"]) ? dispatch["completion"] : undefined;
+  const finalOutput = followup === undefined ? undefined : completionFinalOutput(followup);
+  return finalOutput === undefined ? completion : { ...completion, finalOutput };
+}
+
+async function prepareAgentCompletionForRecording(
+  pi: PiLike,
+  core: CoreBridge,
+  bridge: ChildSessionBridge | undefined,
+  prepared: Record<string, unknown>,
+  completion: Record<string, unknown>,
+): Promise<Record<string, unknown> | undefined> {
+  const goalAdjusted = withSpawnGoalStatus(prepared, bridge, completion);
+  if (goalAdjusted === undefined) return undefined;
+  return expandTooBriefSpawnCompletion(pi, core, bridge, prepared, goalAdjusted);
+}
+
 async function deliverAgentCompletion(
   pi: PiLike,
   result: Record<string, unknown>,
@@ -764,6 +873,8 @@ async function deliverAgentCompletion(
   return false;
 }
 
+const AGENT_COMPLETION_NOTIFICATION_DELAY_MS = 1000;
+
 function recordAgentBackgroundNotification(
   core: CoreBridge,
   prepared: Record<string, unknown>,
@@ -775,15 +886,16 @@ function recordAgentBackgroundNotification(
   }
 }
 
-async function recordAgentDispatchCompletion(
+async function deliverRecordedAgentCompletion(
   pi: PiLike,
   core: CoreBridge,
   prepared: Record<string, unknown>,
-  dispatch: Record<string, unknown>,
+  completion: Record<string, unknown>,
   ctx: unknown,
+  pendingAgentWaits: PendingAgentWaits,
 ): Promise<void> {
-  const completion = dispatch["completion"];
-  if (!isRecord(completion)) return;
+  const runId = stringField(prepared, "run_id");
+  if (runId !== "" && pendingAgentWaits.has(pendingAgentWaitKey(ctx, runId))) return;
   const result = coreCall(core, "recordAgentDispatchCompletion", [{
     prepared,
     completion,
@@ -791,8 +903,69 @@ async function recordAgentDispatchCompletion(
   if (!isRecord(result) || result["ok"] !== true) {
     throw new Error("Invalid Taumel agent completion update");
   }
+  if (runId !== "" && pendingAgentWaits.has(pendingAgentWaitKey(ctx, runId))) return;
   if (await deliverAgentCompletion(pi, result)) {
     recordAgentBackgroundNotification(core, prepared, ctx);
+  }
+}
+
+function scheduleAgentCompletionDelivery(
+  pi: PiLike,
+  core: CoreBridge,
+  prepared: Record<string, unknown>,
+  completion: Record<string, unknown>,
+  ctx: unknown,
+  pendingAgentWaits: PendingAgentWaits,
+): void {
+  setTimeout(() => {
+    void deliverRecordedAgentCompletion(
+      pi,
+      core,
+      prepared,
+      completion,
+      ctx,
+      pendingAgentWaits,
+    ).catch((error) => {
+      console.warn("Taumel agent completion delivery failed:", error);
+    });
+  }, AGENT_COMPLETION_NOTIFICATION_DELAY_MS);
+}
+
+async function recordAgentDispatchCompletion(
+  pi: PiLike,
+  core: CoreBridge,
+  prepared: Record<string, unknown>,
+  dispatch: Record<string, unknown>,
+  ctx: unknown,
+  pendingAgentWaits: PendingAgentWaits,
+  bridge?: ChildSessionBridge,
+): Promise<void> {
+  const completion = dispatch["completion"];
+  if (!isRecord(completion)) return;
+  const preparedCompletion = await prepareAgentCompletionForRecording(
+    pi,
+    core,
+    bridge,
+    prepared,
+    completion,
+  );
+  if (preparedCompletion === undefined) return;
+  const result = coreCall(core, "recordAgentDispatchCompletion", [{
+    prepared,
+    completion: preparedCompletion,
+  }, ctx]);
+  if (!isRecord(result) || result["ok"] !== true) {
+    throw new Error("Invalid Taumel agent completion update");
+  }
+  if (result["notify"] === true) {
+    scheduleAgentCompletionDelivery(
+      pi,
+      core,
+      prepared,
+      preparedCompletion,
+      ctx,
+      pendingAgentWaits,
+    );
   }
 }
 
@@ -831,9 +1004,11 @@ function recordAgentDispatchCompletionInBackground(
   core: CoreBridge,
   prepared: Record<string, unknown>,
   ctx: unknown,
+  pendingAgentWaits: PendingAgentWaits,
+  bridge?: ChildSessionBridge,
 ): (dispatch: Record<string, unknown>) => void {
   return (dispatch) => {
-    void recordAgentDispatchCompletion(pi, core, prepared, dispatch, ctx).catch((error) => {
+    void recordAgentDispatchCompletion(pi, core, prepared, dispatch, ctx, pendingAgentWaits, bridge).catch((error) => {
       // Background completion must not crash the parent turn; persistent run state
       // will be reconciled by later wait/list commands if this notification fails.
       console.warn("Taumel agent completion recording failed:", error);
@@ -980,12 +1155,46 @@ function agentWaitPollParams(params: unknown, prepared: Record<string, unknown>)
   return isRecord(details["pollParams"]) ? details["pollParams"] : params;
 }
 
+function agentDeliveryKind(prepared: Record<string, unknown>): string {
+  const details = isRecord(prepared["details"]) ? prepared["details"] : {};
+  return stringField(details, "deliveryKind");
+}
+
+type PendingAgentWaits = Map<string, number>;
+
+function agentWaitPendingRunIds(prepared: Record<string, unknown>): string[] {
+  const details = isRecord(prepared["details"]) ? prepared["details"] : {};
+  const pollParams = isRecord(details["pollParams"]) ? details["pollParams"] : undefined;
+  return pollParams === undefined ? [] : stringArrayFromUnknown(pollParams["run_ids"]) ?? [];
+}
+
+function pendingAgentWaitKey(ctx: unknown, runId: string): string {
+  return `${childSessionCacheKeyScopeFromContext(ctx)}\0${runId}`;
+}
+
+function addPendingAgentWaits(pending: PendingAgentWaits, ctx: unknown, runIds: readonly string[]): void {
+  for (const runId of runIds) {
+    const key = pendingAgentWaitKey(ctx, runId);
+    pending.set(key, (pending.get(key) ?? 0) + 1);
+  }
+}
+
+function removePendingAgentWaits(pending: PendingAgentWaits, ctx: unknown, runIds: readonly string[]): void {
+  for (const runId of runIds) {
+    const key = pendingAgentWaitKey(ctx, runId);
+    const count = pending.get(key) ?? 0;
+    if (count <= 1) pending.delete(key);
+    else pending.set(key, count - 1);
+  }
+}
+
 async function executeAgentWait(
   core: CoreBridge,
   params: unknown,
   ctx: unknown,
   signal: AbortSignal | undefined,
   initialPrepared: Record<string, unknown>,
+  pendingAgentWaits: PendingAgentWaits,
 ): Promise<Record<string, unknown>> {
   const timeoutSeconds = isRecord(params) ? optionalNumberField(params, "timeout_seconds") : undefined;
   let prepared = initialPrepared;
@@ -993,33 +1202,49 @@ async function executeAgentWait(
     return preparedToolResult(core, prepared);
   }
   const pollParams = agentWaitPollParams(params, prepared);
+  const pendingRunIds = agentWaitPendingRunIds(prepared);
+  addPendingAgentWaits(pendingAgentWaits, ctx, pendingRunIds);
 
   const startedAt = Date.now();
   const deadline =
     timeoutSeconds !== undefined ? startedAt + Math.max(0, timeoutSeconds) * 1000 : undefined;
 
-  while (agentWaitHasActiveRuns(prepared)) {
-    if (signal?.aborted === true) {
-      return preparedToolResult(core, prepared, {
-        waitInterrupted: true,
-        status: "interrupted",
-      });
+  try {
+    while (agentWaitHasActiveRuns(prepared)) {
+      if (signal?.aborted === true) {
+        prepared = preparedAction(core, "agent_wait", pollParams, ctx);
+        if (prepared["ok"] !== true) {
+          return errorToolResult(core, requiredError(prepared, "tool preparation"), prepared);
+        }
+        if (!agentWaitHasActiveRuns(prepared)) return preparedToolResult(core, prepared);
+        return preparedToolResult(core, prepared, {
+          waitInterrupted: true,
+          status: "interrupted",
+        });
+      }
+      const now = Date.now();
+      if (deadline !== undefined && now >= deadline) {
+        prepared = preparedAction(core, "agent_wait", pollParams, ctx);
+        if (prepared["ok"] !== true) {
+          return errorToolResult(core, requiredError(prepared, "tool preparation"), prepared);
+        }
+        if (!agentWaitHasActiveRuns(prepared)) return preparedToolResult(core, prepared);
+        return preparedToolResult(core, prepared, {
+          waitTimedOut: true,
+          status: "timed_out",
+        });
+      }
+      const delay = Math.min(250, Math.max(10, (deadline ?? (now + 250)) - now));
+      await sleep(delay);
+      prepared = preparedAction(core, "agent_wait", pollParams, ctx);
+      if (prepared["ok"] !== true) {
+        return errorToolResult(core, requiredError(prepared, "tool preparation"), prepared);
+      }
     }
-    const now = Date.now();
-    if (deadline !== undefined && now >= deadline) {
-      return preparedToolResult(core, prepared, {
-        waitTimedOut: true,
-        status: "timed_out",
-      });
-    }
-    const delay = Math.min(250, Math.max(10, (deadline ?? (now + 250)) - now));
-    await sleep(delay);
-    prepared = preparedAction(core, "agent_wait", pollParams, ctx);
-    if (prepared["ok"] !== true) {
-      return errorToolResult(core, requiredError(prepared, "tool preparation"), prepared);
-    }
+    return preparedToolResult(core, prepared);
+  } finally {
+    removePendingAgentWaits(pendingAgentWaits, ctx, pendingRunIds);
   }
-  return preparedToolResult(core, prepared);
 }
 
 async function runThreadTool(core: CoreBridge, name: string, prepared: Record<string, unknown>, ctx: unknown) {
@@ -1146,6 +1371,7 @@ export async function executeTool(
   pi: PiLike,
   core: CoreBridge,
   childSessions: Map<string, ChildSessionBridge>,
+  pendingAgentWaits: PendingAgentWaits,
   name: string,
   rawParams: unknown,
   ctx: unknown,
@@ -1160,7 +1386,7 @@ export async function executeTool(
     return errorToolResult(core, requiredError(prepared, "tool preparation"), prepared);
   }
   if (name === "agent_wait") {
-    return executeAgentWait(core, parsed.params, ctx, signal, prepared);
+    return executeAgentWait(core, parsed.params, ctx, signal, prepared, pendingAgentWaits);
   }
 
   const action = stringField(prepared, "action");
@@ -1188,7 +1414,7 @@ export async function executeTool(
       );
       const dispatch = await sendToChildSession(pi, core, bridge, prompt, "no initial prompt", {
         awaitCompletion: false,
-        onCompletion: recordAgentDispatchCompletionInBackground(pi, core, prepared, ctx),
+        onCompletion: recordAgentDispatchCompletionInBackground(pi, core, prepared, ctx, pendingAgentWaits, bridge),
       });
       const result = coreCall(core, "finishAgentAction", [{
         prepared,
@@ -1202,6 +1428,9 @@ export async function executeTool(
       const workerId = stringField(prepared, "workerId");
       const keyScope = childSessionCacheKeyScopeFromContext(ctx);
       await applyChildSessionUpdatesFromDetails(childSessions, prepared, keyScope);
+      if (agentDeliveryKind(prepared) === "suspended" && stringField(prepared, "prompt") === "") {
+        return preparedToolResult(core, prepared);
+      }
       let bridge = childSessions.get(childSessionCacheKey(workerId, keyScope));
       if (bridge === undefined) {
         bridge = (
@@ -1223,7 +1452,7 @@ export async function executeTool(
         {
           awaitCompletion: false,
           deliverAs: optionalStringField(prepared, "dispatchDeliverAs") ?? "",
-          onCompletion: recordAgentDispatchCompletionInBackground(pi, core, prepared, ctx),
+          onCompletion: recordAgentDispatchCompletionInBackground(pi, core, prepared, ctx, pendingAgentWaits, bridge),
         },
       );
       const result = coreCall(core, "finishAgentAction", [{ prepared, dispatch }, ctx]);
@@ -1364,6 +1593,7 @@ export function registerGatewayTools(
   if (allowedToolNames === undefined) throw new Error("Invalid Taumel allowed tool names");
   const allowed = new Set(allowedToolNames);
   const registered = new Set<string>();
+  const pendingAgentWaits: PendingAgentWaits = new Map();
   const registerMatching = (agentTools: boolean) => {
     for (const spec of toolContracts) {
       const name = spec.name;
@@ -1379,7 +1609,7 @@ export function registerGatewayTools(
         ...renderersForTool(name),
         execute: async (...args) => {
           const { params, signal, ctx } = readInvocation(args);
-          return executeTool(pi, core, childSessions, name, params, ctx, signal);
+          return executeTool(pi, core, childSessions, pendingAgentWaits, name, params, ctx, signal);
         },
       });
       registered.add(name);

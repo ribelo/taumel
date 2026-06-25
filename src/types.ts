@@ -110,6 +110,7 @@ export type SessionInfo = {
 export type ChildSessionBridge = SessionInfo & {
   readonly ctx?: unknown;
   readonly session?: unknown;
+  readonly sessionManager?: unknown;
   readonly cancelled?: boolean;
   readonly error?: string;
   readonly missingSessionIdentifier?: boolean;

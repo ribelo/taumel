@@ -123,11 +123,35 @@ let permissions_entry metadata =
         }
   | _ -> None
 
+let initial_goal_entries fields =
+  match string_field "initialGoalObjective" fields with
+  | None -> []
+  | Some objective -> (
+      let worker_id = string_field "workerId" fields |> Option.value ~default:"agent" in
+      let thread_id = "agent:" ^ worker_id in
+      match Goal.create ~thread_id ~now:0 objective None with
+      | Error _ -> []
+      | Ok goal ->
+          [
+            {
+              custom_type = "taumel.goal";
+              data = Goal.codec.encode (Some goal);
+            };
+            {
+              custom_type = "taumel.goal_automation";
+              data = Goal.automation_codec.encode Goal.Automation_enabled;
+            };
+          ])
+
 let setup_entries ~metadata ~parent_session_id ~parent_session_file =
+  let fields = object_fields metadata in
   let child = child_entry ~metadata ~parent_session_id ~parent_session_file in
-  match permissions_entry metadata with
-  | None -> [ child ]
-  | Some permissions -> [ child; permissions ]
+  let base =
+    match permissions_entry metadata with
+    | None -> [ child ]
+    | Some permissions -> [ child; permissions ]
+  in
+  base @ initial_goal_entries fields
 
 let start_plan ~metadata ~parent_session_id ~parent_session_file =
   let fields = object_fields metadata in

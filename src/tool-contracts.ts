@@ -167,8 +167,6 @@ const AgentSpawnParamsSchema = Type.Object(
   {
     profile: Type.String({ minLength: 1 }),
     objective: Type.String({ minLength: 1 }),
-    description: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
-    agent_id: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
   },
   { $id: "AgentSpawnParams", additionalProperties: false },
 );
@@ -176,7 +174,7 @@ const AgentSpawnParamsSchema = Type.Object(
 const AgentSendParamsSchema = Type.Object(
   {
     agent_id: Type.String({ minLength: 1 }),
-    objective: Type.String({ minLength: 1 }),
+    message: Type.Optional(Type.String({ minLength: 1 })),
     interrupt: Type.Optional(Type.Boolean()),
   },
   { $id: "AgentSendParams", additionalProperties: false },
@@ -548,7 +546,7 @@ export const toolContracts: readonly ToolContract[] = [
   {
     name: "agent_send",
     label: "agent.send",
-    description: "Send an additional objective to an existing open Taumel agent.",
+    description: "Send a message to an existing open Taumel agent, or interrupt it when interrupt is true.",
     promptSnippet: "",
     parameters: toolParameters(AgentSendParamsSchema),
   },

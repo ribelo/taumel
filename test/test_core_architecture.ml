@@ -315,10 +315,11 @@ let test_subagent_spawn_rejects_full_access_sandbox () =
   let inherited_definition =
     Subagents.create_definition ~max_depth:2 inherited_full_access_profile
   in
-  (match spawn inherited_definition "w2" with
-  | Error "danger-full-access is not allowed for subagents" -> ()
-  | Error message -> fail "inherited full access" ("unexpected error: " ^ message)
-  | Ok _ -> fail "inherited full access" "expected rejection");
+  let inherited_worker =
+    expect_ok "inherited full access clamps" (spawn inherited_definition "w2")
+  in
+  assert_bool "inherited full access clamps to workspace-write"
+    (inherited_worker.sandbox.filesystem_mode = Sandbox.Workspace_write);
   let workspace_profile =
     {
       explicit_full_access_profile with

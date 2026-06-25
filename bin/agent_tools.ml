@@ -36,6 +36,41 @@ let js_worker (worker : Taumel.Subagents.worker) =
 let summary (worker : Taumel.Subagents.worker) =
   Taumel.Subagents.summary worker
 
+let xml_attr value =
+  let buffer = Buffer.create (String.length value) in
+  String.iter
+    (function
+      | '&' -> Buffer.add_string buffer "&amp;"
+      | '"' -> Buffer.add_string buffer "&quot;"
+      | '<' -> Buffer.add_string buffer "&lt;"
+      | '>' -> Buffer.add_string buffer "&gt;"
+      | c -> Buffer.add_char buffer c)
+    value;
+  Buffer.contents buffer
+
+let xml_agent_line ?(lifecycle = "open") ?sandbox agent_id profile =
+  let sandbox =
+    match sandbox with
+    | None -> ""
+    | Some value -> Printf.sprintf " sandbox=\"%s\"" (xml_attr value)
+  in
+  Printf.sprintf "  <agent id=\"%s\" profile=\"%s\" lifecycle=\"%s\"%s />"
+    (xml_attr agent_id) (xml_attr profile) (xml_attr lifecycle) sandbox
+
+let xml_run_line ?elapsed ?reason run_id status =
+  let elapsed =
+    match elapsed with
+    | None -> ""
+    | Some value -> Printf.sprintf " elapsed_seconds=\"%d\"" value
+  in
+  let reason =
+    match reason with
+    | None -> ""
+    | Some value -> Printf.sprintf " reason=\"%s\"" (xml_attr value)
+  in
+  Printf.sprintf "  <run id=\"%s\" status=\"%s\"%s%s />" (xml_attr run_id)
+    (xml_attr status) elapsed reason
+
 let js_child_session_update ?reason action key =
   let fields = [ ("action", js_string action); ("key", js_string key) ] in
   let fields =
@@ -49,15 +84,52 @@ let result ?run_id ?submission_id ?delivery_kind ?previous_status
     ?dispatch_deliver_as ?(child_session_updates = [])
     ?(action = "tool_result") ?(message = "") ?(prompt = "")
     (worker : Taumel.Subagents.worker) =
-  let text = if message = "" then summary worker else message in
   let run_id = Option.value run_id ~default:(worker.id ^ "-run-1") in
+  let run_status =
+    match Taumel.Subagents.find_run !agent_state run_id with
+    | Some run -> Taumel.Subagents.run_status_to_string run.run_status
+    | None -> Taumel.Subagents.lifecycle_to_string worker.lifecycle
+  in
+  let text =
+    match action with
+    | "agent_spawn" ->
+        String.concat "\n"
+          [
+            "<taumel_agent_spawn>";
+            xml_agent_line ~sandbox:(Taumel.Sandbox.filesystem_mode_to_string
+                worker.sandbox.filesystem_mode) worker.id worker.definition_name;
+            xml_run_line run_id run_status;
+            "</taumel_agent_spawn>";
+          ]
+    | "agent_send" ->
+        let submission =
+          match submission_id with
+          | None | Some "" -> []
+          | Some id ->
+              [
+                Printf.sprintf
+                  "  <submission id=\"%s\" kind=\"%s\" />"
+                  (xml_attr id)
+                  (xml_attr (Option.value delivery_kind ~default:"sent"));
+              ]
+        in
+        String.concat "\n"
+          ([
+             "<taumel_agent_send>";
+             xml_agent_line worker.id worker.definition_name;
+             xml_run_line run_id run_status;
+           ]
+          @ submission
+          @ [ "</taumel_agent_send>" ])
+    | _ -> if message = "" then summary worker else message
+  in
   let detail_fields =
     [
       ("worker", inject (js_worker worker));
       ("agent_id", js_string worker.id);
       ("run_id", js_string run_id);
       ("profile", js_string worker.definition_name);
-      ("status", js_string (Taumel.Subagents.lifecycle_to_string worker.lifecycle));
+      ("status", js_string run_status);
       ("ok", js_bool true);
     ]
   in
@@ -89,7 +161,7 @@ let result ?run_id ?submission_id ?delivery_kind ?previous_status
       ("agent_id", js_string worker.id);
       ("run_id", js_string run_id);
       ("profile", js_string worker.definition_name);
-      ("status", js_string (Taumel.Subagents.lifecycle_to_string worker.lifecycle));
+      ("status", js_string run_status);
       ("prompt", js_string prompt);
       ("details", inject (Unsafe.obj (Array.of_list detail_fields)));
     ]
@@ -243,14 +315,28 @@ let agent_completion_message run status ?reason ?final_output () =
     | None -> "unknown"
   in
   let status = Taumel.Subagents.run_status_to_string status in
-  let header =
-    Printf.sprintf "Agent %s %s (%s, profile=%s)" run.run_agent_id status
-      run.run_id profile
+  let block =
+    match (final_output, reason) with
+    | Some output, _ ->
+        [ "  <final_output>"; output; "  </final_output>" ]
+    | None, Some reason -> [ "  <error>"; reason; "  </error>" ]
+    | None, None -> []
   in
-  match final_output, reason with
-  | Some output, _ -> header ^ "\n\n" ^ output
-  | None, Some reason -> header ^ "\n\n" ^ reason
-  | None, None -> header
+  String.concat "\n"
+    ([
+       "<taumel_notification kind=\"agent_completion\" severity=\"info\">";
+       Printf.sprintf "  <agent id=\"%s\" profile=\"%s\" />"
+         (xml_attr run.run_agent_id) (xml_attr profile);
+       Printf.sprintf "  <run id=\"%s\" status=\"%s\" />"
+         (xml_attr run.run_id) (xml_attr status);
+     ]
+    @ block
+    @ [ "</taumel_notification>" ])
+
+let latest_submission_id (run : Taumel.Subagents.agent_run) =
+  match List.rev run.run_submissions with
+  | submission :: _ -> Some submission.submission_id
+  | [] -> None
 
 let record_dispatch_completion params ctx =
   let prepared = Unsafe.get params "prepared" in
@@ -258,7 +344,6 @@ let record_dispatch_completion params ctx =
   match Taumel.Shared.trim_non_empty (get_string prepared "run_id") with
   | None -> ok_obj [ ("ok", js_bool true) ]
   | Some run_id ->
-      Session_sync.load_agent_state ctx;
       let status = completion_status completion in
       let reason =
         Option.bind (optional_string_field completion "reason")
@@ -268,11 +353,43 @@ let record_dispatch_completion params ctx =
         Option.bind (optional_string_field completion "finalOutput")
           Taumel.Shared.trim_non_empty
       in
+      let prepared_submission_id =
+        Option.bind (optional_string_field prepared "submission_id")
+          Taumel.Shared.trim_non_empty
+      in
+      let completion_result_fields run status ?reason ?final_output () =
+        [
+          ("notify", js_bool true);
+          ("customType", js_string "taumel.notification");
+          ( "content",
+            js_string
+              (agent_completion_message run status ?reason ?final_output ()) );
+          ("display", js_bool true);
+          ("triggerTurn", js_bool true);
+          ("deliverAs", js_string "followUp");
+        ]
+      in
       (match Taumel.Subagents.find_run !agent_state run_id with
+      | Some run when run.run_consumed || run.run_background_notified ->
+          ok_obj [ ("ok", js_bool true); ("notify", js_bool false) ]
+      | Some run
+        when Option.is_some prepared_submission_id
+             && latest_submission_id run <> prepared_submission_id ->
+          ok_obj [ ("ok", js_bool true); ("notify", js_bool false) ]
+      | Some run when run.run_status = Taumel.Subagents.Run_suspended ->
+          ok_obj [ ("ok", js_bool true); ("notify", js_bool false) ]
       | Some run when not (Taumel.Subagents.active_run_status run.run_status) ->
-          ok_obj [ ("ok", js_bool true); ("notify", js_bool false) ]
-      | Some run when run.run_consumed ->
-          ok_obj [ ("ok", js_bool true); ("notify", js_bool false) ]
+          ok_obj
+            (completion_result_fields run run.run_status
+               ?reason:
+                 (match reason with
+                 | Some _ -> reason
+                 | None -> run.run_reason)
+               ?final_output:
+                 (match final_output with
+                 | Some _ -> final_output
+                 | None -> run.run_final_output)
+               ())
       | _ -> (
           let previous_run = Taumel.Subagents.find_run !agent_state run_id in
           match
@@ -288,17 +405,7 @@ let record_dispatch_completion params ctx =
                 match previous_run with
                 | None -> ("notify", js_bool false) :: fields
                 | Some run ->
-                    [
-                      ("notify", js_bool true);
-                      ("customType", js_string "taumel.agent.completion");
-                      ( "content",
-                        js_string
-                          (agent_completion_message run status ?reason
-                             ?final_output ()) );
-                      ("display", js_bool true);
-                      ("triggerTurn", js_bool true);
-                      ("deliverAs", js_string "followUp");
-                    ]
+                    completion_result_fields run status ?reason ?final_output ()
                     @ fields
               in
               ok_obj fields))
@@ -308,7 +415,6 @@ let record_background_notification params ctx =
   match Taumel.Shared.trim_non_empty (get_string prepared "run_id") with
   | None -> error_obj "missing agent run id"
   | Some run_id -> (
-      Session_sync.load_agent_state ctx;
       match
         Taumel.Subagents.record_background_notification !agent_state ~run_id
       with
@@ -443,17 +549,15 @@ let request_from_params (owner : Taumel.Subagents.owner) name params =
       in
       Taumel.Subagents.request_of_values ~workspace_roots ~default_id
         ~action:"spawn"
-        ?id:(non_empty (optional_string_field params "agent_id"))
         ?agent:requested_profile
         ?prompt:(non_empty (optional_string_field params "objective"))
-        ?description:(non_empty (optional_string_field params "description"))
         ()
   | "agent_send" ->
       let default_id = Taumel.Subagents.default_worker_id !workers in
       Taumel.Subagents.request_of_values ~workspace_roots ~default_id
         ~action:"send"
         ?id:(non_empty (optional_string_field params "agent_id"))
-        ?prompt:(non_empty (optional_string_field params "objective"))
+        ?prompt:(non_empty (optional_string_field params "message"))
         ~interrupt:(get_bool params "interrupt")
         ()
   | "agent_wait" ->
@@ -480,11 +584,10 @@ let delivery_run_status = Option.map Taumel.Subagents.run_status_to_string
 let delivery_child_session_updates worker_id
     (delivery : Taumel.Subagents.submission_delivery) =
   match (delivery.delivery_kind, delivery.delivery_previous_status) with
-  | "started", Some _ ->
+  | ("interrupted" | "suspended"), Some _ ->
       [
         js_child_session_update ~reason:"interrupted_by_parent"
           "stop_child_session" worker_id;
-        js_child_session_update "drop_child_session" worker_id;
       ]
   | _ -> []
 
@@ -569,16 +672,41 @@ let terminal_result_summary (run : Taumel.Subagents.agent_run) =
             Some ("error=" ^ compact_text 240 reason)
         | _ -> None)
 
+let js_submission (submission : Taumel.Subagents.submission) =
+  Unsafe.obj
+    [|
+      ("submission_id", js_string submission.submission_id);
+      ("kind", js_string submission.submission_kind);
+      ("createdAt", js_number (float_of_int submission.submission_created_at));
+    |]
+
 let js_run ~now (run : Taumel.Subagents.agent_run) =
   Unsafe.obj
     [|
       ("run_id", js_string run.run_id);
       ("agent_id", js_string run.run_agent_id);
-      ("objective", js_string run.run_objective);
-      ("description", js_option_string run.run_description);
+      ("initialSubmissionKind", js_string run.run_initial_submission_kind);
+      ( "submissions",
+        js_array (List.map js_submission run.run_submissions) );
       ("status", js_string (Taumel.Subagents.run_status_to_string run.run_status));
       ("reason", js_option_string run.run_reason);
       ("finalOutput", js_option_string run.run_final_output);
+      ("outputAvailable", js_bool run.run_output_available);
+      ("consumed", js_bool run.run_consumed);
+      ("backgroundNotified", js_bool run.run_background_notified);
+      ("createdAt", js_number (float_of_int run.run_created_at));
+      ("startedAt", js_option_int run.run_started_at);
+      ("completedAt", js_option_int run.run_completed_at);
+      ("elapsedSeconds", js_number (float_of_int (run_elapsed_seconds ~now run)));
+    |]
+
+let js_list_run ~now (run : Taumel.Subagents.agent_run) =
+  Unsafe.obj
+    [|
+      ("run_id", js_string run.run_id);
+      ("agent_id", js_string run.run_agent_id);
+      ("initialSubmissionKind", js_string run.run_initial_submission_kind);
+      ("status", js_string (Taumel.Subagents.run_status_to_string run.run_status));
       ("consumed", js_bool run.run_consumed);
       ("backgroundNotified", js_bool run.run_background_notified);
       ("createdAt", js_number (float_of_int run.run_created_at));
@@ -612,7 +740,7 @@ let js_agent_identity ~now state (identity : Taumel.Subagents.agent_identity) =
       ( "latestRun",
         match latest with
         | None -> inject Js.null
-        | Some run -> inject (js_run ~now run) );
+        | Some run -> inject (js_list_run ~now run) );
     |]
 
 let agent_identity_summary ~now state identity =
@@ -640,6 +768,25 @@ let agent_identity_summary ~now state identity =
   Printf.sprintf "%s [%s] profile=%s latest=%s" identity.identity_agent_id
     lifecycle identity.identity_profile_name run
 
+let agent_identity_xml ~now state identity =
+  let lifecycle =
+    if Taumel.Subagents.identity_open identity then "open" else "closed"
+  in
+  let latest =
+    match Taumel.Subagents.latest_run state identity.identity_agent_id with
+    | None -> []
+    | Some run ->
+        [
+          xml_run_line
+            ~elapsed:(run_elapsed_seconds ~now run)
+            run.run_id (Taumel.Subagents.run_status_to_string run.run_status);
+        ]
+  in
+  String.concat "\n"
+    ([ xml_agent_line ~lifecycle identity.identity_agent_id
+         identity.identity_profile_name ]
+    @ latest)
+
 let render_agent_list ~owner_id ~include_closed =
   let state = !agent_state in
   let now = now_seconds () in
@@ -649,12 +796,21 @@ let render_agent_list ~owner_id ~include_closed =
            identity.identity_parent_session_id = owner_id
            && (include_closed || Taumel.Subagents.identity_open identity))
   in
-  let text =
+  let _human_text =
     match identities with
     | [] -> "No agents."
     | identities ->
         String.concat "\n"
           (List.map (agent_identity_summary ~now state) identities)
+  in
+  let text =
+    match identities with
+    | [] -> "<taumel_agent_list>\n  <summary count=\"0\" />\n</taumel_agent_list>"
+    | identities ->
+        String.concat "\n"
+          (["<taumel_agent_list>"]
+          @ List.map (agent_identity_xml ~now state) identities
+          @ ["</taumel_agent_list>"])
   in
   ok_obj
     [
@@ -678,6 +834,7 @@ let js_wait_item (item : Taumel.Subagents.wait_item) =
       ("status", js_string item.wait_status);
       ("finalOutput", js_option_string item.wait_final_output);
       ("error", js_option_string item.wait_error);
+      ("outputAvailable", js_bool item.wait_output_available);
       ("consumed", js_bool item.wait_consumed);
       ("backgroundNotified", js_bool item.wait_background_notified);
     |]
@@ -701,6 +858,43 @@ let parse_wait_selector params =
   | None, Some agent_ids -> Ok (Taumel.Subagents.Wait_agent_ids agent_ids)
   | None, None -> Ok Taumel.Subagents.Wait_all_active
 
+let wait_item_xml (item : Taumel.Subagents.wait_item) =
+  let run_id =
+    match item.wait_run_id with
+    | None -> ""
+    | Some value -> Printf.sprintf " run_id=\"%s\"" (xml_attr value)
+  in
+  let agent_id =
+    if item.wait_agent_id = "" then ""
+    else Printf.sprintf " agent_id=\"%s\"" (xml_attr item.wait_agent_id)
+  in
+  let output_available =
+    if item.wait_output_available then ""
+    else " output_available=\"false\""
+  in
+  let open_tag =
+    Printf.sprintf "  <run%s%s status=\"%s\"%s>" agent_id run_id
+      (xml_attr item.wait_status) output_available
+  in
+  let close_tag = "  </run>" in
+  match (item.wait_final_output, item.wait_error) with
+  | Some output, _ ->
+      String.concat "\n"
+        [ open_tag; "    <final_output>"; output; "    </final_output>"; close_tag ]
+  | None, Some error ->
+      String.concat "\n"
+        [ open_tag; "    <error>"; error; "    </error>"; close_tag ]
+  | None, None -> String.concat "\n" [ open_tag; close_tag ]
+
+let wait_result_xml result =
+  match result.Taumel.Subagents.wait_items with
+  | [] -> "<taumel_agent_wait>\n  <summary status=\"no_active_runs\" />\n</taumel_agent_wait>"
+  | items ->
+      String.concat "\n"
+        (["<taumel_agent_wait>"]
+        @ List.map wait_item_xml items
+        @ ["</taumel_agent_wait>"])
+
 let render_agent_wait params owner_id ctx =
   match parse_wait_selector params with
   | Error message -> error_obj message
@@ -715,7 +909,7 @@ let render_agent_wait params owner_id ctx =
       ok_obj
         [
           ("action", js_string "tool_result");
-          ("text", js_string result.wait_message);
+          ("text", js_string (wait_result_xml result));
           ( "details",
             inject
               (Unsafe.obj
@@ -762,18 +956,58 @@ let profile_summary state (profile : Taumel.Subagents.profile_spec) =
     (Taumel.Subagents.sandbox_setting_to_summary profile.spec_sandbox)
     (Taumel.Subagents.tools_setting_to_summary profile.spec_tools)
 
+let profile_tool_xml = function
+  | Taumel.Subagents.Inherit_tools -> [ "    <tool name=\"inherit\" />" ]
+  | Taumel.Subagents.Concrete_tools tools ->
+      List.map
+        (fun tool -> Printf.sprintf "    <tool name=\"%s\" />" (xml_attr tool))
+        tools
+
+let profile_xml state (profile : Taumel.Subagents.profile_spec) =
+  let enabled = Taumel.Subagents.profile_enabled state profile.spec_name in
+  let disabled_reason =
+    if enabled then ""
+    else " disabled_reason=\"disabled for this session\""
+  in
+  String.concat "\n"
+    ([
+       Printf.sprintf
+         "  <profile name=\"%s\" enabled=\"%s\" sandbox=\"%s\"%s>"
+         (xml_attr profile.spec_name)
+         (if enabled then "true" else "false")
+         (xml_attr
+            (Taumel.Subagents.sandbox_setting_to_summary profile.spec_sandbox))
+         disabled_reason;
+       "    <description>" ^ profile.spec_description ^ "</description>";
+     ]
+    @ profile_tool_xml profile.spec_tools
+    @ [ "  </profile>" ])
+
 let render_profiles () =
   let state = !agent_state in
   let catalog = !agent_catalog in
-  let profile_text =
+  let _profile_text =
     match catalog.catalog_profiles with
     | [] -> "No agent profiles."
     | profiles -> String.concat "\n" (List.map (profile_summary state) profiles)
   in
   let text =
     match catalog.catalog_errors with
-    | [] -> profile_text
-    | errors -> profile_text ^ "\nErrors:\n" ^ String.concat "\n" errors
+    | [] ->
+        String.concat "\n"
+          (["<taumel_agent_profiles>"]
+          @ List.map (profile_xml state) catalog.catalog_profiles
+          @ ["</taumel_agent_profiles>"])
+    | errors ->
+        String.concat "\n"
+          (["<taumel_agent_profiles>"]
+          @ List.map (profile_xml state) catalog.catalog_profiles
+          @ [
+              "  <error>";
+              String.concat "\n" errors;
+              "  </error>";
+              "</taumel_agent_profiles>";
+            ])
   in
   ok_obj
     [
@@ -803,8 +1037,16 @@ let js_delete_child_session_update id =
 let close_tool_result ids =
   let count = List.length ids in
   let text =
-    Printf.sprintf "Closed %d agent%s." count
-      (if count = 1 then "" else "s")
+    String.concat "\n"
+      ([
+         Printf.sprintf "<taumel_agent_close count=\"%d\">" count;
+       ]
+      @ List.map
+          (fun id ->
+            Printf.sprintf "  <agent id=\"%s\" lifecycle=\"closed\" />"
+              (xml_attr id))
+          ids
+      @ [ "</taumel_agent_close>" ])
   in
   ok_obj
     [
@@ -939,8 +1181,7 @@ let prepare name params ctx =
                     (Taumel.Subagents.record_spawn !agent_state ~now
                        ~parent_session_id:owner.id ~agent_id:spawn.id
                        ~profile_name:spawn.name ?profile_snapshot
-                       ?sandbox_snapshot ~system_prompt
-                       ?description:spawn.description spawn.prompt)
+                       ?sandbox_snapshot ~system_prompt spawn.prompt)
               | Taumel.Subagents.Send send ->
                   Result.map
                     (fun (delivery : Taumel.Subagents.submission_delivery) ->

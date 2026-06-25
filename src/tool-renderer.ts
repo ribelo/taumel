@@ -178,9 +178,9 @@ function inlineForTool(name: string, args: Record<string, unknown>, expanded: bo
     case "apply_patch":
       return truncate(oneLine(stringField(args, "input") ?? stringField(args, "patch") ?? "patch"), maxChars);
     case "agent_spawn":
-      return truncate([stringField(args, "agent_id"), stringField(args, "profile"), stringField(args, "objective")].filter(Boolean).join(" "), maxChars);
+      return truncate([stringField(args, "profile"), stringField(args, "objective")].filter(Boolean).join(" "), maxChars);
     case "agent_send":
-      return truncate([stringField(args, "agent_id"), stringField(args, "objective")].filter(Boolean).join(" "), maxChars);
+      return truncate([stringField(args, "agent_id"), stringField(args, "message")].filter(Boolean).join(" "), maxChars);
     case "agent_wait": {
       const agentIds = Array.isArray(args["agent_ids"]) ? args["agent_ids"].length : 0;
       const runIds = Array.isArray(args["run_ids"]) ? args["run_ids"].length : 0;

@@ -104,6 +104,8 @@ let ensure_tool_names required tool_names =
 
 let ralph_control_tool_names = [ "ralph_continue"; "ralph_finish" ]
 let ambient_hidden_tool_names = [ "usage"; "user_detection_tool" ]
+let child_goal_removed_tool_names = [ "create_goal" ]
+let child_goal_required_tool_names = [ "update_goal" ]
 
 let rewrite_shell_tool_names tool_names =
   let push name values = if List.mem name values then values else values @ [ name ] in
@@ -132,12 +134,16 @@ let rewrite_active_tools ?provider ?(ralph_child = false) tool_names =
 
 let plan_agent_child_active_tools ~worker_tools ~current_active_tools_available
     ~current_active_tools =
+  let agent_child_tools tool_names =
+    tool_names
+    |> remove_tool_names Subagents.all_agent_tool_names
+    |> remove_tool_names child_goal_removed_tool_names
+    |> ensure_tool_names child_goal_required_tool_names
+  in
   match worker_tools with
-  | Some tools -> Some (remove_tool_names Subagents.all_agent_tool_names tools)
+  | Some tools -> Some (agent_child_tools tools)
   | None when current_active_tools_available ->
-      Some
-        (rewrite_active_tools current_active_tools
-        |> remove_tool_names Subagents.all_agent_tool_names)
+      Some (rewrite_active_tools current_active_tools |> agent_child_tools)
   | None -> None
 
 let plan_active_tools_sync ?provider ?(ralph_child = false) tool_names =

@@ -3,7 +3,7 @@
 ## What It Is
 
 Taumel agents are durable child sessions owned by a parent session. A parent can
-spawn an agent with a typed profile, send additional objectives to the same
+spawn an agent with a typed profile, send additional messages to the same
 agent, wait for active runs, inspect status, and close the agent permanently.
 
 The design follows Kimi's subagent UX where it fits Taumel, Tau's sandbox and
@@ -23,6 +23,9 @@ Taumel depth is exactly one, so child sessions never receive agent tools.
 - Fail profile and tool-surface problems at startup, not during a later agent
   run.
 - Keep nesting depth exactly one.
+- Use XML-style model markup for agent run results and completion
+  notifications, while keeping human rendering minimal and separate from the
+  model-facing protocol.
 - Keep model-visible tool schemas and system prompt text stable across
   per-session agent toggles so provider prompt caching is not invalidated by
   `/agents`.
@@ -72,16 +75,34 @@ agent tool in worker custom tools and rely on depth/spawn policy. Taumel makes
 nesting impossible by construction: child session tool registration and
 active-tool rewriting both remove the agent tools.
 
+Goal tools are separate from agent tools. A spawned objective run receives a
+host-created child goal before the first child turn starts. The child does not
+receive `create_goal`, because the parent already supplied the objective, but
+every subagent session does receive `update_goal` so it can mark its goal
+`complete` or `blocked`. Without `update_goal`, a goal-mode child could
+continue forever.
+
+`update_goal` behaves like the normal goal tool in every subagent turn. If no
+child goal is active, it returns the normal no-active-goal tool result; Taumel
+does not special-case this into a subagent error.
+
+Subagent tool and system-prompt surfaces are stable for the lifetime of the
+child session. Taumel must not attach or detach tools per run just to reflect
+whether the current run started from `agent_spawn` or `agent_send`; that would
+break provider token caching. Any future per-run tool or prompt change needs a
+strong explicit reason and a PRD update.
+
 ### `agent_spawn`
 
 Creates a durable agent identity and starts one run. It never waits.
+`agent_spawn` is objective-based: the child session receives the objective as an
+automatically created child goal, and the child pursues it with the same goal
+mode mechanics as the main agent.
 
 Inputs:
 
 - `profile`: required profile name.
 - `objective`: required full task objective.
-- `description`: optional short UI label.
-- `agent_id`: optional requested stable id.
 
 No `provider`, `model`, `thinking`, `tools`, or `sandbox` fields are accepted.
 Those belong to the profile.
@@ -95,12 +116,14 @@ Output includes:
 
 ### `agent_send`
 
-Sends an objective/message to an existing, non-closed agent.
+Sends a normal message to an existing, non-closed agent. Unlike `agent_spawn`,
+`agent_send` does not automatically create a child goal.
 
 Inputs:
 
 - `agent_id`: required.
-- `objective`: required.
+- `message`: optional normal message to deliver. Required unless
+  `interrupt = true`.
 - `interrupt`: optional boolean.
 
 The agent keeps its original profile. `profile`, `provider`, `model`,
@@ -109,48 +132,88 @@ The agent keeps its original profile. `profile`, `provider`, `model`,
 Default behavior follows Tau/Kimi style: if the agent has an active run,
 `agent_send` steers the message into that active child session through Pi's
 steering mechanism. It does not fail just because the child is busy, and it does
-not create a second active run for the same agent.
+not create a second active run for the same agent. There is no queue-next-run
+mode in this PRD.
 
-With `interrupt = true`, Taumel cancels the active run with reason
-`interrupted_by_parent` and starts a new run for the sent objective.
-The interrupted run remains in history with its Pi-backed transcript/log
-preserved by the child session machinery; Taumel records the terminal status and
-references, not a copied transcript.
+With `interrupt = true`, a present `message` means priority steering. Taumel may
+interrupt the current child SDK turn so the parent message can be delivered
+promptly, but it does not cancel the parent-visible run, does not create a
+replacement run, does not drop/recreate the child session, and does not leave
+the child goal automation paused/interrupted. The message is still a normal
+message to the same durable child session. If the active run is a spawned goal
+run, the existing child goal remains the source of truth. The underlying goal
+component may transiently observe the interrupted child turn, but the sent
+message is the recovery/resume path and the goal component must continue
+normally afterward when the goal is still active.
+
+With `interrupt = true` and no `message`, Taumel sends an interrupt-only event.
+It interrupts the current child SDK turn, leaves the child goal automation in
+the existing interrupted/paused state, and marks the parent-visible run
+`suspended` with reason `interrupted_by_parent`. No replacement run is created,
+the child session is not dropped, and the agent identity remains open. This is
+the model-facing non-closing stop/pause operation. A later `agent_send` with a
+message to that agent resumes the same suspended run through the existing child
+session and goal component, rather than creating a replacement run.
+
+With `interrupt = true`, no `message`, and no active or suspended run, there is
+nothing to interrupt; Taumel returns a normal no-active-run result and does not
+create a run.
 
 If the agent identity is open and has no active run, `agent_send` is allowed
 regardless of the previous terminal run state (`completed`, `failed`,
 `cancelled`, `timed_out`, or `lost`). It creates a new `run_id`; it never
 restarts or rewrites the previous run. If a lost child runtime must be recreated
 behind the same `agent_id`, that is still a new run, not a resumed old run.
+The new run is a normal child prompt turn, not a child goal.
+
+If the agent identity has a suspended run, `agent_send` with a message resumes
+that run instead of creating a new one.
 
 Output includes:
 
 - `agent_id`
 - `run_id`
 - `submission_id`
-- delivery kind: `steered` for active runs, `started` for new runs
-- previous run status when interrupted
-- `status = running`
+- delivery kind: `steered` for active runs, `interrupted` for priority-steered
+  active runs, `suspended` for interrupt-only stops, `resumed` for suspended
+  runs, `started` for new runs
+- resulting run/status summary
 
 ### `agent_wait`
 
-Waits for active work. Waiting is unlimited by default.
+Waits for active work or reads exact run results. Waiting is unlimited by
+default.
 
 Inputs:
 
 - `run_ids`: optional exact run ids.
-- `agent_ids`: optional agents whose active runs should be waited on.
+- `agent_ids`: optional agents whose active or fresh deliverable runs should be
+  waited on.
 - `timeout_seconds`: optional wait-call timeout.
 
 Selector rules:
 
 - Exactly one selector kind may be provided.
-- Omitted selector means all active runs owned by this session.
-- `run_ids` waits for exactly those runs, including already-terminal runs.
-- `agent_ids` waits for the currently active run on each agent.
-- Agents with no active run are reported as `no_active_run`.
-- If the selector resolves to no active runs, `agent_wait` returns a successful
-  status result such as `no_active_runs`; it is not a tool error.
+- Omitted selector means all deliverable runs owned by this session: active
+  runs plus terminal runs whose result has not been consumed by `agent_wait` and
+  has not been delivered through background notification.
+- `run_ids` waits for exactly those runs, including already-terminal and
+  already-delivered runs. This is the explicit historical readback path.
+- `agent_ids` waits for each selected agent's active run or fresh undelivered
+  terminal run. It does not reread consumed/background-notified history.
+- Suspended runs are not active work and do not block `agent_wait`. Exact
+  `run_ids` or selected `agent_ids` report them immediately as `suspended`.
+- Agents with no active or deliverable run are reported as `no_active_run` or
+  `no_deliverable_run`.
+- If the selector resolves to no active or deliverable runs, `agent_wait`
+  returns a successful status result such as `no_active_runs`; it is not a tool
+  error.
+- Exact `run_ids` waits partially succeed. Owned runs return their status and
+  output/error when available; missing run ids return `not_found`; not-owned run
+  ids return `not_owned` without agent id, profile, final output, error text, or
+  any other cross-session metadata.
+- A malformed selector is a tool error. Examples: multiple selector kinds,
+  empty selector arrays, or invalid ids.
 - Waiting is run-based, not submission-based. `submission_id` is a trace/UI
   marker; it is not accepted as an `agent_wait` selector.
 
@@ -166,6 +229,26 @@ background and still produce completion notifications later.
 
 Model-facing output contains final child answers and run metadata only. It does
 not include raw child transcript, child tool logs, or hidden reasoning.
+
+For completed/failed terminal runs, `agent_wait` returns XML-style model markup
+around the child final handoff. The markup is a prompt protocol for the model,
+not a strict XML document that must round-trip through an XML parser. Controlled
+metadata such as ids, profile names, status, and elapsed time may be attributes.
+Freeform child output is inserted as raw block text inside elements; Taumel does
+not escape code snippets or other child text merely to make the markup
+schema-valid.
+
+If exact `run_ids` readback finds a known terminal run but the final output is
+not available through Pi/worker transcript history or current process memory,
+`agent_wait` returns a normal structured result for that run with
+`output_available = false` and no `<final_output>`/`<error>` block. This is not
+a tool error and does not change the run status.
+
+`agent_wait` consumption affects only automatic delivery. If a fresh terminal
+run is returned by default wait, `agent_ids` wait, or explicit `run_ids` wait,
+Taumel marks it consumed and suppresses background completion for that run.
+Explicit `run_ids` may reread already-consumed or background-notified terminal
+runs later without changing their delivery state.
 
 ### `agent_list`
 
@@ -190,7 +273,7 @@ Output includes:
 - active/latest `run_id`
 - run state
 - elapsed time
-- compact final summary/error when terminal
+- bounded status/reason codes, never child output, summaries, or raw error text
 
 ### `agent_close`
 
@@ -203,6 +286,10 @@ Inputs:
 If an agent has an active run, that run is cancelled with reason
 `closed_by_parent`. The agent identity becomes closed and cannot be resumed.
 Historical run output remains inspectable through listing/status surfaces.
+
+`agent_close` is the only model-facing permanent close primitive in this PRD.
+It is not a pause. `agent_send` with `interrupt = true` and no `message` is the
+model-facing non-closing stop/pause primitive.
 
 `all` means every open agent identity owned by the current session, including
 agents whose latest run is already terminal.
@@ -219,7 +306,7 @@ Output includes:
 - enabled/disabled state for this parent session
 - disabled reason, when disabled
 - sandbox summary
-- tool summary
+- canonical tool names exposed by that profile
 
 The `agent_profiles` tool has stable schema and stable description. `/agents`
 toggles do not mutate the model tool schema or the system prompt. If the model
@@ -230,8 +317,144 @@ user can enable it with `/agents enable <profile>`.
 Disabled profiles are included in `agent_profiles` output with
 `enabled = false`; they are not hidden.
 
+Following Kimi, `agent_profiles` exposes each profile's canonical tool names to
+the parent model. This helps the parent choose an appropriate profile and keeps
+the capability surface explicit. Tool names are emitted as structured profile
+metadata, not as natural-language prose.
+
+Tool names are repeated child elements, not a comma-delimited attribute:
+
+```xml
+<taumel_agent_profiles>
+  <profile name="finder" enabled="true" sandbox="read-only">
+    <description>Fast read-only codebase exploration.</description>
+    <tool name="exec_command" />
+    <tool name="find_thread" />
+    <tool name="read_thread" />
+  </profile>
+</taumel_agent_profiles>
+```
+
 This tool does not report existing agent identities, active runs, or run output;
 use `agent_list` and `agent_wait` for those.
+
+## Model Markup And Human Rendering
+
+Model-visible subagent tool outputs use XML-style prompt markup, not ad hoc
+plain key/value text. This applies to `agent_spawn`, `agent_send`,
+`agent_wait`, `agent_list`, `agent_close`, `agent_profiles`, and background
+completion notifications. The goal is stable structure for the parent model,
+not strict XML validity.
+
+Example:
+
+```xml
+<taumel_agent_spawn>
+  <agent id="smart-ucfq" profile="smart" lifecycle="open" sandbox="workspace-write" />
+  <run id="smart-ucfq-run-1" status="running" />
+</taumel_agent_spawn>
+
+<taumel_agent_wait>
+  <run agent_id="smart-ucfq" run_id="smart-ucfq-run-5" profile="smart" status="completed" elapsed_seconds="3">
+    <final_output>
+Hi - fifth test.
+    </final_output>
+  </run>
+</taumel_agent_wait>
+```
+
+Rules:
+
+- Controlled metadata may be attributes.
+- Freeform child output or error text goes inside block elements as raw text.
+- Freeform descriptions, objectives, messages, and summaries are elements, not
+  attributes.
+- Do not escape child output just to make strict XML valid.
+- The stored run `final output` remains plain child text. XML-style markup is
+  a delivery envelope, not the persisted value.
+- Structured model output uses XML-style tags even when a tool only returns
+  acknowledgements or catalog data. Do not introduce JSON or key/value text for
+  subagent model outputs unless the PRD is changed explicitly.
+- Important semantic data must be present in model-visible content and
+  structured details. It must not exist only in human UI rendering.
+
+Root tag names map directly to the tool/custom-message surface:
+
+```text
+agent_spawn      -> <taumel_agent_spawn>
+agent_send       -> <taumel_agent_send>
+agent_wait       -> <taumel_agent_wait>
+agent_list       -> <taumel_agent_list>
+agent_close      -> <taumel_agent_close>
+agent_profiles   -> <taumel_agent_profiles>
+notification     -> <taumel_notification kind="...">
+```
+
+Canonical child elements:
+
+```text
+<agent ... />
+<run ...>...</run>
+<submission ... />
+<profile ... />
+<tool ... />
+<final_output>...</final_output>
+<error>...</error>
+<summary>...</summary>
+<message>...</message>
+```
+
+This is a vocabulary, not a parser-enforced schema. Tools may omit irrelevant
+elements, repeat list elements, or add narrow attributes when needed, but they
+should not invent alternate names for the same concepts.
+
+Structured `details` mirrors the same domain concepts as the model markup:
+`agent`, `run`, `submission`, `profile`, `tool`, `finalOutput`, `error`,
+`summary`, and `message`. Renderer-only names should be avoided unless they
+describe UI state that has no model-facing meaning.
+
+Human rendering is separate from model markup. Tool renderers and notification
+renderers parse structured details/model content into a minimal UI; they do not
+show raw XML-style markup by default.
+
+Subagent tool rendering uses one shared agent-event grammar based on run state,
+not on individual tool names. `agent_spawn`, `agent_send`, `agent_wait`,
+`agent_list`, and background completion notifications all map their details to
+one or more agent events:
+
+```text
+agent id, run id, profile, status, lifecycle, submission kind/id, final
+output/error, sandbox, elapsed time, delivery kind
+```
+
+Compact rendering stays one line unless a short error reason is needed:
+
+```text
+agent_spawn smart-ucfq - smart - running
+agent_send smart-ucfq - steered - smart-ucfq-run-2
+agent_wait 1 completed
+agent_list 3 open
+agent_close 2 closed
+```
+
+Compact `agent_wait` shows counts/status only. It does not show final child
+output previews. Expanded rendering is still minimal: a few structured metadata
+lines plus final output or error text. It does not show raw child transcripts,
+child tool logs, hidden prompts, or the XML-style model envelope.
+
+`agent_list` is an inventory/status surface. It must not include full terminal
+final output or error text in model-visible content, details, compact UI, or
+expanded UI. Including full output would multiply token usage by the number of
+agents. `agent_list` may include only bounded compact terminal summaries. Full
+terminal output is available through `agent_wait` with explicit `run_ids` or
+human `/agent-runs output`.
+
+`agent_profiles` is not an agent-event renderer. It uses a separate catalog
+renderer:
+
+- compact: profile counts and enabled/disabled counts
+- expanded: profile name, enabled/disabled state, disabled reason, sandbox,
+  canonical tool names, and short description
 
 ## User Commands
 
@@ -313,50 +536,114 @@ auto-recreate it during `/resume`. A later `agent_send` may create a new child
 runtime behind the same open `agent_id`, recorded as a new run.
 
 Because child sessions are in-memory in this implementation, `taumel.agents`
-persists run metadata and final output references/values needed for resume and
-menus, but it does not promise durable raw child transcripts across process
-exit. Active runs become `lost` on resume unless a live worker is attached.
-Durable hidden child-session files are out of scope for this PRD.
+persists only the run metadata needed for resume and menus. It does not persist
+final child output, raw child transcripts, or child tool logs. Active runs
+become `lost` on resume unless a live worker is attached. Durable hidden
+child-session files are out of scope for this PRD.
+
+Agent ids are generated by Taumel, not provided by the model. When
+`agent_spawn` creates an identity, Taumel generates `<profile>-<shortid>`, for
+example `finder-k7p2`. The short id uses a small lowercase unambiguous alphabet,
+is 4-6 characters long, and retries on collision.
 
 Agent ids are not reusable within a session. If an id was ever used by an open
-or closed identity, `agent_spawn` with that requested `agent_id` fails.
-
-When `agent_spawn` omits `agent_id`, Taumel generates one as
-`<profile>-<shortid>`, for example `finder-k7p2`. The short id uses a small
-lowercase unambiguous alphabet, is 4-6 characters long, and retries on
-collision. Generated ids also follow the no-reuse rule.
-
-User-provided `agent_id` values are allowed but strictly parsed: lowercase
-letters, digits, and hyphen only; must start with a letter; bounded length; no
-reuse within the session.
+or closed identity, Taumel does not generate it again.
 
 Multiple open agents may use the same profile at the same time. `agent_id`, not
 profile name, is the unique identity boundary.
 
 ### Run
 
-One contiguous child execution episode for an agent. A run starts from an
-initial objective and may receive additional submissions through steering while
-it remains active.
+One contiguous child execution episode for an agent. A run starts either from an
+`agent_spawn` objective, which becomes a child goal, or from an `agent_send`
+message when the agent is idle. Active runs may receive additional
+`agent_send` messages through steering or priority interruption while they
+remain active. Suspended runs remain non-terminal and can be resumed by a later
+`agent_send` message.
 
 Fields:
 
 - `run_id`
 - `agent_id`
-- objective
-- submissions sent to the run
-- description
+- initial submission kind
+- submission ids and kinds sent to the run
 - status
-- reason, when terminal failure/cancellation has a reason
-- final output, when available
+- reason code, when terminal failure/cancellation has a reason
 - parent delivery state
 - created/started/completed timestamps
 
+Persisted run metadata must not store raw text: no objective/message payloads,
+descriptions, final output, child transcript text, tool logs, freeform error
+text, freeform reason text, summaries, labels, prompts, or system prompts. Raw
+text lives in Pi-owned transcript/tool-result/session history, not in
+`taumel.agents`.
+
 Each `agent_spawn` and `agent_send` creates a `submission_id`. A submission is a
-message/objective delivered to an agent. If the agent has an active run, the
-submission belongs to that active run and is delivered by steering. If the agent
-is idle, the submission starts a new run. Submissions are trace/UI markers; the
-terminal result belongs to the run.
+payload delivered to an agent. `agent_spawn` submissions are objectives and
+create child goals. `agent_send` submissions are normal messages. If the agent
+has an active run, the `agent_send` submission belongs to that active run and is
+delivered by steering. If the agent is idle, the `agent_send` submission starts
+a new non-goal message run. Submissions are trace/UI markers; the terminal
+result belongs to the run.
+
+Child goal mode for spawned objectives must use Taumel's existing goal
+component, the same component used by the main agent. The agent subsystem does
+not reimplement goal continuation, completion auditing, retry behavior,
+time/budget handling, or continuation prompts. The child session is wrapped so
+the existing goal component owns those mechanics. The objective is stored as
+child goal state/prompt data, not echoed back in the parent-facing
+`agent_spawn` tool result. `agent_send` is intentionally not goal-based; it is
+ordinary communication with an existing durable agent.
+
+Taumel creates the child goal internally before dispatching the spawned
+objective. It must not rely on the child model calling `create_goal`, and the
+automatic goal setup should not appear as a visible child tool call.
+
+The child uses `update_goal` to update goal state, not as a host-side
+interruption mechanism. If the child marks the goal `complete` or `blocked`,
+Taumel does not stop the child turn immediately; it waits for the child to
+finish normally and uses the final assistant handoff as run output. The existing
+goal component decides whether another automatic continuation is needed after
+the child turn ends. If the goal remains active, that component continues the
+goal loop. If the goal is `complete`, the spawned run may be recorded as
+`completed` after final-output handling. If the goal is `blocked`, the
+parent-visible run is recorded as `failed` with reason `goal_blocked`;
+`blocked` remains a goal status, not a separate run status.
+
+For spawned objective runs, the goal component state is the source of truth for
+parent-visible run completion. The agent subsystem observes child turn
+completion plus the child goal state; it must not infer completion from
+assistant prose alone.
+
+For non-goal message runs started by `agent_send` when the agent is idle, there
+is no child goal-state gate. The run terminal state comes from the child
+prompt/follow-up turn result: successful turn ends as `completed`; child
+error/cancel/timeout maps to the corresponding terminal run status.
+
+The run `final output` is the child's final assistant handoff text, not a
+separate host-generated summary of the whole child transcript. Child profiles
+must tell the child that the parent sees only the final handoff.
+
+For successful spawned objective/goal runs only, Taumel follows Kimi's
+too-brief handoff rule before recording the run as `completed`: if the child's
+last assistant text is shorter than 200 trimmed characters, Taumel sends one
+follow-up prompt to the same child session:
+
+```text
+Your previous response was too brief. Please provide a more comprehensive summary that includes:
+
+1. Specific technical details and implementations
+2. Detailed findings and analysis
+3. All important information that the parent agent should know
+```
+
+After that one continuation, the new last assistant text becomes the canonical
+final output. Taumel does not run a separate summarizer over the child session.
+Normal `agent_send` message runs do not get the too-brief expansion; short
+answers to normal messages are valid. Failed, cancelled, timed-out, lost,
+and closed runs do not get the too-brief expansion; their terminal reason/error
+is recorded directly. Suspended runs are not terminal and do not have final
+output yet.
 
 Run statuses:
 
@@ -374,6 +661,12 @@ lost
 `completed` means the latest assigned task finished. It does not mean the agent
 identity is dead. The same `agent_id` can receive another run via `agent_send`
 until it is closed.
+
+`suspended` means a running child was interrupted without a replacement message.
+The child goal automation is intentionally interrupted/paused, the run has no
+final output, and the agent identity remains open. A later `agent_send` message
+to the same agent resumes the suspended run through the existing child session
+and goal component.
 
 On `/resume`, any run that was persisted as `queued`, `running`, or `suspended`
 but has no live worker in the current process becomes `lost`. The agent identity
@@ -586,7 +879,7 @@ The entry owns:
 - profile enabled/disabled state for the session
 - durable agent identities
 - run metadata
-- terminal output references
+- delivery state such as consumed/background-notified flags
 
 `/resume` restores profile toggles and known agent/run state from this entry.
 Runs that were active when the previous process exited are restored as `lost`
@@ -594,11 +887,37 @@ unless a live worker is actually attached.
 Other Taumel session entries, such as permissions, network, and goal state, do
 not own agent data.
 
-Large child data is not embedded directly in `taumel.agents`. Final outputs are
-stored separately or by reference from run metadata. Raw child transcripts and
-tool logs are Pi/worker-owned live data in this implementation and are not
-promised to survive process exit. The `taumel.agents` entry stays a small index
-for resume, menus, and model-facing status tools.
+`taumel.agents` must not store raw text. That includes objective/message
+payloads, descriptions, final child output, raw child transcripts, child tool
+logs, freeform error text, freeform reason text, summaries, labels, prompts, and
+system prompts. It stores metadata only: controlled ids, enum values, booleans,
+small integers/counters, timestamps, delivery flags, lifecycle/status values,
+profile names, and other non-freeform state needed for status inspection.
+Parent-visible final output is delivered through the normal parent
+transcript/tool-result/notification path owned by Pi.
+
+After `/resume`, Pi is responsible for restoring the parent conversation
+transcript, including prior agent tool calls/results that are part of that
+transcript. Taumel does not track parent tool history, re-execute old tool
+calls, or synthesize additional tool results from `taumel.agents` during
+resume. To inspect current restored agent state, the parent can call
+`agent_list` or exact `agent_wait run_ids`. If the parent session contains a
+valid `taumel.agents` entry, `agent_list` must show the restored open/closed
+identities and latest run states; it must not return an empty list merely
+because child worker sessions were process-local and are gone. Runs persisted
+as `queued`, `running`, or `suspended` without a live worker become `lost` with
+reason `process_resumed_without_live_worker`.
+
+If Taumel crashes before a state transition is persisted, `/resume` can only
+restore the last saved `taumel.agents` entry. For example, a child may have
+completed in reality, but if the terminal run state was not saved before
+process exit, the restored run is still treated as lost rather than completed.
+
+Large child data and raw text are not embedded in `taumel.agents`. Final
+outputs, child transcripts, prompts, and tool logs are Pi/worker-owned data in
+this implementation and are not persisted by Taumel's agent state. The
+`taumel.agents` entry stays a small metadata index for resume, menus, and
+model-facing status tools.
 
 Final output is the default displayed output for completed runs. Raw transcript
 or tool-log access is available only through an explicit human UI action, not as
@@ -627,6 +946,11 @@ Profile `tools` is authoritative for the child tool surface.
   agent subsystem.
 - Taumel should surface a visible startup diagnostic and avoid registering agent
   tools while the subsystem is invalid.
+- `update_goal` is always added to the child tool surface even if the profile
+  tool list does not mention it. `create_goal` is not added to child sessions.
+- The child tool surface is stable for the child session lifetime. Taumel does
+  not attach or detach tools per run, so token caching is not invalidated by
+  switching between spawned objective runs and normal send-message runs.
 
 ## Sandbox And Approval
 
@@ -634,11 +958,12 @@ Sandbox is the execution authority.
 
 - Child sandbox cannot be more powerful than the parent/session sandbox.
 - `no_sandbox` is never allowed for subagents.
-- `sandbox: inherit` means inherit the parent sandbox only if that sandbox is
-  valid for subagents.
-- `danger-full-access` is not valid for subagents. A profile that declares it,
-  or a subagent that would inherit it from a full-access parent/session, is a
-  validation error.
+- `sandbox: inherit` means inherit the parent sandbox, clamped to the strongest
+  sandbox that is valid for subagents.
+- `danger-full-access` is not valid for subagent profile declarations. A profile
+  that declares it is a validation error.
+- If a profile inherits from a `danger-full-access` parent/session, the child
+  sandbox is clamped to `workspace-write`.
 - `workspace-write` stays `workspace-write`.
 - `read-only` stays `read-only`.
 - Child tool execution uses the child session sandbox.
@@ -657,11 +982,32 @@ of inventing a separate queue.
 Completion delivery happens only for terminal runs whose result was not already
 returned to the parent by `agent_wait`.
 
-The delivered message contains:
+Suspended runs do not produce background completion notifications. Suspension is
+non-terminal and has no final child output; the `agent_send` interrupt-only tool
+result is the delivery surface for the pause event.
+
+The delivered message is a `taumel.notification` custom message, not a
+tool-specific `taumel.agent.completion` message. Its model-visible `content` is
+XML-style markup and its structured `details` carry the renderer/diagnostic
+payload.
+
+Example model-visible content:
+
+```xml
+<taumel_notification kind="agent_completion" severity="info">
+  <agent id="smart-ucfq" profile="smart" />
+  <run id="smart-ucfq-run-5" status="completed" elapsed_seconds="3" />
+  <final_output>
+Hi - fifth test.
+  </final_output>
+</taumel_notification>
+```
+
+The notification details contain:
 
 - `agent_id`
 - `run_id`
-- submission ids and short labels for submissions included in the run
+- submission ids and kinds included in the run
 - profile
 - status
 - final output or error
@@ -684,6 +1030,24 @@ child logs through a human UI action.
 
 Run metadata records whether a terminal result was consumed by `agent_wait` or
 delivered through background completion. A run must not notify the parent twice.
+Taumel marks a run as background-notified only after `pi.sendMessage` succeeds.
+If delivery fails, the terminal run remains unnotified so explicit or default
+`agent_wait` can still surface the result.
+
+There is exactly one automatic delivery path for a terminal child result:
+
+- if a pending `agent_wait` returns the terminal result, background notification
+  is suppressed and the run is marked consumed;
+- if no wait captures the terminal result, Taumel sends `taumel.notification`
+  and then marks the run background-notified;
+- default `agent_wait` does not later re-deliver background-notified terminal
+  runs;
+- explicit diagnostic reads such as `agent_wait` with `run_ids` and human
+  `/agent-runs output` may show historical terminal output only when that
+  output is still available through Pi/worker transcript history or current
+  process memory; Taumel does not retrieve it from `taumel.agents`;
+- `agent_list` may show only current status and bounded terminal summaries, not
+  full historical output.
 
 ## Startup Failure Policy
 
@@ -747,6 +1111,51 @@ If any check fails:
   `oracle`, `painter`, and `review`; no `plan` profile exists.
 - Spawning requires an explicit valid profile.
 - Spawn returns `agent_id` and `run_id` without waiting.
+- Spawn accepts only `profile` and `objective`; Taumel generates `agent_id`.
+- Spawn automatically creates a child goal from the objective and the child
+  pursues it with main-agent goal-mode semantics.
+- Spawned child goals use the existing Taumel goal component wrapped around the
+  child session; the agent subsystem does not implement its own continuation
+  loop or continuation prompt.
+- Spawned objective run completion is derived from child turn completion plus
+  child goal component state, not from assistant prose alone.
+- Non-goal message run completion is derived from the child prompt/follow-up
+  turn result, not from goal component state.
+- Spawned objective child goals are created internally before the first child
+  turn, not by a visible child `create_goal` call.
+- Child `update_goal complete` or `blocked` does not interrupt the child turn;
+  Taumel still waits for the final assistant handoff.
+- Subagent sessions always receive `update_goal` and never receive
+  `create_goal`.
+- Subagent `update_goal` behaves like the normal goal tool; when no child goal
+  is active it returns the normal no-active-goal result.
+- A spawned child goal marked `blocked` records the parent-visible run as
+  `failed` with reason `goal_blocked`.
+- Subagent tool and system-prompt surfaces remain stable for the child session
+  lifetime; Taumel does not attach/detach tools per run.
+- `agent_send` accepts `message` as optional only when `interrupt=true`; without
+  a message and without `interrupt=true`, the call is invalid.
+- `agent_send` with a message delivers a normal message to an existing child and
+  does not create a child goal by default.
+- `agent_send` requires `agent_id`; profile names are not accepted as send
+  selectors.
+- `agent_send` to an active run steers into that run; there is no queue-next-run
+  mode.
+- `agent_send interrupt=true` with a message priority-steers the message. It may
+  interrupt the current child SDK turn, but it does not cancel the
+  parent-visible run, create a replacement run, drop/recreate the child session,
+  or leave child goal automation paused/interrupted after the sent message
+  resumes the child.
+- `agent_send interrupt=true` without a message interrupts the current child SDK
+  turn, leaves child goal automation interrupted/paused, marks the run
+  `suspended` with reason `interrupted_by_parent`, and does not create a
+  replacement run or close the agent.
+- A later `agent_send` message to a suspended agent resumes the same run through
+  the existing child session and goal component.
+- `agent_send interrupt=true` without a message and without an active/suspended
+  run returns a normal no-active-run result.
+- `agent_send` to an idle agent starts a normal non-goal prompt run.
+- `agent_close` is the only model-facing permanent close primitive.
 - `/agents` opens a Tau-style profile toggle menu.
 - `/agents enable|disable <profile>` can enable/disable profiles for
   non-interactive use.
@@ -754,6 +1163,9 @@ If any check fails:
   session file.
 - Agent profile toggles and agent/run metadata are persisted under the dedicated
   `taumel.agents` session entry.
+- `taumel.agents` stores metadata only and no raw text: no objective/message
+  payloads, descriptions, final child output, transcripts, tool logs, freeform
+  errors/reasons, summaries, labels, prompts, or system prompts.
 - `/agent-runs` is a separate menu for running/completed agent identities and
   run control.
 - `/resume` restores session profile toggles.
@@ -763,14 +1175,41 @@ If any check fails:
 - `agent_list` returns existing agent identity/run state and does not include
   profile toggle state.
 - `agent_profiles` includes disabled profiles instead of hiding them.
+- Model-facing subagent tool outputs and completion notifications use
+  XML-style prompt markup; raw child output is plain block text inside that
+  markup.
+- Human compact renderers for subagent tools are one-line, minimal summaries;
+  expanded renderers show structured metadata plus final output/error, not raw
+  XML-style markup.
+- Successful spawned objective/goal runs shorter than 200 trimmed characters
+  receive one Kimi-style continuation prompt before Taumel records the run as
+  completed. Normal `agent_send` message runs and non-success terminal runs do
+  not.
+- Background completion uses the generic `taumel.notification` custom message
+  type.
 - Spawning a disabled profile fails with a clear model-visible error.
 - Disabling a profile only blocks future spawns; existing agents using that
   profile remain sendable until stopped or closed.
 - Waiting with no timeout can wait indefinitely.
+- Default `agent_wait` selects active runs plus fresh undelivered terminal runs
+  owned by the parent session.
+- `agent_wait` with exact `run_ids` can reread historical terminal output only
+  when that output is available through Pi/worker transcript history or current
+  process memory; it is not read from `taumel.agents`.
+- `agent_wait` with exact `run_ids` returns a normal `output_available=false`
+  result when terminal output is known to be unavailable.
+- `agent_wait` with `agent_ids` is a delivery selector, not a historical
+  readback selector.
+- `agent_wait` reports suspended runs immediately and does not block on them.
+- `agent_wait` returns normal successful no-active/no-deliverable results when
+  there is nothing to wait for.
+- `agent_wait` redacts not-owned run ids and can partially succeed for mixed
+  `run_ids` selectors.
 - Interrupting a wait does not cancel child work.
 - Resuming a session marks previously active but unattached child runs as
   `lost` and keeps their agent identities resumable.
 - Completed child work automatically notifies the parent session.
+- Suspended runs do not produce background completion notifications.
 - Runs returned through `agent_wait` are marked consumed and do not later produce
   duplicate background completion messages.
 - Background completion delivery uses Pi's existing steering/follow-up message

@@ -43,9 +43,9 @@ function argsFor(name) {
     case "read_thread":
       return { threadID: "thread-1" };
     case "agent_spawn":
-      return { profile: "finder", objective: "inspect renderer coverage", agent_id: "worker-1" };
+      return { profile: "finder", objective: "inspect renderer coverage" };
     case "agent_send":
-      return { agent_id: "worker-1", objective: "continue" };
+      return { agent_id: "worker-1", message: "continue" };
     case "agent_wait":
       return { agent_ids: ["worker-1"], timeout_seconds: 0 };
     case "agent_list":

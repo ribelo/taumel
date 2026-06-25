@@ -97,7 +97,6 @@ type spawn_tool_request = {
   id : string;
   name : string;
   prompt : string;
-  description : string option;
   system_prompt : string;
   model_id : string option;
   thinking_level : string option;
@@ -291,6 +290,7 @@ let plan_child_session_spawn_from_input ~prompt input =
                 ( "thinkingLevel",
                   string_option_json (Some input.profile.thinking_level) );
                 ("activeTools", string_list_option_json input.active_tools);
+                ("initialGoalObjective", Shared.String prompt);
               ];
         }
 
@@ -462,7 +462,7 @@ let apply_request ~parent_profile ~(owner : owner) workers = function
       Ok (plan ~listed_workers:owned workers "tool_result" message)
 
 let request_of_values ~workspace_roots ~default_id ?action ?id ?agent ?prompt
-    ?description ?model_id ?thinking_level ?sandbox_preset ?tools
+    ?model_id ?thinking_level ?sandbox_preset ?tools
     ?(no_sandbox = false) ?(interrupt = false) () =
   let opt_trim = Option.bind in
   match String.trim (Option.value action ~default:"list") with
@@ -499,7 +499,6 @@ let request_of_values ~workspace_roots ~default_id ?action ?id ?agent ?prompt
              id;
              name;
              prompt = Option.value prompt ~default:"";
-             description = opt_trim description Shared.trim_non_empty;
              system_prompt = "";
              model_id = opt_trim model_id Shared.trim_non_empty;
              thinking_level = opt_trim thinking_level Shared.trim_non_empty;
@@ -509,10 +508,18 @@ let request_of_values ~workspace_roots ~default_id ?action ?id ?agent ?prompt
              no_sandbox;
            })
   | "send" -> (
-      match opt_trim id Shared.trim_non_empty with
-      | Some id ->
-          Ok (Send { id; prompt = Option.value prompt ~default:""; interrupt })
-      | None -> Error "agent.id must not be empty")
+      match (opt_trim id Shared.trim_non_empty, opt_trim prompt Shared.trim_non_empty) with
+      | None, _ -> Error "agent_id is required"
+      | Some _, None when not interrupt ->
+          Error "agent_send.message is required unless interrupt is true"
+      | Some id, prompt ->
+          Ok
+            (Send
+               {
+                 id;
+                 prompt = Option.value prompt ~default:"";
+                 interrupt;
+               }))
   | "wait" -> (
       match opt_trim id Shared.trim_non_empty with
       | Some id -> Ok (Wait { id })
@@ -926,7 +933,7 @@ type run_status =
 
 type submission = {
   submission_id : string;
-  submission_objective : string;
+  submission_kind : string;
   submission_created_at : int;
 }
 
@@ -946,12 +953,12 @@ type agent_identity = {
 type agent_run = {
   run_id : string;
   run_agent_id : string;
-  run_objective : string;
-  run_description : string option;
+  run_initial_submission_kind : string;
   run_submissions : submission list;
   run_status : run_status;
   run_reason : string option;
   run_final_output : string option;
+  run_output_available : bool;
   run_consumed : bool;
   run_background_notified : bool;
   run_created_at : int;
@@ -974,7 +981,7 @@ type submission_delivery = {
 }
 
 let dispatch_deliver_as_for_delivery_kind = function
-  | "steered" -> "steer"
+  | "steered" | "interrupted" -> "steer"
   | _ -> "followUp"
 
 type wait_selector =
@@ -988,6 +995,7 @@ type wait_item = {
   wait_status : string;
   wait_final_output : string option;
   wait_error : string option;
+  wait_output_available : bool;
   wait_consumed : bool;
   wait_background_notified : bool;
 }
@@ -1025,6 +1033,12 @@ let run_status_of_string = function
 let active_run_status = function
   | Run_queued | Run_running | Run_suspended -> true
   | Run_completed | Run_failed | Run_cancelled | Run_timed_out | Run_lost -> false
+
+let active_work_run_status = function
+  | Run_queued | Run_running -> true
+  | Run_suspended | Run_completed | Run_failed | Run_cancelled | Run_timed_out
+  | Run_lost ->
+      false
 
 let identity_open identity = identity.identity_closed_at = None
 
@@ -1083,7 +1097,10 @@ let active_run state agent_id =
   runs_for_agent state agent_id
   |> List.find_opt (fun run -> active_run_status run.run_status)
 
-let terminal_run run = not (active_run_status run.run_status)
+let terminal_run run =
+  match run.run_status with
+  | Run_completed | Run_failed | Run_cancelled | Run_timed_out | Run_lost -> true
+  | Run_queued | Run_running | Run_suspended -> false
 
 let next_run_id state agent_id =
   let count = List.length (runs_for_agent state agent_id) + 1 in
@@ -1092,35 +1109,35 @@ let next_run_id state agent_id =
 let submission_id run_id index =
   run_id ^ "-submission-" ^ string_of_int index
 
-let append_submission run now objective =
+let append_submission run now kind =
   let next_index = List.length run.run_submissions + 1 in
   let submission =
     {
       submission_id = submission_id run.run_id next_index;
-      submission_objective = objective;
+      submission_kind = kind;
       submission_created_at = now;
     }
   in
   ({ run with run_submissions = run.run_submissions @ [ submission ] }, submission)
 
-let create_run ~now ~agent_id ?description objective =
+let create_run ~now ~agent_id kind =
   let run_id = agent_id ^ "-run-1" in
   let submission =
     {
       submission_id = submission_id run_id 1;
-      submission_objective = objective;
+      submission_kind = kind;
       submission_created_at = now;
     }
   in
   ( {
       run_id;
       run_agent_id = agent_id;
-      run_objective = objective;
-      run_description = description;
+      run_initial_submission_kind = kind;
       run_submissions = [ submission ];
       run_status = Run_running;
       run_reason = None;
       run_final_output = None;
+      run_output_available = false;
       run_consumed = false;
       run_background_notified = false;
       run_created_at = now;
@@ -1129,24 +1146,24 @@ let create_run ~now ~agent_id ?description objective =
     },
     submission )
 
-let create_next_run state ~now ~agent_id ?description objective =
+let create_next_run state ~now ~agent_id kind =
   let run_id = next_run_id state agent_id in
   let submission =
     {
       submission_id = submission_id run_id 1;
-      submission_objective = objective;
+      submission_kind = kind;
       submission_created_at = now;
     }
   in
   ( {
       run_id;
       run_agent_id = agent_id;
-      run_objective = objective;
-      run_description = description;
+      run_initial_submission_kind = kind;
       run_submissions = [ submission ];
       run_status = Run_running;
       run_reason = None;
       run_final_output = None;
+      run_output_available = false;
       run_consumed = false;
       run_background_notified = false;
       run_created_at = now;
@@ -1156,8 +1173,7 @@ let create_next_run state ~now ~agent_id ?description objective =
     submission )
 
 let record_spawn state ~now ~parent_session_id ~agent_id ~profile_name
-    ?profile_snapshot ?sandbox_snapshot ?(system_prompt = "") ?description
-    objective =
+    ?profile_snapshot ?sandbox_snapshot ?(system_prompt = "") _objective =
   match validate_agent_id agent_id with
   | Error _ as error -> error
   | Ok agent_id ->
@@ -1178,7 +1194,7 @@ let record_spawn state ~now ~parent_session_id ~agent_id ~profile_name
         identity_closed_at = None;
       }
     in
-    let run, submission = create_run ~now ~agent_id ?description objective in
+    let run, submission = create_run ~now ~agent_id "objective" in
     let state =
       {
         state with
@@ -1204,39 +1220,68 @@ let record_active_tools_snapshot state ~agent_id ~active_tools =
       in
       Ok { state with identities = replace_identity updated state.identities }
 
-let record_send ?(interrupt = false) state ~now ~agent_id objective =
+let record_send ?(interrupt = false) state ~now ~agent_id message =
+  let message = String.trim message in
   match find_identity state agent_id with
   | None -> Error ("unknown agent: " ^ agent_id)
   | Some identity when not (identity_open identity) ->
       Error ("cannot send to a closed agent: " ^ agent_id)
   | Some _ -> (
       match active_run state agent_id with
-      | Some run when interrupt ->
+      | Some run when interrupt && message = "" ->
           let previous_status = run.run_status in
-          let cancelled =
+          let suspended =
             {
               run with
-              run_status = Run_cancelled;
+              run_status = Run_suspended;
               run_reason = Some "interrupted_by_parent";
-              run_completed_at = Some now;
+              run_completed_at = None;
             }
           in
-          let state = { state with runs = replace_run cancelled state.runs } in
-          let run, submission =
-            create_next_run state ~now ~agent_id objective
+          Ok
+            {
+              delivery_state =
+                { state with runs = replace_run suspended state.runs };
+              delivery_run_id = suspended.run_id;
+              delivery_submission_id = "";
+              delivery_kind = "suspended";
+              delivery_previous_status = Some previous_status;
+            }
+      | Some run when run.run_status = Run_suspended ->
+          let previous_status = run.run_status in
+          let updated, submission = append_submission run now "message" in
+          let updated =
+            {
+              updated with
+              run_status = Run_running;
+              run_reason = None;
+              run_started_at = Some now;
+            }
           in
-          let state = { state with runs = run :: state.runs } in
+          let state = { state with runs = replace_run updated state.runs } in
           Ok
             {
               delivery_state = state;
-              delivery_run_id = run.run_id;
+              delivery_run_id = updated.run_id;
               delivery_submission_id = submission.submission_id;
-              delivery_kind = "started";
+              delivery_kind = "resumed";
+              delivery_previous_status = Some previous_status;
+            }
+      | Some run when interrupt ->
+          let previous_status = run.run_status in
+          let updated, submission = append_submission run now "message" in
+          let state = { state with runs = replace_run updated state.runs } in
+          Ok
+            {
+              delivery_state = state;
+              delivery_run_id = updated.run_id;
+              delivery_submission_id = submission.submission_id;
+              delivery_kind = "interrupted";
               delivery_previous_status = Some previous_status;
             }
       | Some run ->
           let previous_status = run.run_status in
-          let updated, submission = append_submission run now objective in
+          let updated, submission = append_submission run now "message" in
           let state = { state with runs = replace_run updated state.runs } in
           Ok
             {
@@ -1248,7 +1293,7 @@ let record_send ?(interrupt = false) state ~now ~agent_id objective =
             }
       | None ->
           let run, submission =
-            create_next_run state ~now ~agent_id objective
+            create_next_run state ~now ~agent_id "message"
           in
           let state = { state with runs = run :: state.runs } in
           Ok
@@ -1426,6 +1471,7 @@ let record_run_completion state ~now ~run_id ~status ?reason ?final_output () =
             run_status = status;
             run_reason = reason;
             run_final_output = final_output;
+            run_output_available = true;
             run_background_notified = false;
             run_completed_at = Some now;
           }
@@ -1498,6 +1544,8 @@ let wait_item_of_run run =
     wait_status = run_status_to_string run.run_status;
     wait_final_output = run.run_final_output;
     wait_error = run.run_reason;
+    wait_output_available =
+      ((not (terminal_run run)) || run.run_output_available);
     wait_consumed = run.run_consumed || terminal_run run;
     wait_background_notified = run.run_background_notified;
   }
@@ -1509,9 +1557,13 @@ let no_active_wait_item agent_id =
     wait_status = "no_active_run";
     wait_final_output = None;
     wait_error = None;
+    wait_output_available = false;
     wait_consumed = false;
     wait_background_notified = false;
   }
+
+let no_deliverable_wait_item agent_id =
+  { (no_active_wait_item agent_id) with wait_status = "no_deliverable_run" }
 
 let unknown_run_wait_item run_id =
   {
@@ -1520,17 +1572,19 @@ let unknown_run_wait_item run_id =
     wait_status = "unknown_run";
     wait_final_output = None;
     wait_error = Some ("unknown run: " ^ run_id);
+    wait_output_available = false;
     wait_consumed = false;
     wait_background_notified = false;
   }
 
-let not_owned_run_wait_item run =
+let not_owned_run_wait_item run_id =
   {
-    wait_agent_id = run.run_agent_id;
-    wait_run_id = Some run.run_id;
+    wait_agent_id = "";
+    wait_run_id = Some run_id;
     wait_status = "not_owned";
     wait_final_output = None;
-    wait_error = Some ("run is not owned by this session: " ^ run.run_id);
+    wait_error = None;
+    wait_output_available = false;
     wait_consumed = false;
     wait_background_notified = false;
   }
@@ -1560,7 +1614,7 @@ let active_wait_run_ids items =
     | item :: rest -> (
         match (item.wait_run_id, run_status_of_string item.wait_status) with
         | Some run_id, Ok status
-          when active_run_status status && not (List.mem run_id seen) ->
+          when active_work_run_status status && not (List.mem run_id seen) ->
             loop (run_id :: seen) (run_id :: acc) rest
         | _ -> loop seen acc rest)
   in
@@ -1575,31 +1629,67 @@ let wait_result state items =
   }
 
 let wait_for_selector state ~parent_session_id selector =
-  let select_all_active () =
+  let owned_open_run run =
+    match find_identity state run.run_agent_id with
+    | Some identity ->
+        identity.identity_parent_session_id = parent_session_id
+        && identity_open identity
+    | None -> false
+  in
+  let select_default_wait_runs () =
     state.runs
-    |> List.filter (fun run ->
-           active_run_status run.run_status
-           &&
-           match find_identity state run.run_agent_id with
-           | Some identity ->
-               identity.identity_parent_session_id = parent_session_id
-               && identity_open identity
-           | None -> false)
+     |> List.filter (fun run ->
+            owned_open_run run
+            && (active_work_run_status run.run_status
+               || ((not run.run_consumed)
+                  && (not run.run_background_notified)
+                  && terminal_run run)))
   in
   match selector with
   | Wait_all_active ->
-      let items = List.map wait_item_of_run (select_all_active ()) in
-      wait_result state items
+      let state_ref = ref state in
+      let items =
+        List.map
+          (fun run ->
+            let consumed = consume_run_if_terminal run in
+            if consumed != run then
+              state_ref :=
+                {
+                  !state_ref with
+                  runs = replace_run consumed (!state_ref).runs;
+                };
+            wait_item_of_run consumed)
+          (select_default_wait_runs ())
+      in
+      wait_result !state_ref items
   | Wait_agent_ids agent_ids ->
+      let state_ref = ref state in
       let items =
         List.map
           (fun agent_id ->
-            match find_identity state agent_id with
+            match find_identity !state_ref agent_id with
             | Some identity
               when identity.identity_parent_session_id = parent_session_id -> (
-                match active_run state agent_id with
+                match active_run !state_ref agent_id with
                 | Some run -> wait_item_of_run run
-                | None -> no_active_wait_item agent_id)
+                | None -> (
+                    match
+                      runs_for_agent !state_ref agent_id
+                      |> List.find_opt (fun run ->
+                             terminal_run run
+                             && (not run.run_consumed)
+                             && not run.run_background_notified)
+                    with
+                    | None -> no_deliverable_wait_item agent_id
+                    | Some run ->
+                        let consumed = consume_run_if_terminal run in
+                        if consumed != run then
+                          state_ref :=
+                            {
+                              !state_ref with
+                              runs = replace_run consumed (!state_ref).runs;
+                            };
+                        wait_item_of_run consumed))
             | Some _ ->
                 {
                   (no_active_wait_item agent_id) with
@@ -1614,7 +1704,7 @@ let wait_for_selector state ~parent_session_id selector =
                 })
           agent_ids
       in
-      wait_result state items
+      wait_result !state_ref items
   | Wait_run_ids run_ids ->
       let state_ref = ref state in
       let items =
@@ -1634,7 +1724,7 @@ let wait_for_selector state ~parent_session_id selector =
                           runs = replace_run consumed (!state_ref).runs;
                         };
                     wait_item_of_run consumed
-                | Some _ | None -> not_owned_run_wait_item run))
+                | Some _ | None -> not_owned_run_wait_item run_id))
           run_ids
       in
       wait_result !state_ref items
@@ -1793,7 +1883,7 @@ let submission_to_json submission =
   Shared.Object
     [
       ("submission_id", Shared.String submission.submission_id);
-      ("objective", Shared.String submission.submission_objective);
+      ("kind", Shared.String submission.submission_kind);
       ("created_at", int_json submission.submission_created_at);
     ]
 
@@ -1801,9 +1891,11 @@ let submission_of_json path json =
   let ( let* ) = Result.bind in
   let* fields = Shared.json_object_fields path json in
   let* submission_id = Shared.json_required_string path fields "submission_id" in
-  let* objective = Shared.json_required_string path fields "objective" in
+  let* submission_kind =
+    Shared.json_string_default path fields "kind" "message"
+  in
   let* created_at = Shared.json_required_int path fields "created_at" in
-  Ok { submission_id; submission_objective = objective; submission_created_at = created_at }
+  Ok { submission_id; submission_kind; submission_created_at = created_at }
 
 let identity_to_json identity =
   Shared.Object
@@ -1820,7 +1912,6 @@ let identity_to_json identity =
         match identity.identity_sandbox_snapshot with
         | None -> Shared.Null
         | Some sandbox -> sandbox_config_to_json sandbox );
-      ("system_prompt", Shared.String identity.identity_system_prompt);
       ("active_tools", string_list_option_json identity.identity_active_tools);
       ("created_at", int_json identity.identity_created_at);
       ("closed_at", int_option_json identity.identity_closed_at);
@@ -1839,9 +1930,7 @@ let identity_of_json path json =
   in
   let* identity_profile_snapshot = optional_profile_snapshot path fields in
   let* identity_sandbox_snapshot = optional_sandbox_snapshot path fields in
-  let* identity_system_prompt =
-    Shared.json_string_default path fields "system_prompt" ""
-  in
+  let identity_system_prompt = "" in
   let* identity_active_tools =
     optional_string_list_snapshot path fields "active_tools"
   in
@@ -1869,13 +1958,20 @@ let run_to_json run =
     [
       ("run_id", Shared.String run.run_id);
       ("agent_id", Shared.String run.run_agent_id);
-      ("objective", Shared.String run.run_objective);
-      ("description", string_option_json run.run_description);
+      ("initial_submission_kind", Shared.String run.run_initial_submission_kind);
       ( "submissions",
         Shared.Array (List.map submission_to_json run.run_submissions) );
       ("status", Shared.String (run_status_to_string run.run_status));
-      ("reason", string_option_json run.run_reason);
-      ("final_output", string_option_json run.run_final_output);
+      ( "reason",
+        string_option_json
+          (match run.run_reason with
+          | Some
+              ( "interrupted_by_parent" | "closed_by_parent"
+              | "stopped_by_parent" | "goal_blocked"
+              | "process_resumed_without_live_worker" | "timed_out" ) as reason
+            ->
+              reason
+          | _ -> None) );
       ("consumed", Shared.Bool run.run_consumed);
       ("background_notified", Shared.Bool run.run_background_notified);
       ("created_at", int_json run.run_created_at);
@@ -1888,8 +1984,9 @@ let run_of_json path json =
   let* fields = Shared.json_object_fields path json in
   let* run_id = Shared.json_required_string path fields "run_id" in
   let* run_agent_id = Shared.json_required_string path fields "agent_id" in
-  let* run_objective = Shared.json_required_string path fields "objective" in
-  let* run_description = Shared.json_optional_string path fields "description" in
+  let* run_initial_submission_kind =
+    Shared.json_string_default path fields "initial_submission_kind" "objective"
+  in
   let* submission_values =
     match Shared.json_optional_field fields "submissions" with
     | Error _ as error -> error
@@ -1911,7 +2008,6 @@ let run_of_json path json =
   let* status = Shared.json_required_string path fields "status" in
   let* run_status = run_status_of_string status in
   let* run_reason = Shared.json_optional_string path fields "reason" in
-  let* run_final_output = Shared.json_optional_string path fields "final_output" in
   let* run_consumed = Shared.json_bool_default path fields "consumed" false in
   let* run_background_notified =
     Shared.json_bool_default path fields "background_notified" false
@@ -1929,12 +2025,12 @@ let run_of_json path json =
     {
       run_id;
       run_agent_id;
-      run_objective;
-      run_description;
+      run_initial_submission_kind;
       run_submissions;
       run_status;
       run_reason;
-      run_final_output;
+      run_final_output = None;
+      run_output_available = false;
       run_consumed;
       run_background_notified;
       run_created_at;

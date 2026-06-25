@@ -78,19 +78,22 @@ let test_agent_child_metadata_uses_core_catalog_rules () =
     && List.mem "agent_profiles" root_sync.tools);
   let active_tools =
     Tool_catalog.plan_agent_child_active_tools
-      ~worker_tools:(Some [ "bash"; "apply_patch"; "usage"; "agent_spawn" ])
+      ~worker_tools:
+        (Some
+           [ "bash"; "apply_patch"; "usage"; "agent_spawn"; "create_goal" ])
       ~current_active_tools_available:true
       ~current_active_tools:[ "read_thread" ]
   in
   assert_bool "explicit worker tools win"
-    (active_tools = Some [ "bash"; "apply_patch"; "usage" ]);
+    (active_tools = Some [ "bash"; "apply_patch"; "usage"; "update_goal" ]);
   let inherited =
     Tool_catalog.plan_agent_child_active_tools ~worker_tools:None
       ~current_active_tools_available:true
-      ~current_active_tools:[ "bash"; "usage"; "ralph_continue"; "agent_list" ]
+      ~current_active_tools:
+        [ "bash"; "usage"; "ralph_continue"; "agent_list"; "create_goal" ]
   in
   assert_bool "inherited tools are rewritten"
-    (inherited = Some [ "exec_command"; "write_stdin" ]);
+    (inherited = Some [ "exec_command"; "write_stdin"; "update_goal" ]);
   let child =
     expect_ok "child session metadata"
       (Subagents.plan_child_session_spawn ~prompt:"inspect repo" worker
@@ -112,9 +115,12 @@ let test_agent_child_metadata_uses_core_catalog_rules () =
   assert_bool "metadata agent prompt"
     (object_field "agentSystemPrompt" child.metadata
     = Some (Shared.String "Use the worker profile prompt."));
+  assert_bool "metadata child goal objective"
+    (object_field "initialGoalObjective" child.metadata
+    = Some (Shared.String "inspect repo"));
   assert_bool "metadata active tools"
     (string_array (object_field "activeTools" child.metadata)
-    = [ "exec_command"; "write_stdin" ])
+    = [ "exec_command"; "write_stdin"; "update_goal" ])
 
 let ready_bridge =
   {
@@ -209,7 +215,6 @@ let test_agent_profile_catalog () =
       Subagents.id = "finder-a1";
       name = "finder";
       prompt = "inspect";
-      description = None;
       system_prompt = "";
       model_id = Some "bad/model";
       thinking_level = Some "bad";
@@ -435,32 +440,61 @@ let test_agent_run_metadata_state () =
   let same_second_interrupted =
     expect_ok "record same-second interrupted send"
       (Subagents.record_send state ~now:10 ~agent_id:"finder-a1"
-         ~interrupt:true "replace in same second")
+         ~interrupt:true "priority in same second")
   in
   (match Subagents.latest_run same_second_interrupted.delivery_state "finder-a1" with
   | Some run ->
-      assert_equal "same-second latest run prefers newest" "finder-a1-run-2"
+      assert_equal "priority interrupt keeps same run" "finder-a1-run-1"
         run.run_id
   | None -> fail "same-second latest run" "expected run");
   let interrupted =
     expect_ok "record interrupted send"
       (Subagents.record_send state ~now:12 ~agent_id:"finder-a1"
-         ~interrupt:true "replace")
+         ~interrupt:true "priority")
   in
-  assert_equal "interrupted send starts next run" "finder-a1-run-2"
+  assert_equal "interrupted send keeps run" "finder-a1-run-1"
     interrupted.delivery_run_id;
-  assert_equal "interrupted send delivery" "started" interrupted.delivery_kind;
-  assert_equal "started delivery mode" "followUp"
+  assert_equal "interrupted send delivery" "interrupted" interrupted.delivery_kind;
+  assert_equal "interrupted delivery mode" "steer"
     (Subagents.dispatch_deliver_as_for_delivery_kind interrupted.delivery_kind);
   assert_bool "interrupted send reports previous status"
     (interrupted.delivery_previous_status = Some Subagents.Run_running);
   (match Subagents.find_run interrupted.delivery_state "finder-a1-run-1" with
   | Some run ->
-      assert_bool "interrupted send cancels old run"
-        (run.run_status = Subagents.Run_cancelled);
-      assert_bool "interrupted send reason"
+      assert_bool "interrupted send keeps running"
+        (run.run_status = Subagents.Run_running);
+      assert_bool "interrupted send appends submission"
+        (List.length run.run_submissions = 2)
+  | None -> fail "interrupted run" "expected run");
+  let suspended =
+    expect_ok "record interrupt-only send"
+      (Subagents.record_send state ~now:12 ~agent_id:"finder-a1"
+         ~interrupt:true "")
+  in
+  assert_equal "interrupt-only keeps run" "finder-a1-run-1"
+    suspended.delivery_run_id;
+  assert_equal "interrupt-only delivery" "suspended" suspended.delivery_kind;
+  (match Subagents.find_run suspended.delivery_state "finder-a1-run-1" with
+  | Some run ->
+      assert_bool "interrupt-only suspends run"
+        (run.run_status = Subagents.Run_suspended);
+      assert_bool "interrupt-only reason"
         (run.run_reason = Some "interrupted_by_parent")
-  | None -> fail "interrupted old run" "expected run");
+  | None -> fail "suspended run" "expected run");
+  let resumed =
+    expect_ok "record suspended resume"
+      (Subagents.record_send suspended.delivery_state ~now:13
+         ~agent_id:"finder-a1" "resume")
+  in
+  assert_equal "resume keeps run" "finder-a1-run-1" resumed.delivery_run_id;
+  assert_equal "resume delivery" "resumed" resumed.delivery_kind;
+  (match Subagents.find_run resumed.delivery_state "finder-a1-run-1" with
+  | Some run ->
+      assert_bool "resume marks running"
+        (run.run_status = Subagents.Run_running);
+      assert_bool "resume appends submission"
+        (List.length run.run_submissions = 2)
+  | None -> fail "resumed run" "expected run");
   let closed =
     expect_ok "record close"
       (Subagents.record_close sent.delivery_state ~now:13 ~agent_id:"finder-a1")
@@ -504,6 +538,11 @@ let test_agent_identity_snapshot_state () =
       (Subagents.record_child_session_start snapshotted
          ~agent_id:"snapshot-a1" ~child_session_id:"child-1" ())
   in
+  (match Subagents.find_identity started "snapshot-a1" with
+  | Some identity ->
+      assert_bool "live snapshot prompt retained"
+        (identity.identity_system_prompt = "Snapshot prompt")
+  | None -> fail "live snapshot identity" "expected identity");
   let decoded =
     expect_ok "snapshot codec"
       (Subagents.session_state_codec.decode
@@ -516,8 +555,8 @@ let test_agent_identity_snapshot_state () =
   in
   assert_bool "snapshot child id persisted"
     (identity.identity_child_session_id = Some "child-1");
-  assert_bool "snapshot prompt persisted"
-    (identity.identity_system_prompt = "Snapshot prompt");
+  assert_bool "snapshot prompt is not persisted"
+    (identity.identity_system_prompt = "");
   assert_bool "snapshot active tools persisted"
     (identity.identity_active_tools = Some [ "exec_command"; "write_stdin" ]);
   let live = Subagents.mark_active_runs_lost ~live_agent_ids:[ "snapshot-a1" ] decoded in
@@ -539,8 +578,8 @@ let test_agent_identity_snapshot_state () =
   assert_equal "snapshot worker model" profile.model_id worker.profile.model_id;
   assert_bool "snapshot worker active tools"
     (worker.active_tools_snapshot = Some [ "exec_command"; "write_stdin" ]);
-  assert_bool "snapshot worker prompt"
-    (worker.system_prompt = "Snapshot prompt");
+  assert_bool "decoded snapshot worker prompt is empty"
+    (worker.system_prompt = "");
   let lost = Subagents.mark_active_runs_lost decoded in
   match Subagents.find_identity lost "snapshot-a1" with
   | Some identity ->
@@ -574,6 +613,23 @@ let test_agent_wait_state () =
       assert_bool "completion starts unnotified"
         (not run.run_background_notified)
   | None -> fail "completion run" "expected run");
+  let default_waited =
+    Subagents.wait_for_selector completed ~parent_session_id:"parent"
+      Subagents.Wait_all_active
+  in
+  (match default_waited.wait_items with
+  | [ item ] ->
+      assert_equal "default wait terminal status" "completed" item.wait_status;
+      assert_bool "default wait terminal consumed" item.wait_consumed
+  | _ -> fail "default wait terminal item" "expected one item");
+  assert_equal "default wait terminal message includes output"
+    "finder-a1 finder-a1-run-1 [completed]\n\ndone" default_waited.wait_message;
+  (match Subagents.find_run default_waited.wait_state "finder-a1-run-1" with
+  | Some run ->
+      assert_bool "default wait marks run consumed" run.run_consumed;
+      assert_bool "default wait does not mark background notification"
+        (not run.run_background_notified)
+  | None -> fail "default wait consumed run" "expected run");
   let notified =
     expect_ok "record background notification"
       (Subagents.record_background_notification completed
@@ -589,6 +645,12 @@ let test_agent_wait_state () =
       assert_bool "codec preserves background notification"
         run.run_background_notified
   | None -> fail "notified run" "expected run");
+  let default_after_notification =
+    Subagents.wait_for_selector notified ~parent_session_id:"parent"
+      Subagents.Wait_all_active
+  in
+  assert_equal "default wait ignores background-notified terminal runs"
+    "No active runs." default_after_notification.wait_message;
   let waited =
     Subagents.wait_for_selector completed ~parent_session_id:"parent"
       (Subagents.Wait_run_ids [ "finder-a1-run-1" ])
@@ -629,13 +691,15 @@ let test_agent_wait_state () =
       assert_bool "not-owned wait hides output" (item.wait_final_output = None)
   | _ -> fail "not-owned wait item" "expected one item");
   assert_equal "not-owned wait message hides output"
-    "finder-b1 finder-b1-run-1 [not_owned]" other_waited.wait_message;
+    "finder-b1-run-1 [not_owned]" other_waited.wait_message;
   let no_active =
     Subagents.wait_for_selector waited.wait_state ~parent_session_id:"parent"
       (Subagents.Wait_agent_ids [ "finder-a1" ])
   in
   (match no_active.wait_items with
-  | [ item ] -> assert_equal "no active status" "no_active_run" item.wait_status
+  | [ item ] ->
+      assert_equal "no deliverable status" "no_deliverable_run"
+        item.wait_status
   | _ -> fail "no active item" "expected one item")
 
 let test_agent_stop_and_output_state () =
