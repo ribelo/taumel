@@ -857,6 +857,12 @@ async function prepareAgentCompletionForRecording(
 
 type NotificationDeliveryMode = "steer" | "trigger";
 
+// Deliver one queued completion as a taumel.notification custom message.
+// 'trigger' wakes a fresh turn (parent idle); 'steer' injects at the start of
+// the next turn (parent mid-turn / turn_end). A notification is inherently a
+// custom message (it carries customType/display/details for the renderer), so
+// we require pi.sendMessage; if it is unavailable we report not-sent and leave
+// the run pending for a later flush rather than delivering a render-less blob.
 async function deliverNotificationMessage(
   pi: PiLike,
   content: string,
@@ -864,18 +870,12 @@ async function deliverNotificationMessage(
   display: boolean,
   mode: NotificationDeliveryMode,
 ): Promise<boolean> {
-  if (typeof pi.sendMessage === "function") {
-    await pi.sendMessage(
-      { customType, content, display },
-      mode === "trigger" ? { triggerTurn: true } : { deliverAs: "steer" },
-    );
-    return true;
-  }
-  if (typeof pi.sendUserMessage === "function") {
-    await pi.sendUserMessage(content, mode === "trigger" ? {} : { deliverAs: "steer" });
-    return true;
-  }
-  return false;
+  if (typeof pi.sendMessage !== "function") return false;
+  await pi.sendMessage(
+    { customType, content, display },
+    mode === "trigger" ? { triggerTurn: true } : { deliverAs: "steer" },
+  );
+  return true;
 }
 
 function recordAgentBackgroundNotification(
@@ -1699,9 +1699,15 @@ export function registerGatewayTools(
   const registered = new Set<string>();
   const pendingAgentWaits: PendingAgentWaits = new Map();
   // turn_end: flush pending child completions via steering, injected at the start
-  // of the next parent turn (before the assistant response). agent_end: the loop
-  // is ending, so flush any still-pending completion by waking a turn; deferred so
-  // the parent is no longer streaming when we trigger.
+  // of the next parent turn (before the assistant response).
+  //
+  // agent_end: the loop is ending. We must NOT trigger synchronously here: Pi
+  // keeps isStreaming === true throughout the agent_end emit and only clears it
+  // in finishRun() after listeners settle, so a synchronous triggerTurn would be
+  // routed to steer() on a loop that's already terminating and never drained.
+  // Deferring to a macrotask runs after finishRun(), when the parent is idle and
+  // triggerTurn starts a fresh turn. (queueMicrotask runs too early; nextTurn
+  // could defer indefinitely.)
   pi.on("turn_end", async (_event, ctx) => {
     try {
       await flushPendingAgentNotifications(pi, core, ctx, "steer", pendingAgentWaits);
