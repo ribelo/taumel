@@ -891,6 +891,7 @@ let test_subagent_tool_planning () =
         id = "w1";
         name = "worker";
         prompt = "do work";
+        create_goal = false;
         system_prompt = "";
         model_id = None;
         thinking_level = None;

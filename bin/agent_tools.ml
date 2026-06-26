@@ -266,8 +266,8 @@ let plan_spawn facts =
   | Error message -> error_obj message
   | Ok input -> (
       let initial_goal_objective =
-        if get_string prepared "action" = "agent_spawn" then
-          Taumel.Shared.trim_non_empty (get_string prepared "prompt")
+        if optional_string_field details "runInitialSubmissionKind" = Some "objective"
+        then Taumel.Shared.trim_non_empty (get_string prepared "prompt")
         else None
       in
       match
@@ -525,6 +525,14 @@ let record_background_notification params ctx =
           Session_sync.save_agent_state ctx;
           ok_obj [ ("ok", js_bool true) ])
 
+let notifiable_terminal_run (run : Taumel.Subagents.agent_run) =
+  (match run.run_status with
+   | Taumel.Subagents.Run_completed | Taumel.Subagents.Run_failed
+   | Taumel.Subagents.Run_timed_out -> true
+   | _ -> false)
+  && (not run.run_consumed)
+  && not run.run_background_notified
+
 let record_child_session_start params ctx =
   let prepared = Unsafe.get params "prepared" in
   let bridge = Unsafe.get params "bridge" in
@@ -633,6 +641,32 @@ let current_owner ctx =
         { id = worker_id; is_subagent = true; depth }
   | _ -> root_owner ()
 
+let pending_agent_notifications ctx =
+  Session_sync.sync_persisted_session ctx;
+  let owner = current_owner ctx in
+  let pending =
+    List.filter
+      (fun (run : Taumel.Subagents.agent_run) ->
+        notifiable_terminal_run run
+        && Taumel.Subagents.run_owned_by_parent !agent_state
+             ~parent_session_id:owner.id run)
+      !agent_state.runs
+  in
+  let notification (run : Taumel.Subagents.agent_run) =
+    let content =
+      agent_completion_message run run.run_status ?reason:run.run_reason
+        ?final_output:run.run_final_output ()
+    in
+    Unsafe.obj
+      [|
+        ("run_id", js_string run.run_id);
+        ("customType", js_string "taumel.notification");
+        ("content", js_string content);
+        ("display", js_bool true);
+      |]
+  in
+  ok_obj [ ("notifications", js_array (List.map notification pending)) ]
+
 let request_from_params (owner : Taumel.Subagents.owner) name params =
   let workspace_roots = if state.cwd = "" then [] else [ state.cwd ] in
   let non_empty value = Option.bind value Taumel.Shared.trim_non_empty in
@@ -651,7 +685,8 @@ let request_from_params (owner : Taumel.Subagents.owner) name params =
       Taumel.Subagents.request_of_values ~workspace_roots ~default_id
         ~action:"spawn"
         ?agent:requested_profile
-        ?prompt:(non_empty (optional_string_field params "objective"))
+        ?prompt:(non_empty (optional_string_field params "message"))
+        ~create_goal:(get_bool params "create_goal")
         ()
   | "agent_send" ->
       let default_id = Taumel.Subagents.default_worker_id !workers in
@@ -1282,7 +1317,8 @@ let prepare name params ctx =
                     (Taumel.Subagents.record_spawn !agent_state ~now
                        ~parent_session_id:owner.id ~agent_id:spawn.id
                        ~profile_name:spawn.name ?profile_snapshot
-                       ?sandbox_snapshot ~system_prompt spawn.prompt)
+                       ?sandbox_snapshot ~system_prompt
+                       ~create_goal:spawn.create_goal spawn.prompt)
               | Taumel.Subagents.Send send ->
                   Result.map
                     (fun (delivery : Taumel.Subagents.submission_delivery) ->

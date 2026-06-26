@@ -50,6 +50,8 @@ let core_call name_js args_js =
       Command_bridge.plan_execution (string_arg args 0) (string_arg args 1) (arg 2)
   | "planGoalContinuation" ->
       Goal_tools.plan_continuation (bool_arg args 0) (arg 1) (arg 2) (arg 3)
+  | "planChildGoalContinuation" ->
+      Goal_tools.plan_child_goal_continuation (arg 0)
   | "startGoalTurn" ->
       Session_sync.start_goal_turn ();
       ok_obj []
@@ -74,6 +76,8 @@ let core_call name_js args_js =
       Agent_tools.record_dispatch_completion (arg 0) (arg 1)
   | "recordAgentBackgroundNotification" ->
       Agent_tools.record_background_notification (arg 0) (arg 1)
+  | "pendingAgentNotifications" ->
+      Agent_tools.pending_agent_notifications (arg 0)
   | "recordAgentChildSessionStart" ->
       Agent_tools.record_child_session_start (arg 0) (arg 1)
   | "recordAgentActiveToolsSnapshot" ->

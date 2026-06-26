@@ -97,6 +97,7 @@ type spawn_tool_request = {
   id : string;
   name : string;
   prompt : string;
+  create_goal : bool;
   system_prompt : string;
   model_id : string option;
   thinking_level : string option;
@@ -469,7 +470,7 @@ let apply_request ~parent_profile ~(owner : owner) workers = function
 
 let request_of_values ~workspace_roots ~default_id ?action ?id ?agent ?prompt
     ?model_id ?thinking_level ?sandbox_preset ?tools
-    ?(no_sandbox = false) ?(interrupt = false) () =
+    ?(no_sandbox = false) ?(interrupt = false) ?(create_goal = false) () =
   let opt_trim = Option.bind in
   match String.trim (Option.value action ~default:"list") with
   | "" | "list" -> Ok List
@@ -505,6 +506,7 @@ let request_of_values ~workspace_roots ~default_id ?action ?id ?agent ?prompt
              id;
              name;
              prompt = Option.value prompt ~default:"";
+             create_goal;
              system_prompt = "";
              model_id = opt_trim model_id Shared.trim_non_empty;
              thinking_level = opt_trim thinking_level Shared.trim_non_empty;
@@ -1179,7 +1181,8 @@ let create_next_run state ~now ~agent_id kind =
     submission )
 
 let record_spawn state ~now ~parent_session_id ~agent_id ~profile_name
-    ?profile_snapshot ?sandbox_snapshot ?(system_prompt = "") _objective =
+    ?profile_snapshot ?sandbox_snapshot ?(system_prompt = "")
+    ?(create_goal = false) _objective =
   match validate_agent_id agent_id with
   | Error _ as error -> error
   | Ok agent_id ->
@@ -1200,7 +1203,9 @@ let record_spawn state ~now ~parent_session_id ~agent_id ~profile_name
         identity_closed_at = None;
       }
     in
-    let run, submission = create_run ~now ~agent_id "objective" in
+    let run, submission =
+      create_run ~now ~agent_id (if create_goal then "objective" else "message")
+    in
     let state =
       {
         state with

@@ -166,7 +166,8 @@ const ReadThreadParamsSchema = Type.Object(
 const AgentSpawnParamsSchema = Type.Object(
   {
     profile: Type.String({ minLength: 1 }),
-    objective: Type.String({ minLength: 1 }),
+    message: Type.String({ minLength: 1 }),
+    create_goal: Type.Optional(Type.Boolean()),
   },
   { $id: "AgentSpawnParams", additionalProperties: false },
 );

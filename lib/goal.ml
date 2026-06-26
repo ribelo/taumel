@@ -656,6 +656,69 @@ let plan_continuation ~initial (facts : continuation_facts) =
       Send_continuation (continuation_for_goal ~initial goal)
   | _ -> No_continuation
 
+type child_finalize = { child_status : string; child_reason : string option }
+
+type child_continuation_plan =
+  | Child_continue of continuation
+  | Child_finalize of child_finalize
+
+(* Default cap on automatic goal continuations for a spawned goal-mode child.
+   The loop is also bounded by the child marking the goal complete/blocked; the
+   cap only guarantees termination when the child never resolves the goal. *)
+let child_continuation_default_max = 25
+
+(* Per-step decision for the spawned goal-mode continuation loop. The loop runs
+   sequentially in the TS host between awaited child turns, with host_idle and
+   no pending parent messages by construction, so the only continue gate is the
+   child goal state plus automation. Reuses should_continue and the shared
+   continuation prompt so goal semantics stay identical to the main agent. *)
+let plan_child_continuation ~goal ~automation ~iterations ~max_iterations
+    ~latest_assistant_stop_reason =
+  let facts =
+    {
+      goal;
+      automation;
+      host_idle = true;
+      has_pending_messages = false;
+      retrying = false;
+      compacting = false;
+      latest_assistant_stop_reason;
+    }
+  in
+  match goal with
+  | None -> Child_finalize { child_status = "completed"; child_reason = None }
+  | Some g -> (
+      match g.status with
+      | Complete ->
+          Child_finalize { child_status = "completed"; child_reason = None }
+      | Blocked ->
+          Child_finalize
+            { child_status = "failed"; child_reason = Some "goal_blocked" }
+      | _ ->
+          if iterations >= max_iterations then
+            Child_finalize
+              {
+                child_status = "failed";
+                child_reason = Some "goal_continuation_limit";
+              }
+          else
+            match latest_assistant_stop_reason with
+            | Some "aborted" ->
+                Child_finalize
+                  { child_status = "cancelled"; child_reason = Some "aborted" }
+            | Some "error" ->
+                Child_finalize
+                  { child_status = "failed"; child_reason = Some "error" }
+            | _ ->
+                if should_continue facts then
+                  Child_continue (continuation_for_goal ~initial:false g)
+                else
+                  Child_finalize
+                    {
+                      child_status = "suspended";
+                      child_reason = Some "goal_paused";
+                    })
+
 let escape_xml_text input =
   input |> String.split_on_char '&' |> String.concat "&amp;"
   |> String.split_on_char '<' |> String.concat "&lt;"

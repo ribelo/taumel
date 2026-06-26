@@ -100,6 +100,57 @@ let plan_continuation initial facts event ctx =
         ]
   | Taumel.Goal.No_continuation -> ok_obj [ ("action", js_string "none") ]
 
+let goal_store_of_js value =
+  match json_from_js value with
+  | Ok json -> ( match Taumel.Goal.codec.decode json with Ok store -> store | Error _ -> None)
+  | Error _ -> None
+
+let automation_of_js value =
+  match json_from_js value with
+  | Ok json -> (
+      match Taumel.Goal.automation_codec.decode json with
+      | Ok automation -> automation
+      | Error _ -> Taumel.Goal.Automation_enabled)
+  | Error _ -> Taumel.Goal.Automation_enabled
+
+let plan_child_goal_continuation facts =
+  let goal = goal_store_of_js (Unsafe.get facts "goal") in
+  let automation = automation_of_js (Unsafe.get facts "automation") in
+  let iterations = int_field_default facts "iterations" 0 in
+  let max_iterations =
+    match int_field facts "maxIterations" with
+    | Some value when value > 0 -> value
+    | _ -> Taumel.Goal.child_continuation_default_max
+  in
+  let latest_assistant_stop_reason =
+    Option.bind (optional_string_field facts "latestAssistantStopReason")
+      Taumel.Shared.trim_non_empty
+  in
+  match
+    Taumel.Goal.plan_child_continuation ~goal ~automation ~iterations
+      ~max_iterations ~latest_assistant_stop_reason
+  with
+  | Taumel.Goal.Child_continue plan ->
+      ok_obj
+        [
+          ("action", js_string "send_goal_continuation");
+          ("customType", js_string plan.custom_type);
+          ("content", js_string plan.content);
+          ("display", js_bool plan.display);
+          ("triggerTurn", js_bool plan.trigger_turn);
+          ("deliverAs", js_string plan.deliver_as);
+        ]
+  | Taumel.Goal.Child_finalize { child_status; child_reason } ->
+      ok_obj
+        ([
+           ("action", js_string "finalize");
+           ("status", js_string child_status);
+         ]
+        @
+        match child_reason with
+        | None -> []
+        | Some reason -> [ ("reason", js_string reason) ])
+
 let prepare_get () =
   with_gateway_authorized "get_goal" (fun _ ->
       let text =

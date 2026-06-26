@@ -99,6 +99,7 @@ export type PiLike = {
     options?: Record<string, unknown>,
   ) => Promise<unknown> | unknown;
   readonly modelRegistry?: unknown;
+  readonly isIdle?: () => boolean;
   readonly createAgentSession?: (options?: Record<string, unknown>) => Promise<{ readonly session?: unknown }>;
 };
 

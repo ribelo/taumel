@@ -95,17 +95,32 @@ strong explicit reason and a PRD update.
 ### `agent_spawn`
 
 Creates a durable agent identity and starts one run. It never waits.
-`agent_spawn` is objective-based: the child session receives the objective as an
-automatically created child goal, and the child pursues it with the same goal
-mode mechanics as the main agent.
+`agent_spawn` takes a single `message` payload and a `create_goal` flag that
+selects between a plain message run and a goal-mode run.
 
 Inputs:
 
 - `profile`: required profile name.
-- `objective`: required full task objective.
+- `message`: required full task/message text delivered to the child.
+- `create_goal`: optional boolean, default `false`.
 
 No `provider`, `model`, `thinking`, `tools`, or `sandbox` fields are accepted.
 Those belong to the profile.
+
+Mode selection:
+
+- `create_goal = false` (default): the child receives `message` as a normal
+  prompt and runs a single non-goal turn, exactly like an `agent_send` message
+  to an idle agent. The run has no child goal, no continuation loop, and no
+  too-brief expansion. Its initial submission kind is `message`.
+- `create_goal = true`: the child receives `message` as an automatically created
+  child goal and pursues it with main-agent goal-mode mechanics, including the
+  child goal continuation loop described under "Child Goal Continuation". Its
+  initial submission kind is `objective`.
+
+The default is `false` because most spawns are "do this specific thing and
+report back", which is a one-shot message run. Goal mode is the heavier path
+(child goal + continuation loop) and is opt-in.
 
 Output includes:
 
@@ -555,11 +570,13 @@ profile name, is the unique identity boundary.
 ### Run
 
 One contiguous child execution episode for an agent. A run starts either from an
-`agent_spawn` objective, which becomes a child goal, or from an `agent_send`
-message when the agent is idle. Active runs may receive additional
-`agent_send` messages through steering or priority interruption while they
-remain active. Suspended runs remain non-terminal and can be resumed by a later
-`agent_send` message.
+`agent_spawn` payload or from an `agent_send` message when the agent is idle. An
+`agent_spawn` run is goal-mode when `create_goal = true` (the `message` becomes a
+child goal) and a plain message run when `create_goal = false`. An idle
+`agent_send` always starts a plain message run. Active runs may receive
+additional `agent_send` messages through steering or priority interruption while
+they remain active. Suspended runs remain non-terminal and can be resumed by a
+later `agent_send` message.
 
 Fields:
 
@@ -579,55 +596,112 @@ text lives in Pi-owned transcript/tool-result/session history, not in
 `taumel.agents`.
 
 Each `agent_spawn` and `agent_send` creates a `submission_id`. A submission is a
-payload delivered to an agent. `agent_spawn` submissions are objectives and
-create child goals. `agent_send` submissions are normal messages. If the agent
+payload delivered to an agent. An `agent_spawn` submission with `create_goal =
+true` is an objective and creates a child goal; with `create_goal = false` it is
+a normal message. `agent_send` submissions are normal messages. If the agent
 has an active run, the `agent_send` submission belongs to that active run and is
 delivered by steering. If the agent is idle, the `agent_send` submission starts
 a new non-goal message run. Submissions are trace/UI markers; the terminal
 result belongs to the run.
 
-Child goal mode for spawned objectives must use Taumel's existing goal
-component, the same component used by the main agent. The agent subsystem does
-not reimplement goal continuation, completion auditing, retry behavior,
-time/budget handling, or continuation prompts. The child session is wrapped so
-the existing goal component owns those mechanics. The objective is stored as
-child goal state/prompt data, not echoed back in the parent-facing
-`agent_spawn` tool result. `agent_send` is intentionally not goal-based; it is
-ordinary communication with an existing durable agent.
+Child goal mode for goal-mode spawns (`create_goal = true`) must use Taumel's
+existing goal component, the same component used by the main agent. The agent
+subsystem does not reimplement goal completion auditing, retry behavior, or the
+continuation prompt wording. The child session is wrapped so the existing goal
+component owns the continue/stop decision and the continuation prompt text. The
+objective is stored as child goal state/prompt data, not echoed back in the
+parent-facing `agent_spawn` tool result. `agent_send` is intentionally not
+goal-based; it is ordinary communication with an existing durable agent.
 
-Taumel creates the child goal internally before dispatching the spawned
-objective. It must not rely on the child model calling `create_goal`, and the
-automatic goal setup should not appear as a visible child tool call.
+For goal-mode spawns, Taumel creates the child goal internally before
+dispatching the objective. It must not rely on the child model calling
+`create_goal`, and the automatic goal setup should not appear as a visible child
+tool call.
 
 The child uses `update_goal` to update goal state, not as a host-side
 interruption mechanism. If the child marks the goal `complete` or `blocked`,
 Taumel does not stop the child turn immediately; it waits for the child to
-finish normally and uses the final assistant handoff as run output. The existing
-goal component decides whether another automatic continuation is needed after
-the child turn ends. If the goal remains active, that component continues the
-goal loop. If the goal is `complete`, the spawned run may be recorded as
-`completed` after final-output handling. If the goal is `blocked`, the
-parent-visible run is recorded as `failed` with reason `goal_blocked`;
-`blocked` remains a goal status, not a separate run status.
+finish normally and uses the final assistant handoff as run output.
 
-For spawned objective runs, the goal component state is the source of truth for
+#### Child Goal Continuation
+
+Goal-mode spawn runs are driven by a sequential continuation loop, not a single
+child turn. The loop is orchestrated in the TypeScript host (which already
+awaits each child SDK turn) while OCaml makes the per-step continue/stop
+decision. The loop must not be event-driven off a fire-and-forget turn-end
+callback, because that is the failure mode that left runs stuck `active`.
+
+The loop, running in the background after `agent_spawn` returns:
+
+1. Send the objective as the first child prompt and await the turn.
+2. Read the child session's `taumel.goal` and `taumel.goal_automation` entries.
+3. Ask OCaml `planChildGoalContinuation` (a dedicated entrypoint that decodes
+   the supplied child goal entries and reuses `Goal.plan_continuation` /
+   `should_continue`). It returns either a continuation prompt to send, or a
+   finalize decision with the terminal run status.
+4. On a continuation decision, send the returned continuation prompt into the
+   same child session, await the turn, increment the continuation counter, and
+   go to step 2.
+5. On a finalize decision, record the parent-visible terminal run from the
+   returned status, apply too-brief expansion when applicable, then deliver or
+   notify.
+
+The continue/stop decision and the continuation prompt wording stay in OCaml so
+there is one source of truth shared with the main agent. The TypeScript host
+only reads the two child goal entries, passes them down, and acts on the
+returned plan.
+
+Delivery of each continuation prompt into the child session follows the main
+agent's rule (see goal.md "Continuation Delivery"): it is sent as a **follow-up**
+to the child, advancing the child to its next turn. This is distinct from how
+the parent is told about the child's *final* result: that terminal handoff is
+delivered to the parent as a **steering** notification (see "Completion
+Delivery"). The child-internal continuation (follow-up) and the parent-facing
+completion (steering) are intentionally different mechanisms.
+
+Finalize mapping:
+
+- goal `complete` -> run `completed` (after too-brief handling)
+- goal `blocked` -> run `failed` with reason `goal_blocked`
+- continuation cap reached while still active -> run `failed` with reason
+  `goal_continuation_limit`
+
+Termination guard: `planChildGoalContinuation` owns a continuation cap. A
+goal-mode child that never reaches `complete`/`blocked` within the cap is
+finalized as `failed` with reason `goal_continuation_limit`. There is no
+unbounded background loop and no silently dropped completion: every goal-mode
+run reaches a terminal (or suspended) state.
+
+Scope note: child goal *budget* accounting (token/time limit enforcement via
+turn-end accounting) is deferred in this iteration. The continuation mechanism
+itself is fully implemented; termination is guaranteed by goal status or the
+continuation cap rather than by token/time limits. Wiring child usage
+accounting is a tracked follow-up, not part of this change.
+
+If the goal is `complete`, the spawned run is recorded as `completed` after
+final-output handling. If the goal is `blocked`, the parent-visible run is
+recorded as `failed` with reason `goal_blocked`; `blocked` remains a goal
+status, not a separate run status.
+
+For goal-mode spawn runs, the goal component state is the source of truth for
 parent-visible run completion. The agent subsystem observes child turn
 completion plus the child goal state; it must not infer completion from
 assistant prose alone.
 
-For non-goal message runs started by `agent_send` when the agent is idle, there
-is no child goal-state gate. The run terminal state comes from the child
-prompt/follow-up turn result: successful turn ends as `completed`; child
-error/cancel/timeout maps to the corresponding terminal run status.
+For plain message runs (idle `agent_send`, or `agent_spawn` with `create_goal =
+false`), there is no child goal-state gate and no continuation loop. The run
+terminal state comes from the single child prompt/follow-up turn result:
+successful turn ends as `completed`; child error/cancel/timeout maps to the
+corresponding terminal run status.
 
 The run `final output` is the child's final assistant handoff text, not a
 separate host-generated summary of the whole child transcript. Child profiles
 must tell the child that the parent sees only the final handoff.
 
-For successful spawned objective/goal runs only, Taumel follows Kimi's
-too-brief handoff rule before recording the run as `completed`: if the child's
-last assistant text is shorter than 200 trimmed characters, Taumel sends one
-follow-up prompt to the same child session:
+For successful goal-mode spawn runs only (`create_goal = true`), Taumel follows
+Kimi's too-brief handoff rule before recording the run as `completed`: if the
+child's last assistant text is shorter than 200 trimmed characters, Taumel sends
+one follow-up prompt to the same child session:
 
 ```text
 Your previous response was too brief. Please provide a more comprehensive summary that includes:
@@ -639,8 +713,9 @@ Your previous response was too brief. Please provide a more comprehensive summar
 
 After that one continuation, the new last assistant text becomes the canonical
 final output. Taumel does not run a separate summarizer over the child session.
-Normal `agent_send` message runs do not get the too-brief expansion; short
-answers to normal messages are valid. Failed, cancelled, timed-out, lost,
+Plain message runs (idle `agent_send`, or `agent_spawn` with `create_goal =
+false`) do not get the too-brief expansion; short answers to normal messages are
+valid. Failed, cancelled, timed-out, lost,
 and closed runs do not get the too-brief expansion; their terminal reason/error
 is recorded directly. Suspended runs are not terminal and do not have final
 output yet.
@@ -975,9 +1050,53 @@ Sandbox is the execution authority.
 
 `agent_spawn` and `agent_send` return immediately.
 
-When a background run completes, Taumel delivers the completion through Pi's
-existing steering/follow-up message mechanism, matching Tau/Kimi style instead
-of inventing a separate queue.
+When a background run completes, Taumel does not eagerly push the result to Pi
+on a timer. Instead Taumel owns a small in-process **notification queue** of
+pending deliverable completions (backed by run state: terminal, not consumed,
+not delivered). The result is delivered to the parent exactly once, by whichever
+of two readers reaches it first, both pulling from that single Taumel queue:
+
+1. **`agent_wait` (pull).** `agent_wait` runs as a tool *inside* a parent turn,
+   so it executes before that turn's `turn_end`. If the awaited run is already
+   terminal (or becomes terminal while the wait blocks), `agent_wait` consumes
+   it from the queue and returns the output directly. This is the parent's
+   first-claim path during an active turn.
+2. **`turn_end` flush (push).** Taumel subscribes to the parent's `turn_end`
+   event. On `turn_end` it flushes every still-pending, unconsumed completion
+   for that parent session by sending each as a Pi **steering** message
+   (`deliverAs: "steer"`), then marks it delivered. Pi drains steering right
+   after `turn_end` and injects it at the *start of the next turn, before the
+   next assistant response*. The parent therefore sees the completion in its
+   context before it could call `agent_wait` again.
+
+Why this removes the earlier confusion: a steered notification flushed at
+`turn_end` is injected *before* the next assistant response, so by the time the
+parent could call `agent_wait` for that run, it has already received the result
+in-band. `agent_wait` reporting that run as already delivered is then correct
+and non-confusing, not an empty result that lost the answer.
+
+The delivery must not use a Pi **follow-up** message. A follow-up is only
+drained when the agent loop would otherwise stop (effectively end of prompt),
+which is exactly the deferred, out-of-band delivery this design avoids. Steering
+is drained at every turn boundary; follow-up is not.
+
+### Idle Delivery
+
+`turn_end` only fires while the parent has a running loop. When the parent is
+**idle** (no loop running), there is no `turn_end` and no `agent_wait` can run
+(the model is not executing), so the queued completion would otherwise sit
+undelivered. In that case Taumel flushes the queue with a `triggerTurn`
+delivery, which starts a fresh parent turn to surface the completion. This also
+covers completions that were still pending when a loop ended. The idle path is
+`triggerTurn` (wake and deliver promptly) rather than `nextTurn`/silent-append
+(which could defer indefinitely if the human never prompts again); guaranteed
+prompt delivery is preferred over deferral. Because no `agent_wait` competes
+while idle, the idle push is unconditional.
+
+Repeated flush attempts are idempotent: the run's consumed/delivered flag is the
+single source of truth, so the first reader to deliver marks it and every other
+path skips it. Exactly one delivery, never twice, never an empty wait for a
+result that exists.
 
 Completion delivery happens only for terminal runs whose result was not already
 returned to the parent by `agent_wait`.
@@ -1016,12 +1135,12 @@ The notification details contain:
 The message contains final output only, not raw child transcript/tool logs.
 Full submission bodies/history are not included by default; they belong in the
 human `/agent-runs` detail/log UI.
-When the parent session has an active turn, delivery uses Pi steering. When the
-parent session is idle, delivery may trigger a follow-up turn through the same Pi
-message machinery. Taumel does not inspect whether the parent is inside a tool
-call and does not defer delivery with its own scheduler; when a background run
-finishes, Taumel immediately hands the completion to Pi's existing delivery
-mechanism.
+Delivery uses Pi steering during an active parent turn (flushed at `turn_end`,
+injected before the next assistant response) and a `triggerTurn` push when the
+parent is idle. The notification is never sent as a follow-up. Taumel drives
+delivery from the parent's `turn_end` event and from the idle path; it does not
+use its own timer/scheduler and does not inspect whether the parent is inside a
+specific tool call.
 
 Child completion delivery is visible to the user in the UI. Taumel must not hide
 the completion event from the human transcript. The model-facing content remains
@@ -1029,19 +1148,19 @@ limited to final output and run metadata unless the user explicitly opens raw
 child logs through a human UI action.
 
 Run metadata records whether a terminal result was consumed by `agent_wait` or
-delivered through background completion. A run must not notify the parent twice.
-Taumel marks a run as background-notified only after `pi.sendMessage` succeeds.
-If delivery fails, the terminal run remains unnotified so explicit or default
-`agent_wait` can still surface the result.
+delivered through a background flush. A run must not be delivered to the parent
+twice. Taumel marks a run as delivered only after the Pi send succeeds. If a
+send fails, the terminal run remains pending in the queue so a later `turn_end`
+flush, idle flush, or `agent_wait` can still surface it.
 
-There is exactly one automatic delivery path for a terminal child result:
+There is exactly one delivery per terminal child result, pulled from the single
+Taumel notification queue:
 
-- if a pending `agent_wait` returns the terminal result, background notification
-  is suppressed and the run is marked consumed;
-- if no wait captures the terminal result, Taumel sends `taumel.notification`
-  and then marks the run background-notified;
-- default `agent_wait` does not later re-deliver background-notified terminal
-  runs;
+- if `agent_wait` consumes the terminal result first, it is returned to the
+  model and marked consumed, and no background flush re-delivers it;
+- otherwise the next `turn_end` flush (active loop) or `triggerTurn` flush
+  (idle) sends `taumel.notification` and marks the run delivered;
+- default `agent_wait` does not re-deliver an already-delivered terminal run;
 - explicit diagnostic reads such as `agent_wait` with `run_ids` and human
   `/agent-runs output` may show historical terminal output only when that
   output is still available through Pi/worker transcript history or current
@@ -1111,17 +1230,29 @@ If any check fails:
   `oracle`, `painter`, and `review`; no `plan` profile exists.
 - Spawning requires an explicit valid profile.
 - Spawn returns `agent_id` and `run_id` without waiting.
-- Spawn accepts only `profile` and `objective`; Taumel generates `agent_id`.
-- Spawn automatically creates a child goal from the objective and the child
-  pursues it with main-agent goal-mode semantics.
-- Spawned child goals use the existing Taumel goal component wrapped around the
-  child session; the agent subsystem does not implement its own continuation
-  loop or continuation prompt.
-- Spawned objective run completion is derived from child turn completion plus
+- Spawn accepts only `profile`, `message`, and `create_goal`; Taumel generates
+  `agent_id`.
+- `create_goal` defaults to `false`; a default spawn runs a single non-goal
+  child turn that completes from the turn result, with no child goal,
+  continuation loop, or too-brief expansion.
+- `create_goal = true` creates a child goal from `message` and the child pursues
+  it with main-agent goal-mode semantics.
+- Goal-mode spawns use the existing Taumel goal component for the per-step
+  continue/stop decision and continuation prompt wording; the loop is
+  orchestrated by the TS host via a dedicated `planChildGoalContinuation`
+  entrypoint, not reimplemented goal logic.
+- Goal-mode spawn run completion is derived from child turn completion plus
   child goal component state, not from assistant prose alone.
-- Non-goal message run completion is derived from the child prompt/follow-up
-  turn result, not from goal component state.
-- Spawned objective child goals are created internally before the first child
+- The goal-mode continuation loop sends successive continuation prompts into the
+  same child session until the goal is `complete`/`blocked` or the continuation
+  cap is reached; it never leaves the run stuck `active` and never silently
+  drops a captured completion.
+- A goal-mode run that hits the continuation cap while still active is finalized
+  as `failed` with reason `goal_continuation_limit`.
+- Plain message run completion (idle `agent_send`, or spawn with `create_goal =
+  false`) is derived from the single child prompt/follow-up turn result, not
+  from goal component state.
+- Goal-mode spawn child goals are created internally before the first child
   turn, not by a visible child `create_goal` call.
 - Child `update_goal complete` or `blocked` does not interrupt the child turn;
   Taumel still waits for the final assistant handoff.
@@ -1212,8 +1343,16 @@ If any check fails:
 - Suspended runs do not produce background completion notifications.
 - Runs returned through `agent_wait` are marked consumed and do not later produce
   duplicate background completion messages.
-- Background completion delivery uses Pi's existing steering/follow-up message
-  mechanism.
+- Background completion is delivered from a single Taumel-owned notification
+  queue, pulled by whichever reader reaches it first: `agent_wait` (consume
+  during an active turn) or a `turn_end` flush (steering) / idle `triggerTurn`
+  flush. It is delivered exactly once and is never sent as a follow-up that
+  waits for end of turn.
+- A completion flushed at `turn_end` is delivered via steering and injected
+  before the next assistant response, so `agent_wait` never returns an empty
+  result for a run whose answer the parent has not already received.
+- When the parent is idle, a completing run is flushed via `triggerTurn` rather
+  than deferred to the next user prompt.
 - Child completion events are visible to the user in the UI.
 - Final child output is available to the parent without raw transcript leakage.
 - Raw child transcript/log access is a separate human-explicit action and is not

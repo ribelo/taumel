@@ -167,7 +167,9 @@ function completionFromAgentEndEvent(event: unknown): Record<string, unknown> | 
 }
 
 async function sendToSdkAgentSession(session: unknown, prompt: string, options: Record<string, unknown>): Promise<unknown> {
-  if (!isRecord(session)) return undefined;
+  if (!isRecord(session)) {
+    return undefined;
+  }
   const subscribe = session["subscribe"];
   let completion: Record<string, unknown> | undefined;
   const unsubscribe =
@@ -705,7 +707,9 @@ function dispatchCompletionFromHostResult(hostResult: unknown): Record<string, u
   if (typeof hostResult === "string" && hostResult.trim() !== "") {
     return { status: "completed", finalOutput: hostResult };
   }
-  if (!isRecord(hostResult)) return undefined;
+  if (!isRecord(hostResult)) {
+    return undefined;
+  }
   const finalOutput =
     typeof hostResult["finalOutput"] === "string" ? hostResult["finalOutput"] :
     typeof hostResult["output"] === "string" ? hostResult["output"] :
@@ -725,7 +729,9 @@ function dispatchCompletionFromHostResult(hostResult: unknown): Record<string, u
     undefined;
   const hasOutput = finalOutput !== undefined && finalOutput.trim() !== "";
   const explicitTerminal = rawStatus !== "" || hostResult["isError"] === true || stopReason !== "";
-  if (!hasOutput && status === "completed" && !explicitTerminal) return undefined;
+  if (!hasOutput && status === "completed" && !explicitTerminal) {
+    return undefined;
+  }
   return {
     status,
     ...(hasOutput ? { finalOutput } : {}),
@@ -775,7 +781,6 @@ function latestChildGoalStatus(bridge: ChildSessionBridge | undefined): string |
 }
 
 function isSpawnedObjectiveCompletion(prepared: Record<string, unknown>): boolean {
-  if (stringField(prepared, "action") === "agent_spawn") return true;
   const details = isRecord(prepared["details"]) ? prepared["details"] : {};
   return optionalStringField(details, "runInitialSubmissionKind") === "objective";
 }
@@ -850,32 +855,28 @@ async function prepareAgentCompletionForRecording(
   return expandTooBriefSpawnCompletion(pi, core, bridge, prepared, goalAdjusted);
 }
 
-async function deliverAgentCompletion(
+type NotificationDeliveryMode = "steer" | "trigger";
+
+async function deliverNotificationMessage(
   pi: PiLike,
-  result: Record<string, unknown>,
+  content: string,
+  customType: string,
+  display: boolean,
+  mode: NotificationDeliveryMode,
 ): Promise<boolean> {
-  if (result["notify"] !== true) return false;
-  const content = stringField(result, "content");
-  const deliverAs = stringField(result, "deliverAs");
   if (typeof pi.sendMessage === "function") {
-    await pi.sendMessage({
-      customType: stringField(result, "customType"),
-      content,
-      display: result["display"] === true,
-    }, {
-      triggerTurn: result["triggerTurn"] === true,
-      deliverAs,
-    });
+    await pi.sendMessage(
+      { customType, content, display },
+      mode === "trigger" ? { triggerTurn: true } : { deliverAs: "steer" },
+    );
     return true;
   }
   if (typeof pi.sendUserMessage === "function") {
-    await pi.sendUserMessage(content, { deliverAs });
+    await pi.sendUserMessage(content, mode === "trigger" ? {} : { deliverAs: "steer" });
     return true;
   }
   return false;
 }
-
-const AGENT_COMPLETION_NOTIFICATION_DELAY_MS = 1000;
 
 function recordAgentBackgroundNotification(
   core: CoreBridge,
@@ -888,49 +889,54 @@ function recordAgentBackgroundNotification(
   }
 }
 
-async function deliverRecordedAgentCompletion(
+// Flush Taumel's notification queue: deliver every pending, unconsumed,
+// undelivered terminal run owned by this parent session, then mark each
+// delivered. "steer" is used on turn_end (injected at the start of the next
+// turn); "trigger" is used when the parent is idle (wakes a turn). A run with an
+// active agent_wait pending is skipped so the wait takes first claim.
+async function flushPendingAgentNotifications(
   pi: PiLike,
   core: CoreBridge,
-  prepared: Record<string, unknown>,
-  completion: Record<string, unknown>,
   ctx: unknown,
+  mode: NotificationDeliveryMode,
   pendingAgentWaits: PendingAgentWaits,
 ): Promise<void> {
-  const runId = stringField(prepared, "run_id");
-  if (runId !== "" && pendingAgentWaits.has(pendingAgentWaitKey(ctx, runId))) return;
-  const result = coreCall(core, "recordAgentDispatchCompletion", [{
-    prepared,
-    completion,
-  }, ctx]);
-  if (!isRecord(result) || result["ok"] !== true) {
-    throw new Error("Invalid Taumel agent completion update");
-  }
-  if (runId !== "" && pendingAgentWaits.has(pendingAgentWaitKey(ctx, runId))) return;
-  if (await deliverAgentCompletion(pi, result)) {
-    recordAgentBackgroundNotification(core, prepared, ctx);
+  const result = coreCall(core, "pendingAgentNotifications", [ctx]);
+  if (!isRecord(result)) return;
+  const notifications = Array.isArray(result["notifications"]) ? result["notifications"] : [];
+  for (const notification of notifications) {
+    if (!isRecord(notification)) continue;
+    const runId = stringField(notification, "run_id");
+    if (runId !== "" && pendingAgentWaits.has(pendingAgentWaitKey(ctx, runId))) continue;
+    const sent = await deliverNotificationMessage(
+      pi,
+      stringField(notification, "content"),
+      stringField(notification, "customType"),
+      notification["display"] === true,
+      mode,
+    );
+    if (sent && runId !== "") {
+      recordAgentBackgroundNotification(core, { run_id: runId }, ctx);
+    }
   }
 }
 
-function scheduleAgentCompletionDelivery(
+function parentIsIdle(pi: PiLike): boolean {
+  return typeof pi.isIdle === "function" ? pi.isIdle() : true;
+}
+
+// Called after a terminal completion is recorded. If the parent is idle there is
+// no turn_end coming and no agent_wait can run, so deliver now via a triggerTurn
+// flush. If the parent is mid-turn, leave the run pending; the turn_end flush
+// (steer) will deliver it before the next assistant response.
+async function deliverCompletionIfParentIdle(
   pi: PiLike,
   core: CoreBridge,
-  prepared: Record<string, unknown>,
-  completion: Record<string, unknown>,
   ctx: unknown,
   pendingAgentWaits: PendingAgentWaits,
-): void {
-  setTimeout(() => {
-    void deliverRecordedAgentCompletion(
-      pi,
-      core,
-      prepared,
-      completion,
-      ctx,
-      pendingAgentWaits,
-    ).catch((error) => {
-      console.warn("Taumel agent completion delivery failed:", error);
-    });
-  }, AGENT_COMPLETION_NOTIFICATION_DELAY_MS);
+): Promise<void> {
+  if (!parentIsIdle(pi)) return;
+  await flushPendingAgentNotifications(pi, core, ctx, "trigger", pendingAgentWaits);
 }
 
 async function recordAgentDispatchCompletion(
@@ -943,7 +949,9 @@ async function recordAgentDispatchCompletion(
   bridge?: ChildSessionBridge,
 ): Promise<void> {
   const completion = dispatch["completion"];
-  if (!isRecord(completion)) return;
+  if (!isRecord(completion)) {
+    return;
+  }
   const preparedCompletion = await prepareAgentCompletionForRecording(
     pi,
     core,
@@ -951,7 +959,9 @@ async function recordAgentDispatchCompletion(
     prepared,
     completion,
   );
-  if (preparedCompletion === undefined) return;
+  if (preparedCompletion === undefined) {
+    return;
+  }
   const result = coreCall(core, "recordAgentDispatchCompletion", [{
     prepared,
     completion: preparedCompletion,
@@ -960,14 +970,7 @@ async function recordAgentDispatchCompletion(
     throw new Error("Invalid Taumel agent completion update");
   }
   if (result["notify"] === true) {
-    scheduleAgentCompletionDelivery(
-      pi,
-      core,
-      prepared,
-      preparedCompletion,
-      ctx,
-      pendingAgentWaits,
-    );
+    await deliverCompletionIfParentIdle(pi, core, ctx, pendingAgentWaits);
   }
 }
 
@@ -1014,6 +1017,97 @@ function recordAgentDispatchCompletionInBackground(
       // Background completion must not crash the parent turn; persistent run state
       // will be reconciled by later wait/list commands if this notification fails.
       console.warn("Taumel agent completion recording failed:", error);
+    });
+  };
+}
+
+function completionStopReason(completion: Record<string, unknown> | undefined): string {
+  if (completion === undefined) return "";
+  if (completionStatus(completion) === "completed") return "";
+  return typeof completion["reason"] === "string" ? completion["reason"] : "";
+}
+
+// Records an already-resolved goal-mode terminal completion directly, bypassing
+// withSpawnGoalStatus (the continuation loop has already decided the terminal
+// status from child goal state), then delivers/notifies like the normal path.
+async function recordAndDeliverChildGoalCompletion(
+  pi: PiLike,
+  core: CoreBridge,
+  prepared: Record<string, unknown>,
+  completion: Record<string, unknown>,
+  ctx: unknown,
+  pendingAgentWaits: PendingAgentWaits,
+): Promise<void> {
+  const result = coreCall(core, "recordAgentDispatchCompletion", [{ prepared, completion }, ctx]);
+  if (!isRecord(result) || result["ok"] !== true) {
+    throw new Error("Invalid Taumel agent completion update");
+  }
+  if (result["notify"] === true) {
+    await deliverCompletionIfParentIdle(pi, core, ctx, pendingAgentWaits);
+  }
+}
+
+// Drives the spawned goal-mode continuation loop. Runs in the background after
+// agent_spawn returns. Starting from the first child turn's completion, it asks
+// OCaml planChildGoalContinuation per step: send the next continuation prompt
+// into the same child session until the goal is complete/blocked or the
+// continuation cap is hit, then record the terminal run exactly once.
+async function runChildGoalContinuationLoop(
+  pi: PiLike,
+  core: CoreBridge,
+  bridge: ChildSessionBridge | undefined,
+  prepared: Record<string, unknown>,
+  ctx: unknown,
+  pendingAgentWaits: PendingAgentWaits,
+  firstDispatch: Record<string, unknown>,
+): Promise<void> {
+  let dispatch = firstDispatch;
+  let iterations = 0;
+  for (;;) {
+    const lastCompletion = isRecord(dispatch["completion"]) ? dispatch["completion"] : undefined;
+    const plan = coreCall(core, "planChildGoalContinuation", [{
+      goal: latestChildCustomEntry(bridge, "taumel.goal") ?? null,
+      automation: latestChildCustomEntry(bridge, "taumel.goal_automation") ?? null,
+      iterations,
+      maxIterations: 0,
+      latestAssistantStopReason: completionStopReason(lastCompletion),
+    }]);
+    if (!isRecord(plan)) throw new Error("Invalid Taumel child goal continuation plan");
+    if (stringField(plan, "action") === "send_goal_continuation") {
+      iterations += 1;
+      dispatch = await sendToChildSession(pi, core, bridge, stringField(plan, "content"), "goal continuation prompt", {
+        awaitCompletion: true,
+        deliverAs: stringField(plan, "deliverAs"),
+      });
+      continue;
+    }
+    const finalStatus = stringField(plan, "status") || "completed";
+    const finalReason = optionalStringField(plan, "reason");
+    const finalOutput = lastCompletion !== undefined ? completionFinalOutput(lastCompletion) : undefined;
+    let completion: Record<string, unknown> = {
+      status: finalStatus,
+      ...(finalOutput !== undefined ? { finalOutput } : {}),
+      ...(finalReason !== undefined ? { reason: finalReason } : {}),
+    };
+    if (finalStatus === "completed") {
+      completion = await expandTooBriefSpawnCompletion(pi, core, bridge, prepared, completion);
+    }
+    await recordAndDeliverChildGoalCompletion(pi, core, prepared, completion, ctx, pendingAgentWaits);
+    return;
+  }
+}
+
+function startChildGoalContinuationLoop(
+  pi: PiLike,
+  core: CoreBridge,
+  prepared: Record<string, unknown>,
+  ctx: unknown,
+  pendingAgentWaits: PendingAgentWaits,
+  bridge?: ChildSessionBridge,
+): (dispatch: Record<string, unknown>) => void {
+  return (dispatch) => {
+    void runChildGoalContinuationLoop(pi, core, bridge, prepared, ctx, pendingAgentWaits, dispatch).catch((error) => {
+      console.warn("Taumel child goal continuation loop failed:", error);
     });
   };
 }
@@ -1414,9 +1508,13 @@ export async function executeTool(
         prepared,
         ctx,
       );
+      const goalMode = isSpawnedObjectiveCompletion(prepared);
+      const onCompletion = goalMode
+        ? startChildGoalContinuationLoop(pi, core, prepared, ctx, pendingAgentWaits, bridge)
+        : recordAgentDispatchCompletionInBackground(pi, core, prepared, ctx, pendingAgentWaits, bridge);
       const dispatch = await sendToChildSession(pi, core, bridge, prompt, "no initial prompt", {
         awaitCompletion: false,
-        onCompletion: recordAgentDispatchCompletionInBackground(pi, core, prepared, ctx, pendingAgentWaits, bridge),
+        onCompletion,
       });
       const result = coreCall(core, "finishAgentAction", [{
         prepared,
@@ -1600,6 +1698,24 @@ export function registerGatewayTools(
   const allowed = new Set(allowedToolNames);
   const registered = new Set<string>();
   const pendingAgentWaits: PendingAgentWaits = new Map();
+  // turn_end: flush pending child completions via steering, injected at the start
+  // of the next parent turn (before the assistant response). agent_end: the loop
+  // is ending, so flush any still-pending completion by waking a turn; deferred so
+  // the parent is no longer streaming when we trigger.
+  pi.on("turn_end", async (_event, ctx) => {
+    try {
+      await flushPendingAgentNotifications(pi, core, ctx, "steer", pendingAgentWaits);
+    } catch (error) {
+      console.warn("Taumel agent turn_end notification flush failed:", error);
+    }
+  });
+  pi.on("agent_end", (_event, ctx) => {
+    setTimeout(() => {
+      void flushPendingAgentNotifications(pi, core, ctx, "trigger", pendingAgentWaits).catch((error) => {
+        console.warn("Taumel agent agent_end notification flush failed:", error);
+      });
+    }, 0);
+  });
   const registerMatching = (agentTools: boolean) => {
     for (const spec of toolContracts) {
       const name = spec.name;

@@ -232,6 +232,7 @@ let test_agent_profile_catalog () =
       Subagents.id = "finder-a1";
       name = "finder";
       prompt = "inspect";
+      create_goal = false;
       system_prompt = "";
       model_id = Some "bad/model";
       thinking_level = Some "bad";

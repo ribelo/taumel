@@ -81,6 +81,11 @@ let sandboxMode = undefined;
 let extensionLoading = true;
 let childCounter = 0;
 let pendingMessages = false;
+// Models pi.isIdle(): when true, a child completion flushes immediately via a
+// triggerTurn notification (background-while-idle). Set false to model the parent
+// being mid-turn (e.g. about to call agent_wait), so the completion stays pending
+// and an agent_wait can claim it before any turn_end flush.
+let parentIdle = true;
 let renderRequests = 0;
 let confirmBehavior = async () => true;
 let selectBehavior = async (_title, labels) => labels[0];
@@ -184,6 +189,7 @@ const pi = {
     runtimeActionGuard();
     sentMessages.push({ message, options });
   },
+  isIdle: () => parentIdle,
   createAgentSession: async (options = {}) => {
     agentSessionCalls.push(options);
     if (nextAgentSessionResult !== undefined) {
@@ -1152,7 +1158,7 @@ try {
   }
   const disabledSpawn = await tools.get("agent_spawn").execute(
     "agent-disabled-spawn",
-    { profile: "finder", objective: "should be blocked" },
+    { profile: "finder", message: "should be blocked" },
     undefined,
     undefined,
     ctx,
@@ -1172,7 +1178,7 @@ try {
   }
   const unknownProfileSpawn = await tools.get("agent_spawn").execute(
     "agent-unknown-profile",
-    { profile: "worker", objective: "should be rejected" },
+    { profile: "worker", message: "should be rejected" },
     undefined,
     undefined,
     ctx,
@@ -1185,7 +1191,7 @@ try {
   }
   const callerIdSpawn = await tools.get("agent_spawn").execute(
     "agent-caller-id",
-    { profile: "finder", objective: "invalid id", agent_id: "Bad_Id" },
+    { profile: "finder", message: "invalid id", agent_id: "Bad_Id" },
     undefined,
     undefined,
     ctx,
@@ -1198,7 +1204,7 @@ try {
   }
   const generatedAgent = await tools.get("agent_spawn").execute(
     "agent-generated-id",
-    { profile: "finder", objective: "spawn with generated id" },
+    { profile: "finder", message: "spawn with generated id" },
     undefined,
     undefined,
     ctx,
@@ -1251,7 +1257,7 @@ try {
   childSendResponses.push(new Promise((resolve) => { resolveCrossSessionCompletion = resolve; }));
   const crossSessionSpawn = await tools.get("agent_spawn").execute(
     "agent-cross-session-async-spawn",
-    { profile: "finder", objective: "complete after parent session changed" },
+    { profile: "finder", message: "complete after parent session changed" },
     undefined,
     undefined,
     ctx,
@@ -1294,7 +1300,8 @@ try {
     const message = sentMessages.at(-1);
     return sentMessages.length === crossSessionNotificationCount + 1 &&
       message?.message?.customType === "taumel.notification" &&
-      message?.message?.content?.includes(crossSessionRunId)
+      message?.message?.content?.includes(crossSessionRunId) &&
+      message?.message?.content?.includes(crossSessionFinalOutput)
       ? message
       : undefined;
   }, "async completion notification did not reload captured session agent state", 2500);
@@ -1327,9 +1334,8 @@ try {
   const crossSessionWaitRun = crossSessionWait.details?.runs?.find((run) => run.run_id === crossSessionRunId);
   if (
     crossSessionWaitRun?.status !== "completed" ||
-    crossSessionWaitRun?.finalOutput !== crossSessionFinalOutput ||
     crossSessionWaitRun?.backgroundNotified !== true ||
-    crossSessionWaitRun?.consumed !== true
+    crossSessionWaitRun?.outputAvailable !== false
   ) {
     throw new Error(`agent_wait did not observe cross-session async completion: ${JSON.stringify(crossSessionWait)}`);
   }
@@ -1460,7 +1466,7 @@ try {
   childSendResponses.push(new Promise((resolve) => { resolveAsyncSpawn = resolve; }));
   const asyncSpawn = await tools.get("agent_spawn").execute(
     "agent-async-spawn",
-    { profile: "finder", objective: "finish later" },
+    { profile: "finder", message: "finish later" },
     undefined,
     undefined,
     ctx,
@@ -1509,7 +1515,7 @@ try {
   childSendResponses.push(new Promise((resolve) => { resolveCloseStaleCompletion = resolve; }));
   const closeStaleSpawn = await tools.get("agent_spawn").execute(
     "agent-close-stale-completion-spawn",
-    { profile: "finder", objective: "ignore completion after close" },
+    { profile: "finder", message: "ignore completion after close" },
     undefined,
     undefined,
     ctx,
@@ -1554,7 +1560,7 @@ try {
   childSendResponses.push(new Promise((resolve) => { resolveStopStaleCompletion = resolve; }));
   const stopStaleSpawn = await tools.get("agent_spawn").execute(
     "agent-stop-stale-completion-spawn",
-    { profile: "finder", objective: "ignore completion after stop" },
+    { profile: "finder", message: "ignore completion after stop" },
     undefined,
     undefined,
     ctx,
@@ -1600,9 +1606,10 @@ try {
   );
 
   childSendResponses.push({ output: longAgentOutput("active child goal prose"), status: "completed" });
+  childSendResponses.push(new Promise(() => undefined));
   const activeGoalProseSpawn = await tools.get("agent_spawn").execute(
     "agent-active-goal-prose-spawn",
-    { profile: "finder", objective: "do not complete from prose alone" },
+    { profile: "finder", message: "do not complete from prose alone", create_goal: true },
     undefined,
     undefined,
     ctx,
@@ -1630,7 +1637,7 @@ try {
   childSendResponses.push(new Promise(() => undefined));
   const activeGoalSteeredSpawn = await tools.get("agent_spawn").execute(
     "agent-active-goal-steered-spawn",
-    { profile: "finder", objective: "do not complete from steered prose alone" },
+    { profile: "finder", message: "do not complete from steered prose alone", create_goal: true },
     undefined,
     undefined,
     ctx,
@@ -1667,7 +1674,7 @@ try {
   childSendResponses.push(new Promise(() => undefined));
   const blockedGoalSteeredSpawn = await tools.get("agent_spawn").execute(
     "agent-blocked-goal-steered-spawn",
-    { profile: "finder", objective: "fail from steered blocked goal" },
+    { profile: "finder", message: "fail from steered blocked goal", create_goal: true },
     undefined,
     undefined,
     ctx,
@@ -1723,7 +1730,7 @@ try {
   childSendResponses.push({ stopReason: "timed_out", suppressAgentEndEvent: true });
   const hostTimeoutSpawn = await tools.get("agent_spawn").execute(
     "agent-host-timeout-spawn",
-    { profile: "finder", objective: "host timeout only" },
+    { profile: "finder", message: "host timeout only" },
     undefined,
     undefined,
     ctx,
@@ -1765,7 +1772,7 @@ try {
   });
   const eventTimeoutSpawn = await tools.get("agent_spawn").execute(
     "agent-event-timeout-spawn",
-    { profile: "finder", objective: "event timeout only" },
+    { profile: "finder", message: "event timeout only" },
     undefined,
     undefined,
     ctx,
@@ -1801,7 +1808,7 @@ try {
   nextAgentSessionResult = {};
   const failedDispatchSpawn = await tools.get("agent_spawn").execute(
     "agent-dispatch-failed-spawn",
-    { profile: "finder", objective: "cannot start child" },
+    { profile: "finder", message: "cannot start child" },
     undefined,
     undefined,
     ctx,
@@ -1847,7 +1854,7 @@ try {
 
   const failedSendWorker = await tools.get("agent_spawn").execute(
     "agent-send-dispatch-failure-spawn",
-    { profile: "finder", objective: "start before failed send" },
+    { profile: "finder", message: "start before failed send" },
     undefined,
     undefined,
     ctx,
@@ -1905,7 +1912,7 @@ try {
   childSendResponses.push({ output: successfulNoOutputExpanded, status: "completed" });
   const successfulNoOutputSpawn = await tools.get("agent_spawn").execute(
     "agent-successful-no-output-spawn",
-    { profile: "finder", objective: "successful no output" },
+    { profile: "finder", message: "successful no output", create_goal: true },
     undefined,
     undefined,
     ctx,
@@ -1958,7 +1965,7 @@ try {
   childSendResponses.push({ output: blockedGoalOutput, status: "completed", goalStatus: "blocked" });
   const blockedGoalSpawn = await tools.get("agent_spawn").execute(
     "agent-blocked-goal-spawn",
-    { profile: "finder", objective: "blocked child goal" },
+    { profile: "finder", message: "blocked child goal", create_goal: true },
     undefined,
     undefined,
     ctx,
@@ -2011,7 +2018,7 @@ try {
   });
   const terminalNoOutputSpawn = await tools.get("agent_spawn").execute(
     "agent-terminal-no-output-spawn",
-    { profile: "finder", objective: "terminal no output" },
+    { profile: "finder", message: "terminal no output" },
     undefined,
     undefined,
     ctx,
@@ -2068,7 +2075,7 @@ try {
   const agentSessionCountBeforeSmoke = agentSessionCalls.length;
   const agentResult = await tools.get("agent_spawn").execute(
     "agent-call",
-    { profile: "finder", objective: "spawn smoke worker" },
+    { profile: "finder", message: "spawn smoke worker", create_goal: true },
     undefined,
     undefined,
     ctx,
@@ -2335,7 +2342,7 @@ try {
   }
   const waitWorker = await tools.get("agent_spawn").execute(
     "agent-wait-loop-spawn",
-    { profile: "finder", objective: "wait loop worker" },
+    { profile: "finder", message: "wait loop worker" },
     undefined,
     undefined,
     ctx,
@@ -2380,7 +2387,7 @@ try {
   childSendResponses.push(new Promise((resolve) => { resolveWaitOwnedCompletion = resolve; }));
   const waitOwnedSpawn = await tools.get("agent_spawn").execute(
     "agent-wait-owned-spawn",
-    { profile: "finder", objective: "complete while parent waits" },
+    { profile: "finder", message: "complete while parent waits" },
     undefined,
     undefined,
     ctx,
@@ -2508,8 +2515,7 @@ try {
     completionMessage?.message?.display !== true ||
     !completionMessage.message.content.includes(`${smokeAgentId}-run-2`) ||
     !completionMessage.message.content.includes("final smoke summary") ||
-    completionMessage?.options?.triggerTurn !== true ||
-    completionMessage?.options?.deliverAs !== "followUp"
+    completionMessage?.options?.triggerTurn !== true
   ) {
     throw new Error(`agent completion was not delivered visibly to the parent: ${JSON.stringify(sentMessages.slice(completionMessageCount))}`);
   }
@@ -2549,6 +2555,7 @@ try {
   }
   childSendResponses.push({ output: "fast wait final output", status: "completed" });
   const fastCompletionMessageCount = sentMessages.length;
+  parentIdle = false;
   const fastCompletedSend = await tools.get("agent_send").execute(
     "agent-send-fast-completes",
     { agent_id: smokeAgentId, message: "finish before the parent waits" },
@@ -2586,9 +2593,10 @@ try {
       messages: sentMessages.slice(fastCompletionMessageCount),
     })}`);
   }
+  parentIdle = true;
   const defaultWaitSpawn = await tools.get("agent_spawn").execute(
     "agent-default-wait-spawn",
-    { profile: "finder", objective: "default wait worker" },
+    { profile: "finder", message: "default wait worker" },
     undefined,
     undefined,
     ctx,
@@ -2674,7 +2682,7 @@ try {
   }
   const nestedAgentResult = await tools.get("agent_spawn").execute(
     "agent-child-spawn",
-    { profile: "finder", objective: "try to spawn nested worker" },
+    { profile: "finder", message: "try to spawn nested worker" },
     undefined,
     undefined,
     agentChildCtx,
@@ -2701,7 +2709,7 @@ try {
   }
   const interruptSpawn = await tools.get("agent_spawn").execute(
     "agent-interrupt-spawn",
-    { profile: "finder", objective: "start interruptible work" },
+    { profile: "finder", message: "start interruptible work" },
     undefined,
     undefined,
     ctx,
@@ -2751,7 +2759,7 @@ try {
   }
   const suspendSpawn = await tools.get("agent_spawn").execute(
     "agent-suspend-spawn",
-    { profile: "finder", objective: "start suspendable work" },
+    { profile: "finder", message: "start suspendable work" },
     undefined,
     undefined,
     ctx,
@@ -2819,14 +2827,14 @@ try {
   );
   const multiCloseA = await tools.get("agent_spawn").execute(
     "agent-multi-close-a",
-    { profile: "finder", objective: "multi close a" },
+    { profile: "finder", message: "multi close a" },
     undefined,
     undefined,
     ctx,
   );
   const multiCloseB = await tools.get("agent_spawn").execute(
     "agent-multi-close-b",
-    { profile: "finder", objective: "multi close b" },
+    { profile: "finder", message: "multi close b" },
     undefined,
     undefined,
     ctx,

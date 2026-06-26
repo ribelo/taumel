@@ -276,6 +276,26 @@ latest_assistant_stop_reason not in ["error", "aborted"]
 The predicate must be implemented once and reused by command, event, and resume
 paths.
 
+### Continuation Delivery
+
+When the predicate returns `Send`, the continuation is delivered as a Pi
+**follow-up** message, not a steering message. This is a deliberate choice and
+the inverse of background agent-completion notifications (which use steering):
+
+- Goal continuation is reactive to the turn *ending* (`agent_end`): the agent
+  finished its current turn, and continuation is the driver that starts the
+  *next* turn. A follow-up is delivered at end of turn and triggers that next
+  turn, which is exactly the turn-by-turn advance the goal loop needs.
+- A steering message would inject the continuation prompt *mid-turn*, into a
+  turn that is still running. That is wrong for goal continuation: there is no
+  in-progress turn to steer into at the moment continuation fires, and steering
+  goal-nudge text into live work is not the intended semantics.
+
+So: goal continuation = follow-up (advance to the next turn once the current
+one ends); background agent-completion notification = steering (interleave a
+finished child's result between the parent's tool calls). The two are
+intentionally different and must not be unified.
+
 ## Interrupt Policy
 
 Taumel intentionally diverges from Codex here.
