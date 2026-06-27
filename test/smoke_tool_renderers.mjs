@@ -1,5 +1,6 @@
 import { toolNames } from "../src/tool-contracts.ts";
 import { notificationMessageRenderer, renderersForTool } from "../src/tool-renderer.ts";
+import { visibleWidth } from "@earendil-works/pi-tui";
 
 const assert = (condition, message) => {
   if (!condition) throw new Error(message);
@@ -166,6 +167,27 @@ assert(!/exit 2/.test(failedShell), `failed exec should not repeat the exit code
 // Running async session → yellow dot + `(session N)` in the subject, no body.
 const runningSession = renderText(shell.renderResult({ content: [], details: { ok: true, sessionId: 4 } }, { expanded: false, isPartial: false }, theme, { args: shellArgs }));
 assert(/• exec_command · ls many-files \(session 4\)/.test(runningSession) && !runningSession.includes("\n"), `running session should be a yellow-dot header with (session N) and no body: ${runningSession}`);
+
+// Width-aware layout: a long command must clip to ONE physical header line when
+// collapsed (the original wrapping nitpick), and wrap under the subject-start
+// indent when expanded. Body lines clip (collapsed) / wrap (expanded) to width.
+{
+  const longCmd = 'cd /home/ribelo/projects/ribelo/taumel && git status --short && echo "=== recent log ===" && git log --oneline -8';
+  const longTail = Array.from({ length: 12 }, (_, index) => `cf4af${index} Harden subagent notification delivery ${index}`).join("\n");
+  const longRes = { content: [], details: { ok: true, output: longTail, exitCode: 0 } };
+  for (const width of [64, 80, 120]) {
+    const collapsed = renderersForTool("exec_command").renderResult(longRes, { expanded: false, isPartial: false }, theme, { args: { cmd: longCmd } }).render(width);
+    assert(collapsed.length > 1 && visibleWidth(collapsed[0]) <= width && collapsed[0].includes("…"), `collapsed exec header must be one line clipped to width ${width}: ${JSON.stringify(collapsed[0])}`);
+    assert(collapsed[1].startsWith("  └ "), `collapsed exec body must start with the └ rail: ${JSON.stringify(collapsed[1])}`);
+    const expanded = renderersForTool("exec_command").renderResult(longRes, { expanded: true, isPartial: false }, theme, { args: { cmd: longCmd } }).render(width);
+    // Expanded header wraps the full command across several lines, continuation
+    // indented to the subject-start column, before the body rail.
+    const subjectStart = visibleWidth(`• exec_command · `);
+    const contIndent = expanded[1].match(/^ +/)?.[0].length ?? -1;
+    assert(expanded.length > 3 && contIndent === subjectStart, `expanded exec header must wrap under the subject-start indent (${subjectStart}), got ${contIndent}: ${JSON.stringify(expanded.slice(0, 2))}`);
+    assert(expanded[expanded.length - 1].startsWith("    "), `expanded exec body continuation must use the 4-space rail indent`);
+  }
+}
 
 // write — content head + `(N lines)`.
 const writeCompact = renderText(renderersForTool("write").renderResult(resultFor("write"), { expanded: false, isPartial: false }, theme, { args: argsFor("write") }));

@@ -54,6 +54,7 @@ export type ToolDefinition = {
   readonly execute: (...args: unknown[]) => Promise<unknown>;
   readonly renderCall?: (...args: unknown[]) => unknown;
   readonly renderResult?: (...args: unknown[]) => unknown;
+  readonly renderShell?: "default" | "self";
 };
 
 export type CommandDefinition = {
