@@ -1,6 +1,9 @@
 import { Text } from "@earendil-works/pi-tui";
+import { structuredPatch } from "diff";
 
-type Status = { readonly text: string; readonly color: string };
+// ─────────────────────────────────────────────────────────────────────────────
+// Field accessors
+// ─────────────────────────────────────────────────────────────────────────────
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -36,6 +39,10 @@ function stringArrayField(record: Record<string, unknown>, name: string): string
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Theme helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
 function themeFg(theme: unknown, color: string, value: string): string {
   if (!isRecord(theme)) return value;
   const fg = theme["fg"];
@@ -44,13 +51,45 @@ function themeFg(theme: unknown, color: string, value: string): string {
   return typeof rendered === "string" ? rendered : value;
 }
 
+// Dormant seam: Pi themes may expose `highlightCode(code, lang)` for future
+// syntax highlighting. It is invoked at the read-expanded call site only; when
+// absent (the common case) the renderer falls back to plain toolOutput.
+function maybeHighlight(theme: unknown, code: string, lang: string): string | undefined {
+  if (!isRecord(theme)) return undefined;
+  const highlight = theme["highlightCode"];
+  if (typeof highlight !== "function") return undefined;
+  try {
+    const rendered = highlight.call(theme, code, lang);
+    return typeof rendered === "string" ? rendered : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Text helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
 function oneLine(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
 function truncate(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
-  return `${value.slice(0, Math.max(0, maxChars - 3))}...`;
+  return `${value.slice(0, Math.max(0, maxChars - 1))}…`;
+}
+
+function domainOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
+function langFromPath(path: string): string {
+  const dot = path.lastIndexOf(".");
+  return dot === -1 ? "" : path.slice(dot + 1);
 }
 
 function textContent(result: unknown): string {
@@ -77,70 +116,6 @@ function expandedFromOptions(options: unknown): boolean {
   return isRecord(options) && options["expanded"] === true;
 }
 
-function statusFromDetails(details: Record<string, unknown>): Status {
-  if (numberField(details, "sessionId") !== undefined || numberField(details, "session_id") !== undefined) {
-    const id = numberField(details, "sessionId") ?? numberField(details, "session_id");
-    return { text: `running session ${id}`, color: "accent" };
-  }
-  const exitCode = numberField(details, "exitCode") ?? numberField(details, "code");
-  if (exitCode !== undefined) {
-    return exitCode === 0
-      ? { text: "exit 0", color: "success" }
-      : { text: `exit ${exitCode}`, color: "error" };
-  }
-  return boolField(details, "ok") === false
-    ? { text: "failed", color: "error" }
-    : { text: "done", color: "success" };
-}
-
-function themeBold(theme: unknown, value: string): string {
-  if (!isRecord(theme)) return value;
-  const bold = theme["bold"];
-  if (typeof bold !== "function") return value;
-  const rendered = bold.call(theme, value);
-  return typeof rendered === "string" ? rendered : value;
-}
-
-function formatDuration(ms: number): string {
-  return `${(ms / 1000).toFixed(1)}s`;
-}
-
-// Pi-style shell title: `$ <command>` (bold), or the stdin text / `poll session N`
-// for write_stdin.
-function shellTitle(name: string, args: Record<string, unknown>, theme: unknown): string {
-  if (name === "write_stdin") {
-    const chars = stringField(args, "chars") ?? "";
-    if (chars.trim() !== "") {
-      return themeFg(theme, "toolTitle", themeBold(theme, `$ ${oneLine(truncate(chars, 200))}`));
-    }
-    const sid = numberField(args, "session_id");
-    return themeFg(theme, "toolTitle", themeBold(theme, sid === undefined ? "poll" : `poll session ${sid}`));
-  }
-  const cmd = oneLine(stringField(args, "cmd") ?? "");
-  return themeFg(theme, "toolTitle", themeBold(theme, `$ ${cmd === "" ? "exec_command" : truncate(cmd, 400)}`));
-}
-
-function header(name: string, inline: string, status: Status, theme: unknown): string {
-  const suffix = inline === "" ? "" : ` ${themeFg(theme, "muted", "-")} ${themeFg(theme, "toolOutput", inline)}`;
-  return `${themeFg(theme, status.color, status.text)} ${themeFg(theme, "toolTitle", name)}${suffix}`;
-}
-
-function callLine(name: string, inline: string, progress: string, theme: unknown): string {
-  const suffix = inline === "" ? "" : ` ${themeFg(theme, "muted", "-")} ${themeFg(theme, "toolOutput", inline)}`;
-  return `${themeFg(theme, "accent", "...")} ${themeFg(theme, "toolTitle", name)}${suffix} ${themeFg(theme, "dim", `(${progress})`)}`;
-}
-
-function limitedText(value: string, expanded: boolean, theme: unknown, compactLines = 8, expandedLines = 120): string {
-  const cleaned = value.trimEnd();
-  if (cleaned === "") return themeFg(theme, "dim", "  (no output)");
-  const lines = cleaned.split(/\r?\n/);
-  const limit = expanded ? expandedLines : compactLines;
-  const omitted = Math.max(0, lines.length - limit);
-  const visible = omitted > 0 ? lines.slice(-limit) : lines;
-  const prefix = omitted > 0 ? `${themeFg(theme, "muted", `  ... ${omitted} earlier lines (expand for more)`)}\n` : "";
-  return prefix + visible.map((line) => themeFg(theme, "toolOutput", `  ${expanded ? line : truncate(line, 220)}`)).join("\n");
-}
-
 function compactJson(value: unknown): string {
   try {
     return JSON.stringify(value, null, 2);
@@ -149,66 +124,131 @@ function compactJson(value: unknown): string {
   }
 }
 
-function listItemTitle(item: Record<string, unknown>, fallback: string): string {
-  return stringField(item, "title") ?? stringField(item, "id") ?? stringField(item, "url") ?? fallback;
+// ─────────────────────────────────────────────────────────────────────────────
+// Grammar primitives: `• <name> · <subject>` header + `  └ ` / `    ` body rail
+// ─────────────────────────────────────────────────────────────────────────────
+
+function dot(theme: unknown, color: string): string {
+  return themeFg(theme, color, "•");
 }
 
-function resultDescription(item: Record<string, unknown>): string | undefined {
-  const summary = stringField(item, "summary") ?? stringField(item, "text") ?? stringField(item, "content");
-  if (summary !== undefined) return summary;
-  const highlights = item["highlights"];
-  if (Array.isArray(highlights)) return highlights.find((part): part is string => typeof part === "string");
-  return undefined;
-}
-
-function renderItems(items: Record<string, unknown>[], expanded: boolean, theme: unknown): string {
-  const limit = expanded ? 30 : 5;
-  const visible = items.slice(0, limit);
-  const lines = visible.map((item, index) => {
-    const title = listItemTitle(item, `item ${index + 1}`);
-    const url = stringField(item, "url");
-    const id = stringField(item, "id");
-    const count = numberField(item, "messageCount") ?? numberField(item, "message_count");
-    const status = stringField(item, "status");
-    const parts = [
-      url,
-      id !== undefined && id !== title ? `id: ${id}` : undefined,
-      count !== undefined ? `${count} messages` : undefined,
-      status !== undefined ? `status: ${status}` : undefined,
-    ].filter((part): part is string => part !== undefined && part !== "");
-    const description = resultDescription(item);
-    const base = `${themeFg(theme, "accent", `${index + 1}.`)} ${themeFg(theme, "toolOutput", title)}`;
-    const meta = parts.length === 0 ? "" : `\n   ${themeFg(theme, "dim", parts.join(" · "))}`;
-    const detail = description === undefined || description === "" ? "" : `\n   ${themeFg(theme, "muted", truncate(oneLine(description), expanded ? 900 : 220))}`;
-    return `${base}${meta}${detail}`;
-  });
-  if (items.length > limit) {
-    lines.push(themeFg(theme, "dim", `... ${items.length - limit} more (expand for more)`));
+function header(name: string, subject: string, dotColor: string, theme: unknown, dimTrailing = ""): string {
+  const parts = [dot(theme, dotColor), themeFg(theme, "toolTitle", name)];
+  if (subject !== "") {
+    parts.push(themeFg(theme, "dim", "·"));
+    parts.push(subject);
   }
-  return lines.length === 0 ? themeFg(theme, "dim", "  (none)") : lines.join("\n");
+  if (dimTrailing !== "") parts.push(themeFg(theme, "dim", dimTrailing));
+  return parts.join(" ");
 }
 
-function inlineForTool(name: string, args: Record<string, unknown>, expanded: boolean): string {
-  const maxChars = expanded ? 400 : 120;
+function callHeader(name: string, subject: string, progress: string, theme: unknown): string {
+  return header(name, subject, "warning", theme, `(${progress})`);
+}
+
+// Apply the `  └ ` connector to the first physical line and a 4-space indent to
+// every continuation line. Entries may themselves contain newlines (expanded
+// collection items with a wrapped description); each physical line is railed.
+function joinBody(entries: readonly string[], theme: unknown): string {
+  const lines = entries.flatMap((entry) => entry.split(/\r?\n/));
+  if (lines.length === 0) return "";
+  return lines
+    .map((line, index) => `${themeFg(theme, "dim", index === 0 ? "  └ " : "    ")}${line}`)
+    .join("\n");
+}
+
+function moreLine(count: number, theme: unknown, unit: "more" | "more lines"): string {
+  return themeFg(theme, "dim", `… ${count} ${unit}`);
+}
+
+function outputLines(lines: readonly string[], expanded: boolean, theme: unknown, maxCollapsed: number): string[] {
+  return lines.map((line) => themeFg(theme, "toolOutput", expanded ? line : truncate(line, maxCollapsed)));
+}
+
+// Tail-oriented body (exec): last N lines, `… N more lines` at the top.
+function renderTailBody(
+  text: string,
+  expanded: boolean,
+  theme: unknown,
+  cap: number,
+  expandedCap: number,
+  maxCollapsed: number,
+): string {
+  const cleaned = (text ?? "").trimEnd();
+  if (cleaned === "") return joinBody([themeFg(theme, "dim", "(no output)")], theme);
+  const all = cleaned.split(/\r?\n/);
+  const limit = expanded ? expandedCap : cap;
+  if (all.length <= limit) return joinBody(outputLines(all, expanded, theme, maxCollapsed), theme);
+  const visible = all.slice(-limit);
+  return joinBody([moreLine(all.length - limit, theme, "more lines"), ...outputLines(visible, expanded, theme, maxCollapsed)], theme);
+}
+
+// Head-oriented body (read / write / code-context): first N lines, `… N more lines` at the bottom.
+function renderHeadBody(
+  text: string,
+  expanded: boolean,
+  theme: unknown,
+  cap: number,
+  expandedCap: number,
+  maxCollapsed: number,
+): string {
+  const cleaned = (text ?? "").trimEnd();
+  if (cleaned === "") return joinBody([themeFg(theme, "dim", "(no output)")], theme);
+  const all = cleaned.split(/\r?\n/);
+  const limit = expanded ? expandedCap : cap;
+  if (all.length <= limit) return joinBody(outputLines(all, expanded, theme, maxCollapsed), theme);
+  const visible = all.slice(0, limit);
+  return joinBody([...outputLines(visible, expanded, theme, maxCollapsed), moreLine(all.length - limit, theme, "more lines")], theme);
+}
+
+// The full textContent body for single-entity tools expanded: appended under the
+// facts line, uncapped.
+function fullTextLines(text: string, theme: unknown): string[] {
+  const cleaned = (text ?? "").trimEnd();
+  if (cleaned === "") return [];
+  return cleaned.split(/\r?\n/).map((line) => themeFg(theme, "toolOutput", line));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// State → dot color
+// ─────────────────────────────────────────────────────────────────────────────
+
+function dotFromDetails(details: Record<string, unknown>): string {
+  const code = numberField(details, "exitCode") ?? numberField(details, "code");
+  if (code !== undefined) return code === 0 ? "success" : "error";
+  if (boolField(details, "ok") === false) return "error";
+  return "success";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Subjects (one-line identity of the call), derived from args
+// ─────────────────────────────────────────────────────────────────────────────
+
+function quotedQuery(args: Record<string, unknown>, expanded: boolean): string {
+  return `"${truncate(oneLine(stringField(args, "query") ?? ""), expanded ? 400 : 120)}"`;
+}
+
+function subjectFromArgs(name: string, args: Record<string, unknown>, expanded: boolean): string {
+  const max = expanded ? 400 : 120;
   switch (name) {
     case "exec_command":
-      return truncate(oneLine(stringField(args, "cmd") ?? "exec_command"), maxChars);
+      return truncate(oneLine(stringField(args, "cmd") ?? "exec_command"), max);
     case "write_stdin": {
       const chars = stringField(args, "chars") ?? "";
-      if (chars.trim() !== "") return truncate(oneLine(chars), maxChars);
-      const sessionId = numberField(args, "session_id");
-      return sessionId === undefined ? "poll" : `session ${sessionId}`;
+      if (chars.trim() !== "") return truncate(oneLine(chars), max);
+      const sid = numberField(args, "session_id");
+      return sid === undefined ? "poll" : `poll session ${sid}`;
     }
     case "write":
     case "edit":
     case "read":
-      return truncate(stringField(args, "path") ?? "", maxChars);
+      return truncate(stringField(args, "path") ?? "", max);
     case "apply_patch":
-      return truncate(oneLine(stringField(args, "input") ?? stringField(args, "patch") ?? "patch"), maxChars);
+      return truncate(oneLine(stringField(args, "input") ?? stringField(args, "patch") ?? "patch"), max);
     case "agent_spawn":
-      return truncate([stringField(args, "profile"), stringField(args, "objective")].filter(Boolean).join(" "), maxChars);
+      return truncate(stringField(args, "profile") ?? "", max);
     case "agent_send":
-      return truncate([stringField(args, "agent_id"), stringField(args, "message")].filter(Boolean).join(" "), maxChars);
+      return truncate(stringField(args, "agent_id") ?? "", max);
     case "agent_wait": {
       const agentIds = Array.isArray(args["agent_ids"]) ? args["agent_ids"].length : 0;
       const runIds = Array.isArray(args["run_ids"]) ? args["run_ids"].length : 0;
@@ -223,20 +263,19 @@ function inlineForTool(name: string, args: Record<string, unknown>, expanded: bo
     case "agent_profiles":
       return "profiles";
     case "create_goal":
-      return truncate(oneLine(stringField(args, "objective") ?? ""), maxChars);
+      return truncate(oneLine(stringField(args, "objective") ?? ""), max);
     case "update_goal":
       return stringField(args, "status") ?? "";
     case "find_thread":
-      return truncate(oneLine(stringField(args, "query") ?? ""), maxChars);
-    case "read_thread":
-      return truncate(oneLine(stringField(args, "threadID") ?? ""), maxChars);
-    case "ralph_continue":
-    case "ralph_finish":
-      return truncate(stringField(args, "task_id") ?? "", maxChars);
     case "web_search_exa":
     case "get_code_context_exa":
     case "exa_agent_create_run":
-      return truncate(oneLine(stringField(args, "query") ?? ""), maxChars);
+      return quotedQuery(args, expanded);
+    case "read_thread":
+      return truncate(stringField(args, "threadID") ?? "", max);
+    case "ralph_continue":
+    case "ralph_finish":
+      return truncate(stringField(args, "task_id") ?? "", max);
     case "crawling_exa": {
       const urls = Array.isArray(args["urls"]) ? args["urls"].length : 0;
       const ids = Array.isArray(args["ids"]) ? args["ids"].length : 0;
@@ -245,7 +284,7 @@ function inlineForTool(name: string, args: Record<string, unknown>, expanded: bo
     case "exa_agent_get_run":
     case "exa_agent_cancel_run":
     case "exa_agent_list_events":
-      return truncate(stringField(args, "id") ?? "", maxChars);
+      return truncate(stringField(args, "id") ?? "", max);
     case "exa_agent_list_runs":
       return args["limit"] === undefined ? "recent runs" : `limit ${args["limit"]}`;
     default:
@@ -253,135 +292,108 @@ function inlineForTool(name: string, args: Record<string, unknown>, expanded: bo
   }
 }
 
-function renderShellResult(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Text {
+// ─────────────────────────────────────────────────────────────────────────────
+// Unified diff (edit / apply_patch) via the `diff` package
+// ─────────────────────────────────────────────────────────────────────────────
+
+type DiffRender = { readonly added: number; readonly removed: number; readonly lines: string[]; readonly markers: string[] };
+
+function countChanges(hunks: { readonly lines: readonly string[] }[]): { added: number; removed: number } {
+  let added = 0;
+  let removed = 0;
+  for (const hunk of hunks) {
+    for (const raw of hunk.lines) {
+      if (raw[0] === "+") added += 1;
+      else if (raw[0] === "-") removed += 1;
+    }
+  }
+  return { added, removed };
+}
+
+function renderDiff(before: string, after: string, expanded: boolean, theme: unknown): DiffRender {
+  const context = expanded ? 3 : 1;
+  let patch: { hunks: { oldStart: number; oldLines: number; newStart: number; newLines: number; lines: string[] }[] };
+  try {
+    patch = structuredPatch("", "", before ?? "", after ?? "", "", "", { context });
+  } catch {
+    patch = { hunks: [] };
+  }
+  const { added, removed } = countChanges(patch.hunks);
+  let maxLine = 0;
+  for (const hunk of patch.hunks) {
+    maxLine = Math.max(maxLine, hunk.newStart + hunk.newLines, hunk.oldStart + hunk.oldLines);
+  }
+  const width = Math.max(2, String(maxLine).length);
+  const lines: string[] = [];
+  const markers: string[] = [];
+  for (const hunk of patch.hunks) {
+    let oldLine = hunk.oldStart;
+    let newLine = hunk.newStart;
+    for (const raw of hunk.lines) {
+      if (raw[0] === "\\") continue; // "\ No newline at end of file" marker
+      const marker = raw[0];
+      const code = raw.slice(1);
+      let num: number;
+      if (marker === "+") {
+        num = newLine;
+        newLine += 1;
+      } else if (marker === "-") {
+        num = oldLine;
+        oldLine += 1;
+      } else {
+        num = newLine;
+        oldLine += 1;
+        newLine += 1;
+      }
+      const gutter = themeFg(theme, "dim", `  ${String(num).padStart(width)}`);
+      const markColor = marker === "+" ? "toolDiffAdded" : marker === "-" ? "toolDiffRemoved" : "dim";
+      const mark = themeFg(theme, markColor, marker);
+      const codeStr = themeFg(theme, "toolOutput", code);
+      lines.push(`${gutter} ${mark} ${codeStr}`);
+      markers.push(marker);
+    }
+  }
+  return { added, removed, lines, markers };
+}
+
+function diffCounts(before: string, after: string): { added: number; removed: number } {
+  if (before === after) return { added: 0, removed: 0 };
+  try {
+    const patch = structuredPatch("", "", before ?? "", after ?? "", "", "", { context: 0 });
+    return countChanges(patch.hunks);
+  } catch {
+    return { added: 0, removed: 0 };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-tool renderers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function renderShell(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Text {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
+  const subject = subjectFromArgs(name, args, expanded);
+  const sid = numberField(details, "sessionId") ?? numberField(details, "session_id");
+  const code = numberField(details, "exitCode") ?? numberField(details, "code");
+
+  // Async session still running: yellow dot, `(session N)` in the subject, no body yet.
+  if (name === "exec_command" && sid !== undefined && code === undefined) {
+    return new Text(header(name, `${subject} (session ${sid})`, "warning", theme), 0, 0);
+  }
+
+  const head = header(name, subject, dotFromDetails(details), theme);
   const output = stringField(details, "output") ?? textContent(result);
-  const title = shellTitle(name, args, theme);
-  const body = limitedText(output, expanded, theme, 5);
-  const sessionId = numberField(details, "sessionId") ?? numberField(details, "session_id");
-  const wallTimeMs = numberField(details, "wallTimeMs");
-  let footer = "";
-  if (sessionId !== undefined) {
-    footer = themeFg(theme, "accent", `running session ${sessionId}`);
-  } else if (wallTimeMs !== undefined) {
-    footer = themeFg(theme, "muted", `Took ${formatDuration(wallTimeMs)}`);
-  }
-  const parts = [title, body];
-  if (footer !== "") parts.push(footer);
-  return new Text(parts.join("\n"), 0, 0);
-}
 
-function renderMutationResult(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Text {
-  const expanded = expandedFromOptions(options);
-  const details = detailsRecord(result);
-  const status = statusFromDetails(details);
-  const path = stringField(details, "displayPath") ?? stringField(details, "path") ?? inlineForTool(name, args, expanded);
-  const summary =
-    name === "write"
-      ? `${numberField(details, "byteLength") ?? 0} bytes`
-      : name === "edit"
-        ? `${numberField(details, "editCount") ?? 0} replacement${numberField(details, "editCount") === 1 ? "" : "s"}`
-        : [
-            `${recordArrayField(details, "writes").length} write${recordArrayField(details, "writes").length === 1 ? "" : "s"}`,
-            `${stringArrayField(details, "deletes").length} delete${stringArrayField(details, "deletes").length === 1 ? "" : "s"}`,
-          ].join(" · ");
-  const lines = [header(name, path, status, theme), `  ${themeFg(theme, "muted", summary)}`];
-  if (expanded) {
-    const affected = stringArrayField(details, "affectedPaths");
-    const writes = recordArrayField(details, "writes").map((write) => stringField(write, "path")).filter(Boolean);
-    const deletes = stringArrayField(details, "deletes");
-    const detailLines = [...affected, ...writes, ...deletes];
-    if (detailLines.length > 0) {
-      lines.push(...detailLines.slice(0, 80).map((item) => themeFg(theme, "toolOutput", `  ${item}`)));
-    } else {
-      lines.push(limitedText(textContent(result), expanded, theme));
+  // write_stdin poll with no new output.
+  if (name === "write_stdin") {
+    const chars = stringField(args, "chars") ?? "";
+    if (chars.trim() === "" && output.trim() === "") {
+      return new Text([head, joinBody([themeFg(theme, "dim", "(still running; no new output)")], theme)].join("\n"), 0, 0);
     }
   }
-  return new Text(lines.join("\n"), 0, 0);
-}
 
-function renderGoalResult(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Text {
-  const expanded = expandedFromOptions(options);
-  const details = detailsRecord(result);
-  const goal = recordField(details, "goal");
-  const inline = goal === undefined ? inlineForTool(name, args, expanded) : stringField(goal, "objective") ?? "";
-  const lines = [header(name, truncate(oneLine(inline), expanded ? 300 : 120), statusFromDetails(details), theme)];
-  if (goal !== undefined) {
-    const parts = [
-      stringField(goal, "status"),
-      numberField(goal, "tokensUsed") !== undefined ? `${numberField(goal, "tokensUsed")} tokens` : undefined,
-      numberField(goal, "timeUsedSeconds") !== undefined ? `${numberField(goal, "timeUsedSeconds")}s` : undefined,
-    ].filter((part): part is string => part !== undefined && part !== "");
-    if (parts.length > 0) lines.push(`  ${themeFg(theme, "dim", parts.join(" · "))}`);
-  }
-  if (expanded) lines.push(limitedText(textContent(result), true, theme));
-  return new Text(lines.join("\n"), 0, 0);
-}
-
-function renderThreadResult(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Text {
-  const expanded = expandedFromOptions(options);
-  const details = detailsRecord(result);
-  const lines = [header(name, inlineForTool(name, args, expanded), statusFromDetails(details), theme)];
-  const threads = recordArrayField(details, "threads");
-  if (threads.length > 0) {
-    lines.push(renderItems(threads, expanded, theme));
-  } else {
-    const thread = recordField(details, "thread");
-    if (thread !== undefined) {
-      lines.push(`  ${themeFg(theme, "toolOutput", stringField(thread, "title") ?? stringField(thread, "id") ?? "thread")}`);
-    }
-    lines.push(limitedText(textContent(result), expanded, theme, name === "read_thread" ? 10 : 6, 180));
-  }
-  return new Text(lines.join("\n"), 0, 0);
-}
-
-function renderAgentResult(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Text {
-  const expanded = expandedFromOptions(options);
-  const details = detailsRecord(result);
-  const lines = [header(name, inlineForTool(name, args, expanded), statusFromDetails(details), theme)];
-  const worker = recordField(details, "worker");
-  const workers = recordArrayField(details, "workers");
-  if (worker !== undefined) {
-    lines.push(`  ${themeFg(theme, "toolOutput", stringField(worker, "id") ?? "worker")} ${themeFg(theme, "dim", `${stringField(worker, "lifecycle") ?? ""} · ${stringField(worker, "sandbox") ?? ""}`)}`);
-  } else if (workers.length > 0) {
-    lines.push(renderItems(workers, expanded, theme));
-  }
-  if (expanded) lines.push(limitedText(textContent(result), true, theme));
-  return new Text(lines.join("\n"), 0, 0);
-}
-
-function renderRalphResult(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Text {
-  const expanded = expandedFromOptions(options);
-  const details = detailsRecord(result);
-  const taskId = stringField(details, "taskId") ?? inlineForTool(name, args, expanded);
-  const parts = [
-    stringField(details, "status"),
-    numberField(details, "iteration") !== undefined ? `iteration ${numberField(details, "iteration")}` : undefined,
-    boolField(details, "reflection") === true ? "reflection" : undefined,
-  ].filter((part): part is string => part !== undefined);
-  const lines = [header(name, taskId, statusFromDetails(details), theme), `  ${themeFg(theme, "dim", parts.join(" · ") || textContent(result))}`];
-  if (expanded) lines.push(limitedText(textContent(result), true, theme));
-  return new Text(lines.join("\n"), 0, 0);
-}
-
-function renderExaResult(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Text {
-  const expanded = expandedFromOptions(options);
-  const details = detailsRecord(result);
-  const response = recordField(details, "response") ?? {};
-  const lines = [header(name, inlineForTool(name, args, expanded), statusFromDetails(details), theme)];
-  const results = recordArrayField(response, "results");
-  const data = recordArrayField(response, "data");
-  if (results.length > 0) {
-    lines.push(renderItems(results, expanded, theme));
-  } else if (data.length > 0) {
-    lines.push(renderItems(data, expanded, theme));
-  } else {
-    const output = recordField(response, "output");
-    const text = stringField(response, "response") ?? (output === undefined ? undefined : stringField(output, "text")) ?? textContent(result);
-    lines.push(limitedText(text, expanded, theme, 10, 180));
-  }
-  return new Text(lines.join("\n"), 0, 0);
+  return new Text([head, renderTailBody(output, expanded, theme, 5, 200, 220)].join("\n"), 0, 0);
 }
 
 function renderRead(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Text {
@@ -390,41 +402,340 @@ function renderRead(name: string, result: unknown, options: unknown, theme: unkn
   const path = stringField(details, "path") ?? stringField(args, "path") ?? "";
   const total = numberField(details, "totalLines");
   const shown = numberField(details, "shownLines");
-  let inline = path;
-  if (total !== undefined) {
-    inline =
-      shown !== undefined && shown < total
+  const subject =
+    total === undefined
+      ? path
+      : shown !== undefined && shown < total
         ? `${path} (${shown}/${total} lines)`
         : `${path} (${total} line${total === 1 ? "" : "s"})`;
-  }
-  const head = header("read", inline, statusFromDetails(details), theme);
-  // Collapsed: one line (header only). Expanded: header + the line-numbered body.
+  const head = header("read", subject, dotFromDetails(details), theme);
   if (!expanded) return new Text(head, 0, 0);
-  return new Text([head, limitedText(textContent(result), true, theme, 5, 2000)].join("\n"), 0, 0);
+
+  const rawText = textContent(result);
+  const highlighted = maybeHighlight(theme, rawText, langFromPath(path));
+  const bodyText = highlighted ?? rawText;
+  const physical = bodyText.trimEnd().split(/\r?\n/);
+  const colored = highlighted ? physical : physical.map((line) => themeFg(theme, "toolOutput", line));
+  if (shown !== undefined && total !== undefined && shown < total) {
+    colored.push(moreLine(total - shown, theme, "more lines"));
+  }
+  if (colored.length === 0 || (colored.length === 1 && colored[0] === "")) return new Text(head, 0, 0);
+  return new Text([head, joinBody(colored, theme)].join("\n"), 0, 0);
 }
 
-function renderGenericResult(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Text {
+function renderWrite(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Text {
+  const expanded = expandedFromOptions(options);
+  const details = detailsRecord(result);
+  const path = stringField(details, "displayPath") ?? stringField(details, "path") ?? stringField(args, "path") ?? "";
+  const mode = stringField(details, "mode");
+  const contents = stringField(details, "contents") ?? "";
+  const lineCount = contents === "" ? 0 : contents.trimEnd().split(/\r?\n/).length;
+  const trailing = mode === "append" ? `(append +${lineCount})` : `(${lineCount} line${lineCount === 1 ? "" : "s"})`;
+  const head = header("write", path, dotFromDetails(details), theme, trailing);
+  if (contents.trim() === "") return new Text(head, 0, 0);
+  return new Text([head, renderHeadBody(contents, expanded, theme, 3, 120, 220)].join("\n"), 0, 0);
+}
+
+function renderEdit(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Text {
+  const expanded = expandedFromOptions(options);
+  const details = detailsRecord(result);
+  const path = stringField(details, "displayPath") ?? stringField(details, "path") ?? stringField(args, "path") ?? "";
+  const before = stringField(details, "before");
+  const after = stringField(details, "after");
+  const head = header("edit", path, dotFromDetails(details), theme);
+  if (before === undefined || after === undefined) {
+    const editCount = numberField(details, "editCount");
+    const summary = editCount !== undefined ? `${editCount} replacement${editCount === 1 ? "" : "s"}` : "";
+    const body = summary === "" ? "" : joinBody([themeFg(theme, "dim", summary)], theme);
+    return new Text([head, body].filter(Boolean).join("\n"), 0, 0);
+  }
+  const diff = renderDiff(before, after, expanded, theme);
+  const withSummary = header("edit", path, dotFromDetails(details), theme, `(+${diff.added} -${diff.removed})`);
+  let body: string;
+  if (!expanded && diff.lines.length > 6) {
+    const hiddenMarkers = diff.markers.slice(6);
+    const hiddenAdded = hiddenMarkers.filter((marker) => marker === "+").length;
+    const label = hiddenAdded > 0 ? `… +${hiddenAdded} more` : `… ${hiddenMarkers.length} more`;
+    body = [...diff.lines.slice(0, 6), `  ${themeFg(theme, "dim", label)}`].join("\n");
+  } else {
+    body = diff.lines.join("\n");
+  }
+  return new Text([withSummary, body].filter(Boolean).join("\n"), 0, 0);
+}
+
+function renderApplyPatch(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Text {
+  const expanded = expandedFromOptions(options);
+  const details = detailsRecord(result);
+  const writes = recordArrayField(details, "writes").map((write) => ({
+    path: stringField(write, "path") ?? "",
+    before: stringField(write, "before") ?? "",
+    after: stringField(write, "contents") ?? stringField(write, "after") ?? "",
+  }));
+  const deletes = stringArrayField(details, "deletes");
+  const dotColor = dotFromDetails(details);
+
+  if (writes.length === 0 && deletes.length === 0) {
+    return new Text(header(name, subjectFromArgs(name, args, expanded), dotColor, theme), 0, 0);
+  }
+
+  const perFile = writes.map((write) => {
+    const { added, removed } = diffCounts(write.before, write.after);
+    return { ...write, added, removed };
+  });
+  const totalAdded = perFile.reduce((sum, file) => sum + file.added, 0);
+  const totalRemoved = perFile.reduce((sum, file) => sum + file.removed, 0);
+  const fileCount = writes.length + deletes.length;
+  const head = header(name, `${fileCount} file${fileCount === 1 ? "" : "s"}`, dotColor, theme, `(+${totalAdded} -${totalRemoved})`);
+
+  if (!expanded) {
+    const summaryLines = [
+      ...perFile.map((file) => themeFg(theme, "toolOutput", `${file.path} (+${file.added} -${file.removed})`)),
+      ...deletes.map((path) => themeFg(theme, "toolOutput", `${path} (deleted)`)),
+    ];
+    summaryLines.push(themeFg(theme, "dim", "… expand for full diff"));
+    return new Text([head, joinBody(summaryLines, theme)].join("\n"), 0, 0);
+  }
+
+  const blocks: string[] = [];
+  for (const file of perFile) {
+    const fileHead = `  ${themeFg(theme, "toolTitle", file.path)} ${themeFg(theme, "dim", `(+${file.added} -${file.removed})`)}`;
+    const diff = renderDiff(file.before, file.after, true, theme);
+    blocks.push(fileHead);
+    if (diff.lines.length > 0) blocks.push(diff.lines.join("\n"));
+  }
+  for (const path of deletes) {
+    blocks.push(`  ${themeFg(theme, "toolTitle", path)} ${themeFg(theme, "dim", "(deleted)")}`);
+  }
+  return new Text([head, ...blocks].join("\n"), 0, 0);
+}
+
+function renderGoal(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Text {
+  const expanded = expandedFromOptions(options);
+  const details = detailsRecord(result);
+  const goal = recordField(details, "goal");
+  const subject = goal !== undefined ? stringField(goal, "objective") ?? subjectFromArgs(name, args, expanded) : subjectFromArgs(name, args, expanded);
+  const head = header(name, truncate(oneLine(subject), expanded ? 300 : 120), dotFromDetails(details), theme);
+  const bodyLines: string[] = [];
+  if (goal !== undefined) {
+    const facts = [
+      stringField(goal, "status"),
+      numberField(goal, "tokensUsed") !== undefined ? `${numberField(goal, "tokensUsed")} tokens` : undefined,
+      numberField(goal, "timeUsedSeconds") !== undefined ? `${numberField(goal, "timeUsedSeconds")}s` : undefined,
+    ].filter((part): part is string => part !== undefined && part !== "");
+    if (facts.length > 0) bodyLines.push(themeFg(theme, "dim", facts.join(" · ")));
+  }
+  if (expanded) bodyLines.push(...fullTextLines(textContent(result), theme));
+  return new Text([head, joinBody(bodyLines, theme)].filter(Boolean).join("\n"), 0, 0);
+}
+
+function listItemTitle(item: Record<string, unknown>, fallback: string): string {
+  return stringField(item, "title") ?? stringField(item, "id") ?? stringField(item, "url") ?? fallback;
+}
+
+function resultDescription(item: Record<string, unknown>): string | undefined {
+  const summary = stringField(item, "summary") ?? stringField(item, "text") ?? stringField(item, "content");
+  if (summary !== undefined) return summary;
+  const highlights = item["highlights"];
+  if (Array.isArray(highlights)) return highlights.find((part): part is string => typeof part === "string");
+  return undefined;
+}
+
+function collectionMeta(item: Record<string, unknown>): string {
+  const parts: string[] = [];
+  const url = stringField(item, "url");
+  if (url !== undefined) parts.push(domainOf(url));
+  const count = numberField(item, "messageCount") ?? numberField(item, "message_count");
+  if (count !== undefined) parts.push(`${count} msgs`);
+  const status = stringField(item, "status");
+  if (status !== undefined) parts.push(status);
+  const lifecycle = stringField(item, "lifecycle");
+  if (lifecycle !== undefined) parts.push(lifecycle);
+  const sandbox = stringField(item, "sandbox");
+  if (sandbox !== undefined) parts.push(sandbox);
+  return parts.join(" · ");
+}
+
+function collectionItemLine(item: Record<string, unknown>, index: number, expanded: boolean, theme: unknown): string {
+  const sep = ` ${themeFg(theme, "dim", "·")} `;
+  const title = listItemTitle(item, `item ${index + 1}`);
+  let line = `${themeFg(theme, "accent", String(index + 1))}${sep}${themeFg(theme, "toolOutput", title)}`;
+  const meta = collectionMeta(item);
+  if (meta !== "") line += `${sep}${themeFg(theme, "dim", meta)}`;
+  if (expanded) {
+    const description = resultDescription(item);
+    if (description !== undefined && description.trim() !== "") {
+      line += `\n${themeFg(theme, "dim", truncate(oneLine(description), 900))}`;
+    }
+  }
+  return line;
+}
+
+function renderCollectionItems(
+  name: string,
+  details: Record<string, unknown>,
+  options: unknown,
+  theme: unknown,
+  baseSubject: string,
+  items: Record<string, unknown>[],
+): Text {
+  const expanded = expandedFromOptions(options);
+  const head = header(name, baseSubject, dotFromDetails(details), theme, `(${items.length} result${items.length === 1 ? "" : "s"})`);
+  if (items.length === 0) return new Text([head, joinBody([themeFg(theme, "dim", "(none)")], theme)].join("\n"), 0, 0);
+  const limit = expanded ? 30 : 3;
+  const bodyLines = items.slice(0, limit).map((item, index) => collectionItemLine(item, index, expanded, theme));
+  if (items.length > limit) bodyLines.push(moreLine(items.length - limit, theme, "more"));
+  return new Text([head, joinBody(bodyLines, theme)].join("\n"), 0, 0);
+}
+
+function renderFindThread(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Text {
+  const details = detailsRecord(result);
+  return renderCollectionItems(name, details, options, theme, subjectFromArgs(name, args, expandedFromOptions(options)), recordArrayField(details, "threads"));
+}
+
+function renderReadThread(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Text {
+  const expanded = expandedFromOptions(options);
+  const details = detailsRecord(result);
+  const thread = recordField(details, "thread");
+  const head = header(name, subjectFromArgs(name, args, expanded), dotFromDetails(details), theme);
+  const bodyLines: string[] = [];
+  if (thread !== undefined) {
+    const facts = [
+      stringField(thread, "title"),
+      (numberField(thread, "messageCount") ?? numberField(thread, "message_count")) !== undefined
+        ? `${numberField(thread, "messageCount") ?? numberField(thread, "message_count")} msgs`
+        : undefined,
+    ].filter((part): part is string => part !== undefined && part !== "");
+    if (facts.length > 0) bodyLines.push(themeFg(theme, "dim", facts.join(" · ")));
+  }
+  if (expanded) bodyLines.push(...fullTextLines(textContent(result), theme));
+  return new Text([head, joinBody(bodyLines, theme)].filter(Boolean).join("\n"), 0, 0);
+}
+
+function renderAgent(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Text {
+  const expanded = expandedFromOptions(options);
+  const details = detailsRecord(result);
+  const workers = recordArrayField(details, "workers");
+  const profiles = recordArrayField(details, "profiles");
+  if (workers.length > 0) return renderCollectionItems(name, details, options, theme, subjectFromArgs(name, args, expanded), workers);
+  if (profiles.length > 0) return renderCollectionItems(name, details, options, theme, subjectFromArgs(name, args, expanded), profiles);
+
+  const worker = recordField(details, "worker");
+  const head = header(name, subjectFromArgs(name, args, expanded), dotFromDetails(details), theme);
+  const bodyLines: string[] = [];
+  if (worker !== undefined) {
+    const id = stringField(worker, "id");
+    const lifecycle = stringField(worker, "lifecycle");
+    const facts = [id !== undefined ? `run ${id}` : undefined, lifecycle].filter((part): part is string => part !== undefined && part !== "");
+    if (facts.length > 0) bodyLines.push(themeFg(theme, "dim", facts.join(" · ")));
+  }
+  if (expanded) bodyLines.push(...fullTextLines(textContent(result), theme));
+  return new Text([head, joinBody(bodyLines, theme)].filter(Boolean).join("\n"), 0, 0);
+}
+
+function renderRalph(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Text {
+  const expanded = expandedFromOptions(options);
+  const details = detailsRecord(result);
+  const taskId = stringField(details, "taskId") ?? subjectFromArgs(name, args, expanded);
+  const head = header(name, taskId, dotFromDetails(details), theme);
+  const facts = [
+    numberField(details, "iteration") !== undefined ? `iteration ${numberField(details, "iteration")}` : undefined,
+    stringField(details, "status"),
+    boolField(details, "reflection") === true ? "reflection" : undefined,
+  ].filter((part): part is string => part !== undefined && part !== "");
+  const bodyLines: string[] = [];
+  if (facts.length > 0) bodyLines.push(themeFg(theme, "dim", facts.join(" · ")));
+  if (expanded) bodyLines.push(...fullTextLines(textContent(result), theme));
+  return new Text([head, joinBody(bodyLines, theme)].filter(Boolean).join("\n"), 0, 0);
+}
+
+function renderExaSearch(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Text {
+  const expanded = expandedFromOptions(options);
+  const details = detailsRecord(result);
+  const response = recordField(details, "response") ?? {};
+  const results = recordArrayField(response, "results");
+  const head = header(name, subjectFromArgs(name, args, expanded), dotFromDetails(details), theme, `(${results.length} result${results.length === 1 ? "" : "s"})`);
+  if (results.length === 0) return new Text([head, joinBody([themeFg(theme, "dim", "(none)")], theme)].join("\n"), 0, 0);
+  const limit = expanded ? 10 : 3;
+  const sep = ` ${themeFg(theme, "dim", "·")} `;
+  const bodyLines = results.slice(0, limit).map((item, index) => {
+    const title = listItemTitle(item, `result ${index + 1}`);
+    const url = stringField(item, "url") ?? "";
+    const domain = domainOf(url);
+    let line = `${themeFg(theme, "accent", String(index + 1))}${sep}${themeFg(theme, "toolOutput", title)}`;
+    if (domain !== "") line += `${sep}${themeFg(theme, "dim", domain)}`;
+    if (expanded) {
+      const extra: string[] = [];
+      if (url !== "") extra.push(themeFg(theme, "dim", url));
+      const published = stringField(item, "publishedDate");
+      if (published !== undefined) extra.push(themeFg(theme, "dim", published));
+      const description = resultDescription(item);
+      if (description !== undefined && description.trim() !== "") {
+        extra.push(themeFg(theme, "dim", truncate(oneLine(description), name === "crawling_exa" ? 600 : 300)));
+      }
+      if (extra.length > 0) line += `\n${extra.join("\n")}`;
+    }
+    return line;
+  });
+  if (results.length > limit) bodyLines.push(moreLine(results.length - limit, theme, "more"));
+  return new Text([head, joinBody(bodyLines, theme)].join("\n"), 0, 0);
+}
+
+function renderCodeContext(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Text {
+  const expanded = expandedFromOptions(options);
+  const details = detailsRecord(result);
+  const response = recordField(details, "response") ?? {};
+  const text = stringField(response, "response") ?? textContent(result);
+  const head = header(name, subjectFromArgs(name, args, expanded), dotFromDetails(details), theme);
+  return new Text([head, renderHeadBody(text, expanded, theme, 5, 100000, 220)].join("\n"), 0, 0);
+}
+
+function renderExaAgent(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Text {
+  const expanded = expandedFromOptions(options);
+  const details = detailsRecord(result);
+  const response = recordField(details, "response") ?? {};
+
+  if (name === "exa_agent_list_runs" || name === "exa_agent_list_events") {
+    const data = recordArrayField(response, "data");
+    const items = data.length > 0 ? data : recordArrayField(response, "results");
+    return renderCollectionItems(name, details, options, theme, subjectFromArgs(name, args, expanded), items);
+  }
+  if (name === "exa_agent_cancel_run") {
+    return new Text(header(name, subjectFromArgs(name, args, expanded), dotFromDetails(details), theme), 0, 0);
+  }
+  // create_run / get_run: single entity `<id> · <status>`, output.text full when expanded.
+  const id = stringField(response, "id") ?? subjectFromArgs(name, args, expanded);
+  const status = stringField(response, "status");
+  const subject = status !== undefined ? `${id} · ${status}` : id;
+  const head = header(name, subject, dotFromDetails(details), theme);
+  const output = recordField(response, "output");
+  const text = output !== undefined ? stringField(output, "text") ?? "" : stringField(response, "response") ?? "";
+  const bodyLines = expanded ? fullTextLines(text, theme) : [];
+  return new Text([head, joinBody(bodyLines, theme)].filter(Boolean).join("\n"), 0, 0);
+}
+
+function renderGeneric(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Text {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
   const text = textContent(result);
-  const body = expanded ? (text === "" ? compactJson(details) : text) : text;
-  return new Text(`${header(name, inlineForTool(name, args, expanded), statusFromDetails(details), theme)}\n${limitedText(body, expanded, theme)}`, 0, 0);
+  const head = header(name, subjectFromArgs(name, args, expanded), dotFromDetails(details), theme);
+  const body = renderTailBody(expanded ? (text === "" ? compactJson(details) : text) : text, expanded, theme, 5, 200, 220);
+  return new Text([head, body].join("\n"), 0, 0);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// taumel.notification message renderer (subagent + exec completions)
+// ─────────────────────────────────────────────────────────────────────────────
 
 function attrValue(content: string, pattern: RegExp): string | undefined {
   const match = pattern.exec(content);
   return match ? match[1] : undefined;
 }
 
-// Inner text of a <tag>...</tag> block in our own notification markup.
 function blockBetween(content: string, tag: string): string {
   const match = new RegExp(`<${tag}>\\n?([\\s\\S]*?)\\n?\\s*</${tag}>`).exec(content);
   return match ? match[1] : "";
 }
 
-// Renderer for `taumel.notification` custom messages (subagent + exec
-// completions). Collapsed: a tool-style header plus a short output preview;
-// expanded: the full output. Falls back to raw content for unknown kinds.
 function renderNotificationMessage(message: unknown, options: unknown, theme: unknown): Text | undefined {
   const content = isRecord(message) ? stringField(message, "content") ?? "" : "";
   if (content === "") return undefined;
@@ -435,26 +746,27 @@ function renderNotificationMessage(message: unknown, options: unknown, theme: un
     const sessionId = attrValue(content, /<session id="([^"]*)"/);
     const exitCode = attrValue(content, /exit_code="(-?\d+)"/);
     const code = exitCode === undefined ? undefined : Number(exitCode);
-    const status: Status =
-      code === 0 ? { text: "exit 0", color: "success" } : { text: `exit ${exitCode ?? "?"}`, color: "error" };
-    const inline = sessionId === undefined ? "" : `session ${sessionId}`;
-    const body = limitedText(blockBetween(content, "output"), expanded, theme, 5);
-    return new Text([header("exec completed", inline, status, theme), body].join("\n"), 0, 0);
+    const dotColor = code === undefined ? "success" : code === 0 ? "success" : "error";
+    const subject = sessionId === undefined ? "" : `session ${sessionId}`;
+    const head = header("exec_completion", subject, dotColor, theme);
+    const body = renderTailBody(blockBetween(content, "output"), expanded, theme, 5, 100000, 220);
+    return new Text([head, body].join("\n"), 0, 0);
   }
 
   if (kind === "agent_completion") {
     const agentId = attrValue(content, /<agent id="([^"]*)"/);
     const profile = attrValue(content, /profile="([^"]*)"/);
     const runStatus = attrValue(content, /<run id="[^"]*" status="([^"]*)"/) ?? "completed";
-    const status: Status =
-      runStatus === "completed" ? { text: runStatus, color: "success" } : { text: runStatus, color: "error" };
-    const inline = [agentId, profile === undefined ? undefined : `(${profile})`].filter(Boolean).join(" ");
+    const dotColor = runStatus === "completed" || runStatus === "succeeded" ? "success" : "error";
+    const subject = [agentId, profile !== undefined ? `(${profile})` : undefined].filter(Boolean).join(" ");
+    const head = header("agent_completion", subject, dotColor, theme);
     const finalOutput = blockBetween(content, "final_output");
-    const body = limitedText(finalOutput !== "" ? finalOutput : blockBetween(content, "error"), expanded, theme, 5);
-    return new Text([header("agent completed", inline, status, theme), body].join("\n"), 0, 0);
+    const text = finalOutput !== "" ? finalOutput : blockBetween(content, "error");
+    const body = renderTailBody(text, expanded, theme, 5, 100000, 220);
+    return new Text([head, body].join("\n"), 0, 0);
   }
 
-  return new Text(limitedText(content, expanded, theme, 6), 0, 0);
+  return new Text(renderTailBody(content, expanded, theme, 6, 100000, 220), 0, 0);
 }
 
 export function notificationMessageRenderer() {
@@ -462,11 +774,16 @@ export function notificationMessageRenderer() {
     renderNotificationMessage(message, options, theme);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Public factory
+// ─────────────────────────────────────────────────────────────────────────────
+
 function progressText(name: string): string {
   if (name.startsWith("exa_") || name.endsWith("_exa")) return "waiting for Exa";
   if (name === "find_thread") return "searching threads";
   if (name === "read_thread") return "reading thread";
   if (name === "read") return "reading";
+  if (name === "agent_wait") return "waiting";
   return "running";
 }
 
@@ -476,24 +793,30 @@ export function renderersForTool(name: string) {
       if (isRecord(context) && context["isPartial"] === false) return new Text("", 0, 0);
       const callArgs = isRecord(args) ? args : {};
       if (name === "exec_command" || name === "write_stdin") {
-        return new Text(shellTitle(name, callArgs, theme), 0, 0);
+        return new Text(callHeader(name, subjectFromArgs(name, callArgs, false), "running", theme), 0, 0);
       }
-      return new Text(callLine(name, inlineForTool(name, callArgs, false), progressText(name), theme), 0, 0);
+      return new Text(callHeader(name, subjectFromArgs(name, callArgs, false), progressText(name), theme), 0, 0);
     },
     renderResult(result: unknown, options: unknown, theme: unknown, context: unknown) {
       if (isRecord(options) && options["isPartial"] === true) {
-        return new Text(themeFg(theme, "warning", `${name} ${progressText(name)}...`), 0, 0);
+        const args = argsFromContext(context);
+        return new Text(callHeader(name, subjectFromArgs(name, args, false), progressText(name), theme), 0, 0);
       }
       const args = argsFromContext(context);
-      if (name === "exec_command" || name === "write_stdin") return renderShellResult(name, result, options, theme, args);
+      if (name === "exec_command" || name === "write_stdin") return renderShell(name, result, options, theme, args);
       if (name === "read") return renderRead(name, result, options, theme, args);
-      if (name === "write" || name === "edit" || name === "apply_patch") return renderMutationResult(name, result, options, theme, args);
-      if (name === "get_goal" || name === "create_goal" || name === "update_goal") return renderGoalResult(name, result, options, theme, args);
-      if (name === "find_thread" || name === "read_thread") return renderThreadResult(name, result, options, theme, args);
-      if (name.startsWith("agent_")) return renderAgentResult(name, result, options, theme, args);
-      if (name === "ralph_continue" || name === "ralph_finish") return renderRalphResult(name, result, options, theme, args);
-      if (name.endsWith("_exa") || name.startsWith("exa_agent_")) return renderExaResult(name, result, options, theme, args);
-      return renderGenericResult(name, result, options, theme, args);
+      if (name === "write") return renderWrite(name, result, options, theme, args);
+      if (name === "edit") return renderEdit(name, result, options, theme, args);
+      if (name === "apply_patch") return renderApplyPatch(name, result, options, theme, args);
+      if (name === "get_goal" || name === "create_goal" || name === "update_goal") return renderGoal(name, result, options, theme, args);
+      if (name === "find_thread") return renderFindThread(name, result, options, theme, args);
+      if (name === "read_thread") return renderReadThread(name, result, options, theme, args);
+      if (name.startsWith("agent_")) return renderAgent(name, result, options, theme, args);
+      if (name === "ralph_continue" || name === "ralph_finish") return renderRalph(name, result, options, theme, args);
+      if (name === "get_code_context_exa") return renderCodeContext(name, result, options, theme, args);
+      if (name === "web_search_exa" || name === "crawling_exa") return renderExaSearch(name, result, options, theme, args);
+      if (name.startsWith("exa_agent_")) return renderExaAgent(name, result, options, theme, args);
+      return renderGeneric(name, result, options, theme, args);
     },
   };
 }

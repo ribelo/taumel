@@ -1470,6 +1470,7 @@ async function executeLegacyWrite(
     path,
     displayPath,
     mode,
+    contents,
     byteLength: contents.length,
   });
 }
@@ -1512,6 +1513,8 @@ async function executeLegacyEdit(
     path,
     displayPath,
     editCount,
+    before: content,
+    after: nextContent,
   });
 }
 
@@ -1552,6 +1555,12 @@ async function executeApplyPatch(
   if (!Array.isArray(writes) || !writes.every(isRecord)) {
     throw new Error("Invalid Taumel apply_patch result");
   }
+  // Attach the pre-patch file contents so the renderer can compute a real
+  // unified diff per file (apply_patch details already carry the new contents).
+  const writesWithBefore = writes.map((write) => {
+    const writePath = stringField(write, "path");
+    return writePath === "" ? write : { ...write, before: files[writePath] ?? "" };
+  });
   const writePaths = writes
     .map((write) => stringField(write, "path"))
     .filter((path) => path !== "");
@@ -1563,7 +1572,7 @@ async function executeApplyPatch(
     throw new Error("Invalid Taumel apply_patch result");
   }
   await writePatchFiles(application);
-  return hostToolResult(core, "apply_patch", application);
+  return hostToolResult(core, "apply_patch", { ...application, writes: writesWithBefore });
 }
 
 export async function executeTool(

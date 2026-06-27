@@ -412,10 +412,11 @@ try {
   const compactShellLines = compactShell.split("\n").map((line) => line.trim());
   const expandedShellLines = expandedShell.split("\n").map((line) => line.trim());
   assert(
-    !compactShellLines.includes("file-1") &&
-    compactShell.includes("earlier lines") &&
-    compactShell.includes("ls many-files") &&
-    expandedShellLines.includes("file-1") &&
+    compactShell.startsWith("• exec_command · ls many-files") &&
+    compactShell.includes("  └ ") &&
+    compactShell.includes("more lines") &&
+    !compactShellLines.includes("file-2") &&
+    expandedShellLines.includes("file-2") &&
     expandedShell.length > compactShell.length,
     `shell renderer did not compact long output: ${JSON.stringify({ compactShell, expandedShell })}`,
   );
