@@ -1,5 +1,5 @@
 import { toolNames } from "../src/tool-contracts.ts";
-import { renderersForTool } from "../src/tool-renderer.ts";
+import { notificationMessageRenderer, renderersForTool } from "../src/tool-renderer.ts";
 
 const assert = (condition, message) => {
   if (!condition) throw new Error(message);
@@ -120,15 +120,27 @@ for (const name of toolNames) {
   assert(typeof renderers.renderResult === "function", `${name} missing renderResult`);
 
   const args = argsFor(name);
+  const shellTool = name === "exec_command" || name === "write_stdin";
   const call = renderText(renderers.renderCall(args, theme, { isPartial: true }));
-  assert(call.includes(name), `${name} call renderer did not include name: ${call}`);
+  // Shell tools render Pi-style (`$ cmd` / `poll session N`) without the literal
+  // tool name, by design.
+  assert(call.includes(name) || shellTool, `${name} call renderer did not include name: ${call}`);
 
   const result = resultFor(name);
   const compact = renderText(renderers.renderResult(result, { expanded: false, isPartial: false }, theme, { args }));
   const expanded = renderText(renderers.renderResult(result, { expanded: true, isPartial: false }, theme, { args }));
-  assert(compact.includes(name) || name === "write_stdin", `${name} compact renderer did not include a title: ${compact}`);
+  assert(compact.includes(name) || shellTool, `${name} compact renderer did not include a title: ${compact}`);
   assert(expanded.length >= compact.length, `${name} expanded renderer should be at least as informative`);
 }
+
+assert(
+  renderText(renderersForTool("exec_command").renderCall({ cmd: "ls many-files" }, theme, { isPartial: true })).includes("$ ls many-files"),
+  "exec_command call renderer should show the $ command title",
+);
+assert(
+  renderText(renderersForTool("write_stdin").renderCall({ session_id: 7 }, theme, { isPartial: true })).includes("poll session 7"),
+  "write_stdin poll call renderer should name the session",
+);
 
 const shell = renderersForTool("exec_command");
 const shellArgs = argsFor("exec_command");
@@ -142,3 +154,48 @@ const compactExa = renderText(exa.renderResult(resultFor("web_search_exa"), { ex
 const expandedExa = renderText(exa.renderResult(resultFor("web_search_exa"), { expanded: true, isPartial: false }, theme, { args: argsFor("web_search_exa") }));
 assert(!compactExa.includes("Result 10") && compactExa.includes("more"), `Exa output was not compacted: ${compactExa}`);
 assert(expandedExa.includes("Result 10"), `expanded Exa output did not include more results: ${expandedExa}`);
+
+// taumel.notification message renderer: compact header + preview, expanded full.
+const renderNotification = notificationMessageRenderer();
+const execNote = [
+  '<taumel_notification kind="exec_completion" severity="info">',
+  '  <session id="3" exit_code="0" />',
+  "  <output>",
+  longLines,
+  "  </output>",
+  "</taumel_notification>",
+].join("\n");
+const compactExecNote = renderText(renderNotification({ customType: "taumel.notification", content: execNote }, { expanded: false }, theme));
+const expandedExecNote = renderText(renderNotification({ customType: "taumel.notification", content: execNote }, { expanded: true }, theme));
+assert(compactExecNote.includes("exec completed") && compactExecNote.includes("session 3") && compactExecNote.includes("exit 0"), `exec notification header missing: ${compactExecNote}`);
+assert(!/(^|\n)\s*line-1\s*(\n|$)/.test(compactExecNote) && compactExecNote.includes("earlier lines"), `exec notification output was not compacted: ${compactExecNote}`);
+assert(/(^|\n)\s*line-1\s*(\n|$)/.test(expandedExecNote), `expanded exec notification did not include full output: ${expandedExecNote}`);
+
+const agentNote = [
+  '<taumel_notification kind="agent_completion" severity="info">',
+  '  <agent id="finder-7" profile="finder" />',
+  '  <run id="finder-7-run-1" status="completed" />',
+  "  <final_output>",
+  "all done here",
+  "  </final_output>",
+  "</taumel_notification>",
+].join("\n");
+const compactAgentNote = renderText(renderNotification({ customType: "taumel.notification", content: agentNote }, { expanded: false }, theme));
+assert(compactAgentNote.includes("agent completed") && compactAgentNote.includes("finder-7") && compactAgentNote.includes("completed"), `agent notification header missing: ${compactAgentNote}`);
+assert(compactAgentNote.includes("all done here"), `agent notification body missing: ${compactAgentNote}`);
+
+assert(
+  renderNotification({ customType: "taumel.notification", content: "" }, { expanded: false }, theme) === undefined,
+  "empty notification content should render nothing",
+);
+
+// read renderer: collapsed is a single header line; expanded shows the body.
+const readResult = {
+  content: [{ type: "text", text: "1\talpha\n2\tbeta\n3\tgamma" }],
+  details: { ok: true, path: "src/x.ts", totalLines: 3, startLine: 1, shownLines: 3, truncated: false },
+};
+const readRenderer = renderersForTool("read");
+const compactRead = renderText(readRenderer.renderResult(readResult, { expanded: false, isPartial: false }, theme, { args: { path: "src/x.ts" } }));
+const expandedRead = renderText(readRenderer.renderResult(readResult, { expanded: true, isPartial: false }, theme, { args: { path: "src/x.ts" } }));
+assert(!compactRead.includes("\n") && compactRead.includes("read") && compactRead.includes("src/x.ts"), `read collapsed should be one line: ${compactRead}`);
+assert(expandedRead.includes("alpha") && expandedRead.includes("gamma") && expandedRead.length > compactRead.length, `read expanded should show the body: ${expandedRead}`);

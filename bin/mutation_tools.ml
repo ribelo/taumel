@@ -35,14 +35,8 @@ let exec_request_from_params params =
      default_workdir = state.cwd;
      sandbox_permissions;
      yield_time_ms = Tool_contracts.ExecCommandParams.get_yield_time_ms params;
-     max_output_tokens =
-       Tool_contracts.ExecCommandParams.get_max_output_tokens params;
      tty =
        opt_bool_default false (Tool_contracts.ExecCommandParams.get_tty params);
-     shell =
-       opt_string_default "" (Tool_contracts.ExecCommandParams.get_shell params);
-     login =
-       opt_bool_default true (Tool_contracts.ExecCommandParams.get_login params);
    }
     : Taumel.Mutation_plan.exec_request)
 
@@ -54,8 +48,6 @@ let write_stdin_request_from_params params =
      chars =
        opt_string_default "" (Tool_contracts.WriteStdinParams.get_chars params);
      yield_time_ms = Tool_contracts.WriteStdinParams.get_yield_time_ms params;
-     max_output_tokens =
-       Tool_contracts.WriteStdinParams.get_max_output_tokens params;
    }
     : Taumel.Mutation_plan.write_stdin_request)
 
@@ -64,6 +56,10 @@ let write_request_from_params params =
   ({
      Taumel.Mutation_plan.path = Tool_contracts.WriteParams.get_path params;
      contents = Tool_contracts.WriteParams.get_content params;
+     mode =
+       (match Tool_contracts.WriteParams.get_mode params with
+        | Some "append" -> "append"
+        | _ -> "overwrite");
    }
     : Taumel.Mutation_plan.write_request)
 
@@ -103,10 +99,7 @@ let prepare_exec_command params =
               ("cmd", js_string plan.cmd);
               ("workdir", js_string plan.workdir);
               ("yieldTimeMs", js_optional_number plan.yield_time_ms);
-              ("maxOutputTokens", js_optional_number plan.max_output_tokens);
               ("tty", js_bool plan.tty);
-              ("shell", js_string plan.shell);
-              ("login", js_bool plan.login);
               ("sandbox", inject (js_sandbox_config sandbox));
             ]
           in
@@ -137,7 +130,6 @@ let prepare_write_stdin params =
               ("sessionId", js_number (float_of_int plan.session_id));
               ("chars", js_string plan.chars);
               ("yieldTimeMs", js_optional_number plan.yield_time_ms);
-              ("maxOutputTokens", js_optional_number plan.max_output_tokens);
             ])
 
 let js_edit_replacement (edit : Taumel.Sandbox.edit_replacement) =
@@ -180,7 +172,28 @@ let prepare_write params =
             [
               ( "contents",
                 js_string (Option.value plan.contents ~default:"") );
+              ("mode", js_string request.mode);
             ])
+
+let prepare_read params =
+  with_gateway_authorized "read" (fun _sandbox ->
+      let params = Tool_contracts.ReadParams.t_of_js (ojs_of_js params) in
+      let path = Tool_contracts.ReadParams.get_path params in
+      if String.trim path = "" then error_obj "read requires a non-empty path"
+      else
+        let int_opt = function
+          | Some value -> [ value ]
+          | None -> []
+        in
+        let offset = Tool_contracts.ReadParams.get_offset params in
+        let limit = Tool_contracts.ReadParams.get_limit params in
+        ok_obj
+          ([
+             ("action", js_string "read");
+             ("path", js_string path);
+           ]
+          @ List.map (fun v -> ("offset", js_number v)) (int_opt offset)
+          @ List.map (fun v -> ("limit", js_number v)) (int_opt limit)))
 
 let prepare_edit params =
   with_gateway_profile_authorized "edit" (fun sandbox ->

@@ -46,10 +46,7 @@ let test_exec_plan () =
          default_workdir = "/repo";
          sandbox_permissions = Sandbox.Use_default;
          yield_time_ms = None;
-         max_output_tokens = None;
          tty = false;
-         shell = "";
-         login = true;
        }
    with
   | Error "exec_command requires cmd" -> ()
@@ -66,10 +63,7 @@ let test_exec_plan () =
             Sandbox.Require_escalated
               { justification = "need host"; prefix_rule = None };
           yield_time_ms = Some 250.;
-          max_output_tokens = Some 1000.;
           tty = true;
-          shell = "bash";
-          login = false;
         }
     with
     | Ok plan -> plan
@@ -95,10 +89,7 @@ let test_exec_plan () =
              Sandbox.Require_escalated
                { justification = "need host"; prefix_rule = None };
            yield_time_ms = None;
-           max_output_tokens = None;
            tty = false;
-           shell = "";
-           login = true;
          })
   in
   expect_escalation_rejected "exec escalation never"
@@ -115,7 +106,7 @@ let test_write_edit_plan () =
   let write =
     match
       Mutation.plan_write sandbox
-        { path = "/outside/file.txt"; contents = "x" }
+        { path = "/outside/file.txt"; contents = "x"; mode = "overwrite" }
     with
     | Ok plan -> plan
     | Error message -> fail "write approval" message

@@ -1054,6 +1054,85 @@ try {
       throw new Error(`write_stdin did not poll session output: ${JSON.stringify({ stdinCalls, stdinResult })}`);
     }
 
+    // Background completion notification: an async command that exits while
+    // unpolled is delivered through the same notification queue as subagents
+    // (idle parent -> triggerTurn). No write_stdin poll consumes it.
+    const bgExecNotifyCount = sentMessages.length;
+    const bgExec = await tools.get("exec_command").execute(
+      "exec-bg-notify",
+      { cmd: "sleep 0.3; echo bg-complete", workdir: cwd, yield_time_ms: 25 },
+      undefined,
+      undefined,
+      ctx,
+    );
+    const bgSessionId = bgExec.details?.sessionId;
+    if (typeof bgSessionId !== "number") {
+      throw new Error(`background exec did not yield a running session: ${JSON.stringify(bgExec)}`);
+    }
+    const bgNotification = await waitFor(() => {
+      const message = sentMessages.at(-1);
+      return sentMessages.length === bgExecNotifyCount + 1 &&
+        message?.message?.customType === "taumel.notification" &&
+        message?.message?.content?.includes("exec_completion") &&
+        message?.message?.content?.includes("bg-complete") &&
+        message?.message?.content?.includes(`id=\"${bgSessionId}\"`)
+        ? message
+        : undefined;
+    }, "background exec completion notification was not delivered", 3000);
+    if (bgNotification?.options?.triggerTurn !== true) {
+      throw new Error(`background exec notification should wake an idle parent via triggerTurn: ${JSON.stringify(bgNotification)}`);
+    }
+    // Delivered exactly once.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    if (sentMessages.length !== bgExecNotifyCount + 1) {
+      throw new Error(`background exec notification delivered more than once: ${JSON.stringify(sentMessages.slice(bgExecNotifyCount))}`);
+    }
+    // The delivered session is consumed/removed: a later poll cannot find it.
+    let bgGone = false;
+    try {
+      await tools
+        .get("write_stdin")
+        .execute("stdin-bg-after", { session_id: bgSessionId, chars: "", yield_time_ms: 10 }, undefined, undefined, ctx);
+    } catch (error) {
+      bgGone = String(error instanceof Error ? error.message : error).toLowerCase().includes("unknown");
+    }
+    if (!bgGone) {
+      throw new Error("delivered background exec session should be removed after notification");
+    }
+
+    // read tool: line-numbered output, negative-offset tail, and missing-file error.
+    const readPath = join(cwd, "read-sample.txt");
+    await writeFile(readPath, "alpha\nbeta\ngamma\ndelta\n", "utf8");
+    const readAll = await tools.get("read").execute("read-all", { path: readPath }, undefined, undefined, ctx);
+    if (
+      readAll.details?.ok !== true ||
+      readAll.details?.totalLines !== 4 ||
+      !readAll.content?.[0]?.text?.includes("1\talpha") ||
+      !readAll.content?.[0]?.text?.includes("4\tdelta")
+    ) {
+      throw new Error(`read did not return line-numbered content: ${JSON.stringify(readAll)}`);
+    }
+    const readTail = await tools.get("read").execute("read-tail", { path: readPath, offset: -2 }, undefined, undefined, ctx);
+    if (
+      readTail.details?.startLine !== 3 ||
+      !readTail.content?.[0]?.text?.includes("3\tgamma") ||
+      readTail.content?.[0]?.text?.includes("1\talpha")
+    ) {
+      throw new Error(`read tail (negative offset) failed: ${JSON.stringify(readTail)}`);
+    }
+    const readMissing = await tools.get("read").execute("read-missing", { path: join(cwd, "nope.txt") }, undefined, undefined, ctx);
+    if (readMissing.details?.ok !== false || !readMissing.content?.[0]?.text?.includes("does not exist")) {
+      throw new Error(`read of a missing file should error: ${JSON.stringify(readMissing)}`);
+    }
+
+    // write append mode.
+    const appendPath = join(cwd, "append-sample.txt");
+    await tools.get("write").execute("write-initial", { path: appendPath, content: "one\n" }, undefined, undefined, ctx);
+    const appendResult = await tools.get("write").execute("write-append", { path: appendPath, content: "two\n", mode: "append" }, undefined, undefined, ctx);
+    if (appendResult.details?.mode !== "append" || (await readFile(appendPath, "utf8")) !== "one\ntwo\n") {
+      throw new Error(`write append mode did not append: ${JSON.stringify(appendResult)}`);
+    }
+
     const fullAccessTarget = join(outsideDir, "full-access.txt");
     const fullAccessResult = await tools.get("apply_patch").execute(
       "patch-full-access-outside",

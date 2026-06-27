@@ -9,6 +9,11 @@ let string_arg args index =
 let bool_arg args index =
   Js.to_bool (Unsafe.coerce (arg_at args index))
 
+let int_arg args index =
+  match float_value (arg_at args index) with
+  | Some value -> int_of_float value
+  | None -> -1
+
 let core_call name_js args_js =
   let name = Js.to_string name_js in
   let args = Option.value (array_value args_js) ~default:[||] in
@@ -45,7 +50,14 @@ let core_call name_js args_js =
       Exec_session.run_exec_command (arg 0) (arg 1) (arg 2)
         (string_arg args 3) (arg 4) (arg 5)
   | "writeExecStdin" -> Exec_session.write_stdin (arg 0) (string_arg args 1)
+  | "readFile" -> Read_tool.read_file (arg 0) (arg 1)
   | "shutdownExecOwner" -> Exec_session.shutdown_owner (string_arg args 0)
+  | "pendingExecNotifications" ->
+      Exec_session.pending_exec_notifications (string_arg args 0)
+  | "markExecNotificationDelivered" ->
+      Exec_session.mark_exec_notification_delivered (int_arg args 0)
+  | "awaitExecCompletion" ->
+      Exec_session.await_exec_completion (int_arg args 0)
   | "planCommandExecution" ->
       Command_bridge.plan_execution (string_arg args 0) (string_arg args 1) (arg 2)
   | "planGoalContinuation" ->

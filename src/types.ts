@@ -79,6 +79,10 @@ export type PiLike = {
   readonly getActiveTools?: () => readonly string[];
   readonly setActiveTools?: (toolNames: string[]) => void;
   readonly registerTool?: (tool: ToolDefinition) => void;
+  readonly registerMessageRenderer?: (
+    customType: string,
+    renderer: (message: unknown, options: unknown, theme: unknown) => unknown,
+  ) => void;
   readonly registerCommand?: (name: string, command: CommandDefinition) => void;
   readonly writeStdin?: (
     sessionId: number,

@@ -10,6 +10,7 @@ let prepare name params ctx =
   | "write_stdin" -> Mutation_tools.prepare_write_stdin params
   | "apply_patch" -> Mutation_tools.prepare_apply_patch params
   | "write" -> Mutation_tools.prepare_write params
+  | "read" -> Mutation_tools.prepare_read params
   | "edit" -> Mutation_tools.prepare_edit params
   | "get_goal" -> Goal_tools.prepare_get ()
   | "create_goal" -> Goal_tools.prepare_create params ctx

@@ -3,6 +3,7 @@ module Child_session = Child_session
 module Command_plan = Command_plan
 module Environment_context = Environment_context
 module Exa = Exa
+module File_read = File_read
 module Footer_model = Footer_model
 module Goal = Goal
 module Global_settings = Global_settings

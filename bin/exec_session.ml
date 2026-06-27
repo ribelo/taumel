@@ -6,10 +6,12 @@ type session = {
   started_at : float;
   tty : bool;
   mutable child : Unsafe.any option;
-  mutable output : string;
-  mutable stdout : string;
-  mutable stderr : string;
-  mutable read_offset : int;
+  pending : Buffer.t;
+  mutable chunk_bytes : int;
+  mutable chunk_lines : int;
+  mutable chunk_trimmed : bool;
+  mutable temp_path : string option;
+  mutable temp_fd : Unsafe.any option;
   mutable exited : bool;
   mutable exit_code : int option;
   mutable waiters : (int * (unit -> unit)) list;
@@ -18,8 +20,8 @@ type session = {
 
 type run_result = {
   output : string;
-  stdout : string;
-  stderr : string;
+  truncated : bool;
+  full_output_path : string option;
   wall_time_ms : float;
   session_id : int option;
   exit_code : int option;
@@ -65,18 +67,43 @@ let normalize_write_yield_ms value input_is_empty =
       max_empty_write_stdin_yield_time_ms
   else min responsive max_yield_time_ms
 
-let max_chars_from_tokens = function
-  | Some tokens when tokens > 0. ->
-      max 1_000 (min (int_of_float (Float.round (tokens *. 4.))) 200_000)
-  | _ -> 40_000
+let max_display_lines = 2000
+let max_display_bytes = 50 * 1024
 
-let truncate_output output max_output_tokens =
-  let max_chars = max_chars_from_tokens max_output_tokens in
-  if String.length output <= max_chars then output
+(* In-memory bound for the unread (pending) buffer. The full output always lives
+   in the temp file, so trimming the oldest unread bytes never loses data. *)
+let pending_cap = 1024 * 1024
+
+let count_newlines s =
+  let n = ref 0 in
+  String.iter (fun c -> if c = '\n' then incr n) s;
+  !n
+
+(* Return the suffix of [s] holding at most its last [n] lines. *)
+let last_lines s n =
+  if n <= 0 || s = "" then ""
   else
-    let omitted = String.length output - max_chars in
-    Printf.sprintf "[output truncated, omitted %d chars]\n%s" omitted
-      (String.sub output omitted max_chars)
+    let len = String.length s in
+    (* Ignore a single trailing newline so it is not counted as a separator. *)
+    let scan_from = if s.[len - 1] = '\n' then len - 2 else len - 1 in
+    let rec scan i seen =
+      if i < 0 then 0
+      else if s.[i] = '\n' then
+        if seen + 1 >= n then i + 1 else scan (i - 1) (seen + 1)
+      else scan (i - 1) seen
+    in
+    let start = if scan_from < 0 then 0 else scan (scan_from) 0 in
+    String.sub s start (len - start)
+
+(* Last [max_display_bytes] bytes, then further limited to the last
+   [max_display_lines] lines (whichever tail is shorter), matching Pi. *)
+let display_tail s =
+  let by_bytes =
+    if String.length s > max_display_bytes then
+      String.sub s (String.length s - max_display_bytes) max_display_bytes
+    else s
+  in
+  last_lines by_bytes max_display_lines
 
 let js_require name =
   Unsafe.fun_call (Unsafe.js_expr "require") [| js_string name |]
@@ -107,10 +134,71 @@ let int_from_js_default value default =
   | Some value -> int_of_float value
   | None -> default
 
-let add_output (session : session) ~stderr text =
-  if stderr then session.stderr <- session.stderr ^ text
-  else session.stdout <- session.stdout ^ text;
-  session.output <- session.output ^ text
+let math_random () =
+  let m = Unsafe.get Unsafe.global "Math" in
+  Option.value (float_value (Unsafe.fun_call (Unsafe.get m "random") [||])) ~default:0.
+
+let os_tmpdir () =
+  let os = js_require "node:os" in
+  match string_value (Unsafe.fun_call (Unsafe.get os "tmpdir") [||]) with
+  | Some dir when dir <> "" -> dir
+  | _ -> "/tmp"
+
+let path_join a b =
+  let path = js_require "node:path" in
+  match
+    string_value
+      (Unsafe.fun_call (Unsafe.get path "join") [| js_string a; js_string b |])
+  with
+  | Some p -> p
+  | None -> a ^ "/" ^ b
+
+(* Lazily open the full-output temp file on first output. *)
+let ensure_temp_file (session : session) =
+  match session.temp_fd with
+  | Some _ -> ()
+  | None -> (
+      try
+        let name =
+          Printf.sprintf "taumel-exec-%d-%d.log" session.id
+            (int_of_float (math_random () *. 1.0e9))
+        in
+        let path = path_join (os_tmpdir ()) name in
+        let fs = js_require "node:fs" in
+        let fd =
+          Unsafe.fun_call (Unsafe.get fs "openSync")
+            [| js_string path; js_string "a" |]
+        in
+        session.temp_path <- Some path;
+        session.temp_fd <- Some fd
+      with _ -> ())
+
+let write_temp (session : session) text =
+  match session.temp_fd with
+  | None -> ()
+  | Some fd -> (
+      try
+        let fs = js_require "node:fs" in
+        ignore (Unsafe.fun_call (Unsafe.get fs "writeSync") [| fd; js_string text |])
+      with _ -> ())
+
+(* stdout and stderr are merged into one ordered stream (Pi semantics). The full
+   stream goes to the temp file; only a bounded rolling tail stays in memory. *)
+let add_output (session : session) text =
+  if text <> "" then begin
+    ensure_temp_file session;
+    write_temp session text;
+    session.chunk_bytes <- session.chunk_bytes + String.length text;
+    session.chunk_lines <- session.chunk_lines + count_newlines text;
+    Buffer.add_string session.pending text;
+    if Buffer.length session.pending > pending_cap then begin
+      let s = Buffer.contents session.pending in
+      let keep = String.sub s (String.length s - pending_cap) pending_cap in
+      Buffer.clear session.pending;
+      Buffer.add_string session.pending keep;
+      session.chunk_trimmed <- true
+    end
+  end
 
 let notify (session : session) =
   let waiters = session.waiters in
@@ -207,54 +295,107 @@ let wait_for_settle session yield_ms signal ~on_done ~on_abort =
   in
   loop ()
 
-let drain_output (session : session) max_output_tokens =
-  let start = session.read_offset in
-  let length = String.length session.output - start in
-  let output = if length <= 0 then "" else String.sub session.output start length in
-  session.read_offset <- String.length session.output;
-  truncate_output output max_output_tokens
+let close_temp (session : session) =
+  (match session.temp_fd with
+  | None -> ()
+  | Some fd -> (
+      try
+        let fs = js_require "node:fs" in
+        ignore (Unsafe.fun_call (Unsafe.get fs "closeSync") [| fd |])
+      with _ -> ()));
+  session.temp_fd <- None
 
-let make_result (session : session) output max_output_tokens =
+(* Compute the display output (last 2000 lines / 50KB) with Pi's truncation
+   footer, WITHOUT mutating the session. Shared by the inline drain
+   (make_result) and the background completion notification. *)
+let display_output (session : session) =
+  let raw = Buffer.contents session.pending in
+  let disp = display_tail raw in
+  let truncated =
+    session.chunk_trimmed
+    || session.chunk_bytes > max_display_bytes
+    || session.chunk_lines > max_display_lines
+  in
+  let output =
+    if not truncated then disp
+    else begin
+      let shown =
+        count_newlines disp
+        + (if disp <> "" && disp.[String.length disp - 1] <> '\n' then 1 else 0)
+      in
+      let footer =
+        match session.temp_path with
+        | None -> ""
+        | Some path ->
+            let total = max session.chunk_lines shown in
+            let start_line = max 1 (total - shown + 1) in
+            Printf.sprintf
+              "[Showing lines %d-%d of %d. Full output: %s]" start_line total
+              total path
+      in
+      if footer = "" then disp
+      else if disp = "" then footer
+      else disp ^ "\n\n" ^ footer
+    end
+  in
+  let full_output_path = if truncated then session.temp_path else None in
+  (output, truncated, full_output_path)
+
+(* Drain the unread chunk for display: the last 2000 lines / 50KB, with a Pi
+   footer when the chunk was truncated (the full output stays in the temp file).
+   Resets the per-chunk accounting so the next call returns only new output. *)
+let make_result (session : session) =
+  let output, truncated, full_output_path = display_output session in
+  Buffer.clear session.pending;
+  session.chunk_bytes <- 0;
+  session.chunk_lines <- 0;
+  session.chunk_trimmed <- false;
   let base =
     {
       output;
-      stdout = truncate_output session.stdout max_output_tokens;
-      stderr = truncate_output session.stderr max_output_tokens;
+      truncated;
+      full_output_path;
       wall_time_ms = now_ms () -. session.started_at;
       session_id = None;
       exit_code = None;
     }
   in
-  if session.exited then { base with exit_code = Some (Option.value session.exit_code ~default:1) }
+  if session.exited then
+    { base with exit_code = Some (Option.value session.exit_code ~default:1) }
   else { base with session_id = Some session.id }
 
 let shell_result_text result =
-  let parts =
-    [
-      Printf.sprintf "Wall time: %.4f seconds" (result.wall_time_ms /. 1000.);
-    ]
+  let body =
+    if result.output = "" then
+      match result.session_id with Some _ -> "" | None -> "(no output)"
+    else result.output
   in
-  let parts =
-    match result.exit_code with
-    | None -> parts
-    | Some code -> parts @ [ Printf.sprintf "Process exited with code %d" code ]
-  in
-  let parts =
-    match result.session_id with
-    | None -> parts
-    | Some id -> parts @ [ Printf.sprintf "Process running with session ID %d" id ]
-  in
-  String.concat "\n" (parts @ [ "Output:"; result.output ])
+  let append status = if body = "" then status else body ^ "\n\n" ^ status in
+  match (result.session_id, result.exit_code) with
+  | Some id, _ ->
+      append
+        (Printf.sprintf "[Running - session %d; use write_stdin to read more]" id)
+  | None, Some code when code <> 0 ->
+      append (Printf.sprintf "Command exited with code %d" code)
+  | _ -> body
 
 let shell_result_details result extra =
   let fields =
     [
-      ("ok", js_bool (match result.exit_code with None -> true | Some code -> code = 0));
+      ( "ok",
+        js_bool (match result.exit_code with None -> true | Some code -> code = 0)
+      );
       ("output", js_string result.output);
-      ("stdout", js_string result.stdout);
-      ("stderr", js_string result.stderr);
       ("wallTimeMs", js_number result.wall_time_ms);
     ]
+  in
+  let fields =
+    if result.truncated then fields @ [ ("truncated", js_bool true) ] else fields
+  in
+  let fields =
+    match result.full_output_path with
+    | Some path -> fields @ [ ("fullOutputPath", js_string path) ]
+    | None -> fields
   in
   let fields =
     match result.exit_code with
@@ -286,30 +427,45 @@ let shell_tool_result result extra =
          ("details", shell_result_details result extra);
        |])
 
-let node_env tty =
+let node_env tty ~shell =
   let process = node_process () in
   let env = Unsafe.get process "env" in
-  if not tty then env
-  else
+  let assign overrides =
+    Unsafe.fun_call (Unsafe.get (Unsafe.get Unsafe.global "Object") "assign")
+      [| inject (Unsafe.obj [||]); inject env; inject (Unsafe.obj overrides) |]
+  in
+  if tty then
     let term =
       match optional_string_field env "TERM" with
       | Some value when value <> "" -> value
       | _ -> "xterm-256color"
     in
-    Unsafe.fun_call (Unsafe.get (Unsafe.get Unsafe.global "Object") "assign")
+    assign [| ("TERM", js_string term) |]
+  else
+    (* Non-interactive hygiene (improves on Pi): strip colour, disable pagers
+       and cursor-addressing, and make git fail fast instead of waiting on a
+       terminal. Honour an explicit ambient GIT_TERMINAL_PROMPT. SHELL points at
+       the resolved bash so child tools that spawn $SHELL get bash. *)
+    let git_prompt =
+      match optional_string_field env "GIT_TERMINAL_PROMPT" with
+      | Some value when value <> "" -> value
+      | _ -> "0"
+    in
+    assign
       [|
-        inject (Unsafe.obj [||]);
-        inject env;
-        inject (Unsafe.obj [| ("TERM", js_string term) |]);
+        ("NO_COLOR", js_string "1");
+        ("TERM", js_string "dumb");
+        ("GIT_TERMINAL_PROMPT", js_string git_prompt);
+        ("SHELL", js_string shell);
       |]
 
-let spawn_options cwd tty =
+let spawn_options cwd tty ~shell =
   let process = node_process () in
   Unsafe.obj
     [|
       ("cwd", js_string cwd);
       ("detached", js_bool (get_string process "platform" <> "win32"));
-      ("env", node_env tty);
+      ("env", node_env tty ~shell);
       ( "stdio",
         js_array
           [
@@ -320,7 +476,7 @@ let spawn_options cwd tty =
       ("windowsHide", js_bool true);
     |]
 
-let wire_stream session child name ~stderr =
+let wire_stream session child name =
   match property child name with
   | None -> ()
   | Some stream ->
@@ -330,7 +486,7 @@ let wire_stream session child name ~stderr =
              js_string "data";
              inject
                (Js.wrap_callback (fun data ->
-                    add_output session ~stderr (data_to_string data);
+                    add_output session (data_to_string data);
                     notify session));
            |])
 
@@ -345,12 +501,12 @@ let spawn_session session ~file ~args ~cwd =
       [|
         js_string file;
         js_array (List.map js_string args);
-        inject (spawn_options cwd session.tty);
+        inject (spawn_options cwd session.tty ~shell:file);
       |]
   in
   session.child <- Some child;
-  wire_stream session child "stdout" ~stderr:false;
-  wire_stream session child "stderr" ~stderr:true;
+  wire_stream session child "stdout";
+  wire_stream session child "stderr";
   ignore
     (Unsafe.meth_call child "on"
        [|
@@ -372,7 +528,7 @@ let spawn_session session ~file ~args ~cwd =
                   | Some message when message <> "" -> message
                   | _ -> js_error_to_string error
                 in
-                add_output session ~stderr:true (message ^ "\n");
+                add_output session (message ^ "\n");
                 session.exited <- true;
                 session.exit_code <- Some 1;
                 notify session));
@@ -387,20 +543,23 @@ let new_session owner_id tty =
     started_at = now_ms ();
     tty;
     child = None;
-    output = "";
-    stdout = "";
-    stderr = "";
-    read_offset = 0;
+    pending = Buffer.create 256;
+    chunk_bytes = 0;
+    chunk_lines = 0;
+    chunk_trimmed = false;
+    temp_path = None;
+    temp_fd = None;
     exited = false;
     exit_code = None;
     waiters = [];
     next_waiter_id = 1;
   }
 
-let finish_session session max_output_tokens extra resolve =
-  let output = drain_output session max_output_tokens in
-  if session.exited then Hashtbl.remove sessions session.id;
-  let result = make_result session output max_output_tokens in
+let finish_session session extra resolve =
+  let result = make_result session in
+  if session.exited then (
+    close_temp session;
+    Hashtbl.remove sessions session.id);
   ignore (Unsafe.fun_call resolve [| inject (shell_tool_result result extra) |])
 
 let rejected_promise message =
@@ -418,7 +577,7 @@ let resolved_promise value =
              ignore (Unsafe.fun_call resolve [| inject value |])));
     |]
 
-let promise_of_session session max_output_tokens yield_ms ?timeout_ms signal extra =
+let promise_of_session session yield_ms ?timeout_ms signal extra =
   Unsafe.new_obj (Unsafe.get Unsafe.global "Promise")
     [|
       inject
@@ -430,17 +589,25 @@ let promise_of_session session max_output_tokens yield_ms ?timeout_ms signal ext
                if not !settled then (
                  settled := true;
                  cleanup ();
-                 finish_session session max_output_tokens extra resolve)
+                 finish_session session extra resolve)
              in
              let reject_once message =
                if not !settled then (
                  settled := true;
                  cleanup ();
                  kill_session session;
+                 close_temp session;
                  Hashtbl.remove sessions session.id;
                  reject_error reject message)
              in
-             let on_abort () = reject_once "Shell command aborted" in
+             let on_abort () =
+               let body = (make_result session).output in
+               let message =
+                 if body = "" then "Command aborted"
+                 else body ^ "\n\nCommand aborted"
+               in
+               reject_once message
+             in
              if signal_aborted signal then on_abort ()
              else (
                timeout_ref :=
@@ -463,8 +630,7 @@ let run_exec_command prepared host runtime owner_id signal force_unsandboxed =
            ~args:call.invocation.args ~cwd:call.cwd
        with exn ->
          let message = Printexc.to_string exn ^ "\n" in
-         session.stderr <- message;
-         session.output <- message;
+         add_output session message;
          session.exited <- true;
          session.exit_code <- Some 1);
       Hashtbl.replace sessions session.id session;
@@ -475,7 +641,7 @@ let run_exec_command prepared host runtime owner_id signal force_unsandboxed =
             ("escalated", js_bool call.escalated);
           |]
       in
-      promise_of_session session call.max_output_tokens
+      promise_of_session session
         (normalize_exec_yield_ms call.yield_time_ms)
         ?timeout_ms:call.timeout_ms signal extra
 
@@ -506,7 +672,6 @@ let write_stdin prepared owner_id =
       | None ->
         let extra = Unsafe.obj [| ("kind", js_string "write_stdin") |] in
         promise_of_session session
-          (optional_positive_float prepared "maxOutputTokens")
           (normalize_write_yield_ms
              (optional_positive_float prepared "yieldTimeMs")
              (chars = ""))
@@ -519,7 +684,82 @@ let shutdown_owner owner_id =
     (fun _ session ->
       if session.owner_id = owner_id then (
         kill_session session;
+        close_temp session;
         None)
       else Some session)
     sessions;
   ok_obj [ ("action", js_string "shutdown_exec_owner") ]
+
+(* Background completion notification (mirrors subagent completion delivery).
+
+   An async session (one that returned a sessionId) that exits while no call is
+   draining it is left in [sessions] with [exited = true]: that is exactly a
+   pending, undelivered background completion. Synchronous commands, aborted
+   commands, and owner-shutdown kills are all removed from [sessions], so they
+   never appear here. A write_stdin poll that drains the terminal exit removes
+   the session too (the inline first-claim path), suppressing any notification. *)
+
+let exec_notification_content (session : session) =
+  let output, _truncated, _path = display_output session in
+  let code = Option.value session.exit_code ~default:1 in
+  let body = if output = "" then "(no output)" else output in
+  Printf.sprintf
+    "<taumel_notification kind=\"exec_completion\" severity=\"info\">\n  \
+     <session id=\"%d\" exit_code=\"%d\" />\n  <output>\n%s\n  </output>\n\
+     </taumel_notification>"
+    session.id code body
+
+(* Pending deliverable background completions for [owner_id]: terminal sessions
+   that have not yet been drained or delivered. Read-only; the session is removed
+   only once delivery succeeds (mark_exec_notification_delivered). *)
+let pending_exec_notifications owner_id =
+  let pending =
+    Hashtbl.fold
+      (fun _ session acc ->
+        if session.owner_id = owner_id && session.exited then session :: acc
+        else acc)
+      sessions []
+  in
+  let pending = List.sort (fun a b -> compare a.id b.id) pending in
+  let notification (session : session) =
+    Unsafe.obj
+      [|
+        ("session_id", js_number (float_of_int session.id));
+        ("customType", js_string "taumel.notification");
+        ("content", js_string (exec_notification_content session));
+        ("display", js_bool true);
+      |]
+  in
+  ok_obj [ ("notifications", js_array (List.map notification pending)) ]
+
+let mark_exec_notification_delivered session_id =
+  (match Hashtbl.find_opt sessions session_id with
+  | Some session ->
+      close_temp session;
+      Hashtbl.remove sessions session_id
+  | None -> ());
+  ok_obj [ ("action", js_string "mark_exec_notification_delivered") ]
+
+(* Resolves when the session has exited (or is already gone/drained), without
+   draining or removing it, so the turn_end/idle flush can deliver its output.
+   The TS layer starts this detached for each async session and, on resolution,
+   does an idle flush (triggerTurn) - the exec analogue of the subagent
+   onCompletion -> deliverCompletionIfParentIdle path. *)
+let await_exec_completion session_id =
+  Unsafe.new_obj (Unsafe.get Unsafe.global "Promise")
+    [|
+      inject
+        (Js.wrap_callback (fun resolve _reject ->
+             let resolve_now () =
+               ignore
+                 (Unsafe.fun_call resolve
+                    [| inject (ok_obj [ ("exited", js_bool true) ]) |])
+             in
+             let rec wait () =
+               match Hashtbl.find_opt sessions session_id with
+               | None -> resolve_now ()
+               | Some session when session.exited -> resolve_now ()
+               | Some session -> ignore (add_waiter session (fun () -> wait ()))
+             in
+             wait ()));
+    |]

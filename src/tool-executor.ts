@@ -1,4 +1,6 @@
 import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 
 import {
   createAgentSession as createPiAgentSession,
@@ -40,8 +42,9 @@ import {
   threadSources,
   validateWorkspaceMutationPaths,
   writePatchFiles,
+  appendToFile,
 } from "./util.ts";
-import { renderersForTool } from "./tool-renderer.ts";
+import { notificationMessageRenderer, renderersForTool } from "./tool-renderer.ts";
 
 function preparedToolResult(core: CoreBridge, prepared: Record<string, unknown>, extraDetails: Record<string, unknown> = {}) {
   const result = coreCall(core, "toolResultEnvelope", [{ prepared, extraDetails }]);
@@ -387,7 +390,30 @@ export async function executeOpenAiUsageWithHostAuth(
   );
 }
 
+// exec_command always runs under bash, never $SHELL. Resolve like Pi:
+// /bin/bash -> `which bash` (handles NixOS, where /bin/bash does not exist and
+// bash lives in the nix store on PATH) -> sh as a last resort.
+let cachedBashPath: string | undefined;
+function resolveBashPath(): string {
+  if (cachedBashPath !== undefined) return cachedBashPath;
+  let resolved = "bash";
+  if (existsSync("/bin/bash")) {
+    resolved = "/bin/bash";
+  } else {
+    try {
+      const which = spawnSync("which", ["bash"], { encoding: "utf-8" });
+      const first = which.status === 0 ? which.stdout.trim().split(/\r?\n/)[0] : "";
+      resolved = first !== "" ? first : "sh";
+    } catch {
+      resolved = "sh";
+    }
+  }
+  cachedBashPath = resolved;
+  return resolved;
+}
+
 async function runPreparedExec(
+  pi: PiLike,
   core: CoreBridge,
   prepared: Record<string, unknown>,
   ctx: unknown,
@@ -400,13 +426,34 @@ async function runPreparedExec(
     execHostFacts(core, prepared),
     {
       defaultCwd: process.cwd(),
-      envShell: process.env.SHELL ?? "",
+      bashPath: resolveBashPath(),
     },
     ownerId,
     signal ?? null,
     forceUnsandboxed,
   ]);
   if (!isRecord(result)) throw new Error("Invalid Taumel exec_command result");
+  // The command outlived the first yield window and is now a background session.
+  // Start a detached waiter that delivers its completion if the parent is idle
+  // when it exits (the exec analogue of subagent onCompletion); turn_end/idle
+  // flushes cover the other cases.
+  const details = result["details"];
+  const sessionId = isRecord(details) ? optionalNumberField(details, "session_id") : undefined;
+  if (sessionId !== undefined) {
+    void startExecCompletionWaiter(pi, core, ctx, sessionId);
+  }
+  return result;
+}
+
+async function runPreparedRead(
+  core: CoreBridge,
+  prepared: Record<string, unknown>,
+) {
+  const result = await coreCall(core, "readFile", [
+    prepared,
+    { defaultCwd: process.cwd() },
+  ]);
+  if (!isRecord(result)) throw new Error("Invalid Taumel read result");
   return result;
 }
 
@@ -939,6 +986,56 @@ async function deliverCompletionIfParentIdle(
   await flushPendingAgentNotifications(pi, core, ctx, "trigger", pendingAgentWaits);
 }
 
+// Flush Taumel's exec notification queue: deliver every async command session
+// owned by this parent that has exited but was not drained inline, then mark it
+// delivered (which removes it). Mirrors flushPendingAgentNotifications; "steer"
+// on turn_end, "trigger" when idle. A poll that drained the session removed it
+// already, so it never appears here (the inline first-claim path).
+async function flushPendingExecNotifications(
+  pi: PiLike,
+  core: CoreBridge,
+  ctx: unknown,
+  mode: NotificationDeliveryMode,
+): Promise<void> {
+  const ownerId = sessionInfoFromContext(ctx).sessionId ?? "current";
+  const result = coreCall(core, "pendingExecNotifications", [ownerId]);
+  if (!isRecord(result)) return;
+  const notifications = Array.isArray(result["notifications"]) ? result["notifications"] : [];
+  for (const notification of notifications) {
+    if (!isRecord(notification)) continue;
+    const sessionId = optionalNumberField(notification, "session_id");
+    const sent = await deliverNotificationMessage(
+      pi,
+      stringField(notification, "content"),
+      stringField(notification, "customType"),
+      notification["display"] === true,
+      mode,
+    );
+    if (sent && sessionId !== undefined) {
+      coreCall(core, "markExecNotificationDelivered", [sessionId]);
+    }
+  }
+}
+
+// Detached per-session waiter: resolves when the async command exits, then
+// delivers its completion if the parent is idle (no turn_end coming). When the
+// parent is mid-turn, the turn_end flush handles it instead.
+async function startExecCompletionWaiter(
+  pi: PiLike,
+  core: CoreBridge,
+  ctx: unknown,
+  sessionId: number,
+): Promise<void> {
+  try {
+    await coreCall(core, "awaitExecCompletion", [sessionId]);
+  } catch {
+    return;
+  }
+  if (parentIsIdle(pi)) {
+    await flushPendingExecNotifications(pi, core, ctx, "trigger");
+  }
+}
+
 async function recordAgentDispatchCompletion(
   pi: PiLike,
   core: CoreBridge,
@@ -1356,17 +1453,23 @@ async function executeLegacyWrite(
   const path = stringField(prepared, "path");
   const displayPath = stringField(prepared, "displayPath") || path;
   const contents = stringField(prepared, "contents");
+  const mode = stringField(prepared, "mode") === "append" ? "append" : "overwrite";
   if (path === "") throw new Error("Invalid Taumel write plan");
   const validationError = await validatePreparedMutationPath(core, prepared, [path]);
   if (validationError !== undefined) {
     return errorToolResult(core, validationError, { ok: false, error: validationError });
   }
-  await writePatchFiles({ deletes: [], writes: [{ path, contents }] });
+  if (mode === "append") {
+    await appendToFile(path, contents);
+  } else {
+    await writePatchFiles({ deletes: [], writes: [{ path, contents }] });
+  }
   return hostToolResult(core, "write", {
     ok: true,
     action: "write",
     path,
     displayPath,
+    mode,
     byteLength: contents.length,
   });
 }
@@ -1584,7 +1687,7 @@ export async function executeTool(
       return result;
     }
     case "exec_command":
-      return runPreparedExec(core, prepared, ctx, signal);
+      return runPreparedExec(pi, core, prepared, ctx, signal);
     case "exec_command_approval": {
       const outcome = await confirmExecApproval(core, prepared, ctx, signal);
       const approvalPlan = coreCall(core, "finishExecApproval", [{
@@ -1600,7 +1703,7 @@ export async function executeTool(
       if (stringField(approvalPlan, "action") !== "exec_command") {
         throw new Error("Invalid Taumel exec approval result");
       }
-      return runPreparedExec(core, prepared, ctx, signal, approvalPlan["forceUnsandboxed"] === true);
+      return runPreparedExec(pi, core, prepared, ctx, signal, approvalPlan["forceUnsandboxed"] === true);
     }
     case "write_stdin":
       return writePreparedStdin(core, prepared, ctx);
@@ -1642,6 +1745,8 @@ export async function executeTool(
     }
     case "write":
       return executeLegacyWrite(core, prepared);
+    case "read":
+      return runPreparedRead(core, prepared);
     case "edit":
       return executeLegacyEdit(core, prepared);
     case "apply_patch":
@@ -1688,6 +1793,9 @@ export function registerGatewayTools(
   if (typeof pi.registerTool !== "function") {
     return { registerAgentTools: () => undefined };
   }
+  if (typeof pi.registerMessageRenderer === "function") {
+    pi.registerMessageRenderer("taumel.notification", notificationMessageRenderer());
+  }
   pi.on("session_shutdown", (_event, ctx) => {
     const ownerId = sessionInfoFromContext(ctx).sessionId;
     if (ownerId !== undefined) coreCall(core, "shutdownExecOwner", [ownerId]);
@@ -1711,6 +1819,7 @@ export function registerGatewayTools(
   pi.on("turn_end", async (_event, ctx) => {
     try {
       await flushPendingAgentNotifications(pi, core, ctx, "steer", pendingAgentWaits);
+      await flushPendingExecNotifications(pi, core, ctx, "steer");
     } catch (error) {
       console.warn("Taumel agent turn_end notification flush failed:", error);
     }
@@ -1719,6 +1828,9 @@ export function registerGatewayTools(
     setTimeout(() => {
       void flushPendingAgentNotifications(pi, core, ctx, "trigger", pendingAgentWaits).catch((error) => {
         console.warn("Taumel agent agent_end notification flush failed:", error);
+      });
+      void flushPendingExecNotifications(pi, core, ctx, "trigger").catch((error) => {
+        console.warn("Taumel exec agent_end notification flush failed:", error);
       });
     }, 0);
   });

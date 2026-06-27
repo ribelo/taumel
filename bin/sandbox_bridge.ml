@@ -96,12 +96,9 @@ let positive_float_option obj name =
 
 let exec_host_options_from_js prepared runtime =
   let shell =
-    match optional_string_field prepared "shell" with
+    match optional_string_field runtime "bashPath" with
     | Some value when String.trim value <> "" -> String.trim value
-    | _ -> (
-        match optional_string_field runtime "envShell" with
-        | Some value when String.trim value <> "" -> String.trim value
-        | _ -> "bash")
+    | _ -> "bash"
   in
   let cwd =
     match optional_string_field prepared "workdir" with
@@ -112,10 +109,8 @@ let exec_host_options_from_js prepared runtime =
     Taumel.Sandbox.cmd = get_string prepared "cmd";
     cwd;
     shell;
-    login = (not (has_property prepared "login") || get_bool prepared "login");
     timeout_ms = positive_float_option prepared "timeout";
     yield_time_ms = positive_float_option prepared "yieldTimeMs";
-    max_output_tokens = positive_float_option prepared "maxOutputTokens";
     tty = get_bool prepared "tty";
   }
 
@@ -128,7 +123,6 @@ let js_exec_host_call (call : Taumel.Sandbox.exec_host_call) =
     [ ("cwd", js_string call.cwd) ]
     @ js_optional_float_field "timeout" call.timeout_ms
     @ js_optional_float_field "yieldTimeMs" call.yield_time_ms
-    @ js_optional_float_field "maxOutputTokens" call.max_output_tokens
     @ if call.tty then [ ("tty", js_bool true) ] else []
   in
   ok_obj
@@ -242,7 +236,6 @@ let plan_write_stdin_host_call prepared facts =
         Taumel.Sandbox.plan_write_stdin_host_call
           ~host_available:(get_bool facts "hostAvailable")
           ?yield_time_ms:(optional_positive_float_js prepared "yieldTimeMs")
-          ?max_output_tokens:(optional_positive_float_js prepared "maxOutputTokens")
           request
       with
   | Taumel.Sandbox.Stdin_result result ->
@@ -255,7 +248,6 @@ let plan_write_stdin_host_call prepared facts =
   | Taumel.Sandbox.Stdin_call call ->
       let option_fields =
         js_optional_float_field "yieldTimeMs" call.yield_time_ms
-        @ js_optional_float_field "maxOutputTokens" call.max_output_tokens
       in
       ok_obj
         [

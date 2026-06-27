@@ -215,10 +215,8 @@ let test_sandbox_workspace_metadata_protection () =
            Sandbox.cmd = "pwd";
            cwd = "/repo";
            shell = "bash";
-           login = true;
            timeout_ms = Some 1000.;
            yield_time_ms = None;
-           max_output_tokens = None;
            tty = false;
          }
          ~force_unsandboxed:false)
@@ -226,7 +224,7 @@ let test_sandbox_workspace_metadata_protection () =
   assert_equal "host call cwd" "/repo" host_call.cwd;
   assert_bool "host call shell args"
     (List.exists
-       (fun arg -> arg = "-lc")
+       (fun arg -> arg = "-c")
        host_call.Sandbox.invocation.args);
   assert_bool "host call timeout" (host_call.timeout_ms = Some 1000.);
   assert_bool ".git config is protected"

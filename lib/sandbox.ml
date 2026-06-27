@@ -91,7 +91,6 @@ type stdin_writer = stdin_request -> (unit, string) result
 type stdin_host_call = {
   request : stdin_request;
   yield_time_ms : float option;
-  max_output_tokens : float option;
 }
 
 type stdin_host_plan =
@@ -126,10 +125,8 @@ type exec_host_options = {
   cmd : string;
   cwd : string;
   shell : string;
-  login : bool;
   timeout_ms : float option;
   yield_time_ms : float option;
-  max_output_tokens : float option;
   tty : bool;
 }
 
@@ -138,7 +135,6 @@ type exec_host_call = {
   cwd : string;
   timeout_ms : float option;
   yield_time_ms : float option;
-  max_output_tokens : float option;
   tty : bool;
   escalated : bool;
 }
@@ -401,8 +397,7 @@ let write_stdin_error_details ?(unavailable = false) message =
       ("unavailable", Shared.Bool unavailable);
     ]
 
-let plan_write_stdin_host_call ~host_available ?yield_time_ms
-    ?max_output_tokens request =
+let plan_write_stdin_host_call ~host_available ?yield_time_ms request =
   if not host_available then
     Stdin_result
       {
@@ -417,7 +412,7 @@ let plan_write_stdin_host_call ~host_available ?yield_time_ms
         message = write_stdin_invalid_session_message;
         details = write_stdin_error_details write_stdin_invalid_session_message;
       }
-  else Stdin_call { request; yield_time_ms; max_output_tokens }
+  else Stdin_call { request; yield_time_ms }
 
 type failure_kind =
   | Network_failure
@@ -613,11 +608,11 @@ let plan_exec_invocation config host ~shell ~shell_args ~force_unsandboxed =
     let args = args @ [ "--dev"; "/dev"; "--proc"; "/proc" ] in
     Ok { command = "bwrap"; args = args @ ("--" :: shell :: shell_args); sandboxed = true }
 
-let exec_shell_args ~login ~cmd = [ (if login then "-lc" else "-c"); cmd ]
+let exec_shell_args ~cmd = [ "-c"; cmd ]
 
 let plan_exec_host_call config host (options : exec_host_options)
     ~force_unsandboxed =
-  let shell_args = exec_shell_args ~login:options.login ~cmd:options.cmd in
+  let shell_args = exec_shell_args ~cmd:options.cmd in
   plan_exec_invocation config host ~shell:options.shell ~shell_args
     ~force_unsandboxed
   |> Result.map (fun invocation ->
@@ -626,7 +621,6 @@ let plan_exec_host_call config host (options : exec_host_options)
            cwd = options.cwd;
            timeout_ms = options.timeout_ms;
            yield_time_ms = options.yield_time_ms;
-           max_output_tokens = options.max_output_tokens;
            tty = options.tty;
            escalated = force_unsandboxed;
          })

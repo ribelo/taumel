@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readdirSync, realpathSync } from "node:fs";
-import { mkdir, open, readFile, readdir, realpath, rename, rm } from "node:fs/promises";
+import { appendFile, mkdir, open, readFile, readdir, realpath, rename, rm } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -393,6 +393,12 @@ async function syncDirectory(path: string): Promise<void> {
   } finally {
     await handle?.close();
   }
+}
+
+export async function appendToFile(path: string, contents: string): Promise<void> {
+  const parent = dirname(path);
+  await mkdir(parent, { recursive: true });
+  await appendFile(path, contents, "utf8");
 }
 
 export async function writeFileAtomically(path: string, contents: string): Promise<void> {

@@ -12,10 +12,7 @@ type exec_request = {
   default_workdir : string;
   sandbox_permissions : Sandbox.sandbox_permissions;
   yield_time_ms : float option;
-  max_output_tokens : float option;
   tty : bool;
-  shell : string;
-  login : bool;
 }
 
 type exec_plan = {
@@ -23,10 +20,7 @@ type exec_plan = {
   cmd : string;
   workdir : string;
   yield_time_ms : float option;
-  max_output_tokens : float option;
   tty : bool;
-  shell : string;
-  login : bool;
   approval : approval option;
 }
 
@@ -34,19 +28,18 @@ type write_stdin_request = {
   session_id : int;
   chars : string;
   yield_time_ms : float option;
-  max_output_tokens : float option;
 }
 
 type write_stdin_plan = {
   session_id : int;
   chars : string;
   yield_time_ms : float option;
-  max_output_tokens : float option;
 }
 
 type write_request = {
   path : string;
   contents : string;
+  mode : string;
 }
 
 type edit_request = {
@@ -114,10 +107,7 @@ let plan_exec (sandbox : Sandbox.config) (request : exec_request) =
         cmd;
         workdir;
         yield_time_ms = request.yield_time_ms;
-        max_output_tokens = request.max_output_tokens;
         tty = request.tty;
-        shell = request.shell;
-        login = request.login;
         approval;
       }
     in
@@ -138,7 +128,6 @@ let plan_write_stdin (request : write_stdin_request) =
         session_id = request.session_id;
         chars = request.chars;
         yield_time_ms = request.yield_time_ms;
-        max_output_tokens = request.max_output_tokens;
       }
 
 let resolved_mutation_plan ?contents ?(edits = []) ?approval action path

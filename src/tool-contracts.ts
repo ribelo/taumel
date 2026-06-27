@@ -81,10 +81,7 @@ const ExecCommandParamsSchema = Type.Object(
         description: "How long to wait (in milliseconds) for output before yielding.",
       }),
     ),
-    max_output_tokens: Type.Optional(Type.Number({ description: "Maximum output token budget." })),
     tty: Type.Optional(Type.Boolean({ description: "Allocate a terminal session for interactive commands." })),
-    shell: Type.Optional(Type.String({ description: "Shell binary to launch." })),
-    login: Type.Optional(Type.Boolean({ description: "Use shell login semantics." })),
     sandbox_permissions: Type.Optional(
       Type.Literal("require_escalated", {
         description: "Request approval to run outside the default sandbox.",
@@ -101,7 +98,6 @@ const WriteStdinParamsSchema = Type.Object(
     session_id: Type.Integer(),
     chars: Type.Optional(Type.String()),
     yield_time_ms: Type.Optional(Type.Number()),
-    max_output_tokens: Type.Optional(Type.Number()),
   },
   { $id: "WriteStdinParams", additionalProperties: false },
 );
@@ -118,8 +114,28 @@ const WriteParamsSchema = Type.Object(
   {
     path: Type.String({ description: "Path to the file to write (relative or absolute)" }),
     content: Type.String({ description: "Content to write to the file" }),
+    mode: Type.Optional(
+      Type.Union([Type.Literal("overwrite"), Type.Literal("append")], {
+        description:
+          "Write mode. Defaults to overwrite. append adds content to the end of the file exactly as provided (no extra newline).",
+      }),
+    ),
   },
   { $id: "WriteParams", additionalProperties: false },
+);
+
+const ReadParamsSchema = Type.Object(
+  {
+    path: Type.String({ description: "Path to the text file to read (relative or absolute)" }),
+    offset: Type.Optional(
+      Type.Integer({
+        description:
+          "Line number to start reading from (1-indexed). A negative value reads from the end of the file (tail).",
+      }),
+    ),
+    limit: Type.Optional(Type.Integer({ minimum: 1, description: "Maximum number of lines to read" })),
+  },
+  { $id: "ReadParams", additionalProperties: false },
 );
 
 const EditParamsSchema = Type.Object(
@@ -312,6 +328,7 @@ export const dtsSchemas = [
   ["WriteStdinParams", WriteStdinParamsSchema],
   ["ApplyPatchParams", ApplyPatchParamsSchema],
   ["WriteParams", WriteParamsSchema],
+  ["ReadParams", ReadParamsSchema],
   ["EditParams", EditParamsSchema],
   ["CreateGoalParams", CreateGoalParamsSchema],
   ["UpdateGoalParams", UpdateGoalParamsSchema],
@@ -334,6 +351,7 @@ export const toolParamSchemas = [
   { name: "write_stdin", interfaceName: "WriteStdinParams", schema: WriteStdinParamsSchema },
   { name: "apply_patch", interfaceName: "ApplyPatchParams", schema: ApplyPatchParamsSchema },
   { name: "write", interfaceName: "WriteParams", schema: WriteParamsSchema },
+  { name: "read", interfaceName: "ReadParams", schema: ReadParamsSchema },
   { name: "edit", interfaceName: "EditParams", schema: EditParamsSchema },
   { name: "agent_spawn", interfaceName: "AgentSpawnParams", schema: AgentSpawnParamsSchema },
   { name: "agent_send", interfaceName: "AgentSendParams", schema: AgentSendParamsSchema },
@@ -515,6 +533,19 @@ export const toolContracts: readonly ToolContract[] = [
     description: "Use the apply_patch tool to edit files.",
     promptSnippet: "Apply a patch to files in the workspace.",
     parameters: toolParameters(ApplyPatchParamsSchema),
+  },
+  {
+    name: "read",
+    label: "read",
+    description:
+      "Read a UTF-8 text file. Output is line-numbered and truncated to 2000 lines / 50KB total and 2000 chars per line; use offset/limit to page (a negative offset reads the tail). Not for images or binary files.",
+    promptSnippet: "Read the contents of a text file (line-numbered).",
+    promptGuidelines: [
+      "Use read to examine files instead of cat or sed.",
+      "Output lines are prefixed with 'lineNo<TAB>'; this prefix is for navigation only. When calling edit, oldText must be the file content WITHOUT the line-number prefix.",
+      "Use offset/limit to page large files; a negative offset (e.g. -50) reads the last N lines.",
+    ],
+    parameters: toolParameters(ReadParamsSchema),
   },
   {
     name: "write",

@@ -93,6 +93,33 @@ function statusFromDetails(details: Record<string, unknown>): Status {
     : { text: "done", color: "success" };
 }
 
+function themeBold(theme: unknown, value: string): string {
+  if (!isRecord(theme)) return value;
+  const bold = theme["bold"];
+  if (typeof bold !== "function") return value;
+  const rendered = bold.call(theme, value);
+  return typeof rendered === "string" ? rendered : value;
+}
+
+function formatDuration(ms: number): string {
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+// Pi-style shell title: `$ <command>` (bold), or the stdin text / `poll session N`
+// for write_stdin.
+function shellTitle(name: string, args: Record<string, unknown>, theme: unknown): string {
+  if (name === "write_stdin") {
+    const chars = stringField(args, "chars") ?? "";
+    if (chars.trim() !== "") {
+      return themeFg(theme, "toolTitle", themeBold(theme, `$ ${oneLine(truncate(chars, 200))}`));
+    }
+    const sid = numberField(args, "session_id");
+    return themeFg(theme, "toolTitle", themeBold(theme, sid === undefined ? "poll" : `poll session ${sid}`));
+  }
+  const cmd = oneLine(stringField(args, "cmd") ?? "");
+  return themeFg(theme, "toolTitle", themeBold(theme, `$ ${cmd === "" ? "exec_command" : truncate(cmd, 400)}`));
+}
+
 function header(name: string, inline: string, status: Status, theme: unknown): string {
   const suffix = inline === "" ? "" : ` ${themeFg(theme, "muted", "-")} ${themeFg(theme, "toolOutput", inline)}`;
   return `${themeFg(theme, status.color, status.text)} ${themeFg(theme, "toolTitle", name)}${suffix}`;
@@ -174,6 +201,7 @@ function inlineForTool(name: string, args: Record<string, unknown>, expanded: bo
     }
     case "write":
     case "edit":
+    case "read":
       return truncate(stringField(args, "path") ?? "", maxChars);
     case "apply_patch":
       return truncate(oneLine(stringField(args, "input") ?? stringField(args, "patch") ?? "patch"), maxChars);
@@ -229,8 +257,19 @@ function renderShellResult(name: string, result: unknown, options: unknown, them
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
   const output = stringField(details, "output") ?? textContent(result);
-  const title = name === "write_stdin" && (stringField(args, "chars") ?? "") === "" ? "poll" : name;
-  return new Text(`${header(title, inlineForTool(name, args, expanded), statusFromDetails(details), theme)}\n${limitedText(output, expanded, theme)}`, 0, 0);
+  const title = shellTitle(name, args, theme);
+  const body = limitedText(output, expanded, theme, 5);
+  const sessionId = numberField(details, "sessionId") ?? numberField(details, "session_id");
+  const wallTimeMs = numberField(details, "wallTimeMs");
+  let footer = "";
+  if (sessionId !== undefined) {
+    footer = themeFg(theme, "accent", `running session ${sessionId}`);
+  } else if (wallTimeMs !== undefined) {
+    footer = themeFg(theme, "muted", `Took ${formatDuration(wallTimeMs)}`);
+  }
+  const parts = [title, body];
+  if (footer !== "") parts.push(footer);
+  return new Text(parts.join("\n"), 0, 0);
 }
 
 function renderMutationResult(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Text {
@@ -345,6 +384,25 @@ function renderExaResult(name: string, result: unknown, options: unknown, theme:
   return new Text(lines.join("\n"), 0, 0);
 }
 
+function renderRead(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Text {
+  const expanded = expandedFromOptions(options);
+  const details = detailsRecord(result);
+  const path = stringField(details, "path") ?? stringField(args, "path") ?? "";
+  const total = numberField(details, "totalLines");
+  const shown = numberField(details, "shownLines");
+  let inline = path;
+  if (total !== undefined) {
+    inline =
+      shown !== undefined && shown < total
+        ? `${path} (${shown}/${total} lines)`
+        : `${path} (${total} line${total === 1 ? "" : "s"})`;
+  }
+  const head = header("read", inline, statusFromDetails(details), theme);
+  // Collapsed: one line (header only). Expanded: header + the line-numbered body.
+  if (!expanded) return new Text(head, 0, 0);
+  return new Text([head, limitedText(textContent(result), true, theme, 5, 2000)].join("\n"), 0, 0);
+}
+
 function renderGenericResult(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Text {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
@@ -353,10 +411,62 @@ function renderGenericResult(name: string, result: unknown, options: unknown, th
   return new Text(`${header(name, inlineForTool(name, args, expanded), statusFromDetails(details), theme)}\n${limitedText(body, expanded, theme)}`, 0, 0);
 }
 
+function attrValue(content: string, pattern: RegExp): string | undefined {
+  const match = pattern.exec(content);
+  return match ? match[1] : undefined;
+}
+
+// Inner text of a <tag>...</tag> block in our own notification markup.
+function blockBetween(content: string, tag: string): string {
+  const match = new RegExp(`<${tag}>\\n?([\\s\\S]*?)\\n?\\s*</${tag}>`).exec(content);
+  return match ? match[1] : "";
+}
+
+// Renderer for `taumel.notification` custom messages (subagent + exec
+// completions). Collapsed: a tool-style header plus a short output preview;
+// expanded: the full output. Falls back to raw content for unknown kinds.
+function renderNotificationMessage(message: unknown, options: unknown, theme: unknown): Text | undefined {
+  const content = isRecord(message) ? stringField(message, "content") ?? "" : "";
+  if (content === "") return undefined;
+  const expanded = expandedFromOptions(options);
+  const kind = attrValue(content, /kind="([^"]*)"/) ?? "notification";
+
+  if (kind === "exec_completion") {
+    const sessionId = attrValue(content, /<session id="([^"]*)"/);
+    const exitCode = attrValue(content, /exit_code="(-?\d+)"/);
+    const code = exitCode === undefined ? undefined : Number(exitCode);
+    const status: Status =
+      code === 0 ? { text: "exit 0", color: "success" } : { text: `exit ${exitCode ?? "?"}`, color: "error" };
+    const inline = sessionId === undefined ? "" : `session ${sessionId}`;
+    const body = limitedText(blockBetween(content, "output"), expanded, theme, 5);
+    return new Text([header("exec completed", inline, status, theme), body].join("\n"), 0, 0);
+  }
+
+  if (kind === "agent_completion") {
+    const agentId = attrValue(content, /<agent id="([^"]*)"/);
+    const profile = attrValue(content, /profile="([^"]*)"/);
+    const runStatus = attrValue(content, /<run id="[^"]*" status="([^"]*)"/) ?? "completed";
+    const status: Status =
+      runStatus === "completed" ? { text: runStatus, color: "success" } : { text: runStatus, color: "error" };
+    const inline = [agentId, profile === undefined ? undefined : `(${profile})`].filter(Boolean).join(" ");
+    const finalOutput = blockBetween(content, "final_output");
+    const body = limitedText(finalOutput !== "" ? finalOutput : blockBetween(content, "error"), expanded, theme, 5);
+    return new Text([header("agent completed", inline, status, theme), body].join("\n"), 0, 0);
+  }
+
+  return new Text(limitedText(content, expanded, theme, 6), 0, 0);
+}
+
+export function notificationMessageRenderer() {
+  return (message: unknown, options: unknown, theme: unknown) =>
+    renderNotificationMessage(message, options, theme);
+}
+
 function progressText(name: string): string {
   if (name.startsWith("exa_") || name.endsWith("_exa")) return "waiting for Exa";
   if (name === "find_thread") return "searching threads";
   if (name === "read_thread") return "reading thread";
+  if (name === "read") return "reading";
   return "running";
 }
 
@@ -364,7 +474,11 @@ export function renderersForTool(name: string) {
   return {
     renderCall(args: unknown, theme: unknown, context: unknown) {
       if (isRecord(context) && context["isPartial"] === false) return new Text("", 0, 0);
-      return new Text(callLine(name, inlineForTool(name, isRecord(args) ? args : {}, false), progressText(name), theme), 0, 0);
+      const callArgs = isRecord(args) ? args : {};
+      if (name === "exec_command" || name === "write_stdin") {
+        return new Text(shellTitle(name, callArgs, theme), 0, 0);
+      }
+      return new Text(callLine(name, inlineForTool(name, callArgs, false), progressText(name), theme), 0, 0);
     },
     renderResult(result: unknown, options: unknown, theme: unknown, context: unknown) {
       if (isRecord(options) && options["isPartial"] === true) {
@@ -372,6 +486,7 @@ export function renderersForTool(name: string) {
       }
       const args = argsFromContext(context);
       if (name === "exec_command" || name === "write_stdin") return renderShellResult(name, result, options, theme, args);
+      if (name === "read") return renderRead(name, result, options, theme, args);
       if (name === "write" || name === "edit" || name === "apply_patch") return renderMutationResult(name, result, options, theme, args);
       if (name === "get_goal" || name === "create_goal" || name === "update_goal") return renderGoalResult(name, result, options, theme, args);
       if (name === "find_thread" || name === "read_thread") return renderThreadResult(name, result, options, theme, args);
