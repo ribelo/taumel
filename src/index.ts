@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 import type { ChildSessionBridge, CoreBridge, PiLike, TaumelGlobal } from "./types.ts";
 import { coreCall, isRecord, stringArrayFromUnknown } from "./util.ts";
@@ -38,6 +39,58 @@ function syncSandboxToolActivation(pi: PiLike, core: CoreBridge, ctx?: unknown):
 
 function installSandboxToolActivation(pi: PiLike, core: CoreBridge): void {
   const sync = (_event: unknown, ctx?: unknown) => syncSandboxToolActivation(pi, core, ctx);
+  pi.on("session_start", sync);
+  pi.on("session_resume", sync);
+}
+
+function execPolicyBlockFromSettings(settings: unknown): unknown {
+  return isRecord(settings) && isRecord(settings["taumel"]) ? settings["taumel"]["execPolicy"] : undefined;
+}
+
+function readExecPolicyScope(scope: string, path: string): Record<string, unknown> | undefined {
+  if (!existsSync(path)) return undefined;
+  try {
+    const settings = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    const execPolicy = execPolicyBlockFromSettings(settings);
+    return execPolicy === undefined ? undefined : { scope, execPolicy };
+  } catch (error) {
+    return { scope, execPolicy: `malformed settings: ${error instanceof Error ? error.message : String(error)}` };
+  }
+}
+
+function isProjectTrusted(ctx: unknown): boolean {
+  if (!isRecord(ctx)) return false;
+  const trusted = ctx["isProjectTrusted"];
+  return typeof trusted === "function" ? trusted.call(ctx) === true : false;
+}
+
+function notifyExecPolicyErrors(result: Record<string, unknown>, ctx?: unknown): void {
+  const errors = Array.isArray(result["errors"])
+    ? result["errors"].filter((error): error is string => typeof error === "string" && error !== "")
+    : [];
+  if (errors.length === 0) return;
+  const ui = isRecord(ctx) && isRecord(ctx["ui"]) ? ctx["ui"] : undefined;
+  const notify = isRecord(ui) ? ui["notify"] : undefined;
+  if (typeof notify !== "function") return;
+  notify.call(ui, `Taumel exec policy has validation errors:\n${errors.join("\n")}`, "warning");
+}
+
+function refreshExecPolicy(core: CoreBridge, ctx?: unknown): void {
+  const scopes: Record<string, unknown>[] = [];
+  const globalScope = readExecPolicyScope("global", join(getAgentDir(), "settings.json"));
+  if (globalScope !== undefined) scopes.push(globalScope);
+  if (isProjectTrusted(ctx)) {
+    const cwd = isRecord(ctx) && typeof ctx["cwd"] === "string" && ctx["cwd"] !== "" ? ctx["cwd"] : process.cwd();
+    const projectScope = readExecPolicyScope("project", join(cwd, ".pi", "settings.json"));
+    if (projectScope !== undefined) scopes.push(projectScope);
+  }
+  const result = coreCall(core, "refreshExecPolicy", [{ scopes }]);
+  if (!isRecord(result)) throw new Error("Invalid Taumel exec policy refresh result");
+  notifyExecPolicyErrors(result, ctx);
+}
+
+function installExecPolicyLoader(pi: PiLike, core: CoreBridge): void {
+  const sync = (_event: unknown, ctx?: unknown) => refreshExecPolicy(core, ctx);
   pi.on("session_start", sync);
   pi.on("session_resume", sync);
 }
@@ -208,6 +261,7 @@ function installEnvironmentContext(pi: PiLike, core: CoreBridge): void {
 export default async function taumel(pi: PiLike) {
   const artifact = new URL("../dist/taumel.cjs", import.meta.url);
   const require = createRequire(import.meta.url);
+  (globalThis as typeof globalThis & { require?: NodeRequire }).require = require;
   require(fileURLToPath(artifact));
 
   const coreGlobal = globalThis as typeof globalThis & TaumelGlobal;
@@ -221,5 +275,6 @@ export default async function taumel(pi: PiLike) {
   installGoalContinuationLoop(pi, core);
   installAgentProfileCatalog(pi, core, composer?.settings, gatewayTools);
   installSandboxToolActivation(pi, core);
+  installExecPolicyLoader(pi, core);
   installEnvironmentContext(pi, core);
 }

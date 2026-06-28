@@ -43,6 +43,7 @@ let host_network_mode : Taumel.Sandbox.network_mode option ref = ref None
 let host_no_sandbox : bool option ref = ref None
 let ralph_tasks : Taumel.Ralph_loop.task list ref = ref []
 let workers : Taumel.Subagents.worker list ref = ref []
+let exec_policy : Taumel.Exec_policy.compiled ref = ref Taumel.Exec_policy.empty
 let agent_state : Taumel.Subagents.session_state ref =
   ref Taumel.Subagents.empty_session_state
 let agent_catalog : Taumel.Subagents.profile_catalog ref =

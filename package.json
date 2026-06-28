@@ -22,6 +22,8 @@
     "@earendil-works/pi-coding-agent": "^0.79.9",
     "@earendil-works/pi-tui": "^0.79.9",
     "diff": "^9.0.0",
+    "tree-sitter": "^0.21.1",
+    "tree-sitter-bash": "^0.23.3",
     "typebox": "^1.1.38"
   },
   "devDependencies": {

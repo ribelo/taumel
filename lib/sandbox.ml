@@ -363,18 +363,36 @@ let authorize_effect (config : config) = function
          authorizes the spawn effect itself. *)
       Ok ()
 
-let authorize_exec (config : config) request =
-  match request.sandbox_permissions with
-  | Require_escalated { justification; _ } ->
-      if config.approval_policy <> On_request then
-        Deny (reject_exec_escalation_message config.approval_policy)
-      else
-        approval_decision config
-          (if justification = "" then "command requested escalation" else justification)
-  | Use_default -> (
-      match request.workdir with
-      | Some workdir -> authorize_path config Read workdir
-      | None -> Allow)
+let decision_rank = function Allow -> 0 | Requires_approval _ -> 1 | Deny _ -> 2
+
+let strictest_decision left right =
+  if decision_rank left >= decision_rank right then left else right
+
+let exec_policy_decision ?message config policy_decision =
+  let message = Option.value message ~default:"exec policy requires approval" in
+  match (policy_decision : Exec_policy.decision) with
+  | Allow -> Allow
+  | Forbidden -> Deny message
+  | Prompt -> approval_decision config message
+
+let authorize_exec ?policy_decision ?policy_message (config : config) request =
+  let existing =
+    match request.sandbox_permissions with
+    | Require_escalated { justification; _ } ->
+        if config.approval_policy <> On_request then
+          Deny (reject_exec_escalation_message config.approval_policy)
+        else
+          approval_decision config
+            (if justification = "" then "command requested escalation" else justification)
+    | Use_default -> (
+        match request.workdir with
+        | Some workdir -> authorize_path config Read workdir
+        | None -> Allow)
+  in
+  match policy_decision with
+  | None -> existing
+  | Some policy_decision ->
+      strictest_decision existing (exec_policy_decision ?message:policy_message config policy_decision)
 
 let exec_command config runner request =
   match authorize_exec config request with

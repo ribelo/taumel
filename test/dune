@@ -81,3 +81,9 @@
  (modules test_goal_prd)
  (package taumel)
  (libraries taumel))
+
+(test
+ (name test_exec_policy)
+ (modules test_exec_policy)
+ (package taumel)
+ (libraries taumel))

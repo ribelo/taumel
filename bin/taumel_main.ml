@@ -26,6 +26,9 @@ let core_call name_js args_js =
       Tool_catalog_bridge.plan_active_tools_sync_js (arg 0) (arg 1)
   | "planEnvironmentContext" ->
       Environment_context_bridge.plan_context (arg 0) (arg 1)
+  | "refreshExecPolicy" -> Exec_policy_bridge.compile_settings (arg 0)
+  | "appendExecPolicyAllowRule" ->
+      Exec_policy_bridge.append_allow_rule (get_string_array (arg 0) "tokens")
   | "sandboxMetadataDirNames" -> Sandbox_bridge.sandbox_metadata_dir_names ()
   | "validateWorkspaceMutationPaths" ->
       Sandbox_bridge.validate_workspace_mutation_paths (arg 0)

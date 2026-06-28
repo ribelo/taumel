@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { join } from "node:path";
 
 import {
   createAgentSession as createPiAgentSession,
@@ -41,6 +42,7 @@ import {
   stringField,
   threadSources,
   validateWorkspaceMutationPaths,
+  writeFileAtomically,
   writePatchFiles,
   appendToFile,
 } from "./util.ts";
@@ -252,6 +254,7 @@ async function withGoalClockPaused<T>(core: CoreBridge, run: () => Promise<T>): 
 
 type ApprovalOutcome =
   | "approved"
+  | "approved_always"
   | "denied_by_user"
   | "timed_out"
   | "unavailable"
@@ -267,8 +270,32 @@ function approvalOutcomeMessage(action: string, outcome: ApprovalOutcome): strin
       return `Error: ${action} approval unavailable`;
     case "interrupted":
       return `Error: ${action} approval interrupted`;
+    case "approved_always":
     case "approved":
       return "";
+  }
+}
+
+async function appendExecPolicyAllowRule(core: CoreBridge, tokens: readonly string[]): Promise<void> {
+  const settingsPath = join(getAgentDir(), "settings.json");
+  let settings: unknown = {};
+  try {
+    settings = JSON.parse(await readFile(settingsPath, "utf8")) as unknown;
+  } catch {
+    settings = {};
+  }
+  const root: Record<string, unknown> = isRecord(settings) ? { ...settings } : {};
+  const taumel = isRecord(root["taumel"]) ? { ...root["taumel"] } : {};
+  const execPolicy = isRecord(taumel["execPolicy"]) ? { ...taumel["execPolicy"] } : {};
+  const rules = Array.isArray(execPolicy["rules"]) ? [...execPolicy["rules"]] : [];
+  rules.push({ pattern: [...tokens], decision: "allow", match: [[...tokens]] });
+  execPolicy["rules"] = rules;
+  taumel["execPolicy"] = execPolicy;
+  root["taumel"] = taumel;
+  await writeFileAtomically(settingsPath, `${JSON.stringify(root, null, 2)}\n`);
+  const result = coreCall(core, "appendExecPolicyAllowRule", [{ tokens: [...tokens] }]);
+  if (!isRecord(result) || result["ok"] !== true) {
+    throw new Error("Invalid Taumel exec policy amendment result");
   }
 }
 
@@ -491,6 +518,9 @@ async function confirmExecApproval(
   }
   if (signal?.aborted === true) return "interrupted";
 
+  const allowAlwaysTokens = stringArrayFromUnknown(prepared["execPolicyAllowAlwaysTokens"]);
+  const select = ui["select"];
+
   const options = isRecord(plan["options"]) ? plan["options"] : {};
   const timeoutMs = optionalNumberField(options, "timeout");
   const controller = new AbortController();
@@ -530,6 +560,17 @@ async function confirmExecApproval(
       requester === undefined
         ? stringField(plan, "prompt")
         : `Requesting ${requester}\n\n${stringField(plan, "prompt")}`;
+    if (allowAlwaysTokens !== undefined && allowAlwaysTokens.length > 0 && typeof select === "function") {
+      const selected = await withGoalClockPaused(core, async () =>
+        await select.call(ui, title, ["Deny", "Allow once", "Allow always"])
+      );
+      if (selected === "Allow once") return "approved";
+      if (selected === "Allow always") {
+        await appendExecPolicyAllowRule(core, allowAlwaysTokens);
+        return "approved_always";
+      }
+      return controller.signal.aborted ? outcome ?? "interrupted" : "denied_by_user";
+    }
     const approved = await withGoalClockPaused(core, async () =>
       await confirm.call(
         ui,
@@ -1701,7 +1742,7 @@ export async function executeTool(
       const outcome = await confirmExecApproval(core, prepared, ctx, signal);
       const approvalPlan = coreCall(core, "finishExecApproval", [{
         prepared,
-        outcome,
+        outcome: outcome === "approved_always" ? "approved" : outcome,
       }]);
       if (!isRecord(approvalPlan)) throw new Error("Invalid Taumel exec approval result");
       if (stringField(approvalPlan, "action") === "result") {

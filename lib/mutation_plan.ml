@@ -89,7 +89,7 @@ let patch_request_of_values ?input ?patch () =
   | Some patch -> Ok { patch }
   | None -> Error "apply_patch.input or apply_patch.patch is required"
 
-let plan_exec (sandbox : Sandbox.config) (request : exec_request) =
+let plan_exec ?policy_decision ?policy_message (sandbox : Sandbox.config) (request : exec_request) =
   let cmd = request.cmd in
   if String.trim cmd = "" then Error "exec_command requires cmd"
   else
@@ -111,7 +111,7 @@ let plan_exec (sandbox : Sandbox.config) (request : exec_request) =
         approval;
       }
     in
-    match Sandbox.authorize_exec sandbox sandbox_request with
+    match Sandbox.authorize_exec ?policy_decision ?policy_message sandbox sandbox_request with
     | Sandbox.Allow -> Ok (base "exec_command" None)
     | Requires_approval message ->
         let prompt = Sandbox.exec_approval_prompt ~cmd message in

@@ -236,6 +236,14 @@ export async function executeGatewayCommand(
   if (name === "composer") {
     return executeComposerCommand(core, composer, args, ctx);
   }
+  if (name === "execpolicy") {
+    const trimmed = args.trim();
+    const valid = trimmed === "" || (trimmed.startsWith("check ") && trimmed.slice("check ".length).trim() !== "");
+    if (!valid) {
+      const message = "Usage: /execpolicy [check <command>]";
+      return { ok: false, action: "command_result", message, error: message, details: { ok: false, error: message } };
+    }
+  }
 
   const callCore = (commandCtx: unknown) => coreCall(core, "handleCommand", [name, args, commandCtx]);
   const plan = coreCall(core, "planCommandExecution", [name, args, ctx]);

@@ -90,7 +90,15 @@ let patch_request_from_params params =
 let prepare_exec_command params =
   with_gateway_authorized "exec_command" (fun sandbox ->
       let request = exec_request_from_params params in
-      match Taumel.Mutation_plan.plan_exec sandbox request with
+      let policy_decision =
+        Exec_policy_bridge.policy_decision_for_command sandbox request.sandbox_permissions
+          request.cmd
+      in
+      let policy_message =
+        Exec_policy_bridge.policy_reason_for_command sandbox request.sandbox_permissions
+          request.cmd
+      in
+      match Taumel.Mutation_plan.plan_exec ?policy_decision ?policy_message sandbox request with
       | Error message -> error_obj message
       | Ok plan ->
           let fields =
@@ -107,6 +115,17 @@ let prepare_exec_command params =
             match plan.approval with
             | None -> fields
             | Some approval ->
+                let allow_amendment_fields =
+                  if not (String.starts_with ~prefix:"exec policy requires approval" approval.message) then []
+                  else if Exec_policy_bridge.explicit_prompt_or_forbidden request.cmd then []
+                  else
+                    match Exec_policy_bridge.allow_amendment_tokens request.cmd with
+                    | None -> []
+                    | Some tokens ->
+                        [
+                          ("execPolicyAllowAlwaysTokens", js_array (List.map js_string tokens));
+                        ]
+                in
                 fields
                 @ [
                     ("approvalMessage", js_string approval.message);
@@ -115,6 +134,7 @@ let prepare_exec_command params =
                     ( "approvalTimeoutMs",
                       js_number (float_of_int approval.timeout_ms) );
                   ]
+                @ allow_amendment_fields
           in
           ok_obj fields)
 
