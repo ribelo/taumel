@@ -1,43 +1,22 @@
+---
+kind: requirement
+status: draft
+tags: [footer, ui]
+depends_on: ["[[plans/sandbox]]"]
+---
 # Footer
 
-## Decision
+## Intent
 
-Ported as a whole replacement.
+The footer is a whole-footer replacement driven from OCaml through a tiny
+TypeScript entrypoint. Display formatting lives in a pure OCaml model; Pi and
+JavaScript interop stay behind a narrow adapter. The refresh loop uses
+`Eta_jsoo`.
 
-## Classification
+## Requirements
 
-Port with selective redesign.
-
-## Why keep it
-
-The footer is always visible and is useful as a low-risk dogfooding target for
-Taumel: it exercises Pi integration, rendering, events, local state, git status
-polling, and Eta_jsoo scheduling without pulling in Tau's larger systems.
-
-## Preserve
-
-- Whole-footer replacement behavior from the extension user's perspective.
-- Session and model/provider/status display.
-- Git branch and change delta display.
-- Sandbox status signal.
-- Lightweight host adapter with a tiny TypeScript entrypoint.
-
-## Redesign
-
-- Move display formatting into a pure OCaml model.
-- Keep Pi/JavaScript interop behind a narrow adapter.
-- Let OCaml own setup, event registration, state, and render decisions.
-- Use Eta_jsoo for the refresh loop instead of Effect.
-
-## Omit
-
-- Backlog indicator.
-- Persistent footer settings.
-- Broader Tau service graph dependencies.
-
-## Acceptance
-
-- Tau no longer installs its footer.
-- Taumel installs a footer from OCaml through the tiny TypeScript entrypoint.
-- Pi can load the installed Taumel extension.
-- The visible footer works well enough for side-by-side comparison.
+- **footer-rp01** (ubiquitous): The system shall replace the whole footer from the extension user's perspective and install it from OCaml through a tiny TypeScript entrypoint.
+- **footer-ds01** (ubiquitous): The system shall display session, model/provider/status, git branch and change delta, and sandbox status.
+- **footer-ar01** (ubiquitous): The system shall hold display formatting in a pure OCaml model, keep Pi/JavaScript interop behind a narrow adapter, and let OCaml own setup, event registration, state, and render decisions.
+- **footer-rl01** (ubiquitous): The system shall drive the footer refresh loop with `Eta_jsoo`.
+- **footer-om01** (ubiquitous): The system shall omit a backlog indicator and persistent footer settings.

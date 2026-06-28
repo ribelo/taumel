@@ -1,108 +1,108 @@
+---
+kind: requirement
+status: draft
+tags: [sandbox, security, execution, filesystem, network]
+depends_on: ["[[plans/capability-profile]]", "[[plans/tool-gateway]]"]
+---
 # Sandbox
 
-## Decision
+## Intent
 
-Port.
+The sandbox is Taumel's central capability gateway. Every path that executes
+commands, mutates files, spawns child agents, or reaches the network passes
+through it, so one boundary constrains all side effects. Codex sandbox behavior
+is the reference model; Tau sets the minimum security baseline.
 
-## Classification
+The tool gateway decides whether a tool may run; the sandbox decides how
+execution and mutation are constrained. Approval policy, filesystem policy, and
+patch parsing stay separate from each other and from execution.
 
-Port with major redesign.
+## Requirements
 
-## Source Of Truth
+### Gateway
 
-Use Codex sandbox behavior as the reference model where Tau was modeling Codex.
-Use Tau as the minimum security baseline: Taumel must not be less secure than
-Tau.
+- **sandbox-gw01** (ubiquitous): The system shall route every command execution, filesystem mutation, child-agent spawn, and network effect through the sandbox policy boundary.
+- **sandbox-gw02** (ubiquitous): The system shall keep no execution, filesystem-mutation, or approval path that reaches host effects outside the sandbox gateway.
+- **sandbox-gw03** (ubiquitous): The system shall let the tool gateway decide whether a tool may run and let the sandbox decide how execution and mutation are constrained.
+- **sandbox-gw04** (ubiquitous): The system shall hold a security level at least equal to Tau.
 
-## Security Invariant
+### Modes and configuration
 
-Sandboxing is a core Taumel capability, not a standalone plugin-style feature.
-Every mechanism that can execute commands, mutate files, spawn child agents, or
-invoke tool-like side effects must go through the sandbox policy boundary.
+- **sandbox-md01** (ubiquitous): The system shall provide the filesystem modes `read-only`, `workspace-write`, and `danger-full-access`.
+- **sandbox-md02** (ubiquitous): The system shall provide the network modes `disabled` and `enabled`.
+- **sandbox-md03** (ubiquitous): The system shall provide the approval policies `never`, `on-request`, `on-failure`, and `untrusted`.
+- **sandbox-md04** (ubiquitous): The system shall derive the active sandbox config from the capability profile, taking filesystem mode from the profile's sandbox preset and approval policy from the profile's approval policy.
+- **sandbox-md05** (ubiquitous): The system shall default a profile to `workspace-write`, `on-request`, and `noSandboxAllowed = false`.
+- **sandbox-md06** (state-driven): While the sandbox preset is `danger-full-access`, the system shall force network `enabled`; while the preset is `read-only` or `workspace-write`, network shall default to `disabled` and stay user-controlled.
+- **sandbox-md07** (event-driven): When no persisted permissions exist, the system shall start a top-level session at `danger-full-access` with network enabled; when persisted permissions are invalid, it shall fall back to `workspace-write` with network disabled.
+- **sandbox-md08** (event-driven): When the host supplies `--sandbox-mode`, a network flag, or `--no-sandbox`, the system shall override the resolved active state with those values, applying `--no-sandbox` only to non-subagent sessions.
 
-No Taumel component should bypass sandboxing by directly exposing process,
-filesystem mutation, or approval behavior outside the central sandbox gateway.
+### Effect authorization
 
-## Why Keep It
+- **sandbox-ef01** (event-driven): When a tool's effect is execution, the system shall authorize it in every filesystem mode, constraining how it runs rather than whether it runs.
+- **sandbox-ef02** (event-driven): When a tool's effect is mutation while the filesystem mode is `read-only`, the system shall reject it with "mutation is disabled in read-only sandbox".
+- **sandbox-ef03** (event-driven): When a tool's effect is mutation while the filesystem mode is `workspace-write` or `danger-full-access`, the system shall authorize the effect and apply the path checks.
+- **sandbox-ef04** (event-driven): When a tool's effect is network while the network mode is `disabled`, the system shall reject it with "network is disabled by sandbox policy".
+- **sandbox-ef05** (event-driven): When a tool's effect is a child-agent spawn, the system shall authorize the spawn effect and leave nesting and ownership to the subagent layer.
 
-The sandbox is the security foundation for all other mechanisms. A separate
-sandbox plugin and a separate sub-agent plugin are not enough if sub-agents or
-other tools can bypass the sandbox. Taumel needs one integrated policy boundary
-that all execution and mutation paths use.
+### Path and mutation authorization
 
-## Preserve
+- **sandbox-pa01** (state-driven): While the filesystem mode is `danger-full-access`, the system shall allow read, write, and delete on any path.
+- **sandbox-pa02** (state-driven): While the filesystem mode is `read-only`, the system shall allow reads and deny writes and deletes.
+- **sandbox-pa03** (state-driven): While the filesystem mode is `workspace-write`, the system shall allow reads everywhere and allow writes and deletes only within the workspace roots.
+- **sandbox-pa04** (unwanted): If a write or delete targets a protected workspace metadata directory (`.git`, `.hg`, `.svn`), then the system shall deny it in `read-only` and `workspace-write` modes.
+- **sandbox-pa05** (event-driven): When a write or delete falls outside the workspace roots under a policy that permits approval, the system shall request approval before allowing it.
+- **sandbox-pa06** (event-driven): When `workspace-write` mutation runs, the system shall validate each path against the workspace roots after realpath resolution and reject any path that escapes the workspace or enters protected metadata.
+- **sandbox-pa07** (ubiquitous): The system shall resolve a relative mutation path against the first workspace root before authorizing it.
 
-- Sandboxed command execution.
-- `exec_command`.
-- `write_stdin`.
-- `apply_patch`.
-- Codex `apply_patch` tool shape and output behavior.
-- Tau-style tolerant mutation input handling for provider compatibility.
-- Routing or disabling unsafe Pi built-in shell/file tools.
-- Approval flow for escalation.
-- `/permissions` command, following Codex naming and behavior: choose what
-  Codex/Taumel is allowed to do.
-- Sandbox presets and effective config.
-- Filesystem policy checks.
-- Network restriction behavior.
-- Sandbox diagnostics for failures.
-- Sandbox state event for footer and other UI.
-- Top-level `--no-sandbox` escape hatch.
-- Sub-agent sandboxing.
-- Security level at least equal to Tau.
+### Exec authorization and escalation
 
-## Redesign
+- **sandbox-ex01** (event-driven): When a command runs with default permissions and a working directory, the system shall authorize read access to that working directory before execution.
+- **sandbox-ex02** (event-driven): When a command requests escalation while the approval policy is `on-request`, the system shall request approval using the supplied justification.
+- **sandbox-ex03** (unwanted): If a command requests escalation while the approval policy is not `on-request`, then the system shall deny the command and report that escalation cannot be requested under the current policy.
+- **sandbox-ex04** (event-driven): When the approval policy is `never`, the system shall deny any decision that would otherwise require approval.
+- **sandbox-ex05** (event-driven): When the approval policy is `on-request`, `on-failure`, or `untrusted`, the system shall surface a decision that requires approval as an approval request.
 
-- Treat the sandbox as a central capability gateway.
-- Let the tool gateway enforce whether a tool may run; let sandbox enforce how
-  execution and mutation are constrained.
-- Expose `exec_command`, `write_stdin`, and provider-appropriate mutation tools
-  through Taumel-owned wrappers.
-- Route OpenAI/OpenAI-Codex providers to `apply_patch`; route non-OpenAI
-  providers to sandboxed `edit`/`write` wrappers rather than forcing strict
-  `apply_patch`.
-- Disable, hide, or wrap Pi built-ins such as `bash`, `write`, and `edit` so
-  filesystem mutation cannot bypass Taumel's gateway.
-- Separate shell execution from policy decisions.
-- Separate approval policy from execution.
-- Separate filesystem policy from patch parsing/application.
-- Implement `apply_patch` as an object-shaped Pi tool contract whose `input` or
-  `patch` field contains a patch body. The OCaml patch engine may still accept
-  Tau-style heredocs, missing end markers, git/unified diffs, rename/add/delete
-  forms, loose hunks, CRLF preservation, and fallback context matching, while
-  enforcing the same sandbox policy at authorization and host mutation time.
-- Rename Tau's `/approval` command to `/permissions`.
-- Let `/permissions` edit sandbox/capability-profile state rather than global
-  Tau state.
-- Feed sandbox mode flags into the initial sandbox config.
-- Allow `--no-sandbox` only for top-level orchestrator sessions.
-- Make `--no-sandbox` visible in footer/sandbox state.
-- Keep Pi-facing tool schemas in TypeScript and OCaml policy registrations
-  separate from tool implementations.
-- Keep Pi rendering at the edge.
-- Keep child-agent sandbox inheritance explicit.
-- Keep Codex behavior as the behavioral reference where applicable.
+### bubblewrap execution
 
-## Omit
+- **sandbox-bw01** (event-driven): When a command runs sandboxed, the system shall execute it under bubblewrap with a new session, die-with-parent, and unshared user, pid, and ipc namespaces, mounting `/dev` and `/proc`.
+- **sandbox-bw02** (state-driven): While the network mode is `disabled`, the system shall unshare the network namespace for sandboxed execution.
+- **sandbox-bw03** (state-driven): While the filesystem mode is `read-only`, the system shall bind workspace roots read-only and mount `/tmp` as tmpfs.
+- **sandbox-bw04** (state-driven): While the filesystem mode is `workspace-write`, the system shall bind workspace roots read-write, bind temp roots, and bind protected workspace metadata children read-only.
+- **sandbox-bw05** (event-driven): When the filesystem mode is `danger-full-access` with network `enabled`, or `--no-sandbox` is active, or the effect is escalated, the system shall run the command unsandboxed.
+- **sandbox-bw06** (unwanted): If sandboxed execution is requested on a non-Linux platform, then the system shall report that sandboxed execution is supported only on Linux and point to `/permissions`.
 
-- Tau compatibility for old settings or persisted state unless explicitly needed.
-- Generic Tau service-layer wiring.
-- Autoresearch-specific sandbox behavior.
-- Tau's `/approval` naming.
-- Sub-agent `--no-sandbox`.
-- Agent-definition-controlled `--no-sandbox`.
-- Plugin composition assumptions where unrelated tools can bypass the sandbox.
-- Any direct shell or filesystem mutation path outside the sandbox gateway.
+### Failure diagnostics
 
-## Acceptance
+- **sandbox-fd01** (event-driven): When a sandboxed command exits non-zero with output matching network-failure signatures while the network is not enabled, the system shall attach a network diagnostic suggesting a retry with `sandbox_permissions="require_escalated"`.
+- **sandbox-fd02** (event-driven): When a sandboxed command exits non-zero with output matching filesystem-failure signatures while the mode is not `danger-full-access`, the system shall attach a filesystem diagnostic suggesting a retry with `sandbox_permissions="require_escalated"`.
+- **sandbox-fd03** (ubiquitous): The system shall emit sandbox state for the footer and other UI.
 
-- Every Taumel command/file mutation path has a clear sandbox policy boundary.
-- Built-in Pi shell/file tools cannot bypass Taumel's sandbox gateway.
-- Sub-agents cannot bypass sandboxing.
-- Sub-agents cannot enable `--no-sandbox`.
-- `apply_patch` enforces the same filesystem policy boundary as shell execution.
-- `edit`/`write` compatibility paths are Taumel-owned wrappers and enforce the
-  same filesystem policy boundary.
-- Non-OpenAI providers are not forced into strict `apply_patch`.
-- Escalation requires the same kind of approval discipline as Tau/Codex.
-- Taumel is not less secure than Tau.
+### Tools
+
+- **sandbox-tl01** (ubiquitous): The system shall expose `exec_command`, `write_stdin`, and provider-appropriate mutation tools through Taumel-owned wrappers.
+- **sandbox-tl02** (ubiquitous): The system shall disable, hide, or wrap Pi built-in `bash`, `write`, and `edit` so filesystem mutation cannot bypass the gateway.
+- **sandbox-tl03** (event-driven): When the provider is OpenAI or OpenAI-Codex, the system shall route mutation through `apply_patch`; for other providers it shall route through sandboxed `edit` and `write` wrappers.
+- **sandbox-tl04** (ubiquitous): The system shall implement `apply_patch` as an object-shaped Pi tool contract whose `input` or `patch` field carries the patch body, while the patch engine accepts Tau-tolerant forms (heredocs, missing end markers, git and unified diffs, rename/add/delete, loose hunks, CRLF preservation, fallback context matching).
+- **sandbox-tl05** (ubiquitous): The system shall enforce the same filesystem policy boundary for `apply_patch`, `edit`, and `write` as for shell execution.
+- **sandbox-tl06** (event-driven): When the host adapter cannot service `write_stdin`, or the session id is missing, the system shall report the unavailable or invalid-session result rather than execute.
+
+### no-sandbox escape hatch
+
+- **sandbox-ns01** (state-driven): While a session is a top-level orchestrator, the system shall allow `--no-sandbox` only when the active capability profile permits it.
+- **sandbox-ns02** (unwanted): If a subagent or agent definition requests `--no-sandbox`, then the system shall reject it.
+- **sandbox-ns03** (event-driven): When `--no-sandbox` is active, the system shall show it in the footer and sandbox state.
+
+### Capability profile and subagents
+
+- **sandbox-cp01** (event-driven): When deriving a child profile, the system shall set its sandbox preset to the stricter of the parent preset and the requested preset, and its approval policy to the stricter of the parent and requested policy.
+- **sandbox-cp02** (unwanted): If a subagent profile requests `danger-full-access`, then the system shall reject it; an inherited `danger-full-access` parent preset shall downgrade to `workspace-write` for the child.
+- **sandbox-cp03** (event-driven): When deriving a child profile, the system shall intersect the parent and child tool and agent allowlists and set the child's `noSandboxAllowed` to false.
+- **sandbox-cp04** (unwanted): If a requested agent is disabled or outside the parent's agent allowlist, then the system shall reject the child profile.
+
+### Permissions and network commands
+
+- **sandbox-pc01** (event-driven): When the user runs `/permissions`, the system shall set sandbox preset, approval policy, `no-sandbox`, and tool and agent allowlists following Codex naming, and shall direct network changes to `/network`.
+- **sandbox-pc02** (event-driven): When the user runs `/network`, the system shall set network access to `enabled` or `disabled`.
+- **sandbox-pc03** (unwanted): If the user disables network while the preset is `danger-full-access`, then the system shall reject the change and ask them to choose `read-only` or `workspace-write` first.
+- **sandbox-pc04** (event-driven): When the user changes the sandbox preset, the system shall reset approval policy and network mode to that preset's defaults.

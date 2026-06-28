@@ -1,53 +1,25 @@
-# Thread Tools
+---
+kind: requirement
+status: draft
+tags: [thread-tools, search, tools]
+depends_on: ["[[plans/capability-profile]]", "[[plans/tool-gateway]]"]
+---
+# Thread tools
 
-## Decision
+## Intent
 
-Port.
+`find_thread` and `read_thread` help agents recover prior context across
+sessions. Session search stays separate from transcript reading, relevance
+scoring stays pure and testable, and Pi `SessionManager` access stays at the
+adapter edge. The capability profile gates both tools, and neither depends on
+goal internals or memory.
 
-## Classification
+## Requirements
 
-Port with redesign.
-
-## Source Of Truth
-
-Use Tau's `find_thread` and `read_thread` behavior as the user-facing reference.
-The internal structure should be redesigned.
-
-## Why Keep It
-
-Thread search and reading help agents recover prior context, inspect earlier
-sessions, and continue work across interruptions without relying on memory.
-
-## Preserve
-
-- `find_thread`.
-- `read_thread`.
-- Search current workspace before global sessions.
-- Search by id, title, and content.
-- Read by exact id or unique prefix.
-- Optional goal-focused transcript extraction.
-- Branch summaries and compaction summaries where available.
-- Compact rendering of search/read results.
-
-## Redesign
-
-- Separate session catalog/search from transcript reading.
-- Keep relevance scoring pure and testable.
-- Keep Pi/SessionManager access at the adapter edge.
-- Gate availability through `CapabilityProfile`.
-- Keep renderer separate from execution.
-- Avoid coupling to goal internals despite the `goal` parameter.
-
-## Omit
-
-- Generic Tau service-layer shape.
-- Renderer-heavy module structure.
-- Any dependency on memory.
-- Any dependency on goal state.
-
-## Acceptance
-
-- Search can be tested with an in-memory catalog.
-- Transcript extraction can be tested without Pi.
-- Ambiguous thread ids produce a clear result.
-- Capability profile can allow or deny both tools.
+- **threads-tl01** (ubiquitous): The system shall provide the tools `find_thread` and `read_thread`.
+- **threads-se01** (event-driven): When the model runs `find_thread`, the system shall search the current workspace before global sessions, matching by id, title, and content.
+- **threads-rd01** (event-driven): When the model runs `read_thread`, the system shall accept an exact id or a unique prefix and may extract a goal-focused transcript with branch and compaction summaries where available.
+- **threads-rd02** (unwanted): If a thread id is ambiguous, then the system shall return a clear result rather than guess.
+- **threads-ar01** (ubiquitous): The system shall separate session catalog and search from transcript reading, keep relevance scoring pure and testable, keep Pi access at the adapter edge, and keep rendering separate from execution.
+- **threads-gp01** (event-driven): When a thread tool is called, the system shall authorize it through the capability profile.
+- **threads-dp01** (ubiquitous): The system shall keep thread tools free of dependencies on goal state and memory despite the `goal` parameter.

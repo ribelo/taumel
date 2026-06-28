@@ -1,64 +1,31 @@
-# Capability Profile
+---
+kind: requirement
+status: draft
+tags: [capability-profile, security, authorization]
+depends_on: []
+---
+# Capability profile
 
-## Decision
+## Intent
 
-Port the idea, but replace Tau's `ExecutionProfile` shape.
+A capability profile is the resolved authorization data for a session or
+subagent: model id, thinking level, sandbox preset, approval policy, allowed
+tools, allowed agents, and whether `--no-sandbox` is permitted. The profile is
+pure, testable, and resolvable without Pi. The tool gateway enforces it; Pi
+active-tool state is an exposure hint, not authority.
 
-## Classification
+## Requirements
 
-Port with redesign.
-
-## Source Of Truth
-
-Use Tau as the cautionary reference: the profile idea was useful, but complexity
-exploded because capability policy leaked into live Pi tool activation and tool
-registration details.
-
-## Why Keep It
-
-Taumel needs a coherent way to describe what a session or sub-agent is allowed
-to do. Model selection alone is not enough. The same resolved policy should
-cover model, thinking level, sandbox ceiling, approval behavior, allowed tools,
-and allowed sub-agents.
-
-## Preserve
-
-- Model id.
-- Thinking level.
-- Execution/tool policy idea.
-- Agent definition inheritance.
-- `inherit` semantics for model/thinking where useful.
-- Tool allowlists.
-- Spawn/sub-agent allowlists.
-- Agent enable/disable controls where useful.
-
-## Redesign
-
-- Rename the concept to `CapabilityProfile`.
-- Treat the profile as authorization data, not Pi registration state.
-- Make the central Taumel tool gateway enforce the active capability profile.
-- Treat Pi active tools/register/unregister as exposure hints only.
-- Deny disallowed tool calls at execution time even if Pi exposes the tool.
-- Derive child profiles from parent profile plus agent definition plus sandbox
-  clamp.
-- Treat UI controls for active tools/agents as profile edits or profile
-  overrides, not as separate authority.
-- Keep profile resolution pure and testable.
-- Keep Pi model/thinking application at the adapter edge.
-
-## Omit
-
-- Tau's `ExecutionProfile` service shape.
-- Any design where Pi active-tool mutation is the security boundary.
-- Generic live register/unregister churn as normal profile operation.
-- Tau's standalone agents-menu state model.
-- Autoresearch-specific execution profile behavior.
-
-## Acceptance
-
-- A profile can be resolved without Pi.
-- A tool call can be authorized or denied from profile data alone.
-- A child agent cannot gain capabilities outside the resolved child profile.
-- The tool gateway is the enforcement point for profile-based tool access.
-- Pi active-tool state can be wrong without violating Taumel's authorization
-  model.
+- **profile-fd01** (ubiquitous): The system shall represent a capability profile as model id, thinking level, sandbox preset, approval policy, tool allowlist, agent allowlist, and a `noSandboxAllowed` flag.
+- **profile-fd02** (ubiquitous): The system shall provide sandbox presets `read-only`, `workspace-write`, and `danger-full-access`, and approval policies `never`, `on-request`, `on-failure`, and `untrusted`.
+- **profile-fd03** (ubiquitous): The system shall represent an allowlist as `none`, `all`, or an explicit set of names.
+- **profile-df01** (ubiquitous): The system shall default a profile to model `inherit`, thinking `medium`, sandbox `workspace-write`, approval `on-request`, tools `all`, agents `all`, and `noSandboxAllowed = false`.
+- **profile-al01** (event-driven): When checking a tool or agent against an allowlist, the system shall allow `all`, deny `none`, and allow a name only when the explicit set contains it.
+- **profile-rk01** (ubiquitous): The system shall rank sandbox strictness `read-only < workspace-write < danger-full-access` and approval strictness `never < untrusted < on-request < on-failure`, treating the lower rank as stricter.
+- **profile-pu01** (ubiquitous): The system shall resolve a profile purely from profile data, without Pi.
+- **profile-ch01** (event-driven): When deriving a child profile, the system shall set the child sandbox preset to the stricter of the parent preset and the requested preset, and the child approval policy to the stricter of the parent and requested policy.
+- **profile-ch02** (event-driven): When a parent's preset is `danger-full-access` and the child requests no preset, the system shall set the inherited preset to `workspace-write`.
+- **profile-ch03** (unwanted): If a child profile requests `danger-full-access`, then the system shall reject it.
+- **profile-ch04** (event-driven): When deriving a child profile, the system shall intersect the parent and child tool and agent allowlists and set the child's `noSandboxAllowed` to false.
+- **profile-ch05** (unwanted): If a requested agent is disabled or outside the parent's agent allowlist, then the system shall reject the child profile.
+- **profile-sr01** (ubiquitous): The system shall authorize or deny a tool call from profile data alone, so wrong Pi active-tool state cannot grant capability beyond the resolved profile.

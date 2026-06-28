@@ -1,69 +1,28 @@
+---
+kind: requirement
+status: draft
+tags: [exa, network, tools]
+depends_on: ["[[plans/tool-gateway]]", "[[plans/sandbox]]"]
+---
 # Exa
 
-## Decision
+## Intent
 
-Port Exa as Taumel-owned OCaml tools on the TypeBox bridge.
+Exa search and agent endpoints are Taumel-owned tools on the TypeBox bridge.
+TypeScript owns Pi-facing schemas, descriptions, and prompt snippets; OCaml owns
+gateway policy, network authorization, approval planning, HTTP execution through
+Eta, and result normalization. Every Exa tool is a `network` effect and is
+re-authorized before execution.
 
-## Classification
+## Requirements
 
-Kept network tools with OCaml policy and Eta HTTP execution.
-
-## Source Of Truth
-
-Use Tau as the user-facing reference for the legacy tool names:
-
-- `web_search_exa`.
-- `crawling_exa`.
-- `get_code_context_exa`.
-
-Use current Exa docs for request fields and endpoints. Do not preserve
-deprecated Exa fields or Tau's implementation shape.
-
-## Responsibilities
-
-- TypeScript owns Pi-facing TypeBox schemas, descriptions, and prompt snippets.
-- OCaml owns gateway policy, sandbox/network authorization, approval planning,
-  HTTP request execution through Eta, and result normalization.
-- `EXA_API_KEY` is read by the OCaml bridge. Missing key returns a clear tool
-  result; tools still register when the key is absent.
-- Every Exa tool is registered as a `Network` effect and is re-authorized before
-  execution.
-
-## Core Tools
-
-- `web_search_exa` -> `POST /search`.
-- `crawling_exa` -> `POST /contents`.
-- `get_code_context_exa` -> `POST /context`.
-
-The exposed parameter surface intentionally omits deprecated fields such as
-`context`, `livecrawl`, and `livecrawlTimeout`.
-
-## Agent Tools
-
-- `exa_agent_create_run` -> `POST /agent/runs`.
-- `exa_agent_get_run` -> `GET /agent/runs/{id}`.
-- `exa_agent_list_runs` -> `GET /agent/runs`.
-- `exa_agent_cancel_run` -> `POST /agent/runs/{id}/cancel`.
-- `exa_agent_list_events` -> `GET /agent/runs/{id}/events`.
-
-`exa_agent_create_run` always requires explicit user approval before the HTTP
-request is sent because Agent runs can be long-running and billable. Denial,
-timeout, interruption, and unavailable UI use the same approval outcome taxonomy
-as sandbox escalation.
-
-## Omit
-
-- Agent delete endpoint.
-- Agent streaming/SSE from model tools.
-- Deprecated Exa request fields.
-- TS `fetch` or ad hoc provider clients.
-- Any path that bypasses capability profile or sandbox network policy.
-
-## Acceptance
-
-- Exa tools are denied when the active capability profile does not allow them.
-- Exa network calls respect Taumel's network policy.
-- Missing API key produces a clear tool result.
-- TypeScript and OCaml tool catalogs fail fast if Exa names drift.
-- `exa_agent_create_run` prompts before sending a request even when network is
-  enabled.
+- **exa-tl01** (ubiquitous): The system shall provide the core tools `web_search_exa` (`POST /search`), `crawling_exa` (`POST /contents`), and `get_code_context_exa` (`POST /context`).
+- **exa-tl02** (ubiquitous): The system shall provide the agent tools `exa_agent_create_run` (`POST /agent/runs`), `exa_agent_get_run` (`GET /agent/runs/{id}`), `exa_agent_list_runs` (`GET /agent/runs`), `exa_agent_cancel_run` (`POST /agent/runs/{id}/cancel`), and `exa_agent_list_events` (`GET /agent/runs/{id}/events`).
+- **exa-ar01** (ubiquitous): The system shall keep Pi-facing schemas, descriptions, and prompt snippets in TypeScript and keep gateway policy, network authorization, approval planning, Eta HTTP execution, and result normalization in OCaml.
+- **exa-ef01** (ubiquitous): The system shall register every Exa tool as a `network` effect and re-authorize it before execution.
+- **exa-ak01** (event-driven): When `EXA_API_KEY` is absent, the system shall return a clear tool result and shall still register the tools.
+- **exa-ap01** (event-driven): When the model invokes `exa_agent_create_run`, the system shall require explicit user approval before sending the request, even when network is enabled.
+- **exa-ap02** (event-driven): When an Exa approval is denied, times out, is interrupted, or has no UI, the system shall use the sandbox escalation approval-outcome taxonomy.
+- **exa-dn01** (event-driven): When the active capability profile disallows an Exa tool, the system shall deny the call.
+- **exa-om01** (ubiquitous): The system shall omit deprecated request fields (`context`, `livecrawl`, `livecrawlTimeout`), the agent delete endpoint, agent streaming, and ad hoc TypeScript HTTP clients.
+- **exa-dr01** (event-driven): When the TypeScript and OCaml Exa tool-name sets drift, the system shall fail fast at startup.

@@ -1,48 +1,21 @@
+---
+kind: requirement
+status: draft
+tags: [usage, provider, command]
+depends_on: []
+---
 # Usage
 
-## Decision
+## Intent
 
-Port, renamed from Tau's `/status` to `/usage`.
+`/usage` reports OpenAI account and quota information in a compact terminal view.
+Provider fetching and parsing stay separate from rendering; Pi command wiring
+stays at the edge. Scope stays on account and quota rather than general status.
 
-## Classification
+## Requirements
 
-Port with redesign and reduced provider scope.
-
-## Source Of Truth
-
-Use Tau's `/status` OpenAI usage/account behavior as the user-facing reference.
-Do not preserve the generic `/status` shape.
-
-## Why Keep It
-
-Provider usage visibility is useful, but it should be scoped to account and
-quota information rather than becoming a generic status dumping ground.
-
-## Preserve
-
-- A command for viewing provider usage.
-- OpenAI account/API-key status.
-- OpenAI plan or quota information where available.
-- Compact terminal rendering of usage rows.
-- Persistence only where needed for a good user experience.
-
-## Redesign
-
-- Rename the command to `/usage`.
-- Make provider support explicit instead of one generic status component.
-- Keep OpenAI as the only provider for now.
-- Separate provider fetching/parsing from terminal rendering.
-- Keep Pi command wiring at the edge.
-
-## Omit
-
-- Gemini CLI usage/status.
-- Google Antigravity usage/status.
-- Generic `/status` command.
-- Sandbox, goal, model, or footer state dumping.
-
-## Acceptance
-
-- `/usage` reports OpenAI usage/account information.
-- No Gemini CLI or Antigravity code is ported.
-- The component does not become the owner of unrelated runtime status.
+- **usage-cm01** (event-driven): When the user runs `/usage`, the system shall report OpenAI usage and account information.
+- **usage-pv01** (ubiquitous): The system shall support OpenAI as the only provider and shall make provider support explicit.
+- **usage-rn01** (ubiquitous): The system shall render usage rows compactly in the terminal.
+- **usage-ar01** (ubiquitous): The system shall separate provider fetching and parsing from terminal rendering and keep Pi command wiring at the edge.
+- **usage-sc01** (ubiquitous): The system shall scope `/usage` output to account and quota information and exclude sandbox, goal, model, and footer state.
