@@ -65,6 +65,12 @@ does not pause the goal lifecycle.
 - **goal-rc03** (event-driven): When a final unrecoverable turn error arrives, the system shall set the goal `blocked`; when a usage or quota error arrives, it shall set the goal `usage_limited`.
 - **goal-rc04** (event-driven): When only an extension `agent_end` with assistant stop reason `error` or `aborted` is available, the system shall suppress continuation without auto-blocking the goal.
 
+### Accounting
+
+- **goal-ac01** (event-driven): When an assistant turn completes while the goal is `active`, the system shall add that turn's uncached input plus output tokens to `tokensUsed` and its active seconds to `timeUsedSeconds`, exactly once per turn keyed by session, branch length, and usage.
+- **goal-ac02** (event-driven): When the goal transitions to `complete` or `blocked` through `update_goal` or `/goal`, the system shall account the in-flight turn while the goal is still `active` before applying the terminal status, so the returned `tokensUsed` and `timeUsedSeconds` include that turn.
+- **goal-ac03** (ubiquitous): The system shall report `tokensUsed` as the sum of every accounted turn's uncached input plus output tokens and `timeUsedSeconds` as the sum of every accounted turn's active seconds.
+
 ### Time limit
 
 - **goal-tl01** (ubiquitous): The system shall enforce active-time limits, counting model generation, tool execution, and in-turn process time, and excluding idle time and bracketed approval waits.

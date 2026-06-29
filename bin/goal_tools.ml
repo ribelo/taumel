@@ -190,6 +190,11 @@ let prepare_update params ctx =
         | "blocked" -> Taumel.Goal.Blocked
         | _ -> failwith "invalid parsed update_goal.status"
       in
+      (* Account the in-flight turn before the goal leaves Active so the
+         returned totals include the work that produced this completion. The
+         turn_end pass dedupes on the same accounting key, so this never double
+         counts. *)
+      Session_sync.account_goal_turn_end ctx;
       match Taumel.Goal.update_status ~now:(now_seconds ()) status !current_goal with
       | Error message -> error_obj message
       | Ok goal ->
@@ -198,6 +203,12 @@ let prepare_update params ctx =
           tool_result (Some goal) "Goal updated.")
 
 let handle_command args ctx =
+  (* Mirror update_goal: a user-driven terminal transition accounts the
+     in-flight turn before the goal leaves Active. *)
+  (let command, _ = Taumel.Goal.split_command args in
+   match String.lowercase_ascii command with
+   | "complete" | "blocked" -> Session_sync.account_goal_turn_end ctx
+   | _ -> ());
   match
     Taumel.Goal.apply_command ~thread_id:(thread_id ()) ~now:(now_seconds ()) args
       !current_goal
