@@ -37,6 +37,7 @@ let command_specs =
     { name = "agents"; description = "List, enable, or disable Taumel agent profiles." };
     { name = "agent-runs"; description = "Inspect and close Taumel agent identities and runs." };
     { name = "execpolicy"; description = "Show or check exec command policy decisions." };
+    { name = "compaction-model"; description = "Choose a model for context compaction." };
   ]
 
 let tool_names = List.map (fun (spec : Tool_gateway.spec) -> spec.name) tool_specs

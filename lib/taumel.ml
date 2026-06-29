@@ -1,6 +1,7 @@
 module Capability_profile = Capability_profile
 module Child_session = Child_session
 module Command_plan = Command_plan
+module Compaction_model = Compaction_model
 module Environment_context = Environment_context
 module Exec_policy = Exec_policy
 module Exa = Exa

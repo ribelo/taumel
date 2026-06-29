@@ -6,6 +6,7 @@ import type {
 } from "./types.ts";
 
 import { executeComposerCommand } from "./composer.ts";
+import { executeCompactionModelCommand } from "./compaction-model.ts";
 import {
   applyChildSessionUpdate,
   childSessionCacheKeyScopeFromContext,
@@ -235,6 +236,9 @@ export async function executeGatewayCommand(
 ): Promise<unknown> {
   if (name === "composer") {
     return executeComposerCommand(core, composer, args, ctx);
+  }
+  if (name === "compaction-model") {
+    return executeCompactionModelCommand(pi, core, args, ctx);
   }
   if (name === "execpolicy") {
     const trimmed = args.trim();

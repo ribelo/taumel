@@ -11,6 +11,7 @@ import { createComposerController } from "./composer.ts";
 import { makeHost } from "./host.ts";
 import { agentGatewayToolNames, registerGatewayTools, type GatewayToolRegistration } from "./tool-executor.ts";
 import { installGoalContinuationLoop, registerGatewayCommands } from "./command-executor.ts";
+import { installCompactionModelHook } from "./compaction-model.ts";
 import { toolNames } from "./tool-contracts.ts";
 
 function requireCoreBridge(core: CoreBridge | undefined): CoreBridge {
@@ -277,4 +278,5 @@ export default async function taumel(pi: PiLike) {
   installSandboxToolActivation(pi, core);
   installExecPolicyLoader(pi, core);
   installEnvironmentContext(pi, core);
+  installCompactionModelHook(pi, core);
 }

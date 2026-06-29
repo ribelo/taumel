@@ -26,6 +26,10 @@ let core_call name_js args_js =
       Tool_catalog_bridge.plan_active_tools_sync_js (arg 0) (arg 1)
   | "planEnvironmentContext" ->
       Environment_context_bridge.plan_context (arg 0) (arg 1)
+  | "planCompactionModelCommand" ->
+      Compaction_model_bridge.plan_command (string_arg args 0) (arg 1)
+  | "planSessionBeforeCompact" ->
+      Compaction_model_bridge.plan_session_before_compact (arg 0) (arg 1)
   | "refreshExecPolicy" -> Exec_policy_bridge.compile_settings (arg 0)
   | "appendExecPolicyAllowRule" ->
       Exec_policy_bridge.append_allow_rule (get_string_array (arg 0) "tokens")

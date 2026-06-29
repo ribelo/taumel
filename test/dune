@@ -87,3 +87,9 @@
  (modules test_exec_policy)
  (package taumel)
  (libraries taumel))
+
+(test
+ (name test_compaction_model)
+ (modules test_compaction_model)
+ (package taumel)
+ (libraries taumel))
