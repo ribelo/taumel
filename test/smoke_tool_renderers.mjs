@@ -203,15 +203,28 @@ assert(editCompact.includes("+ line TWO"), `edit diff should show an added (+) l
 assert(editExpanded.length >= editCompact.length, `edit expanded should be at least as informative`);
 assert(!editCompact.includes("  └ "), `edit body should use the line-number gutter, not the └ connector`);
 
-// Single-line addition in a 5-line file → 2 context above + added line + 2 context below = 5 lines.
+// Pure addition → 5 diff-body rows (2 context + 1 added + 2 context), excluding the header row.
 const addEditResult = {
   content: [{ type: "text", text: "edited" }],
   details: { ok: true, displayPath: "src/mid.ts", before: "a\nb\nc\nd\ne", after: "a\nb\nNEW\nc\nd\ne" },
 };
 const addEditCompact = renderText(renderersForTool("edit").renderResult(addEditResult, { expanded: false, isPartial: false }, theme, { args: { path: "src/mid.ts" } }));
 const addEditDiffLines = addEditCompact.split("\n").filter((line) => /^\s+\d+\s+[+\- ]/.test(line));
-assert(addEditDiffLines.length === 5, `single-line addition should render 5 diff lines (2 context + 1 added + 2 context): ${addEditCompact}`);
+assert(addEditDiffLines.length === 5, `pure addition should render 5 diff-body rows (2 context + 1 added + 2 context), excluding the header row: ${addEditCompact}`);
 assert(/• edit · src\/mid\.ts \(\+1 -0\)/.test(addEditCompact), `addition edit subject should be (+1 -0): ${addEditCompact}`);
+
+// Single-line replacement (the common case) → 6 diff-body rows (2 context + 1 removed + 1 added + 2 context),
+// because unified diff shows the old and new lines as separate rows.
+const replaceEditResult = {
+  content: [{ type: "text", text: "edited" }],
+  details: { ok: true, displayPath: "src/mid.ts", before: "a\nb\nOLD\nc\nd\ne", after: "a\nb\nNEW\nc\nd\ne" },
+};
+const replaceEditCompact = renderText(renderersForTool("edit").renderResult(replaceEditResult, { expanded: false, isPartial: false }, theme, { args: { path: "src/mid.ts" } }));
+const replaceEditDiffLines = replaceEditCompact.split("\n").filter((line) => /^\s+\d+\s+[+\- ]/.test(line));
+assert(replaceEditDiffLines.length === 6, `single-line replacement should render 6 diff-body rows (2 context + 1 removed + 1 added + 2 context): ${replaceEditCompact}`);
+assert(/• edit · src\/mid\.ts \(\+1 -1\)/.test(replaceEditCompact), `replacement edit subject should be (+1 -1): ${replaceEditCompact}`);
+assert(replaceEditCompact.includes("- OLD"), `replacement edit should show the removed (-) line: ${replaceEditCompact}`);
+assert(replaceEditCompact.includes("+ NEW"), `replacement edit should show the added (+) line: ${replaceEditCompact}`);
 
 // apply_patch — single-file collapsed renders like edit (inline diff); expanded full diff.
 const patchCompact = renderText(renderersForTool("apply_patch").renderResult(resultFor("apply_patch"), { expanded: false, isPartial: false }, theme, { args: argsFor("apply_patch") }));
