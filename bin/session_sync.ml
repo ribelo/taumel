@@ -150,17 +150,17 @@ let live_agent_ids_for_ctx ctx =
 
 let load_agent_state ctx =
   match Session_store.custom_entry_data ctx "taumel.agents" with
-  | None -> agent_state := Taumel.Subagents.empty_session_state
+  | None -> agent_state := Taumel.Agent_runs.empty_session_state
   | Some data -> (
-      match Result.bind (json_from_js data) Taumel.Subagents.session_state_codec.decode with
+      match Result.bind (json_from_js data) Taumel.Agent_runs_codec.session_state_codec.decode with
       | Ok state ->
           agent_state :=
-            Taumel.Subagents.mark_active_runs_lost
+            Taumel.Agent_runs.mark_active_runs_lost
               ~live_agent_ids:(live_agent_ids_for_ctx ctx) state
       | Error message ->
           report_session_sync_error "agent state load"
             (Failure ("Ignoring incompatible saved Taumel agents entry: " ^ message));
-          agent_state := Taumel.Subagents.empty_session_state)
+          agent_state := Taumel.Agent_runs.empty_session_state)
 
 let load_session_state ctx =
   load_goal_state ctx;
@@ -229,7 +229,7 @@ let save_ralph_state ctx =
 
 let save_agent_state ctx =
   Session_store.append_custom_entry ctx "taumel.agents"
-    (Taumel.Subagents.session_state_codec.encode !agent_state)
+    (Taumel.Agent_runs_codec.session_state_codec.encode !agent_state)
 
 let account_goal_turn_end ctx =
   let active_time_seconds, next_clock =

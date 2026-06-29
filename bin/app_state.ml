@@ -44,10 +44,10 @@ let host_no_sandbox : bool option ref = ref None
 let ralph_tasks : Taumel.Ralph_loop.task list ref = ref []
 let workers : Taumel.Subagents.worker list ref = ref []
 let exec_policy : Taumel.Exec_policy.compiled ref = ref Taumel.Exec_policy.empty
-let agent_state : Taumel.Subagents.session_state ref =
-  ref Taumel.Subagents.empty_session_state
-let agent_catalog : Taumel.Subagents.profile_catalog ref =
-  ref Taumel.Subagents.default_profile_catalog
+let agent_state : Taumel.Agent_runs.session_state ref =
+  ref Taumel.Agent_runs.empty_session_state
+let agent_catalog : Taumel.Agent_profiles.profile_catalog ref =
+  ref Taumel.Agent_profiles.default_profile_catalog
 let loaded_session_id : string option ref = ref None
 let last_goal_accounting_key : string option ref = ref None
 let footer_event = "taumel:footer:changed"

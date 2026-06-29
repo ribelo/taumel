@@ -2,6 +2,9 @@ module Capability = Taumel.Capability_profile
 module Sandbox = Taumel.Sandbox
 module Shared = Taumel.Shared
 module Subagents = Taumel.Subagents
+module Agent_profiles = Taumel.Agent_profiles
+module Agent_runs = Taumel.Agent_runs
+module Agent_runs_codec = Taumel.Agent_runs_codec
 module Tool_catalog = Taumel.Tool_catalog
 
 let fail label message = failwith (Printf.sprintf "%s: %s" label message)
@@ -176,54 +179,54 @@ let test_agent_bridge_update_requires_created_child () =
 let test_agent_profile_toggle_state () =
   let disabled =
     expect_ok "disable profile"
-      (Subagents.set_profile_enabled Subagents.empty_session_state "finder" false)
+      (Agent_runs.set_profile_enabled Agent_runs.empty_session_state "finder" false)
   in
-  assert_bool "finder disabled" (not (Subagents.profile_enabled disabled "finder"));
+  assert_bool "finder disabled" (not (Agent_runs.profile_enabled disabled "finder"));
   assert_bool "other profile defaults enabled"
-    (Subagents.profile_enabled disabled "review");
-  (match Subagents.set_profile_enabled disabled "plan" false with
+    (Agent_runs.profile_enabled disabled "review");
+  (match Agent_runs.set_profile_enabled disabled "plan" false with
   | Error "unknown agent profile: plan" -> ()
   | Error message -> fail "unknown profile" ("unexpected error: " ^ message)
   | Ok _ -> fail "unknown profile" "expected validation error");
-  let encoded = Subagents.session_state_codec.encode disabled in
+  let encoded = Agent_runs_codec.session_state_codec.encode disabled in
   let decoded =
-    expect_ok "toggle codec" (Subagents.session_state_codec.decode encoded)
+    expect_ok "toggle codec" (Agent_runs_codec.session_state_codec.decode encoded)
   in
   assert_bool "codec preserves disabled profile"
-    (not (Subagents.profile_enabled decoded "finder"));
+    (not (Agent_runs.profile_enabled decoded "finder"));
   let enabled =
-    expect_ok "enable profile" (Subagents.set_profile_enabled decoded "finder" true)
+    expect_ok "enable profile" (Agent_runs.set_profile_enabled decoded "finder" true)
   in
-  assert_bool "finder enabled" (Subagents.profile_enabled enabled "finder");
+  assert_bool "finder enabled" (Agent_runs.profile_enabled enabled "finder");
   let scout =
     {
-      Subagents.spec_name = "scout";
+      Agent_profiles.spec_name = "scout";
       spec_description = "Repository scout";
-      spec_provider = Subagents.Inherit_string;
-      spec_model = Subagents.Inherit_string;
-      spec_thinking = Subagents.Inherit_string;
-      spec_sandbox = Subagents.Inherit_sandbox;
-      spec_tools = Subagents.Inherit_tools;
+      spec_provider = Agent_profiles.Inherit_string;
+      spec_model = Agent_profiles.Inherit_string;
+      spec_thinking = Agent_profiles.Inherit_string;
+      spec_sandbox = Agent_profiles.Inherit_sandbox;
+      spec_tools = Agent_profiles.Inherit_tools;
       spec_prompt = "Inspect directly.";
-      spec_source = Subagents.User_markdown "/profiles/scout.md";
+      spec_source = Agent_profiles.User_markdown "/profiles/scout.md";
     }
   in
-  let catalog = Subagents.build_profile_catalog ~live_tools:[] [ scout ] in
+  let catalog = Agent_profiles.build_profile_catalog ~live_tools:[] [ scout ] in
   let user_disabled =
     expect_ok "disable user profile"
-      (Subagents.set_profile_enabled ~catalog enabled "scout" false)
+      (Agent_runs.set_profile_enabled ~catalog enabled "scout" false)
   in
   assert_bool "user profile disabled"
-    (not (Subagents.profile_enabled user_disabled "scout"))
+    (not (Agent_runs.profile_enabled user_disabled "scout"))
 
 let test_agent_profile_catalog () =
-  let catalog = Subagents.default_profile_catalog in
+  let catalog = Agent_profiles.default_profile_catalog in
   assert_bool "catalog has finder"
-    (Option.is_some (Subagents.find_profile_spec catalog "finder"));
+    (Option.is_some (Agent_profiles.find_profile_spec catalog "finder"));
   assert_bool "catalog has no plan"
-    (Option.is_none (Subagents.find_profile_spec catalog "plan"));
+    (Option.is_none (Agent_profiles.find_profile_spec catalog "plan"));
   let finder =
-    match Subagents.find_profile_spec catalog "finder" with
+    match Agent_profiles.find_profile_spec catalog "finder" with
     | Some finder -> finder
     | None -> fail "finder profile" "expected built-in"
   in
@@ -242,7 +245,7 @@ let test_agent_profile_catalog () =
       no_sandbox = true;
     }
   in
-  let resolved = Subagents.spawn_request_with_profile finder request in
+  let resolved = Agent_profiles.spawn_request_with_profile finder request in
   assert_bool "profile clears per-call model override" (resolved.model_id = None);
   assert_bool "profile applies system prompt"
     (resolved.system_prompt = finder.spec_prompt);
@@ -250,23 +253,23 @@ let test_agent_profile_catalog () =
   assert_bool "profile clears no-sandbox" (not resolved.no_sandbox);
   let finder_override =
     {
-      Subagents.override_name = "finder";
-      override_provider = Subagents.Concrete_string "openai-codex";
-      override_model = Subagents.Concrete_string "gpt-override";
-      override_thinking = Subagents.Concrete_string "high";
+      Agent_profiles.override_name = "finder";
+      override_provider = Agent_profiles.Concrete_string "openai-codex";
+      override_model = Agent_profiles.Concrete_string "gpt-override";
+      override_thinking = Agent_profiles.Concrete_string "high";
     }
   in
   let override_catalog =
-    Subagents.build_profile_catalog ~builtin_overrides:[ finder_override ]
+    Agent_profiles.build_profile_catalog ~builtin_overrides:[ finder_override ]
       ~live_tools:[] []
   in
   let overridden_finder =
-    match Subagents.find_profile_spec override_catalog "finder" with
+    match Agent_profiles.find_profile_spec override_catalog "finder" with
     | Some finder -> finder
     | None -> fail "overridden finder profile" "expected built-in"
   in
   let overridden =
-    Subagents.spawn_request_with_profile overridden_finder request
+    Agent_profiles.spawn_request_with_profile overridden_finder request
   in
   assert_bool "override catalog valid"
     (override_catalog.catalog_errors = []);
@@ -275,10 +278,10 @@ let test_agent_profile_catalog () =
   assert_bool "override applies thinking"
     (overridden.thinking_level = Some "high");
   let unknown_override =
-    { finder_override with Subagents.override_name = "ghost" }
+    { finder_override with Agent_profiles.override_name = "ghost" }
   in
   let invalid_catalog =
-    Subagents.build_profile_catalog ~builtin_overrides:[ unknown_override ]
+    Agent_profiles.build_profile_catalog ~builtin_overrides:[ unknown_override ]
       ~live_tools:[] []
   in
   assert_bool "unknown built-in override is invalid"
@@ -304,19 +307,19 @@ let test_markdown_profile_validation () =
   in
   let scout =
     expect_ok "parse markdown profile"
-      (Subagents.parse_markdown_profile ~path:"/profiles/scout.md" markdown)
+      (Agent_profiles.parse_markdown_profile ~path:"/profiles/scout.md" markdown)
   in
   assert_equal "markdown profile name" "scout" scout.spec_name;
   assert_equal "markdown sandbox" "read-only"
-    (Subagents.sandbox_setting_to_summary scout.spec_sandbox);
+    (Agent_profiles.sandbox_setting_to_summary scout.spec_sandbox);
   let catalog =
-    Subagents.build_profile_catalog
+    Agent_profiles.build_profile_catalog
       ~live_tools:[ "exec_command"; "find_thread" ]
       [ scout ]
   in
   assert_bool "valid catalog has scout"
     (catalog.catalog_errors = []
-    && Option.is_some (Subagents.find_profile_spec catalog "scout"));
+    && Option.is_some (Agent_profiles.find_profile_spec catalog "scout"));
   let provider_mismatch =
     String.concat "\n"
       [
@@ -333,7 +336,7 @@ let test_markdown_profile_validation () =
       ]
   in
   (match
-     Subagents.parse_markdown_profile ~path:"/profiles/mismatch.md"
+     Agent_profiles.parse_markdown_profile ~path:"/profiles/mismatch.md"
        provider_mismatch
    with
   | Error message when String.contains message 'p' -> ()
@@ -355,7 +358,7 @@ let test_markdown_profile_validation () =
         "Body";
       ]
   in
-  (match Subagents.parse_markdown_profile ~path:"/profiles/tau.md" tau_key with
+  (match Agent_profiles.parse_markdown_profile ~path:"/profiles/tau.md" tau_key with
   | Error message when String.contains message 's' -> ()
   | Error message -> fail "tau key" ("unexpected error: " ^ message)
   | Ok _ -> fail "tau key" "expected error");
@@ -375,22 +378,22 @@ let test_markdown_profile_validation () =
       ]
   in
   (match
-     Subagents.parse_markdown_profile ~path:"/profiles/full.md"
+     Agent_profiles.parse_markdown_profile ~path:"/profiles/full.md"
        full_access_profile
    with
   | Error "/profiles/full.md: danger-full-access is not allowed for subagent profiles" -> ()
   | Error message -> fail "full-access sandbox" ("unexpected error: " ^ message)
   | Ok _ -> fail "full-access sandbox" "expected error");
-  let override = { scout with Subagents.spec_name = "finder" } in
+  let override = { scout with Agent_profiles.spec_name = "finder" } in
   let invalid =
-    Subagents.build_profile_catalog ~live_tools:[ "exec_command" ] [ override ]
+    Agent_profiles.build_profile_catalog ~live_tools:[ "exec_command" ] [ override ]
   in
   assert_bool "built-in override is invalid" (invalid.catalog_errors <> []);
   let agent_tool =
-    { scout with spec_name = "delegator"; spec_tools = Subagents.Concrete_tools [ "agent_spawn" ] }
+    { scout with spec_name = "delegator"; spec_tools = Agent_profiles.Concrete_tools [ "agent_spawn" ] }
   in
   let invalid_tools =
-    Subagents.build_profile_catalog ~live_tools:[ "agent_spawn" ] [ agent_tool ]
+    Agent_profiles.build_profile_catalog ~live_tools:[ "agent_spawn" ] [ agent_tool ]
   in
   assert_bool "agent tools are invalid in profile"
     (invalid_tools.catalog_errors <> [])
@@ -398,7 +401,7 @@ let test_markdown_profile_validation () =
 let test_agent_run_metadata_state () =
   let spawned =
     expect_ok "record spawn"
-      (Subagents.record_spawn Subagents.empty_session_state ~now:10
+      (Agent_runs.record_spawn Agent_runs.empty_session_state ~now:10
          ~parent_session_id:"parent" ~agent_id:"finder-a1"
          ~profile_name:"finder" "inspect")
   in
@@ -407,39 +410,39 @@ let test_agent_run_metadata_state () =
     spawned.delivery_submission_id;
   assert_equal "spawn delivery" "started" spawned.delivery_kind;
   let state = spawned.delivery_state in
-  assert_bool "agent id used" (Subagents.agent_id_used state "finder-a1");
-  let generated_id = Subagents.default_agent_id state "finder" in
+  assert_bool "agent id used" (Agent_runs.agent_id_used state "finder-a1");
+  let generated_id = Agent_runs.default_agent_id state "finder" in
   assert_starts_with "generated id prefix" ~prefix:"finder-" generated_id;
   assert_bool "generated id length"
     (String.length generated_id = String.length "finder-" + 4);
   let parent_a_id =
-    Subagents.default_agent_id ~scope:"parent-a" Subagents.empty_session_state
+    Agent_runs.default_agent_id ~scope:"parent-a" Agent_runs.empty_session_state
       "finder"
   in
   let parent_b_id =
-    Subagents.default_agent_id ~scope:"parent-b" Subagents.empty_session_state
+    Agent_runs.default_agent_id ~scope:"parent-b" Agent_runs.empty_session_state
       "finder"
   in
   assert_bool "generated id includes parent scope" (parent_a_id <> parent_b_id);
   let generated =
     expect_ok "record generated spawn"
-      (Subagents.record_spawn state ~now:11 ~parent_session_id:"parent"
+      (Agent_runs.record_spawn state ~now:11 ~parent_session_id:"parent"
          ~agent_id:generated_id ~profile_name:"finder" "generated")
   in
   assert_bool "generated id persisted"
-    (Subagents.agent_id_used generated.delivery_state generated_id);
-  let retry_generated_id = Subagents.default_agent_id generated.delivery_state "finder" in
+    (Agent_runs.agent_id_used generated.delivery_state generated_id);
+  let retry_generated_id = Agent_runs.default_agent_id generated.delivery_state "finder" in
   assert_bool "generated id retries on collision"
     (retry_generated_id <> generated_id);
   (match
-     Subagents.record_spawn state ~now:11 ~parent_session_id:"parent"
+     Agent_runs.record_spawn state ~now:11 ~parent_session_id:"parent"
        ~agent_id:"Finder_bad" ~profile_name:"finder" "bad id"
    with
   | Error message when starts_with ~prefix:"invalid agent_id" message -> ()
   | Error message -> fail "invalid agent id" ("unexpected error: " ^ message)
   | Ok _ -> fail "invalid agent id" "expected validation error");
   (match
-     Subagents.record_spawn state ~now:11 ~parent_session_id:"parent"
+     Agent_runs.record_spawn state ~now:11 ~parent_session_id:"parent"
        ~agent_id:"finder-a1" ~profile_name:"finder" "again"
    with
   | Error "agent id was already used in this session: finder-a1" -> ()
@@ -447,80 +450,80 @@ let test_agent_run_metadata_state () =
   | Ok _ -> fail "duplicate agent id" "expected error");
   let sent =
     expect_ok "record send"
-      (Subagents.record_send state ~now:12 ~agent_id:"finder-a1" "continue")
+      (Agent_runs.record_send state ~now:12 ~agent_id:"finder-a1" "continue")
   in
   assert_equal "send steers active run" "steered" sent.delivery_kind;
   assert_equal "send steered delivery mode" "steer"
-    (Subagents.dispatch_deliver_as_for_delivery_kind sent.delivery_kind);
+    (Agent_runs.dispatch_deliver_as_for_delivery_kind sent.delivery_kind);
   assert_equal "send keeps run" spawned.delivery_run_id sent.delivery_run_id;
   assert_equal "send submission id" "finder-a1-run-1-submission-2"
     sent.delivery_submission_id;
   let same_second_interrupted =
     expect_ok "record same-second interrupted send"
-      (Subagents.record_send state ~now:10 ~agent_id:"finder-a1"
+      (Agent_runs.record_send state ~now:10 ~agent_id:"finder-a1"
          ~interrupt:true "priority in same second")
   in
-  (match Subagents.latest_run same_second_interrupted.delivery_state "finder-a1" with
+  (match Agent_runs.latest_run same_second_interrupted.delivery_state "finder-a1" with
   | Some run ->
       assert_equal "priority interrupt keeps same run" "finder-a1-run-1"
         run.run_id
   | None -> fail "same-second latest run" "expected run");
   let interrupted =
     expect_ok "record interrupted send"
-      (Subagents.record_send state ~now:12 ~agent_id:"finder-a1"
+      (Agent_runs.record_send state ~now:12 ~agent_id:"finder-a1"
          ~interrupt:true "priority")
   in
   assert_equal "interrupted send keeps run" "finder-a1-run-1"
     interrupted.delivery_run_id;
   assert_equal "interrupted send delivery" "interrupted" interrupted.delivery_kind;
   assert_equal "interrupted delivery mode" "steer"
-    (Subagents.dispatch_deliver_as_for_delivery_kind interrupted.delivery_kind);
+    (Agent_runs.dispatch_deliver_as_for_delivery_kind interrupted.delivery_kind);
   assert_bool "interrupted send reports previous status"
-    (interrupted.delivery_previous_status = Some Subagents.Run_running);
-  (match Subagents.find_run interrupted.delivery_state "finder-a1-run-1" with
+    (interrupted.delivery_previous_status = Some Agent_runs.Run_running);
+  (match Agent_runs.find_run interrupted.delivery_state "finder-a1-run-1" with
   | Some run ->
       assert_bool "interrupted send keeps running"
-        (run.run_status = Subagents.Run_running);
+        (run.run_status = Agent_runs.Run_running);
       assert_bool "interrupted send appends submission"
         (List.length run.run_submissions = 2)
   | None -> fail "interrupted run" "expected run");
   let suspended =
     expect_ok "record interrupt-only send"
-      (Subagents.record_send state ~now:12 ~agent_id:"finder-a1"
+      (Agent_runs.record_send state ~now:12 ~agent_id:"finder-a1"
          ~interrupt:true "")
   in
   assert_equal "interrupt-only keeps run" "finder-a1-run-1"
     suspended.delivery_run_id;
   assert_equal "interrupt-only delivery" "suspended" suspended.delivery_kind;
-  (match Subagents.find_run suspended.delivery_state "finder-a1-run-1" with
+  (match Agent_runs.find_run suspended.delivery_state "finder-a1-run-1" with
   | Some run ->
       assert_bool "interrupt-only suspends run"
-        (run.run_status = Subagents.Run_suspended);
+        (run.run_status = Agent_runs.Run_suspended);
       assert_bool "interrupt-only reason"
         (run.run_reason = Some "interrupted_by_parent")
   | None -> fail "suspended run" "expected run");
   let resumed =
     expect_ok "record suspended resume"
-      (Subagents.record_send suspended.delivery_state ~now:13
+      (Agent_runs.record_send suspended.delivery_state ~now:13
          ~agent_id:"finder-a1" "resume")
   in
   assert_equal "resume keeps run" "finder-a1-run-1" resumed.delivery_run_id;
   assert_equal "resume delivery" "resumed" resumed.delivery_kind;
-  (match Subagents.find_run resumed.delivery_state "finder-a1-run-1" with
+  (match Agent_runs.find_run resumed.delivery_state "finder-a1-run-1" with
   | Some run ->
       assert_bool "resume marks running"
-        (run.run_status = Subagents.Run_running);
+        (run.run_status = Agent_runs.Run_running);
       assert_bool "resume appends submission"
         (List.length run.run_submissions = 2)
   | None -> fail "resumed run" "expected run");
   let idle =
     expect_ok "complete run for idle send"
-      (Subagents.record_run_completion state ~now:14
-         ~run_id:"finder-a1-run-1" ~status:Subagents.Run_completed ())
+      (Agent_runs.record_run_completion state ~now:14
+         ~run_id:"finder-a1-run-1" ~status:Agent_runs.Run_completed ())
   in
   let idle_interrupt =
     expect_ok "record idle interrupt-only send"
-      (Subagents.record_send idle ~now:15 ~agent_id:"finder-a1"
+      (Agent_runs.record_send idle ~now:15 ~agent_id:"finder-a1"
          ~interrupt:true "")
   in
   assert_equal "idle interrupt has no run" "" idle_interrupt.delivery_run_id;
@@ -532,59 +535,59 @@ let test_agent_run_metadata_state () =
     (List.length idle_interrupt.delivery_state.runs = List.length idle.runs);
   let closed =
     expect_ok "record close"
-      (Subagents.record_close sent.delivery_state ~now:13 ~agent_id:"finder-a1")
+      (Agent_runs.record_close sent.delivery_state ~now:13 ~agent_id:"finder-a1")
   in
-  (match Subagents.latest_run closed "finder-a1" with
+  (match Agent_runs.latest_run closed "finder-a1" with
   | Some run ->
       assert_bool "close cancels active run"
-        (run.run_status = Subagents.Run_cancelled);
+        (run.run_status = Agent_runs.Run_cancelled);
       assert_bool "close reason"
         (run.run_reason = Some "closed_by_parent")
   | None -> fail "closed latest run" "expected run");
   let decoded =
     expect_ok "agent metadata codec"
-      (Subagents.session_state_codec.decode
-         (Subagents.session_state_codec.encode closed))
+      (Agent_runs_codec.session_state_codec.decode
+         (Agent_runs_codec.session_state_codec.encode closed))
   in
   assert_bool "codec preserves identity"
-    (Subagents.agent_id_used decoded "finder-a1");
-  let lost = Subagents.mark_active_runs_lost state in
-  (match Subagents.latest_run lost "finder-a1" with
+    (Agent_runs.agent_id_used decoded "finder-a1");
+  let lost = Agent_runs.mark_active_runs_lost state in
+  (match Agent_runs.latest_run lost "finder-a1" with
   | Some run ->
-      assert_bool "resume marks running lost" (run.run_status = Subagents.Run_lost)
+      assert_bool "resume marks running lost" (run.run_status = Agent_runs.Run_lost)
   | None -> fail "lost latest run" "expected run")
 
 let test_agent_identity_snapshot_state () =
   let spawned =
     expect_ok "snapshot spawn"
-      (Subagents.record_spawn Subagents.empty_session_state ~now:10
+      (Agent_runs.record_spawn Agent_runs.empty_session_state ~now:10
          ~parent_session_id:"parent" ~agent_id:"snapshot-a1"
          ~profile_name:"finder" ~profile_snapshot:profile
          ~sandbox_snapshot:sandbox ~system_prompt:"Snapshot prompt" "inspect")
   in
   let snapshotted =
     expect_ok "record active tools snapshot"
-      (Subagents.record_active_tools_snapshot spawned.delivery_state
+      (Agent_runs.record_active_tools_snapshot spawned.delivery_state
          ~agent_id:"snapshot-a1"
          ~active_tools:[ "exec_command"; "write_stdin" ])
   in
   let started =
     expect_ok "record child session start"
-      (Subagents.record_child_session_start snapshotted
+      (Agent_runs.record_child_session_start snapshotted
          ~agent_id:"snapshot-a1" ~child_session_id:"child-1" ())
   in
-  (match Subagents.find_identity started "snapshot-a1" with
+  (match Agent_runs.find_identity started "snapshot-a1" with
   | Some identity ->
       assert_bool "live snapshot prompt retained"
         (identity.identity_system_prompt = "Snapshot prompt")
   | None -> fail "live snapshot identity" "expected identity");
   let decoded =
     expect_ok "snapshot codec"
-      (Subagents.session_state_codec.decode
-         (Subagents.session_state_codec.encode started))
+      (Agent_runs_codec.session_state_codec.decode
+         (Agent_runs_codec.session_state_codec.encode started))
   in
   let identity =
-    match Subagents.find_identity decoded "snapshot-a1" with
+    match Agent_runs.find_identity decoded "snapshot-a1" with
     | Some identity -> identity
     | None -> fail "snapshot identity" "expected identity"
   in
@@ -594,29 +597,29 @@ let test_agent_identity_snapshot_state () =
     (identity.identity_system_prompt = "");
   assert_bool "snapshot active tools persisted"
     (identity.identity_active_tools = Some [ "exec_command"; "write_stdin" ]);
-  let live = Subagents.mark_active_runs_lost ~live_agent_ids:[ "snapshot-a1" ] decoded in
-  (match Subagents.find_identity live "snapshot-a1" with
+  let live = Agent_runs.mark_active_runs_lost ~live_agent_ids:[ "snapshot-a1" ] decoded in
+  (match Agent_runs.find_identity live "snapshot-a1" with
   | Some identity ->
       assert_bool "session switch keeps live child id"
         (identity.identity_child_session_id = Some "child-1")
   | None -> fail "live snapshot identity" "expected identity");
-  (match Subagents.find_run live "snapshot-a1-run-1" with
+  (match Agent_runs.find_run live "snapshot-a1-run-1" with
   | Some run ->
       assert_bool "session switch keeps live run running"
-        (run.run_status = Subagents.Run_running)
+        (run.run_status = Agent_runs.Run_running)
   | None -> fail "live snapshot run" "expected run");
   let owner : Subagents.owner = { id = "parent"; is_subagent = false; depth = 0 } in
   let worker =
     expect_ok "worker from snapshot"
-      (Subagents.worker_of_identity_snapshot ~owner identity)
+      (Agent_runs.worker_of_identity_snapshot ~owner identity)
   in
   assert_equal "snapshot worker model" profile.model_id worker.profile.model_id;
   assert_bool "snapshot worker active tools"
     (worker.active_tools_snapshot = Some [ "exec_command"; "write_stdin" ]);
   assert_bool "decoded snapshot worker prompt is empty"
     (worker.system_prompt = "");
-  let lost = Subagents.mark_active_runs_lost decoded in
-  match Subagents.find_identity lost "snapshot-a1" with
+  let lost = Agent_runs.mark_active_runs_lost decoded in
+  match Agent_runs.find_identity lost "snapshot-a1" with
   | Some identity ->
       assert_bool "resume clears stale child id"
         (identity.identity_child_session_id = None)
@@ -625,13 +628,13 @@ let test_agent_identity_snapshot_state () =
 let test_agent_wait_state () =
   let spawned =
     expect_ok "wait spawn"
-      (Subagents.record_spawn Subagents.empty_session_state ~now:10
+      (Agent_runs.record_spawn Agent_runs.empty_session_state ~now:10
          ~parent_session_id:"parent" ~agent_id:"finder-a1"
          ~profile_name:"finder" "inspect")
   in
   let active =
-    Subagents.wait_for_selector spawned.delivery_state ~parent_session_id:"parent"
-      Subagents.Wait_all_active
+    Agent_runs.wait_for_selector spawned.delivery_state ~parent_session_id:"parent"
+      Agent_runs.Wait_all_active
   in
   assert_equal "wait active message" "finder-a1 finder-a1-run-1 [running]"
     active.wait_message;
@@ -639,18 +642,18 @@ let test_agent_wait_state () =
     (active.wait_active_run_ids = [ "finder-a1-run-1" ]);
   let completed =
     expect_ok "complete run"
-      (Subagents.record_run_completion spawned.delivery_state ~now:20
-         ~run_id:"finder-a1-run-1" ~status:Subagents.Run_completed
+      (Agent_runs.record_run_completion spawned.delivery_state ~now:20
+         ~run_id:"finder-a1-run-1" ~status:Agent_runs.Run_completed
          ~final_output:"done" ())
   in
-  (match Subagents.find_run completed "finder-a1-run-1" with
+  (match Agent_runs.find_run completed "finder-a1-run-1" with
   | Some run ->
       assert_bool "completion starts unnotified"
         (not run.run_background_notified)
   | None -> fail "completion run" "expected run");
   let default_waited =
-    Subagents.wait_for_selector completed ~parent_session_id:"parent"
-      Subagents.Wait_all_active
+    Agent_runs.wait_for_selector completed ~parent_session_id:"parent"
+      Agent_runs.Wait_all_active
   in
   (match default_waited.wait_items with
   | [ item ] ->
@@ -659,7 +662,7 @@ let test_agent_wait_state () =
   | _ -> fail "default wait terminal item" "expected one item");
   assert_equal "default wait terminal message includes output"
     "finder-a1 finder-a1-run-1 [completed]\n\ndone" default_waited.wait_message;
-  (match Subagents.find_run default_waited.wait_state "finder-a1-run-1" with
+  (match Agent_runs.find_run default_waited.wait_state "finder-a1-run-1" with
   | Some run ->
       assert_bool "default wait marks run consumed" run.run_consumed;
       assert_bool "default wait does not mark background notification"
@@ -667,28 +670,28 @@ let test_agent_wait_state () =
   | None -> fail "default wait consumed run" "expected run");
   let notified =
     expect_ok "record background notification"
-      (Subagents.record_background_notification completed
+      (Agent_runs.record_background_notification completed
          ~run_id:"finder-a1-run-1")
   in
   let decoded_notified =
     expect_ok "background notification codec"
-      (Subagents.session_state_codec.decode
-         (Subagents.session_state_codec.encode notified))
+      (Agent_runs_codec.session_state_codec.decode
+         (Agent_runs_codec.session_state_codec.encode notified))
   in
-  (match Subagents.find_run decoded_notified "finder-a1-run-1" with
+  (match Agent_runs.find_run decoded_notified "finder-a1-run-1" with
   | Some run ->
       assert_bool "codec preserves background notification"
         run.run_background_notified
   | None -> fail "notified run" "expected run");
   let default_after_notification =
-    Subagents.wait_for_selector notified ~parent_session_id:"parent"
-      Subagents.Wait_all_active
+    Agent_runs.wait_for_selector notified ~parent_session_id:"parent"
+      Agent_runs.Wait_all_active
   in
   assert_equal "default wait ignores background-notified terminal runs"
     "No active runs." default_after_notification.wait_message;
   let explicit_after_notification =
-    Subagents.wait_for_selector notified ~parent_session_id:"parent"
-      (Subagents.Wait_run_ids [ "finder-a1-run-1" ])
+    Agent_runs.wait_for_selector notified ~parent_session_id:"parent"
+      (Agent_runs.Wait_run_ids [ "finder-a1-run-1" ])
   in
   (match explicit_after_notification.wait_items with
   | [ item ] ->
@@ -703,7 +706,7 @@ let test_agent_wait_state () =
     "finder-a1 finder-a1-run-1 [completed]\n\ndone"
     explicit_after_notification.wait_message;
   (match
-     Subagents.find_run explicit_after_notification.wait_state
+     Agent_runs.find_run explicit_after_notification.wait_state
        "finder-a1-run-1"
    with
   | Some run ->
@@ -714,8 +717,8 @@ let test_agent_wait_state () =
         run.run_background_notified
   | None -> fail "explicit notified run" "expected run");
   let waited =
-    Subagents.wait_for_selector completed ~parent_session_id:"parent"
-      (Subagents.Wait_run_ids [ "finder-a1-run-1" ])
+    Agent_runs.wait_for_selector completed ~parent_session_id:"parent"
+      (Agent_runs.Wait_run_ids [ "finder-a1-run-1" ])
   in
   (match waited.wait_items with
   | [ item ] ->
@@ -726,7 +729,7 @@ let test_agent_wait_state () =
     "finder-a1 finder-a1-run-1 [completed]\n\ndone" waited.wait_message;
   assert_bool "terminal wait has no active run ids"
     (waited.wait_active_run_ids = []);
-  (match Subagents.find_run waited.wait_state "finder-a1-run-1" with
+  (match Agent_runs.find_run waited.wait_state "finder-a1-run-1" with
   | Some run ->
       assert_bool "wait marks run consumed" run.run_consumed;
       assert_bool "wait does not mark background notification"
@@ -734,18 +737,18 @@ let test_agent_wait_state () =
   | None -> fail "wait consumed run" "expected run");
   let other_spawned =
     expect_ok "wait other spawn"
-      (Subagents.record_spawn completed ~now:30 ~parent_session_id:"other"
+      (Agent_runs.record_spawn completed ~now:30 ~parent_session_id:"other"
          ~agent_id:"finder-b1" ~profile_name:"finder" "inspect other")
   in
   let other_completed =
     expect_ok "complete other run"
-      (Subagents.record_run_completion other_spawned.delivery_state ~now:40
-         ~run_id:"finder-b1-run-1" ~status:Subagents.Run_completed
+      (Agent_runs.record_run_completion other_spawned.delivery_state ~now:40
+         ~run_id:"finder-b1-run-1" ~status:Agent_runs.Run_completed
          ~final_output:"secret child answer" ())
   in
   let other_waited =
-    Subagents.wait_for_selector other_completed ~parent_session_id:"parent"
-      (Subagents.Wait_run_ids [ "finder-b1-run-1" ])
+    Agent_runs.wait_for_selector other_completed ~parent_session_id:"parent"
+      (Agent_runs.Wait_run_ids [ "finder-b1-run-1" ])
   in
   (match other_waited.wait_items with
   | [ item ] ->
@@ -755,8 +758,8 @@ let test_agent_wait_state () =
   assert_equal "not-owned wait message hides output"
     "finder-b1-run-1 [not_owned]" other_waited.wait_message;
   let no_active =
-    Subagents.wait_for_selector waited.wait_state ~parent_session_id:"parent"
-      (Subagents.Wait_agent_ids [ "finder-a1" ])
+    Agent_runs.wait_for_selector waited.wait_state ~parent_session_id:"parent"
+      (Agent_runs.Wait_agent_ids [ "finder-a1" ])
   in
   (match no_active.wait_items with
   | [ item ] ->
@@ -767,30 +770,30 @@ let test_agent_wait_state () =
 let test_agent_stop_and_output_state () =
   let spawned =
     expect_ok "stop spawn"
-      (Subagents.record_spawn Subagents.empty_session_state ~now:10
+      (Agent_runs.record_spawn Agent_runs.empty_session_state ~now:10
          ~parent_session_id:"parent" ~agent_id:"finder-a1"
          ~profile_name:"finder" "inspect")
   in
   let stopped, changed =
     expect_ok "stop agent"
-      (Subagents.record_stop_agent spawned.delivery_state ~now:11
+      (Agent_runs.record_stop_agent spawned.delivery_state ~now:11
          ~agent_id:"finder-a1")
   in
   assert_bool "stop changed active run" changed;
-  (match Subagents.latest_run stopped "finder-a1" with
+  (match Agent_runs.latest_run stopped "finder-a1" with
   | Some run ->
-      assert_bool "stop cancels run" (run.run_status = Subagents.Run_cancelled);
+      assert_bool "stop cancels run" (run.run_status = Agent_runs.Run_cancelled);
       assert_bool "stop reason"
         (run.run_reason = Some "stopped_by_parent")
   | None -> fail "stopped run" "expected run");
   let completed =
     expect_ok "complete for output"
-      (Subagents.record_run_completion spawned.delivery_state ~now:12
-         ~run_id:"finder-a1-run-1" ~status:Subagents.Run_completed
+      (Agent_runs.record_run_completion spawned.delivery_state ~now:12
+         ~run_id:"finder-a1-run-1" ~status:Agent_runs.Run_completed
          ~final_output:"done" ())
   in
   (match
-     Subagents.output_run_for_target completed ~parent_session_id:"parent"
+     Agent_runs.output_run_for_target completed ~parent_session_id:"parent"
        "finder-a1"
    with
   | Ok run ->
@@ -798,7 +801,7 @@ let test_agent_stop_and_output_state () =
       assert_bool "output has final" (run.run_final_output = Some "done")
   | Error message -> fail "output target" message);
   (match
-     Subagents.output_run_for_target completed ~parent_session_id:"other"
+     Agent_runs.output_run_for_target completed ~parent_session_id:"other"
        "finder-a1-run-1"
    with
   | Error "run is not owned by this session: finder-a1-run-1" -> ()
