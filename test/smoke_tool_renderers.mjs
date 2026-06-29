@@ -203,12 +203,23 @@ assert(editCompact.includes("+ line TWO"), `edit diff should show an added (+) l
 assert(editExpanded.length >= editCompact.length, `edit expanded should be at least as informative`);
 assert(!editCompact.includes("  └ "), `edit body should use the line-number gutter, not the └ connector`);
 
-// apply_patch — collapsed per-file summary with └ rail; expanded full diff.
+// Single-line addition in a 5-line file → 2 context above + added line + 2 context below = 5 lines.
+const addEditResult = {
+  content: [{ type: "text", text: "edited" }],
+  details: { ok: true, displayPath: "src/mid.ts", before: "a\nb\nc\nd\ne", after: "a\nb\nNEW\nc\nd\ne" },
+};
+const addEditCompact = renderText(renderersForTool("edit").renderResult(addEditResult, { expanded: false, isPartial: false }, theme, { args: { path: "src/mid.ts" } }));
+const addEditDiffLines = addEditCompact.split("\n").filter((line) => /^\s+\d+\s+[+\- ]/.test(line));
+assert(addEditDiffLines.length === 5, `single-line addition should render 5 diff lines (2 context + 1 added + 2 context): ${addEditCompact}`);
+assert(/• edit · src\/mid\.ts \(\+1 -0\)/.test(addEditCompact), `addition edit subject should be (+1 -0): ${addEditCompact}`);
+
+// apply_patch — single-file collapsed renders like edit (inline diff); expanded full diff.
 const patchCompact = renderText(renderersForTool("apply_patch").renderResult(resultFor("apply_patch"), { expanded: false, isPartial: false }, theme, { args: argsFor("apply_patch") }));
 const patchExpanded = renderText(renderersForTool("apply_patch").renderResult(resultFor("apply_patch"), { expanded: true, isPartial: false }, theme, { args: argsFor("apply_patch") }));
-assert(/• apply_patch · 1 file \(\+2 -1\)/.test(patchCompact), `apply_patch subject should be N files (+A -R): ${patchCompact}`);
-assert(patchCompact.includes("  └ a.txt (+2 -1)"), `apply_patch collapsed should list per-file summary via └: ${patchCompact}`);
-assert(patchCompact.includes("… expand for full diff"), `apply_patch collapsed should hint at expansion: ${patchCompact}`);
+assert(/• apply_patch · a\.txt \(\+2 -1\)/.test(patchCompact), `apply_patch single-file subject should be the path (+A -R): ${patchCompact}`);
+assert(patchCompact.includes("- beta"), `apply_patch collapsed should show the removed line: ${patchCompact}`);
+assert(patchCompact.includes("+ BETA"), `apply_patch collapsed should show the added line: ${patchCompact}`);
+assert(!patchCompact.includes("  └ "), `apply_patch single-file body should use the line-number gutter, not the └ connector: ${patchCompact}`);
 assert(patchExpanded.includes("+ BETA") && patchExpanded.includes("- beta"), `apply_patch expanded should render the full diff: ${patchExpanded}`);
 
 // read — collapsed is a single header line; expanded shows the body head-oriented.

@@ -340,7 +340,7 @@ function countChanges(hunks: { readonly lines: readonly string[] }[]): { added: 
 }
 
 function renderDiff(before: string, after: string, expanded: boolean, theme: unknown, lang: string | undefined = undefined): DiffRender {
-  const context = expanded ? 3 : 1;
+  const context = expanded ? 3 : 2;
   let patch: { hunks: { oldStart: number; oldLines: number; newStart: number; newLines: number; lines: string[] }[] };
   try {
     patch = structuredPatch("", "", before ?? "", after ?? "", "", "", { context });
@@ -520,15 +520,12 @@ function buildEdit(name: string, result: unknown, options: unknown, theme: unkno
   const entries: Entry[] = diff.lines.map((text) => ({ text }));
   // Collapsed: cap to ~6 changed lines; advertise the rest with an exempt hint.
   if (!expanded && diff.lines.length > 6) {
-    const hiddenMarkers = diff.markers.slice(6);
-    const hiddenAdded = hiddenMarkers.filter((marker) => marker === "+").length;
-    const label = hiddenAdded > 0 ? `… +${hiddenAdded} more` : `… ${hiddenMarkers.length} more`;
     return {
       header,
       body: {
         mode: "flush",
         clip: true,
-        entries: [...diff.lines.slice(0, 6).map((text) => ({ text })), { text: themeFg(theme, "dim", `  ${label}`), exempt: true }],
+        entries: [...diff.lines.slice(0, 6).map((text) => ({ text })), { text: `  ${moreLine(diff.lines.length - 6, theme, "more lines")}`, exempt: true }],
       },
     };
   }
@@ -560,6 +557,24 @@ function buildApplyPatch(name: string, result: unknown, options: unknown, theme:
   const header = headerSpec(name, `${fileCount} file${fileCount === 1 ? "" : "s"}`, dotColor, theme, themeFg(theme, "dim", `(+${totalAdded} -${totalRemoved})`));
 
   if (!expanded) {
+    if (writes.length === 1 && deletes.length === 0) {
+      const file = perFile[0];
+      const diff = renderDiff(file.before, file.after, false, theme, langFromPath(file.path));
+      const singleHeader = headerSpec(name, file.path, dotColor, theme, themeFg(theme, "dim", `(+${diff.added} -${diff.removed})`));
+      const entries: Entry[] = diff.lines.map((text) => ({ text }));
+      if (diff.lines.length > 6) {
+        return {
+          header: singleHeader,
+          body: {
+            mode: "flush",
+            clip: true,
+            entries: [...diff.lines.slice(0, 6).map((text) => ({ text })), { text: `  ${moreLine(diff.lines.length - 6, theme, "more lines")}`, exempt: true }],
+          },
+        };
+      }
+      return { header: singleHeader, body: { mode: "flush", clip: true, entries } };
+    }
+
     const entries: Entry[] = [
       ...perFile.map((file) => ({ text: `${themeFg(theme, "toolTitle", file.path)} ${themeFg(theme, "dim", `(+${file.added} -${file.removed})`)}` })),
       ...deletes.map((path) => ({ text: `${themeFg(theme, "toolTitle", path)} ${themeFg(theme, "dim", "(deleted)")}` })),
