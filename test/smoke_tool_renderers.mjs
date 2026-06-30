@@ -147,6 +147,14 @@ assert(
   /• write_stdin · poll session 7 \(running\)/.test(renderText(renderersForTool("write_stdin").renderCall({ session_id: 7 }, theme, { isPartial: true }))),
   "write_stdin poll call should be `• write_stdin · poll session N (running)`",
 );
+assert(
+  renderersForTool("exec_command").renderCall({ cmd: "ls" }, theme, { isPartial: false }).render(120).length === 0,
+  "completed exec_command call placeholder should render zero lines, not a blank top-margin row",
+);
+assert(
+  renderersForTool("write_stdin").renderCall({ session_id: 7 }, theme, { isPartial: false }).render(120).length === 0,
+  "completed write_stdin call placeholder should render zero lines, not a blank top-margin row",
+);
 
 const shell = renderersForTool("exec_command");
 const shellArgs = argsFor("exec_command");
@@ -300,6 +308,7 @@ const execNote = [
 ].join("\n");
 const compactExecNote = renderText(renderNotification({ customType: "taumel.notification", content: execNote }, { expanded: false }, theme));
 const expandedExecNote = renderText(renderNotification({ customType: "taumel.notification", content: execNote }, { expanded: true }, theme));
+assert(compactExecNote.startsWith(" • exec_completion"), `exec notification should include custom-message left gutter: ${compactExecNote}`);
 assert(/• exec_completion · session 3/.test(compactExecNote), `exec notification header wrong: ${compactExecNote}`);
 assert(!/exit 0/.test(compactExecNote), `exec notification should not repeat the exit code (green dot signals it): ${compactExecNote}`);
 assert(compactExecNote.includes("… 19 more lines"), `exec notification tail body was not compacted: ${compactExecNote}`);

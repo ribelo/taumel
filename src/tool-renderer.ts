@@ -222,6 +222,26 @@ function renderBlock(block: Block, expanded: boolean): { render(width: number): 
   };
 }
 
+function emptyComponent(): { render(_width: number): string[]; invalidate(): void } {
+  return {
+    render(_width: number): string[] {
+      return [];
+    },
+    invalidate() {},
+  };
+}
+
+function withLeftGutter(component: { render(width: number): string[]; invalidate(): void }): { render(width: number): string[]; invalidate(): void } {
+  return {
+    render(width: number): string[] {
+      return component.render(Math.max(1, width - 1)).map((line) => ` ${line}`);
+    },
+    invalidate() {
+      component.invalidate();
+    },
+  };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Grammar primitives
 // ─────────────────────────────────────────────────────────────────────────────
@@ -863,7 +883,7 @@ function buildNotificationBlock(message: unknown, options: unknown, theme: unkno
 export function notificationMessageRenderer() {
   return (message: unknown, options: unknown, theme: unknown) => {
     const block = buildNotificationBlock(message, options, theme);
-    return block === undefined ? undefined : renderBlock(block, expandedFromOptions(options));
+    return block === undefined ? undefined : withLeftGutter(renderBlock(block, expandedFromOptions(options)));
   };
 }
 
@@ -900,7 +920,7 @@ function buildResult(name: string, result: unknown, options: unknown, theme: unk
 export function renderersForTool(name: string) {
   return {
     renderCall(args: unknown, theme: unknown, context: unknown) {
-      if (isRecord(context) && context["isPartial"] === false) return renderBlock({ header: { lead: "", subject: "", trailing: "" }, body: undefined }, false);
+      if (isRecord(context) && context["isPartial"] === false) return emptyComponent();
       const callArgs = isRecord(args) ? args : {};
       // In-flight call: yellow dot header + dim (progress), header-only, clipped to one line.
       const header = headerSpec(name, subjectFromArgs(name, callArgs), "warning", theme, themeFg(theme, "dim", `(${progressText(name)})`));
