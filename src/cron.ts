@@ -109,6 +109,6 @@ export function installCronLoop(pi: PiLike, core: CoreBridge): void {
   });
   pi.on("agent_end", (_event, ctx) => {
     latestCtx = ctx;
-    setTimeout(() => void poll("steer").catch((error) => console.warn("Taumel cron agent_end poll failed:", error)), 0);
+    setTimeout(() => void poll("trigger").catch((error) => console.warn("Taumel cron agent_end poll failed:", error)), 0);
   });
 }
