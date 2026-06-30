@@ -20,7 +20,7 @@
         system:
         let
           pkgs = import nixpkgs { inherit system; };
-          switchName = "5.4.1";
+          switchName = "5.5.0";
           sharedOpamRoot = "$HOME/.cache/opam";
 
           setup = pkgs.writeShellApplication {
@@ -28,6 +28,7 @@
             runtimeInputs = [
               pkgs.autoconf
               pkgs.cacert
+              pkgs.coreutils
               pkgs.git
               pkgs.gnumake
               pkgs.m4
@@ -36,9 +37,14 @@
               pkgs.pkg-config
               pkgs.python3
               pkgs.unzip
+            ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+              pkgs.gmp
+              pkgs.libffi
+              pkgs.openssl
+              pkgs.zlib
             ];
             text = ''
-              switch_name="''${1:-${switchName}}"
+              switch_name="''${TAUMEL_OPAM_SWITCH:-${switchName}}"
               repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
               cd "$repo_root"
 
@@ -51,25 +57,33 @@
               export OPAMROOT="''${OPAMROOT:-${sharedOpamRoot}}"
               export OPAMYES=1
 
-              if [ ! -d "$OPAMROOT" ]; then
-                opam init --bare --disable-sandboxing --no-setup --yes
-              fi
-
               if ! opam switch list --short | grep -Fxq "$switch_name"; then
-                opam switch create "$switch_name" "ocaml-base-compiler.$switch_name" \
-                  --assume-depexts \
-                  --yes
+                echo "Missing OPAM switch '$switch_name'." >&2
+                echo "Run: shared-ocaml-switch-init" >&2
+                exit 1
               fi
 
               export OPAMSWITCH="$switch_name"
               eval "$(opam env --switch "$switch_name" --set-switch)"
 
-              opam pin add -n eta "$eta_path" --yes
-              opam pin add -n eta_http "$eta_path" --yes
-              opam pin add -n eta_http_js "$eta_path" --yes
-              opam pin add -n eta_jsoo "$eta_path" --yes
+              eta_root="$(cd "$eta_path" && git rev-parse --show-toplevel)"
+              eta_url="git+file://$eta_root"
+              eta_packages="''${TAUMEL_ETA_PACKAGES:-eta eta_http eta_jsoo eta_http_js}"
+              if [ "$#" -gt 0 ]; then
+                eta_packages="$*"
+              fi
 
+              package_args=()
+              for package in $eta_packages; do
+                package_args+=("$package")
+                opam pin add --kind=git "$package" "$eta_url" --no-action --yes
+              done
+
+              opam install "''${package_args[@]}" --assume-depexts --yes
               opam install . --deps-only --with-test --assume-depexts --yes
+
+              echo "Taumel OPAM deps installed into switch: $switch_name"
+              echo "Eta packages: $eta_packages"
             '';
           };
 
@@ -100,6 +114,12 @@
               pkgs.pkg-config
               pkgs.unzip
               pkgs.which
+            ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+              pkgs.gmp
+              pkgs.libffi
+              pkgs.openssl
+              pkgs.zlib
+            ] ++ [
               setup
             ];
             inherit shellHook;
