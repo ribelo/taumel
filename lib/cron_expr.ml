@@ -1,4 +1,4 @@
-type field = int list
+type field = { values : int list; wildcard : bool }
 
 type t = {
   minutes : field;
@@ -38,17 +38,24 @@ let parse_part label min_v max_v text =
       match int_of_string_opt step_text with
       | Some step when step > 0 ->
           Result.map
-            (List.filter (fun n -> (n - min_v) mod step = 0))
+            (function
+              | [] -> []
+              | values ->
+                  let anchor = List.hd values in
+                  List.filter (fun n -> (n - anchor) mod step = 0) values)
             (parse_atom label min_v max_v base)
       | _ -> Error (label ^ " step must be positive"))
   | _ -> Error (label ^ " field is invalid")
 
 let parse_field label min_v max_v text =
+  let text = String.trim text in
+  let wildcard = text = "*" in
   let parts = String.split_on_char ',' text in
   let rec loop acc = function
     | [] ->
         let values = unique_sorted acc in
-        if values = [] then Error (label ^ " field matches no values") else Ok values
+        if values = [] then Error (label ^ " field matches no values")
+        else Ok { values; wildcard }
     | part :: rest -> (
         match parse_part label min_v max_v part with
         | Error _ as error -> error
@@ -69,40 +76,29 @@ let parse expression =
                         (parse_field "day-of-week" 0 7 dow)))))
   | _ -> Error "cron expression must contain exactly 5 fields"
 
+let field_matches value field = List.mem value field.values
+
+let day_of_week_matches weekday field =
+  field_matches weekday field || (weekday = 0 && field_matches 7 field)
+
+let day_matches expr ~day ~weekday =
+  let dom = field_matches day expr.days_of_month in
+  let dow = day_of_week_matches weekday expr.days_of_week in
+  match (expr.days_of_month.wildcard, expr.days_of_week.wildcard) with
+  | true, true -> true
+  | true, false -> dow
+  | false, true -> dom
+  | false, false -> dom || dow
+
 let matches expr ~minute ~hour ~day ~month ~weekday =
-  List.mem minute expr.minutes
-  && List.mem hour expr.hours
-  && List.mem day expr.days_of_month
-  && List.mem month expr.months
-  && (List.mem weekday expr.days_of_week
-     || (weekday = 0 && List.mem 7 expr.days_of_week))
-
-let div_floor a b =
-  let q = a / b and r = a mod b in
-  if r <> 0 && ((r < 0) <> (b < 0)) then q - 1 else q
-
-let civil_from_days z =
-  let z = z + 719468 in
-  let era = div_floor (if z >= 0 then z else z - 146096) 146097 in
-  let doe = z - (era * 146097) in
-  let yoe = (doe - (doe / 1460) + (doe / 36524) - (doe / 146096)) / 365 in
-  let y = yoe + (era * 400) in
-  let doy = doe - ((365 * yoe) + (yoe / 4) - (yoe / 100)) in
-  let mp = ((5 * doy) + 2) / 153 in
-  let d = doy - (((153 * mp) + 2) / 5) + 1 in
-  let m = mp + if mp < 10 then 3 else -9 in
-  let y = y + if m <= 2 then 1 else 0 in
-  (y, m, d)
+  field_matches minute expr.minutes
+  && field_matches hour expr.hours
+  && field_matches month expr.months
+  && day_matches expr ~day ~weekday
 
 let parts_of_epoch seconds =
-  let days = div_floor seconds 86400 in
-  let rem = seconds - (days * 86400) in
-  let hour = rem / 3600 in
-  let minute = (rem mod 3600) / 60 in
-  let _, month, day = civil_from_days days in
-  let weekday = (days + 4) mod 7 in
-  let weekday = if weekday < 0 then weekday + 7 else weekday in
-  (minute, hour, day, month, weekday)
+  let tm = Unix.localtime (float_of_int seconds) in
+  (tm.tm_min, tm.tm_hour, tm.tm_mday, tm.tm_mon + 1, tm.tm_wday)
 
 let next_due_after expr ~after =
   let start = ((after / 60) + 1) * 60 in

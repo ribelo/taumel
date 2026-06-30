@@ -117,6 +117,8 @@ let core_call name_js args_js =
   | "finishAgentsPrompt" -> Agent_tools.finish_agents_prompt (arg 0) (arg 1) (arg 2)
   | "planAgentRunsPrompt" -> Agent_tools.plan_agent_runs_prompt (arg 0) (arg 1)
   | "finishAgentRunsPrompt" -> Agent_tools.finish_agent_runs_prompt (arg 0) (arg 1) (arg 2)
+  | "planCronPrompt" -> Cron_tools.plan_prompt (arg 0) (arg 1)
+  | "finishCronPrompt" -> Cron_tools.finish_prompt (arg 0) (arg 1) (arg 2)
   | "planPermissionsPrompt" -> Permissions_commands.plan_prompt (arg 0) (arg 1)
   | "finishPermissionsPrompt" ->
       Permissions_commands.finish_prompt (arg 0) (arg 1) (arg 2)

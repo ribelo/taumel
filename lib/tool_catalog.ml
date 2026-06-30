@@ -22,9 +22,9 @@ let tool_specs =
   @ Subagents.tool_specs
   @ Goal.tool_specs @ Ralph_loop.tool_specs
   @ [
-      { Tool_gateway.name = "cron_create"; effect_kind = Tool_gateway.Pure };
+      { Tool_gateway.name = "cron_create"; effect_kind = Tool_gateway.Mutate };
       { name = "cron_list"; effect_kind = Pure };
-      { name = "cron_delete"; effect_kind = Pure };
+      { name = "cron_delete"; effect_kind = Mutate };
     ]
   @ Thread_tools.tool_specs @ Exa.tool_specs
 

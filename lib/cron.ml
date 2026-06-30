@@ -34,6 +34,14 @@ type delivery = {
   content : string;
 }
 
+type startup_reason = New | Reload | Resume | Startup | Fork | Other
+
+type startup_plan = {
+  state : state;
+  notify : bool;
+  message : string;
+}
+
 let empty = { enabled = true; tasks = [] }
 let mode_to_string = function Message -> "message" | Goal -> "goal"
 let mode_of_string = function "goal" -> Some Goal | "message" -> Some Message | _ -> None
@@ -46,7 +54,8 @@ let next_due cron ~now =
       | Some due -> Ok due
       | None -> Error "cron expression has no matching instant in the searchable range")
 
-let id_from_seed seed = Printf.sprintf "%08x" (seed land 0xffffffff)
+let id_from_seed seed =
+  Printf.sprintf "%08lx" (Int32.logand (Int32.of_int seed) Int32.minus_one)
 
 let create ~now ~id (request : create_request) state =
   Result.bind (validate_prompt request.prompt) (fun prompt ->
@@ -67,6 +76,16 @@ let create ~now ~id (request : create_request) state =
 
 let delete id state = { state with tasks = List.filter (fun task -> task.id <> id) state.tasks }
 let set_enabled enabled state = { state with enabled }
+
+let startup_message = "Stored cron tasks are disabled on resume; run /cron enable to arm them."
+
+let apply_startup reason state =
+  match (reason, state.tasks) with
+  | (Resume | Startup | Fork), _ :: _ ->
+      { state = { state with enabled = false }; notify = true; message = startup_message }
+  | New, _ -> { state = empty; notify = false; message = "" }
+  | (Resume | Startup | Fork), [] | Reload, _ | Other, _ ->
+      { state; notify = false; message = "" }
 
 let tick ~now state =
   if not state.enabled then state
@@ -103,9 +122,11 @@ let deliverable facts task =
       && (match task.mode with Message -> true | Goal -> facts.goal_slot_free)
 
 let pending_delivery ~now facts state =
-  state.tasks
-  |> List.find_opt (deliverable facts)
-  |> Option.map (fun task ->
+  if not state.enabled then None
+  else
+    state.tasks
+    |> List.find_opt (deliverable facts)
+    |> Option.map (fun task ->
          let pending_since = Option.value task.pending_since ~default:task.next_due in
          {
            task;
@@ -171,7 +192,7 @@ let task_of_json json =
                                               created_at;
                                               next_due;
                                               pending_since = Option.map int_of_float pending_since;
-                                            }))))))))))
+                                            })))))))))
 
 let encode state =
   Shared.Object

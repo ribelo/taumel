@@ -187,6 +187,14 @@ async function executeAgentRunsPrompt(
   return executeSelectionPrompt(core, prompt, ctx, "planAgentRunsPrompt", "finishAgentRunsPrompt", "agent runs");
 }
 
+async function executeCronPrompt(
+  core: CoreBridge,
+  prompt: Record<string, unknown>,
+  ctx: unknown,
+): Promise<unknown> {
+  return executeSelectionPrompt(core, prompt, ctx, "planCronPrompt", "finishCronPrompt", "cron");
+}
+
 async function executeCommandAction(
   pi: PiLike,
   core: CoreBridge,
@@ -201,6 +209,8 @@ async function executeCommandAction(
       return executeAgentsPrompt(core, result, ctx);
     case "agent_runs_prompt":
       return executeAgentRunsPrompt(core, result, ctx);
+    case "cron_prompt":
+      return executeCronPrompt(core, result, ctx);
     case "openai_usage_fetch":
       return commandResultFromToolResult(core, await executeOpenAiUsageWithHostAuth(pi, core, result, ctx));
     default:

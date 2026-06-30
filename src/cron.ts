@@ -5,27 +5,40 @@ function canSend(pi: PiLike): boolean {
   return typeof pi.sendMessage === "function" || typeof pi.sendUserMessage === "function";
 }
 
-async function sendCronMessage(pi: PiLike, content: string, mode: string, coalesced: number): Promise<void> {
+async function sendCronMessage(
+  pi: PiLike,
+  content: string,
+  deliveryKind: "trigger" | "steer",
+  coalesced: number,
+): Promise<void> {
   const prefix = coalesced > 1 ? `[cron: ${coalesced} coalesced fires]\n` : "[cron]\n";
+  const options = deliveryKind === "trigger" ? { triggerTurn: true } : { deliverAs: "steer" };
   if (typeof pi.sendMessage === "function") {
-    await pi.sendMessage({ customType: "taumel.cron.fire", content: `${prefix}${content}`, display: true }, { triggerTurn: true });
+    await pi.sendMessage({ customType: "taumel.cron.fire", content: `${prefix}${content}`, display: true }, options);
     return;
   }
-  await pi.sendUserMessage?.(`${prefix}${content}`, { triggerTurn: true, deliverAs: mode === "steer" ? "steer" : undefined });
+  await pi.sendUserMessage?.(`${prefix}${content}`, options);
 }
 
-async function deliverCron(pi: PiLike, core: CoreBridge, delivery: Record<string, unknown>, ctx: unknown): Promise<void> {
+async function deliverCron(
+  pi: PiLike,
+  core: CoreBridge,
+  delivery: Record<string, unknown>,
+  ctx: unknown,
+  deliveryKind: "trigger" | "steer",
+): Promise<void> {
   const mode = stringField(delivery, "mode");
   const content = stringField(delivery, "content");
   const coalesced = typeof delivery["coalesced"] === "number" ? delivery["coalesced"] as number : 1;
   if (mode !== "goal") {
-    await sendCronMessage(pi, content, "message", coalesced);
+    await sendCronMessage(pi, content, deliveryKind, coalesced);
     return;
   }
 
-  const result = coreCall(core, "prepareTool", ["create_goal", { objective: content }, ctx]);
+  const objective = coalesced > 1 ? `[cron: ${coalesced} coalesced fires]\n${content}` : content;
+  const result = coreCall(core, "prepareTool", ["create_goal", { objective }, ctx]);
   if (!isRecord(result) || result["ok"] !== true) {
-    await sendCronMessage(pi, content, "message", coalesced);
+    await sendCronMessage(pi, content, deliveryKind, coalesced);
     return;
   }
   const plan = coreCall(core, "planGoalContinuation", [true, {
@@ -58,21 +71,28 @@ function notify(ctx: unknown, message: string): void {
 export function installCronLoop(pi: PiLike, core: CoreBridge): void {
   if (!canSend(pi)) return;
   let latestCtx: unknown;
-  let goalDriving = false;
+  let pollInFlight = false;
 
-  const poll = async () => {
-    if (latestCtx === undefined) return;
-    const goalFacts = coreCall(core, "cronGoalFacts", [latestCtx]);
-    const goalSlotFree = isRecord(goalFacts) ? goalFacts["goalSlotFree"] === true : false;
-    const plan = coreCall(core, "cronPoll", [{
-      now: Date.now(),
-      hostIdle: typeof pi.isIdle === "function" ? pi.isIdle() : true,
-      goalDriving,
-      goalSlotFree,
-    }, latestCtx]);
-    if (isRecord(plan) && stringField(plan, "action") === "deliver") {
-      await deliverCron(pi, core, plan, latestCtx);
-      coreCall(core, "cronDelivered", [{ id: stringField(plan, "id"), now: Date.now() }, latestCtx]);
+  const poll = async (deliveryKind: "trigger" | "steer" = "trigger") => {
+    if (pollInFlight) return;
+    pollInFlight = true;
+    try {
+      if (latestCtx === undefined) return;
+      const goalFacts = coreCall(core, "cronGoalFacts", [latestCtx]);
+      const goalSlotFree = isRecord(goalFacts) ? goalFacts["goalSlotFree"] === true : false;
+      const goalDriving = isRecord(goalFacts) ? goalFacts["goalDriving"] === true : false;
+      const plan = coreCall(core, "cronPoll", [{
+        now: Date.now(),
+        hostIdle: typeof pi.isIdle === "function" ? pi.isIdle() : true,
+        goalDriving,
+        goalSlotFree,
+      }, latestCtx]);
+      if (isRecord(plan) && stringField(plan, "action") === "deliver") {
+        await deliverCron(pi, core, plan, latestCtx, deliveryKind);
+        coreCall(core, "cronDelivered", [{ id: stringField(plan, "id"), now: Date.now() }, latestCtx]);
+      }
+    } finally {
+      pollInFlight = false;
     }
   };
 
@@ -84,18 +104,11 @@ export function installCronLoop(pi: PiLike, core: CoreBridge): void {
     const result = coreCall(core, "cronStartup", [event, ctx]);
     if (isRecord(result) && result["notify"] === true) notify(ctx, stringField(result, "message"));
   });
-  pi.on("session_resume", (event, ctx) => {
-    latestCtx = ctx;
-    const result = coreCall(core, "cronStartup", [event, ctx]);
-    if (isRecord(result) && result["notify"] === true) notify(ctx, stringField(result, "message"));
-  });
   pi.on("turn_start", (_event, ctx) => {
     latestCtx = ctx;
-    goalDriving = true;
   });
   pi.on("agent_end", (_event, ctx) => {
     latestCtx = ctx;
-    goalDriving = false;
-    setTimeout(() => void poll().catch((error) => console.warn("Taumel cron agent_end poll failed:", error)), 0);
+    setTimeout(() => void poll("steer").catch((error) => console.warn("Taumel cron agent_end poll failed:", error)), 0);
   });
 }

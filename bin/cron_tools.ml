@@ -8,6 +8,9 @@ let cron_entry_type = "taumel.cron"
 let save_state ctx =
   Session_store.append_custom_entry ctx cron_entry_type (Taumel.Cron.encode !cron_state)
 
+let save_state_if_changed ctx previous =
+  if previous <> !cron_state then save_state ctx
+
 let load_state ctx =
   match Session_store.custom_entry_data ctx cron_entry_type with
   | None -> cron_state := Taumel.Cron.empty
@@ -29,7 +32,7 @@ let random_id () =
     match function_field math "random" with
     | Some random -> (
         match float_value (Unsafe.fun_call random [||]) with
-        | Some value -> int_of_float (value *. 4294967295.)
+        | Some value -> int_of_float (value *. 2147483647.)
         | None -> App_state.now_seconds ())
     | None -> App_state.now_seconds ()
   in
@@ -137,18 +140,74 @@ let handle_command args ctx =
       save_state ctx;
       command_result "Cron disabled." (Unsafe.obj [| ("enabled", js_bool false) |])
   | "" ->
-      let lines =
-        if !cron_state.tasks = [] then [ "No cron tasks." ]
-        else
-          (Printf.sprintf "Cron is %s." (if !cron_state.enabled then "enabled" else "disabled"))
-          :: List.map
-               (fun (task : Taumel.Cron.task) ->
-                 Printf.sprintf "%s  %s  %s  next=%d" task.id task.cron
-                   (Taumel.Cron.mode_to_string task.mode) task.next_due)
-               !cron_state.tasks
-      in
-      command_result (String.concat "\n" lines) (Unsafe.obj [| ("tasks", tasks_array !cron_state.tasks) |])
+      if !cron_state.tasks = [] then
+        command_result "No cron tasks." (Unsafe.obj [| ("tasks", tasks_array []) |])
+      else
+        Unsafe.obj
+          [|
+            ("ok", js_bool true);
+            ("action", js_string "cron_prompt");
+            ("enabled", js_bool !cron_state.enabled);
+            ("tasks", tasks_array !cron_state.tasks);
+          |]
   | _ -> command_result ~ok:false "Usage: /cron [enable|disable]" (Unsafe.obj [||])
+
+let task_label (task : Taumel.Cron.task) =
+  Printf.sprintf "%s  %s  %s  next=%d" task.id task.cron
+    (Taumel.Cron.mode_to_string task.mode) task.next_due
+
+let task_listing_message enabled tasks =
+  match tasks with
+  | [] -> "No cron tasks."
+  | _ ->
+      String.concat "\n"
+        ((Printf.sprintf "Cron is %s." (if enabled then "enabled" else "disabled"))
+        :: List.map task_label tasks)
+
+let plan_prompt prompt facts =
+  let tasks = get_object_array prompt "tasks" in
+  if tasks = [] then
+    Unsafe.obj
+      [|
+        ("action", js_string "result");
+        ("result", command_result "No cron tasks." (Unsafe.obj [| ("tasks", js_array []) |]));
+      |]
+  else if not (get_bool facts "uiAvailable") then
+    Unsafe.obj
+      [|
+        ("action", js_string "result");
+        ( "result",
+          command_result
+            (task_listing_message (get_bool prompt "enabled") !cron_state.tasks)
+            (Unsafe.obj [| ("tasks", tasks_array !cron_state.tasks) |]) );
+      |]
+  else
+    let labels = List.map task_label !cron_state.tasks in
+    Unsafe.obj
+      [|
+        ("action", js_string "select");
+        ("title", js_string "Select a cron task to cancel");
+        ("labels", js_array_of_strings labels);
+      |]
+
+let finish_prompt _prompt selection ctx =
+  sync ctx;
+  match get_string selection "status" with
+  | "cancelled" -> command_result "Cron selection cancelled." (Unsafe.obj [||])
+  | "selected" ->
+      let selected = get_string selection "selected" in
+      let selected_id =
+        match String.split_on_char ' ' selected with id :: _ -> id | [] -> ""
+      in
+      let before = List.length !cron_state.tasks in
+      cron_state := Taumel.Cron.delete selected_id !cron_state;
+      save_state ctx;
+      command_result
+        (if List.length !cron_state.tasks < before then
+           "Cancelled cron task " ^ selected_id ^ "."
+         else "No cron task matched " ^ selected_id ^ ".")
+        (Unsafe.obj [| ("id", js_string selected_id) |])
+  | _ -> command_result ~ok:false "Cron selection failed." (Unsafe.obj [||])
 
 let facts_from_js facts =
   {
@@ -160,8 +219,9 @@ let facts_from_js facts =
 let poll params ctx =
   sync ctx;
   let now = int_of_float (float_field_default params "now" (float_of_int (App_state.now_seconds ())) /. 1000.) in
+  let previous = !cron_state in
   cron_state := Taumel.Cron.tick ~now !cron_state;
-  save_state ctx;
+  save_state_if_changed ctx previous;
   match Taumel.Cron.pending_delivery ~now (facts_from_js params) !cron_state with
   | None -> Unsafe.obj [| ("action", js_string "none") |]
   | Some delivery ->
@@ -195,23 +255,39 @@ let delivered params ctx =
 
 let goal_facts ctx =
   Session_sync.sync_session_from_host ~scope:"cron goal facts" ctx;
-  let goal_slot_free =
+  let goal_slot_free, goal_driving =
     match !App_state.current_goal with
-    | None -> true
-    | Some goal -> (match goal.Taumel.Goal.status with Taumel.Goal.Complete -> true | _ -> false)
+    | None -> (true, false)
+    | Some goal ->
+        let slot_free = match goal.Taumel.Goal.status with Taumel.Goal.Complete -> true | _ -> false in
+        let driving =
+          goal.Taumel.Goal.status = Taumel.Goal.Active
+          && !App_state.goal_automation = Taumel.Goal.Automation_enabled
+        in
+        (slot_free, driving)
   in
-  Unsafe.obj [| ("goalSlotFree", js_bool goal_slot_free) |]
+  Unsafe.obj
+    [|
+      ("goalSlotFree", js_bool goal_slot_free);
+      ("goalDriving", js_bool goal_driving);
+    |]
+
+let startup_reason = function
+  | "new" -> Taumel.Cron.New
+  | "reload" -> Taumel.Cron.Reload
+  | "resume" -> Taumel.Cron.Resume
+  | "startup" -> Taumel.Cron.Startup
+  | "fork" -> Taumel.Cron.Fork
+  | _ -> Taumel.Cron.Other
 
 let startup event ctx =
   sync ctx;
-  let reason = get_string event "reason" in
-  let has_tasks = !cron_state.tasks <> [] in
-  if has_tasks && List.mem reason [ "resume"; "startup"; "fork" ] then (
-    cron_state := Taumel.Cron.set_enabled false !cron_state;
-    save_state ctx;
-    Unsafe.obj
-      [|
-        ("notify", js_bool true);
-        ("message", js_string "Stored cron tasks are disabled on resume; run /cron enable to arm them.");
-      |])
-  else Unsafe.obj [| ("notify", js_bool false) |]
+  let plan = Taumel.Cron.apply_startup (startup_reason (get_string event "reason")) !cron_state in
+  let previous = !cron_state in
+  cron_state := plan.state;
+  save_state_if_changed ctx previous;
+  Unsafe.obj
+    [|
+      ("notify", js_bool plan.notify);
+      ("message", js_string plan.message);
+    |]
