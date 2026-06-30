@@ -42,7 +42,14 @@ function syncSandboxToolActivation(pi: PiLike, core: CoreBridge, ctx?: unknown):
 function installSandboxToolActivation(pi: PiLike, core: CoreBridge): void {
   const sync = (_event: unknown, ctx?: unknown) => syncSandboxToolActivation(pi, core, ctx);
   pi.on("session_start", sync);
+  // Pi does not emit session_resume in production (resume arrives via
+  // session_start with reason "resume"); retained because the test harness
+  // drives the sync through it.
   pi.on("session_resume", sync);
+  // Re-derive the mutation tool set when the model changes mid-session.
+  // model_select fires on set/cycle/restore after ctx.model is updated, so a
+  // switch to/from an OpenAI provider flips between apply_patch and edit/write.
+  pi.on("model_select", sync);
 }
 
 function execPolicyBlockFromSettings(settings: unknown): unknown {

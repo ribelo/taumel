@@ -725,8 +725,8 @@ try {
 
   ctx.model.provider = "anthropic";
   activeTools = ["bash", "apply_patch", "usage"];
-  for (const handler of handlers.get("session_resume") ?? []) {
-    handler({ type: "session_resume" }, ctx);
+  for (const handler of handlers.get("model_select") ?? []) {
+    handler({ type: "model_select" }, ctx);
   }
   const nonOpenAiTools = activeToolUpdates.at(-1) ?? [];
   if (
@@ -739,8 +739,16 @@ try {
   }
   ctx.model.provider = "openai-codex";
   activeTools = ["bash", "write", "usage", "bash"];
-  for (const handler of handlers.get("session_resume") ?? []) {
-    handler({ type: "session_resume" }, ctx);
+  for (const handler of handlers.get("model_select") ?? []) {
+    handler({ type: "model_select" }, ctx);
+  }
+  const switchedTools = activeToolUpdates.at(-1) ?? [];
+  if (
+    switchedTools.includes("write") ||
+    switchedTools.includes("edit") ||
+    !switchedTools.includes("apply_patch")
+  ) {
+    throw new Error(`model_select to openai did not switch to apply_patch: ${JSON.stringify(activeToolUpdates)}`);
   }
 
   const execResult = await tools
