@@ -69,6 +69,10 @@ let core_call name_js args_js =
       Command_bridge.plan_execution (string_arg args 0) (string_arg args 1) (arg 2)
   | "planGoalContinuation" ->
       Goal_tools.plan_continuation (bool_arg args 0) (arg 1) (arg 2) (arg 3)
+  | "cronPoll" -> Cron_tools.poll (arg 0) (arg 1)
+  | "cronDelivered" -> Cron_tools.delivered (arg 0) (arg 1)
+  | "cronGoalFacts" -> Cron_tools.goal_facts (arg 0)
+  | "cronStartup" -> Cron_tools.startup (arg 0) (arg 1)
   | "planChildGoalContinuation" ->
       Goal_tools.plan_child_goal_continuation (arg 0)
   | "startGoalTurn" ->

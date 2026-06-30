@@ -105,6 +105,7 @@ let handle name args ctx =
   | "permissions" -> Permissions_commands.handle args ctx
   | "network" -> Permissions_commands.handle_network args ctx
   | "goal" -> Goal_tools.handle_command args ctx
+  | "cron" -> Cron_tools.handle_command args ctx
   | "ralph" -> Ralph_tools.handle_command args ctx
   | "usage" -> Usage_bridge.handle_command ()
   | "agents" -> Agent_tools.handle_agents_command args ctx

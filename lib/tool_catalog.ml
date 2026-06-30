@@ -21,6 +21,11 @@ let tool_specs =
   Sandbox.canonical_tool_specs
   @ Subagents.tool_specs
   @ Goal.tool_specs @ Ralph_loop.tool_specs
+  @ [
+      { Tool_gateway.name = "cron_create"; effect_kind = Tool_gateway.Pure };
+      { name = "cron_list"; effect_kind = Pure };
+      { name = "cron_delete"; effect_kind = Pure };
+    ]
   @ Thread_tools.tool_specs @ Exa.tool_specs
 
 let command_specs =
@@ -34,6 +39,7 @@ let command_specs =
     { name = "ralph"; description = "Start, pause, resume, finish, and list Ralph tasks." };
     { name = "usage"; description = "Show OpenAI account and quota usage." };
     { name = "goal"; description = "Show or update the thread goal." };
+    { name = "cron"; description = "List, enable, disable, or cancel cron tasks." };
     { name = "agents"; description = "List, enable, or disable Taumel agent profiles." };
     { name = "agent-runs"; description = "Inspect and close Taumel agent identities and runs." };
     { name = "execpolicy"; description = "Show or check exec command policy decisions." };

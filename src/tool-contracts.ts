@@ -164,6 +164,23 @@ const UpdateGoalParamsSchema = Type.Object(
   { $id: "UpdateGoalParams", additionalProperties: false },
 );
 
+const CronCreateParamsSchema = Type.Object(
+  {
+    cron: Type.String({ minLength: 1 }),
+    prompt: Type.String({ minLength: 1 }),
+    recurring: Type.Optional(Type.Boolean()),
+    goal: Type.Optional(Type.Boolean()),
+  },
+  { $id: "CronCreateParams", additionalProperties: false },
+);
+
+const CronDeleteParamsSchema = Type.Object(
+  {
+    id: Type.String({ pattern: "^[0-9a-f]{8}$" }),
+  },
+  { $id: "CronDeleteParams", additionalProperties: false },
+);
+
 const FindThreadParamsSchema = Type.Object(
   {
     query: Type.String({ minLength: 1, maxLength: 500 }),
@@ -332,6 +349,8 @@ export const dtsSchemas = [
   ["EditParams", EditParamsSchema],
   ["CreateGoalParams", CreateGoalParamsSchema],
   ["UpdateGoalParams", UpdateGoalParamsSchema],
+  ["CronCreateParams", CronCreateParamsSchema],
+  ["CronDeleteParams", CronDeleteParamsSchema],
   ["FindThreadParams", FindThreadParamsSchema],
   ["ReadThreadParams", ReadThreadParamsSchema],
   ["AgentSpawnParams", AgentSpawnParamsSchema],
@@ -362,6 +381,9 @@ export const toolParamSchemas = [
   { name: "get_goal", interfaceName: "EmptyParams", schema: EmptyParamsSchema },
   { name: "create_goal", interfaceName: "CreateGoalParams", schema: CreateGoalParamsSchema },
   { name: "update_goal", interfaceName: "UpdateGoalParams", schema: UpdateGoalParamsSchema },
+  { name: "cron_create", interfaceName: "CronCreateParams", schema: CronCreateParamsSchema },
+  { name: "cron_list", interfaceName: "EmptyParams", schema: EmptyParamsSchema },
+  { name: "cron_delete", interfaceName: "CronDeleteParams", schema: CronDeleteParamsSchema },
   { name: "find_thread", interfaceName: "FindThreadParams", schema: FindThreadParamsSchema },
   { name: "read_thread", interfaceName: "ReadThreadParams", schema: ReadThreadParamsSchema },
   { name: "ralph_continue", interfaceName: "RalphTaskParams", schema: RalphTaskParamsSchema },
@@ -630,6 +652,27 @@ export const toolContracts: readonly ToolContract[] = [
     description: "Update the existing goal only to mark it complete or genuinely blocked.",
     promptSnippet: "",
     parameters: toolParameters(UpdateGoalParamsSchema),
+  },
+  {
+    name: "cron_create",
+    label: "cron.create",
+    description: "Schedule a prompt to run later in this Pi session using a 5-field cron expression.",
+    promptSnippet: "Create a recurring or one-shot cron task. Tell the user the returned task id and that /cron manages crons.",
+    parameters: toolParameters(CronCreateParamsSchema),
+  },
+  {
+    name: "cron_list",
+    label: "cron.list",
+    description: "List scheduled cron tasks for this Pi session.",
+    promptSnippet: "List cron tasks.",
+    parameters: toolParameters(EmptyParamsSchema),
+  },
+  {
+    name: "cron_delete",
+    label: "cron.delete",
+    description: "Delete a scheduled cron task by id.",
+    promptSnippet: "Delete a cron task.",
+    parameters: toolParameters(CronDeleteParamsSchema),
   },
   {
     name: "find_thread",

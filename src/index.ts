@@ -12,6 +12,7 @@ import { makeHost } from "./host.ts";
 import { agentGatewayToolNames, registerGatewayTools, type GatewayToolRegistration } from "./tool-executor.ts";
 import { installGoalContinuationLoop, registerGatewayCommands } from "./command-executor.ts";
 import { installCompactionModelHook } from "./compaction-model.ts";
+import { installCronLoop } from "./cron.ts";
 import { toolNames } from "./tool-contracts.ts";
 
 function requireCoreBridge(core: CoreBridge | undefined): CoreBridge {
@@ -274,6 +275,7 @@ export default async function taumel(pi: PiLike) {
   const gatewayTools = registerGatewayTools(pi, core, childSessions);
   registerGatewayCommands(pi, core, childSessions, composer);
   installGoalContinuationLoop(pi, core);
+  installCronLoop(pi, core);
   installAgentProfileCatalog(pi, core, composer?.settings, gatewayTools);
   installSandboxToolActivation(pi, core);
   installExecPolicyLoader(pi, core);

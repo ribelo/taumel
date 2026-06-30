@@ -20,6 +20,7 @@ let prepare name params ctx =
   | "agent_spawn" | "agent_send" | "agent_wait" | "agent_list" | "agent_close"
   | "agent_profiles" ->
       Agent_tools.prepare name params ctx
+  | "cron_create" | "cron_list" | "cron_delete" -> Cron_tools.prepare name params ctx
   | "ralph_continue" | "ralph_finish" -> Ralph_tools.prepare_child_tool name params ctx
   | "web_search_exa" -> Exa_bridge.prepare_web_search params
   | "crawling_exa" -> Exa_bridge.prepare_crawling params
