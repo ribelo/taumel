@@ -89,6 +89,12 @@
  (libraries taumel))
 
 (test
+ (name test_skill_resolver)
+ (modules test_skill_resolver)
+ (package taumel)
+ (libraries taumel))
+
+(test
  (name test_compaction_model)
  (modules test_compaction_model)
  (package taumel)

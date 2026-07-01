@@ -17,6 +17,7 @@ module Ralph_loop = Ralph_loop
 module Runtime_policy = Runtime_policy
 module Sandbox = Sandbox
 module Shared = Shared
+module Skill_resolver = Skill_resolver
 module Subagents = Subagents
 module Agent_profiles = Agent_profiles
 module Agent_runs = Agent_runs

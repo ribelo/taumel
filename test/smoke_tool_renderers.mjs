@@ -1,5 +1,5 @@
 import { toolNames } from "../src/tool-contracts.ts";
-import { notificationMessageRenderer, renderersForTool } from "../src/tool-renderer.ts";
+import { notificationMessageRenderer, renderersForTool, skillMessageRenderer } from "../src/tool-renderer.ts";
 import { visibleWidth } from "@earendil-works/pi-tui";
 
 const assert = (condition, message) => {
@@ -330,6 +330,24 @@ assert(compactAgentNote.includes("all done here"), `agent notification body miss
 assert(
   renderNotification({ customType: "taumel.notification", content: "" }, { expanded: false }, theme) === undefined,
   "empty notification content should render nothing",
+);
+
+const renderSkill = skillMessageRenderer();
+const skillBlock = [
+  '<skill name="foo" location="/skills/foo/SKILL.md">',
+  "References are relative to /skills/foo.",
+  "",
+  longLines,
+  "</skill>",
+].join("\n");
+const compactSkill = renderText(renderSkill({ customType: "taumel.skill", content: skillBlock }, { expanded: false }, theme));
+const expandedSkill = renderText(renderSkill({ customType: "taumel.skill", content: skillBlock }, { expanded: true }, theme));
+assert(/• skill · foo/.test(compactSkill), `skill renderer header wrong: ${compactSkill}`);
+assert(compactSkill.includes("… 19 more lines"), `skill renderer should collapse body: ${compactSkill}`);
+assert(expandedSkill.includes("line-24"), `expanded skill renderer should show full body: ${expandedSkill}`);
+assert(
+  renderSkill({ customType: "taumel.skill", content: "<skill>bad</skill>" }, { expanded: false }, theme) === undefined,
+  "invalid skill markup should render nothing",
 );
 
 console.log("tool renderer smoke: all assertions passed");

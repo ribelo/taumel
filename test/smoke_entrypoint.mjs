@@ -13,6 +13,10 @@ const originalAgentProfileDir = process.env.TAUMEL_AGENT_PROFILE_DIR;
 process.env.TAUMEL_SETTINGS_PATH = join(cwd, "taumel-settings.json");
 process.env.TAUMEL_AGENT_PROFILE_DIR = join(cwd, "agent-profiles");
 await mkdir(process.env.TAUMEL_AGENT_PROFILE_DIR, { recursive: true });
+await mkdir(join(cwd, ".pi", "skills", "foo"), { recursive: true });
+await mkdir(join(cwd, ".pi", "skills", "bar"), { recursive: true });
+await writeFile(join(cwd, ".pi", "skills", "foo", "SKILL.md"), ["---", "name: foo", "---", "Foo body"].join("\n"));
+await writeFile(join(cwd, ".pi", "skills", "bar", "SKILL.md"), "Bar body\n");
 await writeFile(
   join(process.env.TAUMEL_AGENT_PROFILE_DIR, "scout.md"),
   [
@@ -579,6 +583,18 @@ try {
     !startupActiveTools.includes("agent_wait")
   ) {
     throw new Error(`openai active tool sync did not select apply_patch: ${JSON.stringify(activeToolUpdates)}`);
+  }
+
+  const skillResults = (handlers.get("before_agent_start") ?? []).map((handler) => handler({ type: "before_agent_start", prompt: "use $foo and $bar and $foo" }, ctx));
+  const skillResult = skillResults.find((result) => Array.isArray(result?.messages));
+  if (
+    !Array.isArray(skillResult?.messages) ||
+    skillResult.messages.length !== 2 ||
+    skillResult.messages[0]?.customType !== "taumel.skill" ||
+    !skillResult.messages[0]?.content?.includes('name="foo"') ||
+    !skillResult.messages[1]?.content?.includes('name="bar"')
+  ) {
+    throw new Error(`skill resolver did not emit ordered custom messages: ${JSON.stringify({ skillResults, handlers: [...handlers.keys()] })}`);
   }
 
   const defaultPermission = await commands.get("permissions").handler("show", ctx);

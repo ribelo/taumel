@@ -14,6 +14,7 @@ import { installGoalContinuationLoop, registerGatewayCommands } from "./command-
 import { installCompactionModelHook } from "./compaction-model.ts";
 import { installCronLoop } from "./cron.ts";
 import { toolNames } from "./tool-contracts.ts";
+import { installSkillResolver } from "./skills.ts";
 
 function requireCoreBridge(core: CoreBridge | undefined): CoreBridge {
   if (!core) {
@@ -286,6 +287,7 @@ export default async function taumel(pi: PiLike) {
   installAgentProfileCatalog(pi, core, composer?.settings, gatewayTools);
   installSandboxToolActivation(pi, core);
   installExecPolicyLoader(pi, core);
+  installSkillResolver(pi, core);
   installEnvironmentContext(pi, core);
   installCompactionModelHook(pi, core);
 }

@@ -842,6 +842,26 @@ function blockBetween(content: string, tag: string): string {
   return match ? match[1] : "";
 }
 
+function parseSkillBlock(content: string): { name: string; location: string; body: string } | undefined {
+  const match = /^<skill name="([^"]*)" location="([^"]*)">\nReferences are relative to [^\n]*\.\n\n([\s\S]*)\n<\/skill>$/.exec(content);
+  return match === null ? undefined : { name: match[1], location: match[2], body: match[3] };
+}
+
+export function skillMessageRenderer() {
+  return (message: unknown, options: unknown, theme: unknown) => {
+    const content = isRecord(message) ? stringField(message, "content") ?? "" : "";
+    const skill = parseSkillBlock(content);
+    if (skill === undefined) return undefined;
+    const expanded = expandedFromOptions(options);
+    return withLeftGutter(
+      renderBlock({
+        header: headerSpec("skill", skill.name, "info", theme, themeFg(theme, "dim", skill.location)),
+        body: { mode: "rail", entries: tailEntries(skill.body, expanded, theme, 5, 100000) },
+      }, expanded),
+    );
+  };
+}
+
 function buildNotificationBlock(message: unknown, options: unknown, theme: unknown): Block | undefined {
   const content = isRecord(message) ? stringField(message, "content") ?? "" : "";
   if (content === "") return undefined;
