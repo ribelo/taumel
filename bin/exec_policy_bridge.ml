@@ -139,11 +139,19 @@ let policy_reason_for_command sandbox sandbox_permissions cmd =
               (unmatched_context sandbox sandbox_permissions)
               ast
           in
-          if fallback.decision = Taumel.Exec_policy.Prompt then
-            Some "exec policy requires approval: dangerous command without sandbox protection"
-          else if fallback.decision = Taumel.Exec_policy.Forbidden then
-            Some "exec policy forbids this command: dangerous command without sandbox protection"
-          else None
+          let outside_safe_subset =
+            match Taumel.Exec_policy.command_tokens_from_ast ast with
+            | Error _ -> true
+            | Ok _ -> false
+          in
+          (match fallback.decision with
+          | Taumel.Exec_policy.Prompt when outside_safe_subset ->
+              Some "exec policy requires approval: unsupported shell construct"
+          | Taumel.Exec_policy.Prompt ->
+              Some "exec policy requires approval: dangerous command"
+          | Taumel.Exec_policy.Forbidden ->
+              Some "exec policy forbids this command by policy"
+          | Taumel.Exec_policy.Allow -> None)
 
 let allow_amendment_tokens cmd =
   match reflect_bash_script cmd with

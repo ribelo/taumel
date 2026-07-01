@@ -407,8 +407,8 @@ let is_known_safe_command = is_safe_to_call_with_exec
 let command_might_be_dangerous = is_dangerous_to_call_with_exec
 
 let decision_for_unmatched_command context command =
-  if command_might_be_dangerous command && context.sandbox_disabled then
-    if context.approval_never then Forbidden else Prompt
+  if command_might_be_dangerous command then
+    if context.approval_prompts_available then Prompt else Allow
   else if is_known_safe_command command then Allow
   else if context.sandbox_restricted then
     if context.requests_sandbox_override && context.approval_prompts_available then Prompt
@@ -418,7 +418,13 @@ let decision_for_unmatched_command context command =
 
 let decide_ast_with_fallback compiled context root =
   match command_token_sequences_from_ast root with
-  | Error _ -> { decision = Prompt; matched_rules = []; tokens = []; defaulted_to_prompt = false }
+  | Error _ ->
+      (* Parsed, but outside the safe word-only subset (loops, redirects,
+         subshells, expansions). Treat it as an unknown command and defer to
+         the sandbox/approval context, matching codex: the sandbox is the
+         safety net rather than a blanket prompt. *)
+      let decision = decision_for_unmatched_command context [] in
+      { decision; matched_rules = []; tokens = []; defaulted_to_prompt = decision = Prompt }
   | Ok [] ->
       let decision = decision_for_unmatched_command context [] in
       { decision; matched_rules = []; tokens = []; defaulted_to_prompt = decision = Prompt }

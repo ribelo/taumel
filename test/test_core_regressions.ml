@@ -496,11 +496,9 @@ let test_sandbox_edit_application () =
     (Sandbox.apply_edits ~display_path:"noop.txt" "same\n" [ edit "same" "same" ])
 
 let test_child_approval_clamping () =
-  (* Child cannot widen approval/escalation beyond parent. *)
   let base_parent =
     { Capability.default with agents = Capability.of_list [ "worker" ] }
   in
-  (* Parent Never, child requests On_request → clamped to Never. *)
   let parent = { base_parent with approval_policy = Capability.Never } in
   let child =
     expect_ok "never parent child"
@@ -517,9 +515,8 @@ let test_child_approval_clamping () =
            allow_no_sandbox = true;
          })
   in
-  assert_bool "child approval clamped to parent Never"
-    (child.approval_policy = Capability.Never);
-  (* Parent On_failure, child requests Never → Never (stricter is fine). *)
+  assert_bool "child can tighten Never parent to On_request"
+    (child.approval_policy = Capability.On_request);
   let parent_strict = { base_parent with approval_policy = Capability.On_failure } in
   let child_strict =
     expect_ok "stricter child allowed"
@@ -536,12 +533,9 @@ let test_child_approval_clamping () =
            allow_no_sandbox = false;
          })
   in
-  assert_bool "child can be stricter than parent"
-    (child_strict.approval_policy = Capability.Never);
-  (* Parent Untrusted, child requests On_failure → clamped to Untrusted. *)
-  let parent_untrusted =
-    { base_parent with approval_policy = Capability.Untrusted }
-  in
+  assert_bool "child Never request clamped to parent On_failure"
+    (child_strict.approval_policy = Capability.On_failure);
+  let parent_untrusted = { base_parent with approval_policy = Capability.Untrusted } in
   let child_widened =
     expect_ok "untrusted clamped child"
       (Capability.child_profile parent_untrusted
@@ -896,6 +890,7 @@ let test_subagent_tool_planning () =
         model_id = None;
         thinking_level = None;
         sandbox_preset = None;
+        approval_policy = None;
         tools = None;
         workspace_roots = [ "/repo" ];
         no_sandbox = false;

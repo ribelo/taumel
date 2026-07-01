@@ -80,10 +80,10 @@ let stricter_sandbox left right =
   if sandbox_rank left <= sandbox_rank right then left else right
 
 let approval_rank = function
-  | Never -> 0
-  | Untrusted -> 1
-  | On_request -> 2
-  | On_failure -> 3
+  | Untrusted -> 0
+  | On_request -> 1
+  | On_failure -> 2
+  | Never -> 3
 
 let stricter_approval left right =
   if approval_rank left <= approval_rank right then left else right

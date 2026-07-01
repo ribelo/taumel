@@ -373,7 +373,10 @@ let exec_policy_decision ?message config policy_decision =
   match (policy_decision : Exec_policy.decision) with
   | Allow -> Allow
   | Forbidden -> Deny message
-  | Prompt -> approval_decision config message
+  | Prompt -> (
+      match config.approval_policy with
+      | Never -> Allow
+      | On_request | On_failure | Untrusted -> approval_decision config message)
 
 let authorize_exec ?policy_decision ?policy_message (config : config) request =
   let existing =

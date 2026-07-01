@@ -1,4 +1,6 @@
 module Exec_policy = Taumel.Exec_policy
+module Capability = Taumel.Capability_profile
+module Sandbox = Taumel.Sandbox
 
 let assert_equal label expected actual =
   if expected <> actual then
@@ -217,19 +219,91 @@ let test_empty_policy_fallback () =
   in
   assert_decision "safe fallback" Exec_policy.Allow
     (Exec_policy.decision_for_unmatched_command context [ "ls"; "-l" ]);
-  assert_decision "dangerous fallback allowed in restricted sandbox" Exec_policy.Allow
+  assert_decision "dangerous fallback prompts under on-request" Exec_policy.Prompt
     (Exec_policy.decision_for_unmatched_command context [ "rm"; "-rf"; "target" ]);
   assert_decision "dangerous fallback prompts without sandbox" Exec_policy.Prompt
     (Exec_policy.decision_for_unmatched_command
        { context with sandbox_restricted = false; sandbox_disabled = true }
        [ "rm"; "-rf"; "target" ]);
-  assert_decision "dangerous fallback forbidden under never" Exec_policy.Forbidden
+  assert_decision "dangerous fallback allowed under never" Exec_policy.Allow
     (Exec_policy.decision_for_unmatched_command
        { context with approval_never = true; approval_prompts_available = false; sandbox_restricted = false; sandbox_disabled = true }
        [ "rm"; "-rf"; "target" ]);
+  assert_decision "sudo dangerous fallback allowed under never full access" Exec_policy.Allow
+    (Exec_policy.decision_for_unmatched_command
+       { context with approval_never = true; approval_prompts_available = false; sandbox_restricted = false; sandbox_disabled = true }
+       [ "sudo"; "rm"; "-rf"; "/tmp/target" ]);
   assert_bool "git status is safe" (Exec_policy.is_known_safe_command [ "git"; "status" ]);
   assert_false "git branch delete is not safe"
     (Exec_policy.is_known_safe_command [ "git"; "branch"; "-d"; "feature" ])
+
+let test_unsupported_defers_to_sandbox () =
+  let unsupported =
+    Exec_policy.{
+      kind = "program";
+      text = "for d in a b; do echo $d; done";
+      children =
+        [ { kind = "for_statement"; text = "for d in a b; do echo $d; done"; children = [] } ];
+    }
+  in
+  let compiled = Exec_policy.empty in
+  let sandbox_on =
+    Exec_policy.{
+      approval_never = false;
+      approval_prompts_available = true;
+      sandbox_restricted = true;
+      sandbox_disabled = false;
+      requests_sandbox_override = false;
+    }
+  in
+  assert_decision "unsupported construct runs under an active sandbox" Exec_policy.Allow
+    (Exec_policy.decide_ast_with_fallback compiled sandbox_on unsupported).decision;
+  let yolo =
+    Exec_policy.{
+      approval_never = true;
+      approval_prompts_available = false;
+      sandbox_restricted = false;
+      sandbox_disabled = true;
+      requests_sandbox_override = false;
+    }
+  in
+  assert_decision "unsupported construct runs under never with no sandbox" Exec_policy.Allow
+    (Exec_policy.decide_ast_with_fallback compiled yolo unsupported).decision;
+  let escalated = { sandbox_on with requests_sandbox_override = true } in
+  assert_decision "unsupported construct prompts when escalation is requested" Exec_policy.Prompt
+    (Exec_policy.decide_ast_with_fallback compiled escalated unsupported).decision
+
+let test_approval_rank_ordering () =
+  assert_bool "untrusted stricter than on-request"
+    (Capability.stricter_approval Capability.Untrusted Capability.On_request
+    = Capability.Untrusted);
+  assert_bool "on-request stricter than on-failure"
+    (Capability.stricter_approval Capability.On_request Capability.On_failure
+    = Capability.On_request);
+  assert_bool "on-failure stricter than never"
+    (Capability.stricter_approval Capability.On_failure Capability.Never
+    = Capability.On_failure)
+
+let test_exec_policy_prompt_under_never_allows_but_boundaries_deny () =
+  let never_read_only =
+    {
+      Sandbox.filesystem_mode = Sandbox.Read_only;
+      workspace_roots = [ "/repo" ];
+      network_mode = Sandbox.Network_disabled;
+      approval_policy = Sandbox.Never;
+      no_sandbox = false;
+      subagent = false;
+    }
+  in
+  (match
+     Sandbox.authorize_exec ~policy_decision:Exec_policy.Prompt never_read_only
+       { cmd = "rm -rf target"; workdir = Some "/repo"; sandbox_permissions = Sandbox.Use_default }
+   with
+  | Sandbox.Allow -> ()
+  | _ -> failwith "exec policy prompt under never: expected allow");
+  (match Sandbox.authorize_mutation_path never_read_only Sandbox.Write "/repo/file" with
+  | Sandbox.Deny _ -> ()
+  | _ -> failwith "read-only write under never: expected denial")
 
 let () =
   test_prefix_alternatives ();
@@ -239,4 +313,7 @@ let () =
   test_ast_walk ();
   test_ast_sequence_strictest ();
   test_ast_unsupported_prompts ();
+  test_unsupported_defers_to_sandbox ();
+  test_approval_rank_ordering ();
+  test_exec_policy_prompt_under_never_allows_but_boundaries_deny ();
   test_empty_policy_fallback ()
