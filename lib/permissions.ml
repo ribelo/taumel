@@ -90,18 +90,9 @@ let network_mode_for_sandbox_preset = function
   | Capability_profile.Read_only | Capability_profile.Workspace_write ->
       Sandbox.Network_disabled
 
-let approval_policy_for_sandbox_preset = function
-  | Capability_profile.Danger_full_access -> Capability_profile.Never
-  | Capability_profile.Read_only | Capability_profile.Workspace_write ->
-      Capability_profile.On_request
-
 let profile_for_sandbox_preset (profile : Capability_profile.t)
     (sandbox_preset : Capability_profile.sandbox_preset) =
-  {
-    profile with
-    Capability_profile.sandbox_preset = sandbox_preset;
-    approval_policy = approval_policy_for_sandbox_preset sandbox_preset;
-  }
+  { profile with Capability_profile.sandbox_preset = sandbox_preset }
 
 let active_state ~(profile : Capability_profile.t) ~network_mode ~no_sandbox
     ~subagent =
@@ -289,7 +280,28 @@ let sandbox_menu_options (state : state) =
     option Capability_profile.Workspace_write "Workspace write" "workspace-write"
       "Write in this workspace and temporary paths, deny network, ask before escalation.";
     option Capability_profile.Danger_full_access "Full access" "full-access"
-      "Unrestricted filesystem and network access without sandbox prompts.";
+      "Unrestricted filesystem and network access.";
+  ]
+
+let approval_menu_options (state : state) =
+  let option policy label value description =
+    let selected = state.profile.approval_policy = policy in
+    {
+      label = label ^ if selected then " (current)" else "";
+      value = "approval " ^ value;
+      description;
+      selected;
+    }
+  in
+  [
+    option Capability_profile.Never "Approval: never" "never"
+      "Run everything without prompts (full YOLO).";
+    option Capability_profile.On_request "Approval: on-request" "on-request"
+      "Run freely, but confirm destructive commands like rm -rf and sudo.";
+    option Capability_profile.On_failure "Approval: on-failure" "on-failure"
+      "Run freely; ask only to retry a sandbox failure with escalation.";
+    option Capability_profile.Untrusted "Approval: untrusted" "untrusted"
+      "Confirm every command that isn't known-safe.";
   ]
 
 let network_menu_options (state : state) =
@@ -309,7 +321,8 @@ let network_menu_options (state : state) =
       "Block network access in read-only and workspace-write modes.";
   ]
 
-let permissions_menu_options (state : state) = sandbox_menu_options state
+let permissions_menu_options (state : state) =
+  sandbox_menu_options state @ approval_menu_options state
 
 let persisted_to_json (state : state) =
   Shared.Object

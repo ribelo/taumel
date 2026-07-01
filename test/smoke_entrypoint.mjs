@@ -583,10 +583,10 @@ try {
 
   const defaultPermission = await commands.get("permissions").handler("show", ctx);
   if (
-    defaultPermission.action !== "command_result" ||
-    !defaultPermission.message.includes("sandbox=danger-full-access") ||
-    !defaultPermission.message.includes("approval=never") ||
-    !defaultPermission.message.includes("network=enabled")
+	    defaultPermission.action !== "command_result" ||
+	    !defaultPermission.message.includes("sandbox=danger-full-access") ||
+	    !defaultPermission.message.includes("approval=on-request") ||
+	    !defaultPermission.message.includes("network=enabled")
   ) {
     throw new Error(`default permissions were not full access: ${JSON.stringify(defaultPermission)}`);
   }
@@ -594,15 +594,33 @@ try {
   const initialEnvironment = findEnvironmentMessage(initialContextMessages);
   assert(
     initialContextMessages[0] === initialEnvironment &&
-    initialContextMessages[1]?.role === "user" &&
-    initialEnvironment?.content?.includes("<sandbox_mode>danger-full-access</sandbox_mode>") &&
-    initialEnvironment.content.includes("<approval_policy>never</approval_policy>") &&
-    initialEnvironment.content.includes("<network_access>enabled</network_access>"),
+	    initialContextMessages[1]?.role === "user" &&
+	    initialEnvironment?.content?.includes("<sandbox_mode>danger-full-access</sandbox_mode>") &&
+	    initialEnvironment.content.includes("<approval_policy>on-request</approval_policy>") &&
+	    initialEnvironment.content.includes("<network_access>enabled</network_access>"),
     `initial environment context was not injected before user input: ${JSON.stringify(initialContextMessages)}`,
   );
-  const unchangedContext = await contextHandlers[0]({ type: "context", messages: [{ role: "user", content: "unchanged context" }] }, ctx);
-  assert(unchangedContext === undefined, `unchanged environment context should not inject: ${JSON.stringify(unchangedContext)}`);
-  const rejectedEscalationConfirmCount = confirmations.length;
+	const unchangedContext = await contextHandlers[0]({ type: "context", messages: [{ role: "user", content: "unchanged context" }] }, ctx);
+	assert(unchangedContext === undefined, `unchanged environment context should not inject: ${JSON.stringify(unchangedContext)}`);
+	confirmBehavior = async () => false;
+	const dangerousConfirmCount = confirmations.length;
+	const dangerousDefault = await tools.get("exec_command").execute(
+	  "exec-dangerous-default",
+	  { cmd: "rm -rf target" },
+	  undefined,
+	  undefined,
+	  ctx,
+	);
+	confirmBehavior = async () => true;
+	assert(
+	  confirmations.length >= dangerousConfirmCount &&
+	    dangerousDefault.content?.[0]?.text === "Sandbox: command blocked (approval denied by user)" &&
+	    dangerousDefault.details?.approvalRequired === true,
+	  `dangerous default command did not prompt under full-access/on-request: ${JSON.stringify({ dangerousDefault, confirmations: confirmations.at(-1) })}`,
+	);
+	const neverSetup = await commands.get("permissions").handler("approval never", ctx);
+	assert(neverSetup.message.includes("approval=never"), `approval never did not apply: ${JSON.stringify(neverSetup)}`);
+	const rejectedEscalationConfirmCount = confirmations.length;
   const rejectedEscalation = await tools.get("exec_command").execute(
     "exec-escalation-rejected",
     {
@@ -619,9 +637,11 @@ try {
     !rejectedEscalation.content?.[0]?.text.includes("approval policy is Never; reject command") ||
     rejectedEscalation.content?.[0]?.text === "need host"
   ) {
-    throw new Error(`exec escalation rejection did not match Codex: ${JSON.stringify({ rejectedEscalation, confirmations })}`);
-  }
-  const workspaceSetup = await commands.get("permissions").handler("sandbox workspace-write", ctx);
+	    throw new Error(`exec escalation rejection did not match Codex: ${JSON.stringify({ rejectedEscalation, confirmations })}`);
+	  }
+	const requestSetup = await commands.get("permissions").handler("approval on-request", ctx);
+	assert(requestSetup.message.includes("approval=on-request"), `approval on-request did not apply: ${JSON.stringify(requestSetup)}`);
+	const workspaceSetup = await commands.get("permissions").handler("sandbox workspace-write", ctx);
   if (
     workspaceSetup.action !== "command_result" ||
     !workspaceSetup.message.includes("sandbox=workspace-write") ||
@@ -644,10 +664,9 @@ try {
   const changedEnvironment = findEnvironmentMessage(changedContextMessages);
   assert(
     changedContextMessages[0] === changedEnvironment &&
-    changedContextMessages[1]?.role === "user" &&
-    changedEnvironment?.content?.includes("<sandbox_mode>workspace-write</sandbox_mode>") &&
-    changedEnvironment.content.includes("<approval_policy>on-request</approval_policy>") &&
-    changedEnvironment.content.includes("<network_access>restricted</network_access>") &&
+	    changedContextMessages[1]?.role === "user" &&
+	    changedEnvironment?.content?.includes("<sandbox_mode>workspace-write</sandbox_mode>") &&
+	    changedEnvironment.content.includes("<network_access>restricted</network_access>") &&
     changedEnvironment.content.includes("<root>") &&
     !changedEnvironment.content.includes("<shell>"),
     `changed environment context was not injected as a diff: ${JSON.stringify(changedContextMessages)}`,

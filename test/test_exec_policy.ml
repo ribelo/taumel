@@ -1,5 +1,6 @@
 module Exec_policy = Taumel.Exec_policy
 module Capability = Taumel.Capability_profile
+module Permissions = Taumel.Permissions
 module Sandbox = Taumel.Sandbox
 
 let assert_equal label expected actual =
@@ -305,6 +306,26 @@ let test_exec_policy_prompt_under_never_allows_but_boundaries_deny () =
   | Sandbox.Deny _ -> ()
   | _ -> failwith "read-only write under never: expected denial")
 
+let test_fresh_full_access_dangerous_prompts () =
+  let active =
+    Permissions.resolve_active ~host_sandbox_preset:None ~host_network_mode:None
+      ~host_no_sandbox:None ~session_subagent:false Permissions.Missing
+  in
+  assert_bool "fresh session is on-request full access"
+    (active.profile.sandbox_preset = Capability.Danger_full_access
+    && active.profile.approval_policy = Capability.On_request);
+  let context =
+    Exec_policy.{
+      approval_never = false;
+      approval_prompts_available = true;
+      sandbox_restricted = false;
+      sandbox_disabled = true;
+      requests_sandbox_override = false;
+    }
+  in
+  assert_decision "fresh rm -rf prompts" Exec_policy.Prompt
+    (Exec_policy.decision_for_unmatched_command context [ "rm"; "-rf"; "target" ])
+
 let () =
   test_prefix_alternatives ();
   test_strictest_wins ();
@@ -316,4 +337,5 @@ let () =
   test_unsupported_defers_to_sandbox ();
   test_approval_rank_ordering ();
   test_exec_policy_prompt_under_never_allows_but_boundaries_deny ();
+  test_fresh_full_access_dangerous_prompts ();
   test_empty_policy_fallback ()

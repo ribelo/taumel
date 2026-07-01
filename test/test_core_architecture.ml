@@ -830,6 +830,13 @@ let test_permissions_state () =
   assert_bool "sandbox config updated"
     (state.sandbox.filesystem_mode = Sandbox.Read_only);
   let state =
+    match expect_ok "parse approval permission" (Permissions.parse "approval never") with
+    | None -> fail "permissions approval parse" "expected update"
+    | Some update -> expect_ok "apply approval permission" (Permissions.apply_update state update)
+  in
+  assert_bool "approval updated"
+    (state.profile.approval_policy = Capability.Never);
+  let state =
     match expect_ok "parse network permission" (Permissions.parse "network enabled") with
     | None -> fail "permissions network parse" "expected update"
     | Some update -> expect_ok "apply network permission" (Permissions.apply_update state update)
@@ -844,6 +851,8 @@ let test_permissions_state () =
     (state.profile.sandbox_preset = Capability.Danger_full_access);
   assert_bool "full access forces network enabled"
     (state.sandbox.network_mode = Sandbox.Network_enabled);
+  assert_bool "full access preserves approval"
+    (state.profile.approval_policy = Capability.Never);
   expect_error "full access rejects network disabled"
     (Permissions.apply_update state (Permissions.Set_network Sandbox.Network_disabled));
   let state =
@@ -853,6 +862,8 @@ let test_permissions_state () =
   in
   assert_bool "workspace preset resets network disabled"
     (state.sandbox.network_mode = Sandbox.Network_disabled);
+  assert_bool "workspace preset preserves approval"
+    (state.profile.approval_policy = Capability.Never);
   let state =
     match expect_ok "parse no-sandbox permission" (Permissions.parse "no-sandbox enabled") with
     | None -> fail "permissions no-sandbox parse" "expected update"
@@ -885,6 +896,10 @@ let test_permissions_state () =
   assert_bool "permissions menu excludes network"
     (Permissions.menu_selected_value permissions_menu "Network disabled (current)"
     = None);
+  assert_equal "approval menu selection by label" "approval never"
+    (Option.value
+       (Permissions.menu_selected_value permissions_menu "Approval: never (current)")
+       ~default:"");
   let network_menu = Permissions.network_menu_options state in
   assert_equal "network menu selection by label" "network disabled"
     (Option.value
@@ -898,6 +913,7 @@ let test_permissions_state () =
         Permissions.default_prompt_title plan.title;
       assert_bool "permissions prompt labels"
         (List.mem "Workspace write (current)" plan.labels
+        && List.mem "Approval: never (current)" plan.labels
         && not (List.mem "Network disabled (current)" plan.labels))
   | Permissions.Prompt_unavailable ->
       fail "permissions prompt plan" "expected select plan");

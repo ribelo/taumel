@@ -688,8 +688,8 @@ let test_permissions_active_resolution () =
   in
   assert_bool "missing permissions defaults to full access"
     (resolved.profile.sandbox_preset = Capability.Danger_full_access);
-  assert_bool "missing permissions defaults to never approval"
-    (resolved.profile.approval_policy = Capability.Never);
+  assert_bool "missing permissions defaults to on-request approval"
+    (resolved.profile.approval_policy = Capability.On_request);
   assert_bool "missing permissions enables network"
     (resolved.network_mode = Sandbox.Network_enabled);
   assert_bool "missing permissions leaves no-sandbox disabled"
@@ -707,7 +707,7 @@ let test_permissions_active_resolution () =
   in
   assert_bool "flags override default sandbox"
     (flagged.profile.sandbox_preset = Capability.Read_only);
-  assert_bool "flags reset preset approval"
+  assert_bool "flags preserve default approval"
     (flagged.profile.approval_policy = Capability.On_request);
   assert_bool "flags override default network"
     (flagged.network_mode = Sandbox.Network_enabled);
@@ -716,6 +716,7 @@ let test_permissions_active_resolution () =
     {
       Capability.default with
       sandbox_preset = Capability.Workspace_write;
+      approval_policy = Capability.On_failure;
       no_sandbox_allowed = true;
     }
   in
@@ -733,8 +734,8 @@ let test_permissions_active_resolution () =
   in
   assert_bool "flags override persisted sandbox"
     (overridden.profile.sandbox_preset = Capability.Danger_full_access);
-  assert_bool "flags override persisted approval"
-    (overridden.profile.approval_policy = Capability.Never);
+  assert_bool "flags preserve persisted approval"
+    (overridden.profile.approval_policy = Capability.On_failure);
   assert_bool "full access flag forces network"
     (overridden.network_mode = Sandbox.Network_enabled);
   assert_bool "no-sandbox flag overrides persisted"
