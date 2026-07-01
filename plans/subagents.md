@@ -94,7 +94,7 @@ separate.
 
 - **sub-pr01** (ubiquitous): The system shall define agent profiles as Markdown with YAML frontmatter and the body as the system prompt, shipping built-ins `smart`, `deep`, `rush`, `finder`, `librarian`, `oracle`, `painter`, and `review`, with no `plan` profile.
 - **sub-pr02** (ubiquitous): The system shall require frontmatter `name`, `description`, `provider`, `model`, `thinking`, `sandbox`, and `tools`, allow `inherit`, and treat omission, Tau keys (`models`, `spawns`, `approval_timeout`), and built-in prompt text that tells a child to spawn agents as errors.
-- **sub-pr03** (ubiquitous): The system shall treat `provider` and `model` as an atomic pair (both `inherit` or both concrete), keep `thinking` independently inheritable, and restrict `sandbox` to `inherit`, `read-only`, or `workspace-write`.
+- **sub-pr03** (ubiquitous): The system shall treat `provider` and `model` as an atomic pair (both `inherit` or both concrete), keep `thinking` independently inheritable, restrict `sandbox` to `inherit`, `read-only`, or `workspace-write`, and accept an optional `approval` field restricted to `inherit`, `never`, `on-request`, `on-failure`, or `untrusted` and defaulting to `inherit`.
 - **sub-pr04** (ubiquitous): The system shall load user profiles from `~/.pi/agent/taumel/agents/*.md`, reserve built-in names, reject a user profile using a built-in name, and exclude project-local profiles.
 - **sub-pr05** (ubiquitous): The system shall override built-in profile model routing only from Pi config JSON (global and trusted project) under `taumel.agents.builtins`, with complete inherit-or-concrete `provider`/`model`/`thinking` entries, creating the section on first run.
 
@@ -135,7 +135,7 @@ separate.
 
 ### Sandbox and approval
 
-- **sub-sa01** (ubiquitous): The system shall never allow `no_sandbox` for subagents, clamp a child sandbox to at most the parent, reject `danger-full-access` declarations, and clamp an inherited `danger-full-access` to `workspace-write`.
+- **sub-sa01** (ubiquitous): The system shall never allow `no_sandbox` for subagents, clamp a child sandbox preset to at most the parent's and a child approval policy to at least the parent's strictness, reject `danger-full-access` declarations, and clamp an inherited `danger-full-access` to `workspace-write`.
 - **sub-sa02** (event-driven): When a child tool needs escalation, the system shall show the approval prompt to the user identifying the requesting agent or profile and run child tools under the child session sandbox.
 
 ### Completion delivery

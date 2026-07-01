@@ -36,6 +36,7 @@ patch parsing stay separate from each other and from execution.
 - **sandbox-md06** (state-driven): While the sandbox preset is `danger-full-access`, the system shall force network `enabled`; while the preset is `read-only` or `workspace-write`, network shall default to `disabled` and stay user-controlled.
 - **sandbox-md07** (event-driven): When no persisted permissions exist, the system shall start a top-level session at `danger-full-access` with network enabled; when persisted permissions are invalid, it shall fall back to `workspace-write` with network disabled.
 - **sandbox-md08** (event-driven): When the host supplies `--sandbox-mode`, a network flag, or `--no-sandbox`, the system shall override the resolved active state with those values, applying `--no-sandbox` only to non-subagent sessions.
+- **sandbox-md09** (ubiquitous): The system shall treat approval policy and sandbox preset as orthogonal: the preset governs OS enforcement and the approval policy governs only the human-in-the-loop cadence, so `danger-full-access` composes with any approval policy — `never` runs unsandboxed with no prompts, and `on-request` runs unsandboxed while still asking before destructive commands.
 
 ### Effect authorization
 
@@ -60,7 +61,7 @@ patch parsing stay separate from each other and from execution.
 - **sandbox-ex01** (event-driven): When a command runs with default permissions and a working directory, the system shall authorize read access to that working directory before execution.
 - **sandbox-ex02** (event-driven): When a command requests escalation while the approval policy is `on-request`, the system shall request approval using the supplied justification.
 - **sandbox-ex03** (unwanted): If a command requests escalation while the approval policy is not `on-request`, then the system shall deny the command and report that escalation cannot be requested under the current policy.
-- **sandbox-ex04** (event-driven): When the approval policy is `never`, the system shall deny any decision that would otherwise require approval.
+- **sandbox-ex04** (event-driven): When the approval policy is `never`, the system shall deny a sandbox-boundary decision that would otherwise require approval — a read-only write, or a write or delete outside the workspace roots — while letting exec-policy `prompt` classifications run without asking.
 - **sandbox-ex05** (event-driven): When the approval policy is `on-request`, `on-failure`, or `untrusted`, the system shall surface a decision that requires approval as an approval request.
 
 ### bubblewrap execution

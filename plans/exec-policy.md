@@ -29,14 +29,15 @@ already-authorized running session and stays out of scope for v1, matching codex
 - **execpolicy-cdx7** (ubiquitous): The system shall port the codex `execpolicy` engine as its rule model and evaluation semantics — the `prefix_rule` shape, the `allow`/`prompt`/`forbidden` decisions, strictest-wins precedence, and `match`/`not_match` validation — and preserve behavior parity with codex for equivalent rules and commands.
 - **execpolicy-7q2a** (event-driven): When the model invokes `exec_command`, the system shall classify the command and produce a decision of `allow`, `prompt`, or `forbidden` before authorizing execution.
 - **execpolicy-k4d1** (ubiquitous): The system shall parse the command script with tree-sitter-bash and accept word-only command sequences joined by `&&`, `||`, `;`, and `|`.
-- **execpolicy-m9x3** (unwanted): If parsing fails or the script contains a construct outside the safe word-only subset, then the system shall resolve the command to `prompt`.
+- **execpolicy-m9x3** (unwanted): If parsing fails or the script contains a construct outside the safe word-only subset, then the system shall treat the command as unmatched and defer to the sandbox and approval context rather than force a `prompt`.
 - **execpolicy-2f8w** (event-driven): When a prefix rule's ordered tokens match a command's leading tokens, the system shall record that rule as a match, treating a nested token list as accepted alternatives.
 - **execpolicy-p1n6** (event-driven): When several rules match one command, the system shall select the strictest decision in the order `forbidden`, `prompt`, `allow`.
 - **execpolicy-3rt5** (event-driven): When no explicit rule matches a command, the system shall add no override and defer the decision to the existing exec authorization.
 - **execpolicy-9bc2** (ubiquitous): The system shall combine the policy decision with the existing exec authorization decision by selecting the strictest of the two.
 - **execpolicy-w7k8** (event-driven): When the policy decision is `forbidden`, the system shall deny the command.
 - **execpolicy-q5h9** (event-driven): When the policy decision is `prompt`, the system shall request user approval through the existing approval flow.
-- **execpolicy-z3v4** (state-driven): While the approval policy is `never`, the system shall deny any command that resolves to `prompt`.
+- **execpolicy-z3v4** (state-driven): While the approval policy is `never`, the system shall resolve a `prompt` classification to `allow` and run the command without asking, reserving denial for `forbidden` rules and sandbox-boundary violations.
+- **execpolicy-dgr1** (event-driven): When an unmatched command is destructive (`rm -f`/`rm -rf`, or `sudo` wrapping one), the system shall resolve it to `prompt` only while the approval policy is `on-request` or `untrusted`, resolve it to `allow` while the policy is `never` or `on-failure`, and never resolve it to `forbidden`, applying the same rule in every sandbox mode.
 - **execpolicy-t6m0** (event-driven): When an explicit `allow` rule matches a command, the policy decision shall be `allow`, and the system shall not request approval on the policy's behalf.
 - **execpolicy-h2j7** (ubiquitous): The system shall read global rules from `~/.pi/agent/settings.json` under `taumel.execPolicy`.
 - **execpolicy-r8p3** (state-driven): While the project is trusted, the system shall read project rules from `<cwd>/.pi/settings.json` under `taumel.execPolicy`.
