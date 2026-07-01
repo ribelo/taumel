@@ -206,6 +206,7 @@ let test_agent_profile_toggle_state () =
       spec_model = Agent_profiles.Inherit_string;
       spec_thinking = Agent_profiles.Inherit_string;
       spec_sandbox = Agent_profiles.Inherit_sandbox;
+      spec_approval = Agent_profiles.Inherit_approval;
       spec_tools = Agent_profiles.Inherit_tools;
       spec_prompt = "Inspect directly.";
       spec_source = Agent_profiles.User_markdown "/profiles/scout.md";
@@ -240,6 +241,7 @@ let test_agent_profile_catalog () =
       model_id = Some "bad/model";
       thinking_level = Some "bad";
       sandbox_preset = Some Capability.Danger_full_access;
+      approval_policy = Some Capability.Untrusted;
       tools = Some (Capability.of_list [ "agent_spawn" ]);
       workspace_roots = [ "/repo" ];
       no_sandbox = true;
@@ -250,6 +252,8 @@ let test_agent_profile_catalog () =
   assert_bool "profile applies system prompt"
     (resolved.system_prompt = finder.spec_prompt);
   assert_bool "profile clears per-call tools override" (resolved.tools = None);
+  assert_bool "profile clears per-call approval override"
+    (resolved.approval_policy = None);
   assert_bool "profile clears no-sandbox" (not resolved.no_sandbox);
   let finder_override =
     {
@@ -298,6 +302,7 @@ let test_markdown_profile_validation () =
         "model: inherit";
         "thinking: inherit";
         "sandbox: read-only";
+        "approval: on-failure";
         "tools:";
         "  - exec_command";
         "  - find_thread";
@@ -312,6 +317,24 @@ let test_markdown_profile_validation () =
   assert_equal "markdown profile name" "scout" scout.spec_name;
   assert_equal "markdown sandbox" "read-only"
     (Agent_profiles.sandbox_setting_to_summary scout.spec_sandbox);
+  assert_equal "markdown approval" "on-failure"
+    (Agent_profiles.approval_setting_to_summary scout.spec_approval);
+  let definition = Agent_profiles.profile_spec_to_definition scout in
+  assert_bool "definition carries approval"
+    (definition.approval_policy = Some Capability.On_failure);
+  let parent_profile =
+    {
+      Capability.default with
+      approval_policy = Capability.On_request;
+      agents = Capability.of_list [ "scout" ];
+    }
+  in
+  let child_profile =
+    expect_ok "frontmatter approval clamps to parent"
+      (Capability.child_profile parent_profile definition)
+  in
+  assert_bool "child approval clamped to parent on-request"
+    (child_profile.approval_policy = Capability.On_request);
   let catalog =
     Agent_profiles.build_profile_catalog
       ~live_tools:[ "exec_command"; "find_thread" ]

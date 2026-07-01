@@ -102,6 +102,7 @@ type spawn_tool_request = {
   model_id : string option;
   thinking_level : string option;
   sandbox_preset : Capability_profile.sandbox_preset option;
+  approval_policy : Capability_profile.approval_policy option;
   tools : Capability_profile.allowlist option;
   workspace_roots : string list;
   no_sandbox : bool;
@@ -378,7 +379,7 @@ let apply_spawn ~parent_profile ~(owner : owner) workers
         model_id = request.model_id;
         thinking_level = request.thinking_level;
         sandbox_preset = request.sandbox_preset;
-        approval_policy = None;
+        approval_policy = request.approval_policy;
         tools = request.tools;
         agents = None;
         allow_no_sandbox = false;
@@ -469,7 +470,7 @@ let apply_request ~parent_profile ~(owner : owner) workers = function
       Ok (plan ~listed_workers:owned workers "tool_result" message)
 
 let request_of_values ~workspace_roots ~default_id ?action ?id ?agent ?prompt
-    ?model_id ?thinking_level ?sandbox_preset ?tools
+    ?model_id ?thinking_level ?sandbox_preset ?approval_policy ?tools
     ?(no_sandbox = false) ?(interrupt = false) ?(create_goal = false) () =
   let opt_trim = Option.bind in
   match String.trim (Option.value action ~default:"list") with
@@ -495,6 +496,15 @@ let request_of_values ~workspace_roots ~default_id ?action ?id ?agent ?prompt
       in
       let ( let* ) = Result.bind in
       let* sandbox_preset = sandbox_preset in
+      let approval_policy =
+        match approval_policy with
+        | None | Some "inherit" -> Ok None
+        | Some value -> (
+            match Capability_profile.approval_of_string value with
+            | Some policy -> Ok (Some policy)
+            | None -> Error ("agent.approval_policy is invalid: " ^ value))
+      in
+      let* approval_policy = approval_policy in
       let tools =
         match tools with
         | Some (_ :: _ as tools) -> Some (Capability_profile.of_list tools)
@@ -511,6 +521,7 @@ let request_of_values ~workspace_roots ~default_id ?action ?id ?agent ?prompt
              model_id = opt_trim model_id Shared.trim_non_empty;
              thinking_level = opt_trim thinking_level Shared.trim_non_empty;
              sandbox_preset;
+             approval_policy;
              tools;
              workspace_roots;
              no_sandbox;

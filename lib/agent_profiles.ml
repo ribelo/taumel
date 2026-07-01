@@ -18,6 +18,10 @@ type sandbox_setting =
   | Inherit_sandbox
   | Concrete_sandbox of Capability_profile.sandbox_preset
 
+type approval_setting =
+  | Inherit_approval
+  | Concrete_approval of Capability_profile.approval_policy
+
 type tools_setting =
   | Inherit_tools
   | Concrete_tools of string list
@@ -33,6 +37,7 @@ type profile_spec = {
   spec_model : inherit_string;
   spec_thinking : inherit_string;
   spec_sandbox : sandbox_setting;
+  spec_approval : approval_setting;
   spec_tools : tools_setting;
   spec_prompt : string;
   spec_source : profile_source;
@@ -45,6 +50,10 @@ let inherit_string_to_summary = function
 let sandbox_setting_to_summary = function
   | Inherit_sandbox -> "inherit"
   | Concrete_sandbox sandbox -> Capability_profile.sandbox_to_string sandbox
+
+let approval_setting_to_summary = function
+  | Inherit_approval -> "inherit"
+  | Concrete_approval approval -> Capability_profile.approval_to_string approval
 
 let tools_setting_to_summary = function
   | Inherit_tools -> "inherit"
@@ -71,7 +80,10 @@ let profile_spec_to_definition spec =
       (match spec.spec_sandbox with
       | Inherit_sandbox -> None
       | Concrete_sandbox sandbox -> Some sandbox);
-    approval_policy = None;
+    approval_policy =
+      (match spec.spec_approval with
+      | Inherit_approval -> None
+      | Concrete_approval approval -> Some approval);
     tools =
       (match spec.spec_tools with
       | Inherit_tools -> None
@@ -89,6 +101,7 @@ let spawn_request_with_profile spec (request : Subagents.spawn_tool_request) =
     model_id = definition.model_id;
     thinking_level = definition.thinking_level;
     sandbox_preset = definition.sandbox_preset;
+    approval_policy = definition.approval_policy;
     tools = definition.tools;
     no_sandbox = false;
   }
@@ -112,6 +125,7 @@ let builtin_specs =
            spec_model = Inherit_string;
            spec_thinking = Inherit_string;
            spec_sandbox = Inherit_sandbox;
+           spec_approval = Inherit_approval;
            spec_tools = Inherit_tools;
            spec_prompt =
              "You are the " ^ name
@@ -246,6 +260,15 @@ let parse_sandbox_setting path fields =
       | Some sandbox -> Ok (Concrete_sandbox sandbox)
       | None -> Error (path ^ ": invalid sandbox: " ^ value))
 
+let parse_approval_setting path fields =
+  match List.assoc_opt "approval" fields with
+  | None | Some (Yaml_scalar "inherit") -> Ok Inherit_approval
+  | Some (Yaml_scalar value) -> (
+      match Capability_profile.approval_of_string value with
+      | Some approval -> Ok (Concrete_approval approval)
+      | None -> Error (path ^ ": invalid approval: " ^ value))
+  | Some (Yaml_list _) -> Error (path ^ ": approval must be a scalar")
+
 let parse_tools_setting path fields =
   match List.assoc_opt "tools" fields with
   | Some (Yaml_scalar "inherit") -> Ok Inherit_tools
@@ -280,6 +303,7 @@ let parse_markdown_profile ~path text =
   let* () = validate_provider_model_pair path provider model_ in
   let* thinking = parse_inherit_string path fields "thinking" in
   let* sandbox = parse_sandbox_setting path fields in
+  let* approval = parse_approval_setting path fields in
   let* tools = parse_tools_setting path fields in
   Ok
     {
@@ -289,6 +313,7 @@ let parse_markdown_profile ~path text =
       spec_model = model_;
       spec_thinking = thinking;
       spec_sandbox = sandbox;
+      spec_approval = approval;
       spec_tools = tools;
       spec_prompt = body;
       spec_source = User_markdown path;
@@ -383,4 +408,3 @@ let build_profile_catalog ?(builtin_overrides = []) ~live_tools user_profiles =
   let catalog = validate_profile_specs ~live_tools (builtin_specs @ user_profiles) in
   let override_errors = validate_builtin_overrides builtin_overrides in
   { catalog with catalog_errors = override_errors @ catalog.catalog_errors }
-
