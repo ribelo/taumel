@@ -340,10 +340,12 @@ const skillBlock = [
   longLines,
   "</skill>",
 ].join("\n");
-const compactSkill = renderText(renderSkill({ customType: "taumel.skill", content: skillBlock }, { expanded: false }, theme));
-const expandedSkill = renderText(renderSkill({ customType: "taumel.skill", content: skillBlock }, { expanded: true }, theme));
+const skillMessage = { customType: "taumel.skill", content: skillBlock, details: { trigger: "$foo" } };
+const compactSkill = renderText(renderSkill(skillMessage, { expanded: false }, theme));
+const expandedSkill = renderText(renderSkill(skillMessage, { expanded: true }, theme));
 assert(/• skill: foo/.test(compactSkill), `skill renderer header wrong: ${compactSkill}`);
-assert(compactSkill.includes("(expand)") && !compactSkill.includes("line-1"), `skill renderer should default collapsed: ${compactSkill}`);
+assert(compactSkill.includes("auto from $foo") && compactSkill.includes("(expand)") && !compactSkill.includes("line-1"), `skill renderer should default collapsed: ${compactSkill}`);
+assert(expandedSkill.includes("because the user mentioned $foo"), `expanded skill renderer should show provenance: ${expandedSkill}`);
 assert(expandedSkill.includes("line-24"), `expanded skill renderer should show full body: ${expandedSkill}`);
 assert(
   renderSkill({ customType: "taumel.skill", content: "<skill>bad</skill>" }, { expanded: false }, theme) === undefined,

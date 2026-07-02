@@ -62,7 +62,12 @@ export function installSkillResolver(pi: PiLike, core: CoreBridge): void {
       const name = typeof block["name"] === "string" ? block["name"] : "";
       if (content === "" || name === "") continue;
       sentCount += 1;
-      await pi.sendMessage({ customType: "taumel.skill", content, display: true });
+      await pi.sendMessage({
+        customType: "taumel.skill",
+        content,
+        display: true,
+        details: { source: "auto-skill-mention", trigger: `$${name}`, name },
+      });
     }
     if (sentCount === 0) return { action: "continue" };
     bypassOnce.set(prompt, (bypassOnce.get(prompt) ?? 0) + 1);

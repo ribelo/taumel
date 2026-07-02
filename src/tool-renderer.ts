@@ -859,16 +859,19 @@ export function skillMessageRenderer() {
     if (skills.length === 0) return undefined;
     const expanded = expandedFromOptions(options);
     const skill = skills[0];
+    const details = detailsRecord(message);
+    const trigger = stringField(details, "trigger") ?? `$${skill.name}`;
+    const provenance = `Skill "${skill.name}" was injected automatically by the harness because the user mentioned ${trigger}.`;
     return withLeftGutter(
       renderBlock(
         {
           header: {
             lead: themeFg(theme, "info", "• skill: "),
             subject: skill.name,
-            trailing: themeFg(theme, "dim", expanded ? skill.location : "(expand)"),
+            trailing: themeFg(theme, "dim", expanded ? skill.location : `auto from ${trigger} (expand)`),
           },
           body: expanded
-            ? { mode: "rail", entries: tailEntries(skill.body, true, theme, 5, 100000) }
+            ? { mode: "rail", entries: tailEntries(`${provenance}\n\n${skill.body}`, true, theme, 5, 100000) }
             : undefined,
         },
         expanded,

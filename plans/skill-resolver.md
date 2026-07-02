@@ -32,7 +32,10 @@ message, so the model sees each skill block as separate user content preceding
 the prose.
 
 Pi's `parseSkillBlock` is not used; the renderer owns each message's display
-as a collapsed-by-default collapsible block, with one block per message.
+as a collapsed-by-default collapsible block, with one block per message. The
+skill body sent to the model remains the exact `<skill>` block; provenance such
+as "injected because the user mentioned `$foo`" is carried in custom message
+details and renderer text, not inserted into the skill body.
 
 The OCaml core owns the algorithm — skill discovery, mention recognition, and
 per‑skill block assembly — as the reference implementation; TypeScript is a
@@ -72,6 +75,7 @@ thin bridge that registers the `input` handler and the `taumel.skill` renderer.
 - **skr-em03** (ubiquitous): The system shall send the user's prose via `pi.sendUserMessage()` after all skill messages, so skills precede the prose in the transcript and for the model.
 - **skr-em04** (ubiquitous): The OCaml core shall return one ordered per‑skill block payload per mention; the TypeScript handler shall iterate them, calling `pi.sendMessage({ customType: "taumel.skill", content: block, display: true })` for each.
 - **skr-em05** (ubiquitous): The system shall register a message renderer for `taumel.skill` that draws each block as a collapsed‑by‑default, collapsible skill component (header = `skill: <name>`, body expandable), and never as raw markup.
+- **skr-em06** (ubiquitous): The system shall attach renderer-visible provenance to each skill custom message indicating that the harness injected the skill because the user mentioned `$name`, without modifying the `<skill>` block content sent to the model.
 
 ### Errors
 

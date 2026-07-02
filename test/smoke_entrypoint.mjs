@@ -400,7 +400,9 @@ try {
   if (
     handledSkill === undefined || sentMessages.length !== 2 || sentUserMessages.at(-1)?.content !== "$foo $bar explain both" ||
     sentMessages[0]?.message?.customType !== "taumel.skill" || !sentMessages[0]?.message?.content?.includes('name="foo"') ||
-    sentMessages[1]?.message?.customType !== "taumel.skill" || !sentMessages[1]?.message?.content?.includes('name="bar"')
+    sentMessages[0]?.message?.details?.trigger !== "$foo" ||
+    sentMessages[1]?.message?.customType !== "taumel.skill" || !sentMessages[1]?.message?.content?.includes('name="bar"') ||
+    sentMessages[1]?.message?.details?.trigger !== "$bar"
   ) {
     throw new Error(`skill resolver input handling failed: ${JSON.stringify({ skillReturns, sentMessages, sentUserMessages })}`);
   }
