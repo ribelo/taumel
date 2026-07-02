@@ -8,6 +8,7 @@ type task = {
   prompt : string;
   recurring : bool;
   mode : mode;
+  enabled : bool;
   created_at : int;
   next_due : int;
   pending_since : int option;
@@ -67,6 +68,7 @@ let create ~now ~id (request : create_request) state =
               prompt;
               recurring = request.recurring;
               mode = request.mode;
+              enabled = true;
               created_at = now;
               next_due = due;
               pending_since = None;
@@ -76,6 +78,14 @@ let create ~now ~id (request : create_request) state =
 
 let delete id state = { state with tasks = List.filter (fun task -> task.id <> id) state.tasks }
 let set_enabled enabled state = { state with enabled }
+
+let set_task_enabled id enabled state =
+  let tasks =
+    List.map
+      (fun task -> if task.id = id then { task with enabled } else task)
+      state.tasks
+  in
+  { state with tasks }
 
 let startup_message = "Stored cron tasks are disabled on resume; run /cron enable to arm them."
 
@@ -95,6 +105,7 @@ let tick ~now state =
         (fun task ->
           match task.pending_since with
           | Some _ -> task
+          | None when (not task.enabled) -> task
           | None when now >= task.next_due -> { task with pending_since = Some task.next_due }
           | None -> task)
         state.tasks
@@ -117,7 +128,8 @@ let deliverable facts task =
   match task.pending_since with
   | None -> false
   | Some _ ->
-      facts.host_idle
+      task.enabled
+      && facts.host_idle
       && (not facts.goal_driving)
       && (match task.mode with Message -> true | Goal -> facts.goal_slot_free)
 
@@ -156,10 +168,11 @@ let task_json task =
     ([
        ("id", String task.id);
        ("cron", String task.cron);
-       ("prompt", String task.prompt);
-       ("recurring", Bool task.recurring);
-       ("mode", String (mode_to_string task.mode));
-       ("createdAt", Number (float_of_int task.created_at));
+	       ("prompt", String task.prompt);
+	       ("recurring", Bool task.recurring);
+	       ("mode", String (mode_to_string task.mode));
+	       ("enabled", Bool task.enabled);
+	       ("createdAt", Number (float_of_int task.created_at));
        ("nextDue", Number (float_of_int task.next_due));
      ]
     @
@@ -178,8 +191,9 @@ let task_of_json json =
                           match mode_of_string mode_s with
                           | None -> Error "taumel.cron.task.mode is invalid"
                           | Some mode ->
+                              Result.bind (json_bool_default "taumel.cron.task" fields "enabled" true) (fun enabled ->
                               Result.bind (json_required_int "taumel.cron.task" fields "createdAt") (fun created_at ->
-                                  Result.bind (json_required_int "taumel.cron.task" fields "nextDue") (fun next_due ->
+	                                  Result.bind (json_required_int "taumel.cron.task" fields "nextDue") (fun next_due ->
                                       Result.bind (json_optional_number "taumel.cron.task" fields "pendingSince")
                                         (fun pending_since ->
                                           Ok
@@ -187,12 +201,13 @@ let task_of_json json =
                                               id;
                                               cron;
                                               prompt;
-                                              recurring;
-                                              mode;
-                                              created_at;
-                                              next_due;
-                                              pending_since = Option.map int_of_float pending_since;
-                                            })))))))))
+	                                              recurring;
+	                                              mode;
+	                                              enabled;
+	                                              created_at;
+	                                              next_due;
+	                                              pending_since = Option.map int_of_float pending_since;
+	                                            }))))))))))
 
 let encode state =
   Shared.Object

@@ -31,7 +31,7 @@ let local_parts seconds =
   let tm = Unix.localtime (float_of_int seconds) in
   (tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_wday)
 
-let task ?(mode = Cron.Message) ?(recurring = true) ?(pending_since = Some 60)
+let task ?(mode = Cron.Message) ?(recurring = true) ?(enabled = true) ?(pending_since = Some 60)
     ?(next_due = 60) id =
   {
     Cron.id;
@@ -39,6 +39,7 @@ let task ?(mode = Cron.Message) ?(recurring = true) ?(pending_since = Some 60)
     prompt = "check";
     recurring;
     mode;
+    enabled;
     created_at = 0;
     next_due;
     pending_since;
@@ -71,6 +72,20 @@ let test_disabled_state_holds_pending_fire () =
   match Cron.pending_delivery ~now:240 facts enabled with
   | Some delivery -> assert_equal_int "coalescing preserved while disabled" 4 delivery.coalesced
   | None -> failwith "re-enabled cron should deliver held fire"
+
+let test_disabled_task_holds_pending_fire () =
+  let disabled_task = task "eeeeeeee" ~enabled:false ~pending_since:None in
+  let state = { Cron.enabled = true; tasks = [ disabled_task ] } in
+  let ticked = Cron.tick ~now:240 state in
+  (match ticked.tasks with
+  | [ task ] -> assert_bool "disabled task does not become pending" (task.pending_since = None)
+  | _ -> failwith "expected one disabled task");
+  let reenabled = Cron.set_task_enabled "eeeeeeee" true ticked in
+  let ticked = Cron.tick ~now:240 reenabled in
+  let facts = { Cron.host_idle = true; goal_driving = false; goal_slot_free = true } in
+  match Cron.pending_delivery ~now:240 facts ticked with
+  | Some delivery -> assert_equal_int "disabled task coalesces after re-enable" 4 delivery.coalesced
+  | None -> failwith "re-enabled task should deliver held fire"
 
 let test_coalescing_and_completion () =
   assert_equal_int "coalesced every minute" 4
@@ -128,6 +143,7 @@ let test_cron_expr_local_time_and_dom_dow_or () =
 let () =
   test_deliverable_precedence ();
   test_disabled_state_holds_pending_fire ();
+  test_disabled_task_holds_pending_fire ();
   test_coalescing_and_completion ();
   test_startup_reason_matrix ();
   test_cron_expr_step_ranges ();

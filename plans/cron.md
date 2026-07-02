@@ -49,7 +49,7 @@ holds.
 
 ### Task record
 
-- **cron-rs01** (ubiquitous): The system shall represent each task as a record with `id` (8 lowercase hex), `cron`, `prompt`, `recurring`, `mode`, `createdAt`, `nextDue`, optional `pendingSince`, and a derived `coalesced` count.
+- **cron-rs01** (ubiquitous): The system shall represent each task as a record with `id` (8 lowercase hex), `cron`, `prompt`, `recurring`, `mode`, per-task `enabled`, `createdAt`, `nextDue`, optional `pendingSince`, and a derived `coalesced` count.
 - **cron-rs02** (ubiquitous): The system shall hold at most one outstanding fire per task by representing pending state as the single optional `pendingSince` timestamp rather than a list.
 - **cron-rs03** (ubiquitous): The system shall regenerate the delivered message from the task's `prompt` at delivery time and store no separate message body.
 
@@ -94,15 +94,15 @@ holds.
 ### Model tools
 
 - **cron-tl01** (event-driven): When the model calls `cron_create` with a cron expression, a prompt, optional `recurring` (default true), and optional `goal` mode (default false), the system shall create the task and return its `id`, a human-readable schedule, `recurring`, `mode`, and `nextDue`.
-- **cron-tl02** (event-driven): When the model calls `cron_list`, the system shall return the cron master switch state and each task's `id`, schedule, `mode`, recurring flag, and `nextDue`, and shall make disabled stored tasks explicit so the model tells the user to run `/cron enable` rather than treating tasks as gone.
+- **cron-tl02** (event-driven): When the model calls `cron_list`, the system shall return the cron master switch state and each task's `id`, schedule, `mode`, per-task enabled flag, recurring flag, raw `nextDue`, and human-readable next-due time, and shall make disabled stored tasks explicit so the model tells the user to run `/cron enable` rather than treating tasks as gone.
 - **cron-tl03** (event-driven): When the model calls `cron_delete` with an `id`, the system shall remove that task.
 - **cron-tl04** (ubiquitous): The system shall instruct the model, on create, to tell the user the task `id` and that the user manages crons through `/cron`.
 
 ### User command
 
-- **cron-cm01** (event-driven): When the user runs `/cron`, the system shall list tasks with their schedule, mode, and next due time.
-- **cron-cm02** (event-driven): When the user selects a task in `/cron`, the system shall let the user cancel it through the selection picker.
-- **cron-cm03** (event-driven): When the user runs `/cron enable` or `/cron disable`, the system shall set the master switch accordingly.
+- **cron-cm01** (event-driven): When the user runs `/cron`, the system shall list tasks with their enabled state, schedule, mode, and human-readable next due time.
+- **cron-cm02** (event-driven): When the user selects an action in `/cron`, the system shall let the user enable or disable the master switch, enable or disable a specific task, or cancel a specific task through the selection picker.
+- **cron-cm03** (event-driven): When the user runs `/cron enable` or `/cron disable`, the system shall set the master switch accordingly; when the user runs `/cron enable ID` or `/cron disable ID`, the system shall set that task's enabled flag accordingly.
 - **cron-cm04** (unwanted): If the user attempts to create a task through `/cron`, then the system shall decline, because task authorship belongs to the model.
 
 ### Architecture

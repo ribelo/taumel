@@ -53,4 +53,22 @@ assert.equal(entries.at(-1)?.data?.tasks?.length, 1, "resume should keep stored 
 const list = core.call("prepareTool", ["cron_list", {}, ctx]);
 assert.equal(list?.details?.enabled, false, `cron_list should expose disabled master switch: ${JSON.stringify(list)}`);
 assert.equal(list?.details?.tasks?.length, 1, `cron_list should retain stored task: ${JSON.stringify(list)}`);
+assert.equal(list?.details?.tasks?.[0]?.enabled, true, `cron_list should expose task enabled flag: ${JSON.stringify(list)}`);
+assert.equal(typeof list?.details?.tasks?.[0]?.nextDueText, "string", `cron_list should expose human next-due text: ${JSON.stringify(list)}`);
 assert.match(list?.text ?? "", /disabled.*\/cron enable/i, "cron_list text should explain disabled stored tasks");
+
+const prompt = core.call("planCronPrompt", [
+  { enabled: false, tasks: entries.at(-1)?.data?.tasks ?? [] },
+  { uiAvailable: true },
+]);
+assert.equal(prompt?.action, "select", `cron prompt should open a picker: ${JSON.stringify(prompt)}`);
+assert.equal(prompt?.title, "Manage cron tasks");
+assert(prompt?.labels?.includes("Enable cron"), `cron prompt should offer master enable: ${JSON.stringify(prompt)}`);
+assert(prompt?.labels?.some((label) => /^Disable task /.test(label)), `cron prompt should offer task disable: ${JSON.stringify(prompt)}`);
+assert(prompt?.labels?.some((label) => /^Cancel task /.test(label)), `cron prompt should offer task cancel: ${JSON.stringify(prompt)}`);
+assert(!prompt?.labels?.some((label) => /next=\d{10}/.test(label)), `cron prompt should not show raw epoch next times: ${JSON.stringify(prompt)}`);
+
+const disableLabel = prompt.labels.find((label) => /^Disable task /.test(label));
+const disabled = core.call("finishCronPrompt", [prompt, { status: "selected", selected: disableLabel }, ctx]);
+assert.equal(disabled?.details?.enabled, false, `task disable action should report disabled: ${JSON.stringify(disabled)}`);
+assert.equal(entries.at(-1)?.data?.tasks?.[0]?.enabled, false, "task disable action should persist task enabled=false");
