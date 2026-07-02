@@ -398,11 +398,17 @@ try {
   const skillReturns = await Promise.all(inputHandlers.map((handler) => handler({ type: "input", text: "$foo $bar explain both" }, ctx)));
   const handledSkill = skillReturns.find((result) => result?.action === "handled");
   if (
-    handledSkill === undefined || sentMessages.length !== 2 || sentUserMessages.at(-1)?.content !== "explain both" ||
+    handledSkill === undefined || sentMessages.length !== 2 || sentUserMessages.at(-1)?.content !== "$foo $bar explain both" ||
     sentMessages[0]?.message?.customType !== "taumel.skill" || !sentMessages[0]?.message?.content?.includes('name="foo"') ||
     sentMessages[1]?.message?.customType !== "taumel.skill" || !sentMessages[1]?.message?.content?.includes('name="bar"')
   ) {
     throw new Error(`skill resolver input handling failed: ${JSON.stringify({ skillReturns, sentMessages, sentUserMessages })}`);
+  }
+  sentMessages.length = 0;
+  sentUserMessages.length = 0;
+  const reentryReturns = await Promise.all(inputHandlers.map((handler) => handler({ type: "input", text: "$foo $bar explain both" }, ctx)));
+  if (sentMessages.length !== 0 || sentUserMessages.length !== 0 || reentryReturns.some((result) => result?.action === "handled")) {
+    throw new Error(`skill resolver reentry should continue with literal mentions: ${JSON.stringify({ reentryReturns, sentMessages, sentUserMessages })}`);
   }
   sentMessages.length = 0;
   sentUserMessages.length = 0;
