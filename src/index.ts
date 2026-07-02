@@ -15,6 +15,7 @@ import { installCompactionModelHook } from "./compaction-model.ts";
 import { installCronLoop } from "./cron.ts";
 import { toolNames } from "./tool-contracts.ts";
 import { installSkillResolver } from "./skills.ts";
+import { skillMessageRenderer } from "./tool-renderer.ts";
 
 function requireCoreBridge(core: CoreBridge | undefined): CoreBridge {
   if (!core) {
@@ -281,13 +282,16 @@ export default async function taumel(pi: PiLike) {
   const childSessions = new Map<string, ChildSessionBridge>();
   const composer = await createComposerController(pi);
   const gatewayTools = registerGatewayTools(pi, core, childSessions);
+  if (typeof pi.registerMessageRenderer === "function") {
+    pi.registerMessageRenderer("taumel.skill", skillMessageRenderer());
+  }
   registerGatewayCommands(pi, core, childSessions, composer);
   installGoalContinuationLoop(pi, core);
   installCronLoop(pi, core);
   installAgentProfileCatalog(pi, core, composer?.settings, gatewayTools);
   installSandboxToolActivation(pi, core);
   installExecPolicyLoader(pi, core);
-  installSkillResolver(pi, core);
   installEnvironmentContext(pi, core);
   installCompactionModelHook(pi, core);
+  installSkillResolver(pi, core);
 }

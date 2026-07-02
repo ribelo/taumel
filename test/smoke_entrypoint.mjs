@@ -67,6 +67,7 @@ const selections = [];
 const activeToolUpdates = [];
 const fetchCalls = [];
 const sentMessages = [];
+const sentUserMessages = [];
 const childSendResponses = [];
 const childDispatchCalls = [];
 const childLifecycleCalls = [];
@@ -192,6 +193,10 @@ const pi = {
   sendMessage: (message, options) => {
     runtimeActionGuard();
     sentMessages.push({ message, options });
+  },
+  sendUserMessage: (content, options) => {
+    runtimeActionGuard();
+    sentUserMessages.push({ content, options });
   },
   isIdle: () => parentIdle,
   createAgentSession: async (options = {}) => {
@@ -386,40 +391,27 @@ try {
     throw new Error(`composer editor was not installed on session_start: ${editorFactories.length}`);
   }
 
-  // Skill resolver registers a before_agent_start handler. Pi calls every
-  // handler and reads each one's singular `message`; find ours among them.
-  const beforeAgentStartHandlers = handlers.get("before_agent_start") ?? [];
-  if (beforeAgentStartHandlers.length === 0) {
-    throw new Error("skill resolver did not register a before_agent_start handler");
-  }
-  const skillEvent = { type: "before_agent_start", prompt: "check $foo then $bar and $foo again and $missing", systemPrompt: "", systemPromptOptions: {} };
-  const skillReturns = beforeAgentStartHandlers.map((handler) => handler(skillEvent, ctx));
-  if (skillReturns.some((result) => Array.isArray(result?.messages))) {
-    throw new Error(`skill resolver must return singular {message}, not {messages}: ${JSON.stringify(skillReturns)}`);
-  }
-  const skillMessage = skillReturns.map((result) => result?.message).find((message) => message?.customType === "taumel.skill");
-  if (!skillMessage) {
-    throw new Error(`skill resolver did not emit a taumel.skill message: ${JSON.stringify(skillReturns)}`);
-  }
-  const skillContent = skillMessage.content ?? "";
+  const inputHandlers = handlers.get("input") ?? [];
+  if (inputHandlers.length === 0) throw new Error("skill resolver did not register an input handler");
+  sentMessages.length = 0;
+  sentUserMessages.length = 0;
+  const skillReturns = await Promise.all(inputHandlers.map((handler) => handler({ type: "input", text: "$foo $bar explain both" }, ctx)));
+  const handledSkill = skillReturns.find((result) => result?.action === "handled");
   if (
-    !skillContent.includes('<skill name="foo"') || !skillContent.includes("Foo body") ||
-    !skillContent.includes('<skill name="bar"') || !skillContent.includes("Bar body")
+    handledSkill === undefined || sentMessages.length !== 2 || sentUserMessages.at(-1)?.content !== "explain both" ||
+    sentMessages[0]?.message?.customType !== "taumel.skill" || !sentMessages[0]?.message?.content?.includes('name="foo"') ||
+    sentMessages[1]?.message?.customType !== "taumel.skill" || !sentMessages[1]?.message?.content?.includes('name="bar"')
   ) {
-    throw new Error(`skill resolver content missing foo/bar blocks: ${JSON.stringify(skillContent)}`);
+    throw new Error(`skill resolver input handling failed: ${JSON.stringify({ skillReturns, sentMessages, sentUserMessages })}`);
   }
-  if ((skillContent.match(/<skill name="foo"/g) ?? []).length !== 1) {
-    throw new Error(`skill resolver did not deduplicate repeated mentions: ${JSON.stringify(skillContent)}`);
+  sentMessages.length = 0;
+  sentUserMessages.length = 0;
+  const noMentionReturns = await Promise.all(inputHandlers.map((handler) => handler({ type: "input", text: "no mentions here" }, ctx)));
+  if (sentMessages.length !== 0 || sentUserMessages.length !== 0 || noMentionReturns.some((result) => result?.action === "handled")) {
+    throw new Error(`skill resolver should continue without mentions: ${JSON.stringify({ noMentionReturns, sentMessages, sentUserMessages })}`);
   }
-  if (skillContent.indexOf('name="foo"') > skillContent.indexOf('name="bar"')) {
-    throw new Error(`skill resolver did not preserve first-appearance order: ${JSON.stringify(skillContent)}`);
-  }
-  const noMentionReturns = beforeAgentStartHandlers.map((handler) =>
-    handler({ type: "before_agent_start", prompt: "no mentions here", systemPrompt: "", systemPromptOptions: {} }, ctx),
-  );
-  if (noMentionReturns.some((result) => result?.message?.customType === "taumel.skill")) {
-    throw new Error(`skill resolver should stay silent without mentions: ${JSON.stringify(noMentionReturns)}`);
-  }
+  sentMessages.length = 0;
+  sentUserMessages.length = 0;
 
   for (const name of [
     "exec_command",

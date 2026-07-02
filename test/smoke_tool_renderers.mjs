@@ -342,8 +342,8 @@ const skillBlock = [
 ].join("\n");
 const compactSkill = renderText(renderSkill({ customType: "taumel.skill", content: skillBlock }, { expanded: false }, theme));
 const expandedSkill = renderText(renderSkill({ customType: "taumel.skill", content: skillBlock }, { expanded: true }, theme));
-assert(/• skill · foo/.test(compactSkill), `skill renderer header wrong: ${compactSkill}`);
-assert(compactSkill.includes("… 19 more lines"), `skill renderer should collapse body: ${compactSkill}`);
+assert(/• skill: foo/.test(compactSkill), `skill renderer header wrong: ${compactSkill}`);
+assert(compactSkill.includes("(expand)") && !compactSkill.includes("line-1"), `skill renderer should default collapsed: ${compactSkill}`);
 assert(expandedSkill.includes("line-24"), `expanded skill renderer should show full body: ${expandedSkill}`);
 assert(
   renderSkill({ customType: "taumel.skill", content: "<skill>bad</skill>" }, { expanded: false }, theme) === undefined,

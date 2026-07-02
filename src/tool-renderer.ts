@@ -858,27 +858,22 @@ export function skillMessageRenderer() {
     const skills = parseSkillBlocks(content);
     if (skills.length === 0) return undefined;
     const expanded = expandedFromOptions(options);
-    const components = skills.map((skill) =>
-      withLeftGutter(
-        renderBlock({
-          header: headerSpec("skill", skill.name, "info", theme, themeFg(theme, "dim", skill.location)),
-          body: { mode: "rail", entries: tailEntries(skill.body, expanded, theme, 5, 100000) },
-        }, expanded),
+    const skill = skills[0];
+    return withLeftGutter(
+      renderBlock(
+        {
+          header: {
+            lead: themeFg(theme, "info", "• skill: "),
+            subject: skill.name,
+            trailing: themeFg(theme, "dim", expanded ? skill.location : "(expand)"),
+          },
+          body: expanded
+            ? { mode: "rail", entries: tailEntries(skill.body, true, theme, 5, 100000) }
+            : undefined,
+        },
+        expanded,
       ),
     );
-    return {
-      render(width: number): string[] {
-        const lines: string[] = [];
-        components.forEach((component, index) => {
-          if (index > 0) lines.push("");
-          lines.push(...component.render(width));
-        });
-        return lines;
-      },
-      invalidate(): void {
-        for (const component of components) component.invalidate();
-      },
-    };
   };
 }
 
