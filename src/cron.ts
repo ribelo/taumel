@@ -5,6 +5,20 @@ function canSend(pi: PiLike): boolean {
   return typeof pi.sendMessage === "function" || typeof pi.sendUserMessage === "function";
 }
 
+function isStaleContextError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("ctx is stale");
+}
+
+function contextIsCurrent(ctx: unknown): boolean {
+  try {
+    if (isRecord(ctx)) void ctx["sessionManager"];
+    return true;
+  } catch (error) {
+    if (isStaleContextError(error)) return false;
+    throw error;
+  }
+}
+
 async function sendCronMessage(
   pi: PiLike,
   content: string,
@@ -72,13 +86,27 @@ export function installCronLoop(pi: PiLike, core: CoreBridge): void {
   if (!canSend(pi)) return;
   let latestCtx: unknown;
   let pollInFlight = false;
+  let stopped = false;
+  let generation = 0;
+
+  const rememberCtx = (ctx: unknown) => {
+    latestCtx = ctx;
+    generation += 1;
+  };
 
   const poll = async (deliveryKind: "trigger" | "steer" = "trigger") => {
+    if (stopped) return;
     if (pollInFlight) return;
     pollInFlight = true;
+    const ctx = latestCtx;
+    const pollGeneration = generation;
     try {
-      if (latestCtx === undefined) return;
-      const goalFacts = coreCall(core, "cronGoalFacts", [latestCtx]);
+      if (ctx === undefined) return;
+      if (!contextIsCurrent(ctx)) {
+        if (latestCtx === ctx) latestCtx = undefined;
+        return;
+      }
+      const goalFacts = coreCall(core, "cronGoalFacts", [ctx]);
       const goalSlotFree = isRecord(goalFacts) ? goalFacts["goalSlotFree"] === true : false;
       const goalDriving = isRecord(goalFacts) ? goalFacts["goalDriving"] === true : false;
       const plan = coreCall(core, "cronPoll", [{
@@ -86,11 +114,19 @@ export function installCronLoop(pi: PiLike, core: CoreBridge): void {
         hostIdle: typeof pi.isIdle === "function" ? pi.isIdle() : true,
         goalDriving,
         goalSlotFree,
-      }, latestCtx]);
+      }, ctx]);
+      if (stopped || generation !== pollGeneration) return;
       if (isRecord(plan) && stringField(plan, "action") === "deliver") {
-        await deliverCron(pi, core, plan, latestCtx, deliveryKind);
-        coreCall(core, "cronDelivered", [{ id: stringField(plan, "id"), now: Date.now() }, latestCtx]);
+        await deliverCron(pi, core, plan, ctx, deliveryKind);
+        if (stopped || generation !== pollGeneration) return;
+        coreCall(core, "cronDelivered", [{ id: stringField(plan, "id"), now: Date.now() }, ctx]);
       }
+    } catch (error) {
+      if (isStaleContextError(error)) {
+        if (latestCtx === ctx) latestCtx = undefined;
+        return;
+      }
+      throw error;
     } finally {
       pollInFlight = false;
     }
@@ -100,15 +136,27 @@ export function installCronLoop(pi: PiLike, core: CoreBridge): void {
   timer.unref?.();
 
   pi.on("session_start", (event, ctx) => {
-    latestCtx = ctx;
+    if (stopped) return;
+    rememberCtx(ctx);
     const result = coreCall(core, "cronStartup", [event, ctx]);
     if (isRecord(result) && result["notify"] === true) notify(ctx, stringField(result, "message"));
   });
   pi.on("turn_start", (_event, ctx) => {
-    latestCtx = ctx;
+    if (!stopped) rememberCtx(ctx);
   });
   pi.on("agent_end", (_event, ctx) => {
-    latestCtx = ctx;
-    setTimeout(() => void poll("trigger").catch((error) => console.warn("Taumel cron agent_end poll failed:", error)), 0);
+    if (stopped) return;
+    rememberCtx(ctx);
+    const scheduledGeneration = generation;
+    setTimeout(() => {
+      if (stopped || generation !== scheduledGeneration) return;
+      void poll("trigger").catch((error) => console.warn("Taumel cron agent_end poll failed:", error));
+    }, 0);
+  });
+  pi.on("session_shutdown", () => {
+    stopped = true;
+    latestCtx = undefined;
+    generation += 1;
+    clearInterval(timer);
   });
 }
