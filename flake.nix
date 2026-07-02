@@ -69,7 +69,7 @@
               eval "$(opam env --switch "$switch_name" --set-switch)"
 
               eta_root="$(cd "$eta_path" && git rev-parse --show-toplevel)"
-              eta_url="git+file://$eta_root"
+              eta_url="git+file://$eta_root#master"
               eta_packages="''${TAUMEL_ETA_PACKAGES:-eta eta_http eta_jsoo eta_http_js}"
               if [ "$#" -gt 0 ]; then
                 eta_packages="$*"
