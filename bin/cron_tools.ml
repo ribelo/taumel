@@ -91,7 +91,17 @@ let prepare_create params ctx =
 
 let prepare_list _params ctx =
   sync ctx;
-  tool_result "Cron tasks listed." (Unsafe.obj [| ("tasks", tasks_array !cron_state.tasks) |])
+  let message =
+    if (not !cron_state.enabled) && !cron_state.tasks <> [] then
+      "Cron tasks listed. Cron is disabled; run /cron enable to arm stored tasks."
+    else "Cron tasks listed."
+  in
+  tool_result message
+    (Unsafe.obj
+       [|
+         ("enabled", js_bool !cron_state.enabled);
+         ("tasks", tasks_array !cron_state.tasks);
+       |])
 
 let prepare_delete params ctx =
   sync ctx;

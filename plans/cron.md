@@ -94,7 +94,7 @@ holds.
 ### Model tools
 
 - **cron-tl01** (event-driven): When the model calls `cron_create` with a cron expression, a prompt, optional `recurring` (default true), and optional `goal` mode (default false), the system shall create the task and return its `id`, a human-readable schedule, `recurring`, `mode`, and `nextDue`.
-- **cron-tl02** (event-driven): When the model calls `cron_list`, the system shall return each task's `id`, schedule, `mode`, recurring flag, and `nextDue`.
+- **cron-tl02** (event-driven): When the model calls `cron_list`, the system shall return the cron master switch state and each task's `id`, schedule, `mode`, recurring flag, and `nextDue`, and shall make disabled stored tasks explicit so the model tells the user to run `/cron enable` rather than treating tasks as gone.
 - **cron-tl03** (event-driven): When the model calls `cron_delete` with an `id`, the system shall remove that task.
 - **cron-tl04** (ubiquitous): The system shall instruct the model, on create, to tell the user the task `id` and that the user manages crons through `/cron`.
 
