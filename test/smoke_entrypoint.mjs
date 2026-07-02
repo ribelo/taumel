@@ -386,6 +386,41 @@ try {
     throw new Error(`composer editor was not installed on session_start: ${editorFactories.length}`);
   }
 
+  // Skill resolver registers a before_agent_start handler. Pi calls every
+  // handler and reads each one's singular `message`; find ours among them.
+  const beforeAgentStartHandlers = handlers.get("before_agent_start") ?? [];
+  if (beforeAgentStartHandlers.length === 0) {
+    throw new Error("skill resolver did not register a before_agent_start handler");
+  }
+  const skillEvent = { type: "before_agent_start", prompt: "check $foo then $bar and $foo again and $missing", systemPrompt: "", systemPromptOptions: {} };
+  const skillReturns = beforeAgentStartHandlers.map((handler) => handler(skillEvent, ctx));
+  if (skillReturns.some((result) => Array.isArray(result?.messages))) {
+    throw new Error(`skill resolver must return singular {message}, not {messages}: ${JSON.stringify(skillReturns)}`);
+  }
+  const skillMessage = skillReturns.map((result) => result?.message).find((message) => message?.customType === "taumel.skill");
+  if (!skillMessage) {
+    throw new Error(`skill resolver did not emit a taumel.skill message: ${JSON.stringify(skillReturns)}`);
+  }
+  const skillContent = skillMessage.content ?? "";
+  if (
+    !skillContent.includes('<skill name="foo"') || !skillContent.includes("Foo body") ||
+    !skillContent.includes('<skill name="bar"') || !skillContent.includes("Bar body")
+  ) {
+    throw new Error(`skill resolver content missing foo/bar blocks: ${JSON.stringify(skillContent)}`);
+  }
+  if ((skillContent.match(/<skill name="foo"/g) ?? []).length !== 1) {
+    throw new Error(`skill resolver did not deduplicate repeated mentions: ${JSON.stringify(skillContent)}`);
+  }
+  if (skillContent.indexOf('name="foo"') > skillContent.indexOf('name="bar"')) {
+    throw new Error(`skill resolver did not preserve first-appearance order: ${JSON.stringify(skillContent)}`);
+  }
+  const noMentionReturns = beforeAgentStartHandlers.map((handler) =>
+    handler({ type: "before_agent_start", prompt: "no mentions here", systemPrompt: "", systemPromptOptions: {} }, ctx),
+  );
+  if (noMentionReturns.some((result) => result?.message?.customType === "taumel.skill")) {
+    throw new Error(`skill resolver should stay silent without mentions: ${JSON.stringify(noMentionReturns)}`);
+  }
+
   for (const name of [
     "exec_command",
     "write_stdin",
@@ -583,18 +618,6 @@ try {
     !startupActiveTools.includes("agent_wait")
   ) {
     throw new Error(`openai active tool sync did not select apply_patch: ${JSON.stringify(activeToolUpdates)}`);
-  }
-
-  const skillResults = (handlers.get("before_agent_start") ?? []).map((handler) => handler({ type: "before_agent_start", prompt: "use $foo and $bar and $foo" }, ctx));
-  const skillResult = skillResults.find((result) => Array.isArray(result?.messages));
-  if (
-    !Array.isArray(skillResult?.messages) ||
-    skillResult.messages.length !== 2 ||
-    skillResult.messages[0]?.customType !== "taumel.skill" ||
-    !skillResult.messages[0]?.content?.includes('name="foo"') ||
-    !skillResult.messages[1]?.content?.includes('name="bar"')
-  ) {
-    throw new Error(`skill resolver did not emit ordered custom messages: ${JSON.stringify({ skillResults, handlers: [...handlers.keys()] })}`);
   }
 
   const defaultPermission = await commands.get("permissions").handler("show", ctx);

@@ -143,24 +143,18 @@ let source_paths cwd =
 
 let warning message = Unsafe.obj [| ("message", js_string message) |]
 
-let message content =
-  Unsafe.obj
-    [|
-      ("role", js_string "custom");
-      ("customType", js_string "taumel.skill");
-      ("content", js_string content);
-      ("display", js_bool true);
-    |]
-
+(* Pi's before_agent_start accepts a single [message] per handler, so all
+   resolved blocks are joined into one [content] string; the taumel.skill
+   renderer splits them back into one collapsible block per skill. *)
 let resolve_mentions params =
   let prompt = get_string params "prompt" in
   let names = Taumel.Skill_resolver.mentions prompt in
-  if names = [] then Unsafe.obj [| ("messages", Unsafe.inject (Js.array [||])); ("warnings", Unsafe.inject (Js.array [||])) |]
+  if names = [] then Unsafe.obj [| ("content", js_string ""); ("warnings", Unsafe.inject (Js.array [||])) |]
   else
     let cwd = match optional_string_field params "cwd" with Some cwd when cwd <> "" -> cwd | _ -> "." in
     let table = Hashtbl.create 32 in
     List.iter (discover_path table) (source_paths cwd);
-    let messages = ref [] in
+    let blocks = ref [] in
     let warnings = ref [] in
     List.iter
       (fun name ->
@@ -172,10 +166,11 @@ let resolve_mentions params =
             | Some text ->
                 let body = strip_frontmatter text in
                 let block = Taumel.Skill_resolver.skill_block ~name:skill.name ~location:skill.path ~base_dir:skill.base_dir ~body in
-                messages := message block :: !messages))
+                blocks := block :: !blocks))
       names;
+    let content = !blocks |> List.rev |> String.concat "\n\n" in
     Unsafe.obj
       [|
-        ("messages", !messages |> List.rev |> Array.of_list |> Js.array |> Unsafe.inject);
+        ("content", js_string content);
         ("warnings", !warnings |> List.rev |> Array.of_list |> Js.array |> Unsafe.inject);
       |]

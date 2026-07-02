@@ -44,7 +44,8 @@ export function installSkillResolver(pi: PiLike, core: CoreBridge): void {
     const result = coreCall(core, "resolveSkillMentions", [{ prompt, cwd }]);
     if (!isRecord(result)) throw new Error("Invalid Taumel skill resolver result");
     notifyWarnings(result, ctx);
-    const messages = Array.isArray(result["messages"]) ? result["messages"] : [];
-    return messages.length === 0 ? undefined : { messages };
+    // before_agent_start accepts one message per handler; all blocks ride in one.
+    const content = typeof result["content"] === "string" ? result["content"] : "";
+    return content === "" ? undefined : { message: { customType: "taumel.skill", content, display: true } };
   });
 }

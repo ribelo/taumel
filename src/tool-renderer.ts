@@ -842,23 +842,43 @@ function blockBetween(content: string, tag: string): string {
   return match ? match[1] : "";
 }
 
-function parseSkillBlock(content: string): { name: string; location: string; body: string } | undefined {
-  const match = /^<skill name="([^"]*)" location="([^"]*)">\nReferences are relative to [^\n]*\.\n\n([\s\S]*)\n<\/skill>$/.exec(content);
-  return match === null ? undefined : { name: match[1], location: match[2], body: match[3] };
+function parseSkillBlocks(content: string): { name: string; location: string; body: string }[] {
+  const re = /<skill name="([^"]*)" location="([^"]*)">\nReferences are relative to [^\n]*\.\n\n([\s\S]*?)\n<\/skill>/g;
+  const blocks: { name: string; location: string; body: string }[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(content)) !== null) {
+    blocks.push({ name: match[1], location: match[2], body: match[3] });
+  }
+  return blocks;
 }
 
 export function skillMessageRenderer() {
   return (message: unknown, options: unknown, theme: unknown) => {
     const content = isRecord(message) ? stringField(message, "content") ?? "" : "";
-    const skill = parseSkillBlock(content);
-    if (skill === undefined) return undefined;
+    const skills = parseSkillBlocks(content);
+    if (skills.length === 0) return undefined;
     const expanded = expandedFromOptions(options);
-    return withLeftGutter(
-      renderBlock({
-        header: headerSpec("skill", skill.name, "info", theme, themeFg(theme, "dim", skill.location)),
-        body: { mode: "rail", entries: tailEntries(skill.body, expanded, theme, 5, 100000) },
-      }, expanded),
+    const components = skills.map((skill) =>
+      withLeftGutter(
+        renderBlock({
+          header: headerSpec("skill", skill.name, "info", theme, themeFg(theme, "dim", skill.location)),
+          body: { mode: "rail", entries: tailEntries(skill.body, expanded, theme, 5, 100000) },
+        }, expanded),
+      ),
     );
+    return {
+      render(width: number): string[] {
+        const lines: string[] = [];
+        components.forEach((component, index) => {
+          if (index > 0) lines.push("");
+          lines.push(...component.render(width));
+        });
+        return lines;
+      },
+      invalidate(): void {
+        for (const component of components) component.invalidate();
+      },
+    };
   };
 }
 
