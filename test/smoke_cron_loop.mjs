@@ -9,6 +9,7 @@ const handlers = new Map();
 const intervals = [];
 const cleared = [];
 const calls = [];
+const notifications = [];
 
 const on = (event, handler) => {
   const list = handlers.get(event) ?? [];
@@ -50,9 +51,9 @@ try {
   };
   const core = {
     init: () => undefined,
-    call: (name, args) => {
-      calls.push({ name, args });
-      if (name === "cronStartup") return { notify: false };
+	    call: (name, args) => {
+	      calls.push({ name, args });
+	      if (name === "cronStartup") return { notify: true, message: "2 stored cron tasks exist in this session. Cron is disabled on startup; run /cron enable to arm them." };
       if (name === "cronGoalFacts") return { goalSlotFree: true, goalDriving: false };
       if (name === "cronPoll") return { action: "none" };
       if (name === "cronDelivered") return { ok: true };
@@ -65,7 +66,14 @@ try {
   assert.equal(intervals[0].ms, 30_000, "cron loop interval should be 30s");
   assert.equal(intervals[0].unrefCalled, true, "cron interval should be unref'd");
 
-  emit("session_start", { type: "session_start", reason: "startup" }, { sessionManager: {} });
+	  emit("session_start", { type: "session_start", reason: "startup" }, {
+	    sessionManager: {},
+	    ui: { notify: (message, type) => notifications.push({ message, type }) },
+	  });
+	  assert.deepEqual(notifications, [{
+	    message: "2 stored cron tasks exist in this session. Cron is disabled on startup; run /cron enable to arm them.",
+	    type: "warning",
+	  }], "cron startup should notify the user about stored disabled crons");
   calls.length = 0;
   intervals[0].fn();
   await tick();

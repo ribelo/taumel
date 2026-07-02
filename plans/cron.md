@@ -87,7 +87,7 @@ holds.
 
 - **cron-ms01** (ubiquitous): The system shall persist a per-session cron master switch in the session state.
 - **cron-ms02** (state-driven): While the master switch is disabled, the system shall fire no tasks while keeping tasks stored and the clock advancing, so coalescing reflects the disabled gap when re-enabled.
-- **cron-ms03** (event-driven): When a session starts with reason `resume`, `startup`, or `fork` and stored tasks exist, the system shall force the master switch off and notify the user that armed crons exist and `/cron enable` arms them.
+- **cron-ms03** (event-driven): When a session starts with reason `resume`, `startup`, or `fork` and stored tasks exist, the system shall leave the stored task records and per-task enabled flags unchanged, force only the session cron master switch off by default, and notify the user that stored crons exist in the session and `/cron enable` arms them.
 - **cron-ms04** (event-driven): When a session starts with reason `reload`, the system shall preserve the persisted master-switch value.
 - **cron-ms05** (event-driven): When a session starts with reason `new`, the system shall start with no tasks.
 

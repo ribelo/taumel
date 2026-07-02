@@ -87,12 +87,14 @@ let set_task_enabled id enabled state =
   in
   { state with tasks }
 
-let startup_message = "Stored cron tasks are disabled on resume; run /cron enable to arm them."
+let startup_message count =
+  Printf.sprintf "%d stored cron task%s exist in this session. Cron is disabled on startup; run /cron enable to arm them."
+    count (if count = 1 then "" else "s")
 
 let apply_startup reason state =
   match (reason, state.tasks) with
   | (Resume | Startup | Fork), _ :: _ ->
-      { state = { state with enabled = false }; notify = true; message = startup_message }
+      { state = { state with enabled = false }; notify = true; message = startup_message (List.length state.tasks) }
   | New, _ -> { state = empty; notify = false; message = "" }
   | (Resume | Startup | Fork), [] | Reload, _ | Other, _ ->
       { state; notify = false; message = "" }

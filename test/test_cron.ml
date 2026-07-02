@@ -104,10 +104,19 @@ let test_coalescing_and_completion () =
   assert_bool "one-shot deleted" (state.tasks = [])
 
 let test_startup_reason_matrix () =
-  let armed = { Cron.enabled = true; tasks = [ task "cccccccc" ~pending_since:None ] } in
+  let armed =
+    {
+      Cron.enabled = true;
+      tasks =
+        [ task "cccccccc" ~pending_since:None; task "dddddddd" ~enabled:false ~pending_since:None ];
+    }
+  in
   let resumed = Cron.apply_startup Cron.Resume armed in
   assert_bool "resume disables" (not resumed.state.enabled);
   assert_bool "resume notifies" resumed.notify;
+  assert_bool "resume preserves task enabled flags" (List.map (fun (task : Cron.task) -> task.enabled) resumed.state.tasks = [ true; false ]);
+  assert_bool "resume notification mentions stored crons" (String.contains resumed.message '2');
+  assert_bool "resume notification tells user how to arm" (String.contains resumed.message '/');
   let reloaded = Cron.apply_startup Cron.Reload armed in
   assert_bool "reload preserves enabled" reloaded.state.enabled;
   assert_bool "reload quiet" (not reloaded.notify);
