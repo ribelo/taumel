@@ -20,7 +20,7 @@
         system:
         let
           pkgs = import nixpkgs { inherit system; };
-          switchName = "5.5.0";
+          switchName = "5.4.1";
           sharedOpamRoot = "$HOME/.cache/opam";
 
           setup = pkgs.writeShellApplication {
@@ -57,10 +57,12 @@
               export OPAMROOT="''${OPAMROOT:-${sharedOpamRoot}}"
               export OPAMYES=1
 
+              if [ ! -f "$OPAMROOT/config" ]; then
+                opam init --bare --disable-sandboxing --yes
+              fi
+
               if ! opam switch list --short | grep -Fxq "$switch_name"; then
-                echo "Missing OPAM switch '$switch_name'." >&2
-                echo "Run: shared-ocaml-switch-init" >&2
-                exit 1
+                opam switch create "$switch_name" "ocaml-base-compiler.$switch_name" --yes
               fi
 
               export OPAMSWITCH="$switch_name"

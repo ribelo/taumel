@@ -34,7 +34,7 @@ patch parsing stay separate from each other and from execution.
 - **sandbox-md04** (ubiquitous): The system shall derive the active sandbox config from the capability profile, taking filesystem mode from the profile's sandbox preset and approval policy from the profile's approval policy.
 - **sandbox-md05** (ubiquitous): The system shall default a profile to `workspace-write`, `on-request`, and `noSandboxAllowed = false`.
 - **sandbox-md06** (state-driven): While the sandbox preset is `danger-full-access`, the system shall force network `enabled`; while the preset is `read-only` or `workspace-write`, network shall default to `disabled` and stay user-controlled.
-- **sandbox-md07** (event-driven): When no persisted permissions exist, the system shall start a top-level session at `danger-full-access` with network enabled; when persisted permissions are invalid, it shall fall back to `workspace-write` with network disabled.
+- **sandbox-md07** (event-driven): When no persisted permissions exist, the system shall start a top-level session at `danger-full-access` with network enabled and approval `on-request`; when persisted permissions are invalid, it shall fall back to `workspace-write` with network disabled.
 - **sandbox-md08** (event-driven): When the host supplies `--sandbox-mode`, a network flag, or `--no-sandbox`, the system shall override the resolved active state with those values, applying `--no-sandbox` only to non-subagent sessions.
 - **sandbox-md09** (ubiquitous): The system shall treat approval policy and sandbox preset as orthogonal: the preset governs OS enforcement and the approval policy governs only the human-in-the-loop cadence, so `danger-full-access` composes with any approval policy — `never` runs unsandboxed with no prompts, and `on-request` runs unsandboxed while still asking before destructive commands.
 
@@ -106,4 +106,5 @@ patch parsing stay separate from each other and from execution.
 - **sandbox-pc01** (event-driven): When the user runs `/permissions`, the system shall set sandbox preset, approval policy, `no-sandbox`, and tool and agent allowlists following Codex naming, and shall direct network changes to `/network`.
 - **sandbox-pc02** (event-driven): When the user runs `/network`, the system shall set network access to `enabled` or `disabled`.
 - **sandbox-pc03** (unwanted): If the user disables network while the preset is `danger-full-access`, then the system shall reject the change and ask them to choose `read-only` or `workspace-write` first.
-- **sandbox-pc04** (event-driven): When the user changes the sandbox preset, the system shall reset approval policy and network mode to that preset's defaults.
+- **sandbox-pc04** (event-driven): When the user changes the sandbox preset, the system shall reset network mode to that preset's default and leave the approval policy unchanged.
+- **sandbox-pc05** (event-driven): When the user opens the interactive `/permissions` menu, the system shall offer the approval policies as selectable options alongside the sandbox presets, marking the current one, so approval is changeable without typing a subcommand.
