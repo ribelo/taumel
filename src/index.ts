@@ -7,7 +7,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 import type { ChildSessionBridge, CoreBridge, PiLike, TaumelGlobal } from "./types.ts";
 import { coreCall, isRecord, stringArrayFromUnknown } from "./util.ts";
-import { createComposerController } from "./composer.ts";
+import { createComposerController, installSkillAutocomplete } from "./composer.ts";
 import { makeHost } from "./host.ts";
 import { agentGatewayToolNames, registerGatewayTools, type GatewayToolRegistration } from "./tool-executor.ts";
 import { installGoalContinuationLoop, registerGatewayCommands } from "./command-executor.ts";
@@ -281,6 +281,7 @@ export default async function taumel(pi: PiLike) {
   core.init(makeHost(pi));
   const childSessions = new Map<string, ChildSessionBridge>();
   const composer = await createComposerController(pi);
+  installSkillAutocomplete(pi, core, composer);
   const gatewayTools = registerGatewayTools(pi, core, childSessions);
   if (typeof pi.registerMessageRenderer === "function") {
     pi.registerMessageRenderer("taumel.skill", skillMessageRenderer());

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import taumel from "../src/index.ts";
-import { renderComposerInput } from "../src/composer.ts";
+import { renderComposerInput, SkillAutocompleteProvider } from "../src/composer.ts";
 import { applyChildSessionUpdate } from "../src/tool-executor.ts";
 
 const cwd = await mkdtemp(join(tmpdir(), "taumel-entrypoint-"));
@@ -72,6 +72,7 @@ const childSendResponses = [];
 const childDispatchCalls = [];
 const childLifecycleCalls = [];
 const editorFactories = [];
+const autocompleteFactories = [];
 const childContexts = new Map();
 const agentToolNames = [
   "agent_spawn",
@@ -343,6 +344,9 @@ try {
       setEditorComponent: (factory) => {
         editorFactories.push(factory);
       },
+      addAutocompleteProvider: (factory) => {
+        autocompleteFactories.push(factory);
+      },
       confirm: async (title, prompt, options) => {
         confirmations.push({ title, prompt, options });
         return confirmBehavior(title, prompt, options);
@@ -389,6 +393,36 @@ try {
   await new Promise((resolve) => setTimeout(resolve, 5));
   if (editorFactories.length !== 1) {
     throw new Error(`composer editor was not installed on session_start: ${editorFactories.length}`);
+  }
+  if (autocompleteFactories.length !== 0) {
+    throw new Error(`skill autocomplete should be installed through the custom editor, not ui wrappers: ${autocompleteFactories.length}`);
+  }
+
+  const fallbackProvider = {
+    triggerCharacters: ["@"],
+    getSuggestions: async () => ({ items: [{ value: "fallback", label: "fallback" }], prefix: "" }),
+    applyCompletion: (lines, cursorLine, cursorCol) => ({ lines, cursorLine, cursorCol }),
+  };
+  const skillProvider = new SkillAutocompleteProvider(fallbackProvider, () => [
+    { name: "foo", location: join(cwd, ".pi", "skills", "foo", "SKILL.md") },
+    { name: "bar", location: join(cwd, ".pi", "skills", "bar", "SKILL.md") },
+  ]);
+  const dollarSuggestions = await skillProvider.getSuggestions(["use $"], 0, 5, { signal: AbortSignal.timeout(100) });
+  const dollarValues = new Set(dollarSuggestions?.items.map((item) => item.value));
+  if (!dollarSuggestions || dollarSuggestions.prefix !== "$" || !dollarValues.has("$foo") || !dollarValues.has("$bar")) {
+    throw new Error(`skill autocomplete did not list all skills after $: ${JSON.stringify(dollarSuggestions)}`);
+  }
+  const filteredSuggestions = await skillProvider.getSuggestions(["use $fo"], 0, 7, { signal: AbortSignal.timeout(100) });
+  if (!filteredSuggestions || filteredSuggestions.items.length !== 1 || filteredSuggestions.items[0]?.value !== "$foo") {
+    throw new Error(`skill autocomplete did not filter typed prefix: ${JSON.stringify(filteredSuggestions)}`);
+  }
+  const completedSkill = skillProvider.applyCompletion(["use $fo now"], 0, 7, { value: "$foo", label: "$foo" }, "$fo");
+  if (completedSkill.lines[0] !== "use $foo now" || completedSkill.cursorCol !== 8) {
+    throw new Error(`skill autocomplete did not replace token with trailing space: ${JSON.stringify(completedSkill)}`);
+  }
+  const completedAtEnd = skillProvider.applyCompletion(["use $fo"], 0, 7, { value: "$foo", label: "$foo" }, "$fo");
+  if (completedAtEnd.lines[0] !== "use $foo " || completedAtEnd.cursorCol !== 9) {
+    throw new Error(`skill autocomplete did not add a trailing space at end: ${JSON.stringify(completedAtEnd)}`);
   }
 
   const inputHandlers = handlers.get("input") ?? [];

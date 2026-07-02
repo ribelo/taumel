@@ -1,6 +1,6 @@
 open Jsoo_bridge
 
-type skill = { name : string; path : string; base_dir : string }
+type skill = { name : string; path : string; base_dir : string; description : string }
 
 let js_require name =
   Unsafe.fun_call (Unsafe.js_expr "require") [| js_string name |]
@@ -50,7 +50,7 @@ let trim_quotes value =
     | _ -> value
   else value
 
-let frontmatter_name text =
+let frontmatter_field key text =
   let lines = String.split_on_char '\n' text in
   match lines with
   | first :: rest when String.trim first = "---" ->
@@ -59,13 +59,24 @@ let frontmatter_name text =
         | line :: _ when String.trim line = "---" -> None
         | line :: rest -> (
             match String.index_opt line ':' with
-            | Some index when String.trim (String.sub line 0 index) = "name" ->
+            | Some index when String.trim (String.sub line 0 index) = key ->
                 let value = String.sub line (index + 1) (String.length line - index - 1) |> trim_quotes in
                 if value = "" then None else Some value
             | _ -> loop rest)
       in
       loop rest
   | _ -> None
+
+let frontmatter_name text = frontmatter_field "name" text
+let frontmatter_description text = frontmatter_field "description" text
+
+let skill_from_file path base_dir default_name =
+  match read_file path with
+  | None -> { name = default_name; path; base_dir; description = "" }
+  | Some text ->
+      let name = frontmatter_name text |> Option.value ~default:default_name in
+      let description = frontmatter_description text |> Option.value ~default:"" in
+      { name; path; base_dir; description }
 
 let strip_frontmatter text =
   let lines = String.split_on_char '\n' text in
@@ -91,8 +102,7 @@ let add_skill table skill = if Hashtbl.mem table skill.name then () else Hashtbl
 let rec discover_dir table dir =
   let file = skill_file dir in
   if exists file then
-    let name = Option.bind (read_file file) frontmatter_name |> Option.value ~default:(basename dir) in
-    add_skill table { name; path = file; base_dir = dir }
+    add_skill table (skill_from_file file dir (basename dir))
   else
     readdir dir
     |> List.iter (fun entry ->
@@ -106,8 +116,7 @@ let discover_path table path =
     if is_dir path then discover_dir table path
     else if basename path = "SKILL.md" then
       let base_dir = dirname path in
-      let name = Option.bind (read_file path) frontmatter_name |> Option.value ~default:(basename base_dir) in
-      add_skill table { name; path; base_dir }
+      add_skill table (skill_from_file path base_dir (basename base_dir))
 
 let json_file path =
   match read_file path with
@@ -152,6 +161,30 @@ let block_payload (skill : skill) content =
       ("content", js_string content);
     |]
 
+let skill_payload (skill : skill) =
+  Unsafe.obj
+    [|
+      ("name", js_string skill.name);
+      ("location", js_string skill.path);
+      ("baseDir", js_string skill.base_dir);
+      ("description", js_string skill.description);
+    |]
+
+let discover_skills cwd =
+  let table = Hashtbl.create 32 in
+  List.iter (discover_path table) (source_paths cwd);
+  Hashtbl.fold (fun _ skill acc -> skill :: acc) table []
+  |> List.sort (fun a b -> compare a.name b.name)
+
+let list_skills params =
+  let cwd = match optional_string_field params "cwd" with Some cwd when cwd <> "" -> cwd | _ -> "." in
+  Unsafe.obj
+    [|
+      ( "skills",
+        discover_skills cwd |> List.map skill_payload |> Array.of_list |> Js.array
+        |> Unsafe.inject );
+    |]
+
 let resolve_mentions params =
   let prompt = get_string params "prompt" in
   let names = Taumel.Skill_resolver.mentions prompt in
@@ -159,7 +192,7 @@ let resolve_mentions params =
   else
     let cwd = match optional_string_field params "cwd" with Some cwd when cwd <> "" -> cwd | _ -> "." in
     let table = Hashtbl.create 32 in
-    List.iter (discover_path table) (source_paths cwd);
+    List.iter (fun skill -> add_skill table skill) (discover_skills cwd);
     let blocks = ref [] in
     let warnings = ref [] in
     List.iter

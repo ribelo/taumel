@@ -144,6 +144,8 @@ export type ComposerController = {
     };
   };
   latestTui?: unknown;
+  latestCwd?: string;
+  skillEntries?: () => readonly { readonly name: string; readonly description?: string; readonly location?: string }[];
 };
 
 export type CoreBridge = {

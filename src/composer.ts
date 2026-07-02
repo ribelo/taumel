@@ -1,5 +1,12 @@
 import { CustomEditor, type KeybindingsManager } from "@earendil-works/pi-coding-agent";
-import { visibleWidth, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
+import {
+  visibleWidth,
+  type AutocompleteItem,
+  type AutocompleteProvider,
+  type AutocompleteSuggestions,
+  type EditorTheme,
+  type TUI,
+} from "@earendil-works/pi-tui";
 
 import type { ComposerController, CoreBridge, PiLike } from "./types.ts";
 import {
@@ -13,6 +20,18 @@ import { coreCall, isRecord, maybeCall, stringField } from "./util.ts";
 
 const EVERFOREST_BG1 = "\x1b[48;2;46;56;60m";
 const ANSI_PATTERN = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
+const SKILL_TOKEN_PATTERN = /(^|[\s])\$([a-z0-9-]*)$/;
+const RESOLVABLE_SKILL_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
+
+type EditorWithPrivateAutocomplete = {
+  tryTriggerAutocomplete?: (explicitTab?: boolean) => void;
+};
+
+type SkillAutocompleteEntry = {
+  readonly name: string;
+  readonly description?: string;
+  readonly location?: string;
+};
 
 function stripAnsi(value: string): string {
   return value.replace(ANSI_PATTERN, "");
@@ -27,6 +46,36 @@ function withBackground(line: string, width: number): string {
   const padded = line + " ".repeat(Math.max(0, width - visibleWidth(line)));
   const patched = padded.replaceAll("\x1b[0m", `\x1b[0m${EVERFOREST_BG1}`);
   return `${EVERFOREST_BG1}${patched}\x1b[0m`;
+}
+
+function skillTokenPrefix(textBeforeCursor: string): string | null {
+  const match = SKILL_TOKEN_PATTERN.exec(textBeforeCursor);
+  return match ? `$${match[2] ?? ""}` : null;
+}
+
+function shouldAutoTriggerSkillAutocomplete(
+  editor: { isShowingAutocomplete: () => boolean; getCursor: () => { line: number; col: number }; getLines: () => string[] },
+  data: string,
+): boolean {
+  if (data.length !== 1) return false;
+  if (editor.isShowingAutocomplete()) return false;
+  if (data !== "$" && !/[a-z0-9-]/.test(data)) return false;
+
+  const { line, col } = editor.getCursor();
+  const currentLine = editor.getLines()[line] ?? "";
+  return skillTokenPrefix(currentLine.slice(0, col)) !== null;
+}
+
+function skillItems(skills: readonly SkillAutocompleteEntry[], prefix: string): AutocompleteItem[] {
+  const query = prefix.slice(1);
+  return skills.filter((skill) => RESOLVABLE_SKILL_NAME_PATTERN.test(skill.name) && skill.name.startsWith(query)).map((skill) => {
+    const description = skill.description || skill.location;
+    return {
+      value: `$${skill.name}`,
+      label: `$${skill.name}`,
+      ...(description ? { description } : {}),
+    };
+  });
 }
 
 export function renderComposerInput(width: number, next: (width: number) => string[], enabled: boolean): string[] {
@@ -74,8 +123,66 @@ export function renderComposerInput(width: number, next: (width: number) => stri
   return result;
 }
 
+export class SkillAutocompleteProvider implements AutocompleteProvider {
+  triggerCharacters: string[];
+
+  constructor(
+    private current: AutocompleteProvider,
+    private readonly skills: () => readonly SkillAutocompleteEntry[],
+  ) {
+    this.triggerCharacters = [...new Set([...(current.triggerCharacters ?? []), "$"])];
+  }
+
+  setBase(current: AutocompleteProvider): void {
+    this.current = current;
+    this.triggerCharacters = [...new Set([...(current.triggerCharacters ?? []), "$"])];
+  }
+
+  async getSuggestions(
+    lines: string[],
+    cursorLine: number,
+    cursorCol: number,
+    options: { signal: AbortSignal; force?: boolean },
+  ): Promise<AutocompleteSuggestions | null> {
+    if (options.force !== true) {
+      const currentLine = lines[cursorLine] || "";
+      const prefix = skillTokenPrefix(currentLine.slice(0, cursorCol));
+      if (prefix !== null) {
+        const items = skillItems(this.skills(), prefix);
+        return items.length === 0 ? null : { items, prefix };
+      }
+    }
+    return this.current.getSuggestions(lines, cursorLine, cursorCol, options);
+  }
+
+  applyCompletion(
+    lines: string[],
+    cursorLine: number,
+    cursorCol: number,
+    item: AutocompleteItem,
+    prefix: string,
+  ): { lines: string[]; cursorLine: number; cursorCol: number } {
+    if (prefix.startsWith("$")) {
+      const currentLine = lines[cursorLine] || "";
+      const beforePrefix = currentLine.slice(0, cursorCol - prefix.length);
+      const afterCursor = currentLine.slice(cursorCol);
+      const suffix = afterCursor.startsWith(" ") ? "" : " ";
+      const newLine = `${beforePrefix}${item.value}${suffix}${afterCursor}`;
+      const newLines = [...lines];
+      newLines[cursorLine] = newLine;
+      return { lines: newLines, cursorLine, cursorCol: beforePrefix.length + item.value.length + suffix.length };
+    }
+    return this.current.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
+  }
+
+  shouldTriggerFileCompletion(lines: string[], cursorLine: number, cursorCol: number): boolean {
+    return this.current.shouldTriggerFileCompletion?.(lines, cursorLine, cursorCol) ?? true;
+  }
+}
+
 class TaumelComposerEditor extends CustomEditor {
   private readonly controller: ComposerController;
+  private skillAutocompleteProvider?: SkillAutocompleteProvider;
 
   constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager, controller: ComposerController) {
     super(tui, theme, keybindings);
@@ -90,6 +197,27 @@ class TaumelComposerEditor extends CustomEditor {
       this.controller.settings.composer.enabled,
     );
   }
+
+  override handleInput(data: string): void {
+    super.handleInput(data);
+    if (shouldAutoTriggerSkillAutocomplete(this, data)) {
+      (this as unknown as EditorWithPrivateAutocomplete).tryTriggerAutocomplete?.(false);
+    }
+  }
+
+  override setAutocompleteProvider(provider: AutocompleteProvider): void {
+    const skillEntries = this.controller.skillEntries;
+    if (!skillEntries) {
+      super.setAutocompleteProvider(provider);
+      return;
+    }
+    if (!this.skillAutocompleteProvider) {
+      this.skillAutocompleteProvider = new SkillAutocompleteProvider(provider, skillEntries);
+    } else {
+      this.skillAutocompleteProvider.setBase(provider);
+    }
+    super.setAutocompleteProvider(this.skillAutocompleteProvider);
+  }
 }
 
 function uiFromContext(ctx: unknown): Record<string, unknown> | undefined {
@@ -102,7 +230,28 @@ function requestRender(controller: ComposerController, ctx: unknown): void {
   maybeCall(uiFromContext(ctx), "requestRender");
 }
 
+function parseSkillEntries(value: unknown): SkillAutocompleteEntry[] {
+  if (!isRecord(value) || !Array.isArray(value["skills"])) return [];
+  return value["skills"].filter(isRecord).flatMap((skill) => {
+    const name = typeof skill["name"] === "string" ? skill["name"] : "";
+    if (name === "") return [];
+    const description = typeof skill["description"] === "string" ? skill["description"] : undefined;
+    const location = typeof skill["location"] === "string" ? skill["location"] : undefined;
+    return [{ name, description, location }];
+  });
+}
+
+function listSkills(core: CoreBridge, controller: ComposerController): SkillAutocompleteEntry[] {
+  const result = coreCall(core, "listSkills", [{ cwd: controller.latestCwd ?? process.cwd() }]);
+  return parseSkillEntries(result);
+}
+
+export function installSkillAutocomplete(pi: PiLike, core: CoreBridge, controller: ComposerController): void {
+  controller.skillEntries = () => listSkills(core, controller);
+}
+
 function installComposerForContext(controller: ComposerController, ctx: unknown): void {
+  if (isRecord(ctx) && typeof ctx["cwd"] === "string" && ctx["cwd"] !== "") controller.latestCwd = ctx["cwd"];
   const ui = uiFromContext(ctx);
   if (!ui) return;
   const setEditorComponent = ui["setEditorComponent"];
