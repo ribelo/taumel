@@ -496,7 +496,7 @@ try {
   if (tools.has("usage")) {
     throw new Error("usage was registered as a model-callable tool");
   }
-  for (const name of ["permissions", "network", "composer", "usage", "ralph", "goal", "agents", "agent-runs"]) {
+  for (const name of ["permissions", "network", "composer", "usage", "ralph", "goal", "agents", "tools", "skills", "agent-runs"]) {
     if (!commands.has(name)) throw new Error(`missing registered command: ${name}`);
   }
   const contextHandlers = handlers.get("context") ?? [];
@@ -570,6 +570,31 @@ try {
     initialGoalMessage?.options?.deliverAs !== "followUp"
   ) {
     throw new Error(`goal command did not queue initial continuation: ${JSON.stringify(sentMessages)}`);
+  }
+
+  sentMessages.length = 0;
+  const staleAgentEndCtx = {
+    ...ctx,
+    sessionManager: {
+      getSessionId: () => {
+        throw new Error("This extension ctx is stale after session replacement or reload.");
+      },
+      getSessionFile: () => {
+        throw new Error("This extension ctx is stale after session replacement or reload.");
+      },
+      getEntries: () => {
+        throw new Error("This extension ctx is stale after session replacement or reload.");
+      },
+      getBranch: () => {
+        throw new Error("This extension ctx is stale after session replacement or reload.");
+      },
+    },
+  };
+  for (const handler of handlers.get("agent_end") ?? []) {
+    await handler({ type: "agent_end", messages: [assistantMessage()] }, staleAgentEndCtx);
+  }
+  if (sentMessages.length !== 0) {
+    throw new Error(`goal agent_end queued from stale ctx: ${JSON.stringify(sentMessages)}`);
   }
 
   sentMessages.length = 0;
@@ -1282,45 +1307,65 @@ try {
   ) {
     throw new Error(`agent_profiles did not return the PRD built-in catalog: ${JSON.stringify(agentProfiles)}`);
   }
-  selectBehavior = async (_title, labels) => labels.find((label) => label.startsWith("Disable scout ")) ?? null;
-  const menuDisableScout = await commands.get("agents").handler("", ctx);
-  const savedScoutMenuState = parentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
+  const agentsList = await commands.get("agents").handler("", ctx);
   if (
-    menuDisableScout.action !== "command_result" ||
-    !menuDisableScout.message.includes("scout disabled") ||
-    !selections.at(-1)?.title.includes("Taumel agent profiles") ||
-    !selections.at(-1)?.labels.some((label) => label.includes("Temporary smoke-test scanner")) ||
-    savedScoutMenuState?.data?.profiles?.find((profile) => profile.name === "scout")?.enabled !== false
+    agentsList.action !== "command_result" ||
+    !agentsList.message.includes("scout [enabled]") ||
+    !agentsList.message.includes("Temporary smoke-test scanner")
   ) {
-    throw new Error(`agents menu did not toggle and persist a user profile: ${JSON.stringify({ menuDisableScout, savedScoutMenuState, selections })}`);
+    throw new Error(`agents list fallback did not show profile visibility: ${JSON.stringify(agentsList)}`);
   }
-  selectBehavior = async (_title, labels) => labels[0];
+  let renderedVisibilityManagerLines = [];
+  ctx.ui.custom = async (factory) => {
+    const component = factory(
+      { requestRender: () => undefined },
+      {
+        fg: (_color, text) => text,
+        bg: (_color, text) => text,
+        bold: (text) => text,
+      },
+      { matches: () => false },
+      () => undefined,
+    );
+    renderedVisibilityManagerLines = component.render(120);
+    return { kind: "exit" };
+  };
+  const agentsManager = await commands.get("agents").handler("", ctx);
+  delete ctx.ui.custom;
+  if (
+    agentsManager.action !== "command_result" ||
+    !renderedVisibilityManagerLines.some((line) => line.includes("Taumel agent profiles")) ||
+    !renderedVisibilityManagerLines.some((line) => line.includes("e toggle") && line.includes("ctrl+s save to project")) ||
+    !renderedVisibilityManagerLines.some((line) => line.includes("scout") && line.includes("enabled"))
+  ) {
+    throw new Error(`agents manager did not render cron-style visibility rows: ${JSON.stringify({ agentsManager, renderedVisibilityManagerLines })}`);
+  }
   const disableScout = await commands.get("agents").handler("disable scout", ctx);
-  const savedScoutDisabledState = parentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
+  const savedScoutDisabledState = parentEntries.filter((entry) => entry.customType === "taumel.visibility").at(-1);
   if (
     disableScout.action !== "command_result" ||
     !disableScout.message.includes("scout disabled") ||
-    savedScoutDisabledState?.data?.profiles?.find((profile) => profile.name === "scout")?.enabled !== false
+    !savedScoutDisabledState?.data?.agents?.disabled?.includes("scout")
   ) {
-    throw new Error(`agents disable did not persist user profile toggle: ${JSON.stringify({ disableScout, savedScoutDisabledState })}`);
+    throw new Error(`agents disable did not persist profile visibility: ${JSON.stringify({ disableScout, savedScoutDisabledState })}`);
   }
   const enableScout = await commands.get("agents").handler("enable scout", ctx);
-  const savedScoutEnabledState = parentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
+  const savedScoutEnabledState = parentEntries.filter((entry) => entry.customType === "taumel.visibility").at(-1);
   if (
     enableScout.action !== "command_result" ||
     !enableScout.message.includes("scout enabled") ||
-    savedScoutEnabledState?.data?.profiles?.find((profile) => profile.name === "scout")?.enabled !== true
+    savedScoutEnabledState?.data?.agents?.disabled?.includes("scout")
   ) {
-    throw new Error(`agents enable did not persist user profile toggle: ${JSON.stringify({ enableScout, savedScoutEnabledState })}`);
+    throw new Error(`agents enable did not persist profile visibility cleanup: ${JSON.stringify({ enableScout, savedScoutEnabledState })}`);
   }
   const disableFinder = await commands.get("agents").handler("disable finder", ctx);
-  const savedAgentsState = parentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
+  const savedAgentsState = parentEntries.filter((entry) => entry.customType === "taumel.visibility").at(-1);
   if (
     disableFinder.action !== "command_result" ||
     !disableFinder.message.includes("finder disabled") ||
-    savedAgentsState?.data?.profiles?.find((profile) => profile.name === "finder")?.enabled !== false
+    !savedAgentsState?.data?.agents?.disabled?.includes("finder")
   ) {
-    throw new Error(`agents disable did not persist profile toggle: ${JSON.stringify({ disableFinder, savedAgentsState })}`);
+    throw new Error(`agents disable did not persist profile visibility: ${JSON.stringify({ disableFinder, savedAgentsState })}`);
   }
   const disabledProfiles = await tools.get("agent_profiles").execute(
     "agent-profiles-disabled",
@@ -1330,24 +1375,10 @@ try {
     ctx,
   );
   if (
-    disabledProfiles.details?.profiles?.find((profile) => profile.name === "finder")?.enabled !== false ||
-    !disabledProfiles.content?.[0]?.text?.includes('<profile name="finder" enabled="false"') ||
-    !disabledProfiles.content?.[0]?.text?.includes('disabled_reason="disabled for this session"')
+    disabledProfiles.details?.profiles?.some((profile) => profile.name === "finder") ||
+    disabledProfiles.content?.[0]?.text?.includes('<profile name="finder"')
   ) {
-    throw new Error(`agent_profiles did not expose disabled profile state: ${JSON.stringify(disabledProfiles)}`);
-  }
-  const disabledSpawn = await tools.get("agent_spawn").execute(
-    "agent-disabled-spawn",
-    { profile: "finder", message: "should be blocked" },
-    undefined,
-    undefined,
-    ctx,
-  );
-  if (
-    disabledSpawn.details?.ok === true ||
-    !disabledSpawn.content?.[0]?.text?.includes("/agents enable finder")
-  ) {
-    throw new Error(`agent_spawn did not reject disabled profile: ${JSON.stringify(disabledSpawn)}`);
+    throw new Error(`agent_profiles did not hide disabled profiles: ${JSON.stringify(disabledProfiles)}`);
   }
   const enableFinder = await commands.get("agents").handler("enable finder", ctx);
   if (
@@ -1355,6 +1386,134 @@ try {
     !enableFinder.message.includes("finder enabled")
   ) {
     throw new Error(`agents enable did not update profile toggle: ${JSON.stringify(enableFinder)}`);
+  }
+  const legacyEntries = [
+    {
+      type: "custom",
+      customType: "taumel.agents",
+      data: {
+        version: 1,
+        profiles: [{ name: "scout", enabled: false }],
+        agents: [],
+        runs: [],
+      },
+    },
+  ];
+  const legacyCtx = {
+    ...ctx,
+    sessionManager: {
+      getSessionId: () => "legacy-agent-visibility-session",
+      getSessionFile: () => join(cwd, "legacy-agent-visibility-session.json"),
+      appendCustomEntry: (type, value) => {
+        legacyEntries.push({ type: "custom", customType: type, data: value });
+      },
+      getEntries: () => legacyEntries,
+      getBranch: () => [],
+    },
+  };
+  const legacyHiddenProfiles = await tools.get("agent_profiles").execute(
+    "agent-profiles-legacy-hidden",
+    {},
+    undefined,
+    undefined,
+    legacyCtx,
+  );
+  if (legacyHiddenProfiles.details?.profiles?.some((profile) => profile.name === "scout")) {
+    throw new Error(`legacy disabled profile was not hidden by migrated visibility: ${JSON.stringify(legacyHiddenProfiles)}`);
+  }
+  const legacyEnableScout = await commands.get("agents").handler("enable scout", legacyCtx);
+  const legacyEnabledProfiles = await tools.get("agent_profiles").execute(
+    "agent-profiles-legacy-enabled",
+    {},
+    undefined,
+    undefined,
+    legacyCtx,
+  );
+  if (
+    legacyEnableScout.action !== "command_result" ||
+    !legacyEnableScout.message.includes("scout enabled") ||
+    !legacyEnabledProfiles.details?.profiles?.some((profile) => profile.name === "scout" && profile.enabled === true) ||
+    !legacyEnabledProfiles.content?.[0]?.text?.includes('<profile name="scout" enabled="true"') ||
+    legacyEnabledProfiles.content?.[0]?.text?.includes('name="scout" enabled="false"')
+  ) {
+    throw new Error(`enabling migrated legacy profile did not render from visibility state: ${JSON.stringify({ legacyEnableScout, legacyEnabledProfiles })}`);
+  }
+  const disableTool = await commands.get("tools").handler("disable write_stdin", ctx);
+  const savedToolDisabledState = parentEntries.filter((entry) => entry.customType === "taumel.visibility").at(-1);
+  if (
+    disableTool.action !== "command_result" ||
+    !disableTool.message.includes("write_stdin disabled") ||
+    activeTools.includes("write_stdin") ||
+    !savedToolDisabledState?.data?.tools?.disabled?.includes("write_stdin")
+  ) {
+    throw new Error(`tools disable did not hide active tool and persist visibility: ${JSON.stringify({ disableTool, activeTools, savedToolDisabledState })}`);
+  }
+  const unknownTool = await commands.get("tools").handler("disable missing_tool", ctx);
+  const savedUnknownToolState = parentEntries.filter((entry) => entry.customType === "taumel.visibility").at(-1);
+  if (
+    unknownTool.ok !== false ||
+    !unknownTool.message.includes("Unknown tool") ||
+    savedUnknownToolState?.data?.tools?.disabled?.includes("missing_tool")
+  ) {
+    throw new Error(`tools disable should warn and preserve state for unknown names: ${JSON.stringify({ unknownTool, savedUnknownToolState })}`);
+  }
+  const enableTool = await commands.get("tools").handler("enable write_stdin", ctx);
+  if (
+    enableTool.action !== "command_result" ||
+    !enableTool.message.includes("write_stdin enabled") ||
+    !activeTools.includes("write_stdin")
+  ) {
+    throw new Error(`tools enable did not restore active tool: ${JSON.stringify({ enableTool, activeTools })}`);
+  }
+  const disableSkill = await commands.get("skills").handler("disable foo", ctx);
+  const savedSkillDisabledState = parentEntries.filter((entry) => entry.customType === "taumel.visibility").at(-1);
+  const visibleSkillsAfterDisable = globalThis.taumel.call("listSkills", [{ cwd }])?.skills ?? [];
+  if (
+    disableSkill.action !== "command_result" ||
+    !disableSkill.message.includes("foo disabled") ||
+    !savedSkillDisabledState?.data?.skills?.disabled?.includes("foo") ||
+    visibleSkillsAfterDisable.some((skill) => skill.name === "foo") ||
+    !visibleSkillsAfterDisable.some((skill) => skill.name === "bar")
+  ) {
+    throw new Error(`skills disable did not filter listSkills/autocomplete source: ${JSON.stringify({ disableSkill, savedSkillDisabledState, visibleSkillsAfterDisable })}`);
+  }
+  sentMessages.length = 0;
+  sentUserMessages.length = 0;
+  const disabledSkillReturns = await Promise.all(inputHandlers.map((handler) => handler({ type: "input", text: "$foo $bar after disabling foo" }, ctx)));
+  if (
+    disabledSkillReturns.every((result) => result?.action !== "handled") ||
+    sentMessages.length !== 1 ||
+    !sentMessages[0]?.message?.content?.includes('name="bar"') ||
+    sentMessages[0]?.message?.content?.includes('name="foo"')
+  ) {
+    throw new Error(`skill resolver did not ignore disabled skill mentions: ${JSON.stringify({ disabledSkillReturns, sentMessages })}`);
+  }
+  sentMessages.length = 0;
+  sentUserMessages.length = 0;
+  const projectSettingsPath = join(cwd, ".pi", "settings.json");
+  await writeFile(
+    projectSettingsPath,
+    `${JSON.stringify({ unrelated: true, taumel: { otherSetting: 1, agents: { builtins: { smart: { provider: "inherit" } } } } }, null, 2)}\n`,
+  );
+  const trustedCtx = { ...ctx, isProjectTrusted: () => true };
+  const saveSkills = await commands.get("skills").handler("save", trustedCtx);
+  const savedProjectSettings = JSON.parse(await readFile(projectSettingsPath, "utf8"));
+  if (
+    saveSkills.action !== "command_result" ||
+    saveSkills.ok !== true ||
+    savedProjectSettings.unrelated !== true ||
+    savedProjectSettings.taumel?.otherSetting !== 1 ||
+    savedProjectSettings.taumel?.agents?.builtins?.smart?.provider !== "inherit" ||
+    !savedProjectSettings.taumel?.skills?.disabled?.includes("foo")
+  ) {
+    throw new Error(`skills save did not preserve project settings while writing disabled list: ${JSON.stringify({ saveSkills, savedProjectSettings })}`);
+  }
+  const enableSkill = await commands.get("skills").handler("enable foo", ctx);
+  if (
+    enableSkill.action !== "command_result" ||
+    !enableSkill.message.includes("foo enabled")
+  ) {
+    throw new Error(`skills enable did not restore visibility: ${JSON.stringify(enableSkill)}`);
   }
   const unknownProfileSpawn = await tools.get("agent_spawn").execute(
     "agent-unknown-profile",
@@ -1458,12 +1617,13 @@ try {
   }
   const otherSessionCommand = await commands.get("agents").handler("disable finder", otherParentCtx);
   const otherSessionStateBeforeCompletion = otherParentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
+  const otherSessionVisibilityBeforeCompletion = otherParentEntries.filter((entry) => entry.customType === "taumel.visibility").at(-1);
   if (
     otherSessionCommand.action !== "command_result" ||
-    otherSessionStateBeforeCompletion?.data?.agents?.length !== 0 ||
-    otherSessionStateBeforeCompletion?.data?.profiles?.find((profile) => profile.name === "finder")?.enabled !== false
+    (otherSessionStateBeforeCompletion?.data?.agents?.length ?? 0) !== 0 ||
+    !otherSessionVisibilityBeforeCompletion?.data?.agents?.disabled?.includes("finder")
   ) {
-    throw new Error(`cross-session async completion did not switch global agent state: ${JSON.stringify({ otherSessionCommand, otherSessionStateBeforeCompletion })}`);
+    throw new Error(`cross-session async completion did not switch global visibility state: ${JSON.stringify({ otherSessionCommand, otherSessionStateBeforeCompletion, otherSessionVisibilityBeforeCompletion })}`);
   }
   const crossSessionFinalOutput = longAgentOutput("cross-session async completion");
   const crossSessionNotificationCount = sentMessages.length;
@@ -1496,8 +1656,8 @@ try {
   }
   const otherSessionStateAfterCompletion = otherParentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
   if (
-    otherSessionStateAfterCompletion?.data?.agents?.length !== 0 ||
-    otherSessionStateAfterCompletion?.data?.runs?.length !== 0
+    (otherSessionStateAfterCompletion?.data?.agents?.length ?? 0) !== 0 ||
+    (otherSessionStateAfterCompletion?.data?.runs?.length ?? 0) !== 0
   ) {
     throw new Error(`async completion updated the wrong parent session state: ${JSON.stringify(otherSessionStateAfterCompletion)}`);
   }
@@ -3091,6 +3251,96 @@ try {
     ralphToolNames.some((name) => name === "agent" || name.startsWith("agent_"))
   ) {
     throw new Error(`ralph child did not persist a restricted tool profile: ${JSON.stringify(ralphChildEntries)}`);
+  }
+  await writeFile(
+    join(cwd, ".pi", "settings.json"),
+    `${JSON.stringify({
+      keepMe: true,
+      taumel: {
+        agents: { disabled: ["review", "ghost_agent"] },
+        tools: { disabled: ["agent_wait", "write_stdin", "ghost_tool"] },
+        skills: { disabled: ["bar", "ghost_skill"] },
+      },
+    }, null, 2)}\n`,
+  );
+  const defaultEntries = [
+    {
+      type: "custom",
+      customType: "taumel.agents",
+      data: {
+        version: 1,
+        profiles: [{ name: "scout", enabled: false }],
+        agents: [],
+        runs: [],
+      },
+    },
+  ];
+  const defaultCtx = {
+    ...ctx,
+    isProjectTrusted: () => true,
+    sessionManager: {
+      getSessionId: () => "visibility-default-session",
+      getSessionFile: () => join(cwd, "visibility-default-session.json"),
+      appendCustomEntry: (type, value) => {
+        defaultEntries.push({ type: "custom", customType: type, data: value });
+      },
+      getEntries: () => defaultEntries,
+      getBranch: () => [],
+    },
+  };
+  notifications.length = 0;
+  activeTools = ["agent_spawn", "agent_wait", "write_stdin", "apply_patch"];
+  for (const handler of handlers.get("session_start") ?? []) {
+    handler({ type: "session_start" }, defaultCtx);
+  }
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const seededVisibility = defaultEntries.find((entry) => entry.customType === "taumel.visibility");
+  const defaultAgentProfiles = await tools.get("agent_profiles").execute(
+    "agent-profiles-project-defaults",
+    {},
+    undefined,
+    undefined,
+    defaultCtx,
+  );
+  const defaultAgentsList = await commands.get("agents").handler("list", defaultCtx);
+  const staleWarningCount = notifications.filter((entry) => entry.message.includes("unavailable disabled")).length;
+  if (
+    !seededVisibility?.data?.agents?.disabled?.includes("review") ||
+    !seededVisibility?.data?.agents?.disabled?.includes("ghost_agent") ||
+    !seededVisibility?.data?.agents?.disabled?.includes("scout") ||
+    !seededVisibility?.data?.tools?.disabled?.includes("agent_wait") ||
+    !seededVisibility?.data?.tools?.disabled?.includes("ghost_tool") ||
+    !seededVisibility?.data?.skills?.disabled?.includes("bar") ||
+    activeTools.includes("agent_wait") ||
+    activeTools.includes("write_stdin") ||
+    defaultAgentProfiles.details?.profiles?.some((profile) => profile.name === "review") ||
+    !defaultAgentsList.message.includes("ghost_agent [unavailable]") ||
+    staleWarningCount < 3
+  ) {
+    throw new Error(`trusted project visibility defaults were not applied: ${JSON.stringify({ seededVisibility, activeTools, defaultAgentProfiles, defaultAgentsList, notifications })}`);
+  }
+  const clearGhostTool = await commands.get("tools").handler("enable ghost_tool", defaultCtx);
+  const clearGhostSkill = await commands.get("skills").handler("enable ghost_skill", defaultCtx);
+  const clearGhostAgent = await commands.get("agents").handler("enable ghost_agent", defaultCtx);
+  const clearedGhostVisibility = defaultEntries.filter((entry) => entry.customType === "taumel.visibility").at(-1);
+  if (
+    clearGhostTool.ok !== true ||
+    clearGhostSkill.ok !== true ||
+    clearGhostAgent.ok !== true ||
+    clearedGhostVisibility?.data?.tools?.disabled?.includes("ghost_tool") ||
+    clearedGhostVisibility?.data?.skills?.disabled?.includes("ghost_skill") ||
+    clearedGhostVisibility?.data?.agents?.disabled?.includes("ghost_agent") ||
+    activeTools.includes("ghost_tool")
+  ) {
+    throw new Error(`unavailable visibility rows were not cleared safely: ${JSON.stringify({ clearGhostTool, clearGhostSkill, clearGhostAgent, clearedGhostVisibility, activeTools })}`);
+  }
+  for (const handler of handlers.get("session_resume") ?? []) {
+    handler({ type: "session_resume" }, defaultCtx);
+  }
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const staleWarningCountAfterResume = notifications.filter((entry) => entry.message.includes("unavailable disabled")).length;
+  if (staleWarningCountAfterResume !== staleWarningCount) {
+    throw new Error(`stale visibility warnings should be once per session/category: ${JSON.stringify(notifications)}`);
   }
   await writeFile(
     join(process.env.TAUMEL_AGENT_PROFILE_DIR, "broken.md"),

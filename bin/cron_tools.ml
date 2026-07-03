@@ -160,7 +160,46 @@ let set_task_enabled_command enabled id ctx =
          ("id", js_string id);
          ("enabled", js_bool enabled);
          ("changed", js_bool exists);
-       |])
+	       |])
+
+let updated_task_details id =
+  let task = List.find_opt (fun (task : Taumel.Cron.task) -> task.id = id) !cron_state.tasks in
+  Unsafe.obj
+    [|
+      ("id", js_string id);
+      ("changed", js_bool (Option.is_some task));
+      ("task", match task with Some task -> inject (task_summary task) | None -> inject Js.null);
+      ("enabled", js_bool !cron_state.enabled);
+      ("tasks", tasks_array !cron_state.tasks);
+    |]
+
+let update_task params ctx =
+  sync ctx;
+  let id = String.trim (get_string params "id") in
+  let now = App_state.now_seconds () in
+  let apply_if present update result =
+    if present then Result.bind result update else result
+  in
+  let result =
+    Ok !cron_state
+    |> apply_if (has_property params "prompt")
+         (Taumel.Cron.update_task_prompt id (get_string params "prompt"))
+    |> apply_if (has_property params "cron")
+         (Taumel.Cron.update_task_cron ~now id (get_string params "cron"))
+    |> apply_if (has_property params "recurring")
+         (Taumel.Cron.update_task_recurring id (get_bool params "recurring"))
+    |> apply_if (has_property params "mode") (fun state ->
+           match Taumel.Cron.mode_of_string (get_string params "mode") with
+           | None -> Error "cron task mode must be message or goal"
+           | Some mode -> Taumel.Cron.update_task_mode id mode state)
+  in
+  match result with
+  | Error message -> command_result ~ok:false message (updated_task_details id)
+  | Ok state ->
+      let previous = !cron_state in
+      cron_state := state;
+      save_state_if_changed ctx previous;
+      command_result ("Updated cron task " ^ id ^ ".") (updated_task_details id)
 
 let handle_command args ctx =
   sync ctx;
@@ -203,10 +242,6 @@ let task_label (task : Taumel.Cron.task) =
     (if task.enabled then "enabled" else "disabled") task.cron
     (Taumel.Cron.mode_to_string task.mode) (human_time task.next_due)
 
-let task_action_label action (task : Taumel.Cron.task) =
-  Printf.sprintf "%s task %s  %s  %s  next=%s" action task.id task.cron
-    (Taumel.Cron.mode_to_string task.mode) (human_time task.next_due)
-
 let task_listing_message enabled tasks =
   match tasks with
   | [] -> "No cron tasks."
@@ -215,7 +250,7 @@ let task_listing_message enabled tasks =
         ((Printf.sprintf "Cron is %s." (if enabled then "enabled" else "disabled"))
         :: List.map task_label tasks)
 
-let plan_prompt prompt facts =
+let plan_prompt prompt _facts =
   let tasks = get_object_array prompt "tasks" in
   if tasks = [] then
     Unsafe.obj
@@ -223,35 +258,18 @@ let plan_prompt prompt facts =
         ("action", js_string "result");
         ("result", command_result "No cron tasks." (Unsafe.obj [| ("tasks", js_array []) |]));
       |]
-  else if not (get_bool facts "uiAvailable") then
+  else
     Unsafe.obj
       [|
         ("action", js_string "result");
-	        ( "result",
-	          command_result
-	            (task_listing_message (get_bool prompt "enabled") !cron_state.tasks)
-	            (Unsafe.obj
-	               [|
-	                 ("enabled", js_bool (get_bool prompt "enabled"));
-	                 ("tasks", tasks_array !cron_state.tasks);
-	               |]) );
-	      |]
-  else
-    let master_label = if get_bool prompt "enabled" then "Disable cron" else "Enable cron" in
-    let task_labels =
-      !cron_state.tasks
-      |> List.concat_map (fun (task : Taumel.Cron.task) ->
-             [
-               task_action_label (if task.enabled then "Disable" else "Enable") task;
-               task_action_label "Cancel" task;
-             ])
-    in
-    let labels = master_label :: task_labels in
-    Unsafe.obj
-      [|
-        ("action", js_string "select");
-        ("title", js_string "Manage cron tasks");
-        ("labels", js_array_of_strings labels);
+        ( "result",
+          command_result
+            (task_listing_message (get_bool prompt "enabled") !cron_state.tasks)
+            (Unsafe.obj
+               [|
+                 ("enabled", js_bool (get_bool prompt "enabled"));
+                 ("tasks", tasks_array !cron_state.tasks);
+               |]) );
       |]
 
 let finish_prompt _prompt selection ctx =

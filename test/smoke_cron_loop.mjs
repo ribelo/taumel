@@ -90,6 +90,19 @@ try {
   await tick();
   assert.deepEqual(calls, [], "cron interval should skip a stale captured ctx before calling core");
 
+  const staleMethodCtx = {
+    sessionManager: {
+      getSessionId() {
+        throw new Error("This extension ctx is stale after session replacement or reload.");
+      },
+    },
+  };
+  emit("turn_start", { type: "turn_start" }, staleMethodCtx);
+  calls.length = 0;
+  intervals[0].fn();
+  await tick();
+  assert.deepEqual(calls, [], "cron interval should skip a ctx whose session manager is stale before calling core");
+
   emit("session_shutdown", { type: "session_shutdown", reason: "reload" }, { sessionManager: {} });
   assert.deepEqual(cleared, [intervals[0]], "cron loop should clear its interval on session shutdown");
 } finally {

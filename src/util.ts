@@ -93,6 +93,33 @@ export function coreCall(core: CoreBridge, name: string, args: readonly unknown[
   return core.call(name, args);
 }
 
+export function isStaleContextError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("ctx is stale") ||
+    message.includes("This extension ctx is stale after session replacement or reload");
+}
+
+export function contextIsLive(ctx: unknown): boolean {
+  try {
+    if (!isRecord(ctx)) return true;
+    const sessionManager = ctx["sessionManager"];
+    if (!isRecord(sessionManager)) return true;
+    const getSessionId = sessionManager["getSessionId"];
+    if (typeof getSessionId === "function") {
+      getSessionId.call(sessionManager);
+      return true;
+    }
+    const getSessionFile = sessionManager["getSessionFile"];
+    if (typeof getSessionFile === "function") {
+      getSessionFile.call(sessionManager);
+    }
+    return true;
+  } catch (error) {
+    if (isStaleContextError(error)) return false;
+    throw error;
+  }
+}
+
 export function stringFromMethod(receiver: unknown, name: string): string | undefined {
   if (!isRecord(receiver)) return undefined;
   const method = receiver[name];

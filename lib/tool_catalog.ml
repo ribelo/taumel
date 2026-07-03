@@ -40,7 +40,9 @@ let command_specs =
     { name = "usage"; description = "Show OpenAI account and quota usage." };
     { name = "goal"; description = "Show or update the thread goal." };
     { name = "cron"; description = "List, enable, disable, or cancel cron tasks." };
-    { name = "agents"; description = "List, enable, or disable Taumel agent profiles." };
+    { name = "agents"; description = "List, enable, disable, or save Taumel agent profile visibility." };
+    { name = "tools"; description = "List, enable, disable, or save Taumel tool visibility." };
+    { name = "skills"; description = "List, enable, disable, or save Taumel skill visibility." };
     { name = "agent-runs"; description = "Inspect and close Taumel agent identities and runs." };
     { name = "execpolicy"; description = "Show or check exec command policy decisions." };
     { name = "compaction-model"; description = "Choose a model for context compaction." };
@@ -154,7 +156,11 @@ let plan_agent_child_active_tools ~worker_tools ~current_active_tools_available
       Some (rewrite_active_tools current_active_tools |> agent_child_tools)
   | None -> None
 
-let plan_active_tools_sync ?provider ?(ralph_child = false) tool_names =
+let plan_active_tools_sync ?provider ?(ralph_child = false) ?(disabled_tools = [])
+    tool_names =
   let current = unique_tool_names tool_names in
-  let tools = rewrite_active_tools ?provider ~ralph_child current in
+  let tools =
+    rewrite_active_tools ?provider ~ralph_child current
+    |> remove_tool_names disabled_tools
+  in
   { tools; changed = current <> tools }

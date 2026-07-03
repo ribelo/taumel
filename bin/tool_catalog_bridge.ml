@@ -56,6 +56,7 @@ let tool_names_from_js tool_names =
 
 let plan_active_tools_sync_js tool_names ctx =
   Session_sync.refresh_session_state_from_host ~scope:"active tools sync" ctx;
+  Session_sync.sync_persisted_session ctx;
   let tool_names = tool_names_from_js tool_names in
   let ralph_child = ralph_child_context ctx in
   let provider =
@@ -63,6 +64,9 @@ let plan_active_tools_sync_js tool_names ctx =
   in
   let plan =
     Taumel.Tool_catalog.plan_active_tools_sync ?provider ~ralph_child tool_names
+      ~disabled_tools:
+        (Taumel.Visibility.disabled Taumel.Visibility.Tools
+           !App_state.visibility_state)
   in
   ok_obj
     [

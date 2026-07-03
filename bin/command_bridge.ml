@@ -108,7 +108,9 @@ let handle name args ctx =
   | "cron" -> Cron_tools.handle_command args ctx
   | "ralph" -> Ralph_tools.handle_command args ctx
   | "usage" -> Usage_bridge.handle_command ()
-  | "agents" -> Agent_tools.handle_agents_command args ctx
+  | "agents" -> Visibility_commands.handle Taumel.Visibility.Agents args ctx
+  | "tools" -> Visibility_commands.handle Taumel.Visibility.Tools args ctx
+  | "skills" -> Visibility_commands.handle Taumel.Visibility.Skills args ctx
   | "agent-runs" -> Agent_tools.handle_agent_runs_command args ctx
   | "execpolicy" -> Exec_policy_bridge.handle_command args
   | other -> error_obj ("command is not connected yet: " ^ other)

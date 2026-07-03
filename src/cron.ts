@@ -1,22 +1,8 @@
 import type { CoreBridge, PiLike } from "./types.ts";
-import { coreCall, isRecord, stringField } from "./util.ts";
+import { contextIsLive, coreCall, isRecord, isStaleContextError, stringField } from "./util.ts";
 
 function canSend(pi: PiLike): boolean {
   return typeof pi.sendMessage === "function" || typeof pi.sendUserMessage === "function";
-}
-
-function isStaleContextError(error: unknown): boolean {
-  return error instanceof Error && error.message.includes("ctx is stale");
-}
-
-function contextIsCurrent(ctx: unknown): boolean {
-  try {
-    if (isRecord(ctx)) void ctx["sessionManager"];
-    return true;
-  } catch (error) {
-    if (isStaleContextError(error)) return false;
-    throw error;
-  }
 }
 
 async function sendCronMessage(
@@ -41,6 +27,7 @@ async function deliverCron(
   ctx: unknown,
   deliveryKind: "trigger" | "steer",
 ): Promise<void> {
+  if (!contextIsLive(ctx)) return;
   const mode = stringField(delivery, "mode");
   const content = stringField(delivery, "content");
   const coalesced = typeof delivery["coalesced"] === "number" ? delivery["coalesced"] as number : 1;
@@ -89,9 +76,14 @@ export function installCronLoop(pi: PiLike, core: CoreBridge): void {
   let stopped = false;
   let generation = 0;
 
-  const rememberCtx = (ctx: unknown) => {
-    latestCtx = ctx;
+  const rememberCtx = (ctx: unknown): boolean => {
     generation += 1;
+    if (!contextIsLive(ctx)) {
+      latestCtx = undefined;
+      return false;
+    }
+    latestCtx = ctx;
+    return true;
   };
 
   const poll = async (deliveryKind: "trigger" | "steer" = "trigger") => {
@@ -102,7 +94,7 @@ export function installCronLoop(pi: PiLike, core: CoreBridge): void {
     const pollGeneration = generation;
     try {
       if (ctx === undefined) return;
-      if (!contextIsCurrent(ctx)) {
+      if (!contextIsLive(ctx)) {
         if (latestCtx === ctx) latestCtx = undefined;
         return;
       }
@@ -137,7 +129,7 @@ export function installCronLoop(pi: PiLike, core: CoreBridge): void {
 
   pi.on("session_start", (event, ctx) => {
     if (stopped) return;
-    rememberCtx(ctx);
+    if (!rememberCtx(ctx)) return;
     const result = coreCall(core, "cronStartup", [event, ctx]);
     if (isRecord(result) && result["notify"] === true) notify(ctx, stringField(result, "message"));
   });

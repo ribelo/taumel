@@ -79,6 +79,17 @@ let create ~now ~id (request : create_request) state =
 let delete id state = { state with tasks = List.filter (fun task -> task.id <> id) state.tasks }
 let set_enabled enabled state = { state with enabled }
 
+let find_task id state = List.find_opt (fun task -> task.id = id) state.tasks
+
+let replace_task updated state =
+  {
+    state with
+    tasks =
+      List.map
+        (fun task -> if task.id = updated.id then updated else task)
+        state.tasks;
+  }
+
 let set_task_enabled id enabled state =
   let tasks =
     List.map
@@ -86,6 +97,29 @@ let set_task_enabled id enabled state =
       state.tasks
   in
   { state with tasks }
+
+let update_task_prompt id prompt state =
+  Result.bind (validate_prompt prompt) (fun prompt ->
+      match find_task id state with
+      | None -> Error ("No cron task matched " ^ id ^ ".")
+      | Some task -> Ok (replace_task { task with prompt } state))
+
+let update_task_cron ~now id cron state =
+  Result.bind (next_due cron ~now) (fun due ->
+      match find_task id state with
+      | None -> Error ("No cron task matched " ^ id ^ ".")
+      | Some task ->
+          Ok (replace_task { task with cron; next_due = due; pending_since = None } state))
+
+let update_task_recurring id recurring state =
+  match find_task id state with
+  | None -> Error ("No cron task matched " ^ id ^ ".")
+  | Some task -> Ok (replace_task { task with recurring } state)
+
+let update_task_mode id mode state =
+  match find_task id state with
+  | None -> Error ("No cron task matched " ^ id ^ ".")
+  | Some task -> Ok (replace_task { task with mode } state)
 
 let startup_message count =
   Printf.sprintf "%d stored cron task%s exist in this session. Cron is disabled on startup; run /cron enable to arm them."

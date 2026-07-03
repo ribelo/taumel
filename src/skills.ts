@@ -48,7 +48,7 @@ export function installSkillResolver(pi: PiLike, core: CoreBridge): void {
       return { action: "continue" };
     }
     const cwd = isRecord(ctx) && typeof ctx["cwd"] === "string" ? ctx["cwd"] : process.cwd();
-    const result = coreCall(core, "resolveSkillMentions", [{ prompt, cwd }]);
+    const result = coreCall(core, "resolveSkillMentions", [{ prompt, cwd, ctx }]);
     if (!isRecord(result)) throw new Error("Invalid Taumel skill resolver result");
     notifyWarnings(result, ctx);
     const blocks = blockRecords(result);

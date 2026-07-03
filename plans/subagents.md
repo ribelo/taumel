@@ -13,8 +13,8 @@ agent with a typed profile, sends further messages, waits for runs, inspects
 status, and closes the agent. Nesting depth is exactly one, so child sessions
 never receive agent tools. OCaml owns the typed state machine, profile
 resolution, and run metadata; TypeScript owns the unavoidable Pi SDK calls.
-Model-visible outputs use XML-style markup; human rendering stays minimal and
-separate.
+Model-visible outputs may use XML-style markup; human rendering stays minimal,
+readable, and separate from that markup.
 
 ## Requirements
 
@@ -31,7 +31,7 @@ separate.
 - **sub-sp02** (event-driven): When `create_goal` is `false`, the system shall deliver `message` as a normal prompt and run a single non-goal turn with submission kind `message`.
 - **sub-sp03** (event-driven): When `create_goal` is `true`, the system shall create a child goal from `message` and pursue it with goal-mode mechanics, with submission kind `objective`.
 - **sub-sp04** (ubiquitous): The system shall output `agent_id`, `run_id`, `profile`, and `status = running` from a spawn.
-- **sub-sp05** (unwanted): If the profile is disabled for the session, then the system shall fail the spawn with a model-visible error naming `/agents enable <profile>`.
+- **sub-sp05** (ubiquitous): If a profile is disabled for the session, then normal model-facing discovery shall not present it as spawnable; direct stale/manual spawn attempts are outside the visibility UX contract.
 
 ### agent_send
 
@@ -67,7 +67,7 @@ separate.
 
 ### agent_profiles
 
-- **sub-pf01** (event-driven): When `agent_profiles` runs, the system shall return the valid profile catalog with per-session enabled/disabled state and disabled reason, sandbox summary, and canonical tool names, as XML-style markup including disabled profiles.
+- **sub-pf01** (event-driven): When `agent_profiles` runs, the system shall return the model-facing available profile catalog with sandbox summary and canonical tool names, omitting profiles disabled by current session visibility; user-facing `/agents` lists may still show disabled profiles.
 - **sub-pf02** (ubiquitous): The system shall keep the `agent_profiles` schema and description stable, so `/agents` toggles mutate neither the model schema nor the system prompt.
 
 ### Goal-mode continuation
@@ -107,9 +107,9 @@ separate.
 
 ### Session toggles and persistence
 
-- **sub-tg01** (ubiquitous): The system shall treat per-session toggles as session state in `taumel.agents`, leaving model tools, descriptions, and the system prompt unchanged across toggles.
-- **sub-tg02** (event-driven): When `agent_spawn` runs, the system shall check the session toggle at execution time and fail loudly for a disabled profile, keeping disabled profiles visible in `agent_profiles`.
-- **sub-tg03** (ubiquitous): The system shall start a new session with all startup-valid profiles enabled and restore toggles on `/resume`.
+- **sub-tg01** (ubiquitous): The system shall treat profile toggles as session-effective visibility state in `taumel.agents`, initialized from trusted project defaults only when no session state exists.
+- **sub-tg02** (event-driven): When a profile is disabled for the session, the user-facing `/agents` manager shall show it as disabled, while model-facing profile discovery shall avoid presenting it as an available choice.
+- **sub-tg03** (ubiquitous): The system shall start a new session with all startup-valid profiles enabled unless trusted project defaults disable them, and shall restore session toggles on `/resume`.
 - **sub-ps01** (ubiquitous): The system shall store profile toggles, durable identities, run metadata, and delivery flags in `taumel.agents`, storing metadata only and no raw text.
 - **sub-ps02** (event-driven): When a session resumes, the system shall restore identities and run state and mark runs persisted as `queued`, `running`, or `suspended` without a live worker as `lost` with reason `process_resumed_without_live_worker`, without auto-restarting them.
 - **sub-ps03** (ubiquitous): The system shall keep final output, transcripts, prompts, and tool logs Pi/worker-owned rather than in `taumel.agents`, and show final output as the default displayed output for completed runs.
@@ -125,13 +125,16 @@ separate.
 - **sub-mk02** (ubiquitous): The system shall mirror the same domain concepts in structured details and keep important semantic data in model-visible content and details rather than only in UI.
 - **sub-rn01** (ubiquitous): The system shall render subagent tools with one shared agent-event grammar keyed on run state, one line compact and minimal structured metadata plus final output or error expanded, never raw transcript or the XML envelope.
 - **sub-rn02** (ubiquitous): The system shall keep `agent_list` free of full terminal output, allowing only bounded summaries, with full output available through `agent_wait run_ids` or `/agent-runs output`.
-- **sub-rn03** (ubiquitous): The system shall render `agent_profiles` with a separate catalog renderer (counts compact; name, state, reason, sandbox, tools, and description expanded).
+- **sub-rn03** (ubiquitous): The system shall render `agent_profiles` with a separate catalog renderer (counts compact; name, enabled state, sandbox, tools, and description expanded).
+- **sub-rn04** (ubiquitous): The system shall render `agent_spawn` expanded output as human-readable profile/id/status fields plus the full message or objective that the parent sent, not as raw XML.
+- **sub-rn05** (ubiquitous): The system shall render `agent_wait` expanded output as grouped child responses with tiny run headers, not as raw XML, and shall show omitted timeouts as `until completion`, positive timeouts as `up to Ns`, and zero timeouts as `poll now`.
 
 ### Commands
 
-- **sub-cm01** (event-driven): When the user runs `/agents`, the system shall open an interactive profile toggle menu (with `list` and `enable`/`disable <profile>` forms) affecting the current session only and persisting immediately.
+- **sub-cm01** (event-driven): When the user runs `/agents` in TUI mode, the system shall open a cron-style profile manager that toggles the current session immediately and can save current disabled profiles to trusted project config with `Ctrl+S`.
 - **sub-cm02** (event-driven): When the user runs `/agent-runs`, the system shall provide inspect, stop, close, and output controls for identities and runs, where stop interrupts and keeps runs resumable and close permanently closes.
 - **sub-cm03** (ubiquitous): The system shall let disabling a profile block only new spawns, keeping existing agents on that profile sendable until stopped or closed and preserving their immutable profile.
+- **sub-cm04** (event-driven): The command forms `/agents list`, `/agents enable <profile>`, `/agents disable <profile>`, and `/agents save` shall work in TUI and non-TUI modes; `/agents` with no args shall list state in non-TUI modes.
 
 ### Sandbox and approval
 

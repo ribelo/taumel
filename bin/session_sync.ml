@@ -162,12 +162,29 @@ let load_agent_state ctx =
             (Failure ("Ignoring incompatible saved Taumel agents entry: " ^ message));
           agent_state := Taumel.Agent_runs.empty_session_state)
 
+let load_visibility_state ctx =
+  visibility_warning_flags := Taumel.Visibility.empty_warning_flags;
+  match Session_store.custom_entry_data ctx "taumel.visibility" with
+  | None ->
+      visibility_state :=
+        Taumel.Visibility.of_legacy_agents_state !agent_state
+  | Some data -> (
+      match Result.bind (json_from_js data) Taumel.Visibility.codec.decode with
+      | Ok state -> visibility_state := state
+      | Error message ->
+          report_session_sync_error "visibility state load"
+            (Failure
+               ("Ignoring incompatible saved Taumel visibility entry: " ^ message));
+          visibility_state :=
+            Taumel.Visibility.of_legacy_agents_state !agent_state)
+
 let load_session_state ctx =
   load_goal_state ctx;
   load_goal_automation_state ctx;
   load_permissions_state ctx;
   load_ralph_state ctx;
   load_agent_state ctx;
+  load_visibility_state ctx;
   last_goal_accounting_key := None;
   goal_turn_clock := Taumel.Goal.empty_clock;
   goal_retrying := false;
@@ -179,6 +196,7 @@ let has_persisted_component_entry ctx =
   || Session_store.custom_entry_data ctx "taumel.permissions" <> None
   || Session_store.custom_entry_data ctx "taumel.ralph" <> None
   || Session_store.custom_entry_data ctx "taumel.agents" <> None
+  || Session_store.custom_entry_data ctx "taumel.visibility" <> None
 
 let sync_persisted_session ?(reset_missing = true) ctx =
   let session_id = Session_store.session_id_from_ctx ctx in
@@ -230,6 +248,10 @@ let save_ralph_state ctx =
 let save_agent_state ctx =
   Session_store.append_custom_entry ctx "taumel.agents"
     (Taumel.Agent_runs_codec.session_state_codec.encode !agent_state)
+
+let save_visibility_state ctx =
+  Session_store.append_custom_entry ctx "taumel.visibility"
+    (Taumel.Visibility.codec.encode !visibility_state)
 
 let account_goal_turn_end ctx =
   let active_time_seconds, next_clock =

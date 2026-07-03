@@ -7,6 +7,8 @@ import type {
 
 import { executeComposerCommand } from "./composer.ts";
 import { executeCompactionModelCommand } from "./compaction-model.ts";
+import { executeCronManager } from "./cron-manager.ts";
+import { executeVisibilityManager, saveProjectVisibility } from "./visibility.ts";
 import {
   applyChildSessionUpdate,
   childSessionCacheKeyScopeFromContext,
@@ -17,12 +19,16 @@ import {
 
 import {
   childBridgeFacts,
+  contextIsLive,
   contextWithOverrides,
   coreCall,
   isRecord,
+  isStaleContextError,
+  stringArrayFromUnknown,
   stringArrayField,
   stringField,
 } from "./util.ts";
+import { toolNames } from "./tool-contracts.ts";
 
 function commandResultFromToolResult(core: CoreBridge, result: unknown): Record<string, unknown> {
   const converted = coreCall(core, "toolResultToCommandResult", [result]);
@@ -41,6 +47,42 @@ function hostIdle(_ctx: unknown): boolean {
   // Pi emits agent_end before some host surfaces report idle; this lifecycle event
   // is Taumel's idle boundary for goal continuation gating.
   return true;
+}
+
+function toolNameFromUnknown(value: unknown): string | undefined {
+  if (typeof value === "string" && value !== "") return value;
+  if (isRecord(value) && typeof value["name"] === "string" && value["name"] !== "") return value["name"];
+  return undefined;
+}
+
+function liveToolNames(pi: PiLike): string[] {
+  const fromRegistry =
+    typeof pi.getAllTools === "function"
+      ? pi.getAllTools().map(toolNameFromUnknown).filter((name): name is string => name !== undefined)
+      : [];
+  return [...new Set([...toolNames, ...fromRegistry])];
+}
+
+function syncActiveTools(pi: PiLike, core: CoreBridge, ctx: unknown, enabledName?: string): void {
+  if (typeof pi.getActiveTools !== "function" || typeof pi.setActiveTools !== "function") return;
+  let current = [...pi.getActiveTools()];
+  if (enabledName !== undefined && enabledName !== "" && !current.includes(enabledName) && liveToolNames(pi).includes(enabledName)) {
+    current = [...current, enabledName];
+    pi.setActiveTools(current);
+  }
+  const plan = coreCall(core, "planActiveToolsSync", [current, ctx]);
+  if (!isRecord(plan)) throw new Error("Invalid Taumel active tools sync plan");
+  const tools = stringArrayFromUnknown(plan["tools"]);
+  if (tools === undefined) throw new Error("Invalid Taumel active tools sync plan");
+  if (plan["changed"] === true) pi.setActiveTools(tools);
+}
+
+function applyVisibilityCommandSideEffects(pi: PiLike, core: CoreBridge, result: unknown, ctx: unknown): void {
+  if (!isRecord(result) || !isRecord(result["details"])) return;
+  const details = result["details"];
+  if (details["visibilityChanged"] !== true || details["category"] !== "tools") return;
+  const enabledName = typeof details["enabledName"] === "string" ? details["enabledName"] : undefined;
+  syncActiveTools(pi, core, ctx, enabledName);
 }
 
 function latestAssistantStopReason(event: unknown): string {
@@ -89,6 +131,7 @@ async function sendGoalContinuation(
   facts: Record<string, unknown>,
   event: unknown,
 ): Promise<void> {
+  if (!contextIsLive(ctx)) return;
   const plan = coreCall(core, "planGoalContinuation", [initial, facts, event, ctx]);
   if (!isRecord(plan)) throw new Error("Invalid Taumel goal continuation plan");
   const action = stringField(plan, "action");
@@ -96,16 +139,21 @@ async function sendGoalContinuation(
   if (action !== "send_goal_continuation") {
     throw new Error("Invalid Taumel goal continuation plan");
   }
-  await sendGoalMessage(
-    pi,
-    stringField(plan, "customType"),
-    stringField(plan, "content"),
-    plan["display"] === true,
-    {
-      triggerTurn: plan["triggerTurn"] === true,
-      deliverAs: stringField(plan, "deliverAs"),
-    },
-  );
+  try {
+    await sendGoalMessage(
+      pi,
+      stringField(plan, "customType"),
+      stringField(plan, "content"),
+      plan["display"] === true,
+      {
+        triggerTurn: plan["triggerTurn"] === true,
+        deliverAs: stringField(plan, "deliverAs"),
+      },
+    );
+  } catch (error) {
+    if (isStaleContextError(error)) return;
+    throw error;
+  }
 }
 
 async function executeGoalCommandSideEffects(
@@ -192,7 +240,16 @@ async function executeCronPrompt(
   prompt: Record<string, unknown>,
   ctx: unknown,
 ): Promise<unknown> {
-  return executeSelectionPrompt(core, prompt, ctx, "planCronPrompt", "finishCronPrompt", "cron");
+  return executeCronManager(core, prompt, ctx);
+}
+
+async function executeVisibilityPrompt(
+  pi: PiLike,
+  core: CoreBridge,
+  prompt: Record<string, unknown>,
+  ctx: unknown,
+): Promise<unknown> {
+  return executeVisibilityManager(core, prompt, ctx, (enabledName) => syncActiveTools(pi, core, ctx, enabledName));
 }
 
 async function executeCommandAction(
@@ -211,6 +268,15 @@ async function executeCommandAction(
       return executeAgentRunsPrompt(core, result, ctx);
     case "cron_prompt":
       return executeCronPrompt(core, result, ctx);
+    case "visibility_prompt":
+      return executeVisibilityPrompt(pi, core, result, ctx);
+    case "visibility_save_project": {
+      const category = stringField(result, "category");
+      if (category !== "agents" && category !== "tools" && category !== "skills") {
+        throw new Error("Invalid Taumel visibility save category");
+      }
+      return saveProjectVisibility(category, stringArrayFromUnknown(result["disabled"]) ?? [], result["details"], ctx);
+    }
     case "openai_usage_fetch":
       return commandResultFromToolResult(core, await executeOpenAiUsageWithHostAuth(pi, core, result, ctx));
     default:
@@ -266,6 +332,7 @@ export async function executeGatewayCommand(
 
   if (stringField(plan, "action") !== "command_child_session") {
     const result = await executeCommandAction(pi, core, callCore(ctx), ctx);
+    applyVisibilityCommandSideEffects(pi, core, result, ctx);
     await applyChildSessionUpdatesFromCommandResult(
       childSessions,
       result,
@@ -390,16 +457,22 @@ export function installGoalContinuationLoop(pi: PiLike, core: CoreBridge): void 
   }
 
   pi.on("agent_end", async (event, ctx) => {
-    observeSessionEvent(event);
-    const stopReason = latestAssistantStopReason(event);
-    if (stopReason === "aborted") {
-      coreCall(core, "interruptGoalAutomation", [ctx]);
+    try {
+      observeSessionEvent(event);
+      if (!contextIsLive(ctx)) return;
+      const stopReason = latestAssistantStopReason(event);
+      if (stopReason === "aborted") {
+        coreCall(core, "interruptGoalAutomation", [ctx]);
+      }
+      await sendGoalContinuation(pi, core, ctx, false, {
+        hostIdle: hostIdle(ctx),
+        hasPendingMessages: hasPendingMessages(ctx),
+        retrying: retrying || (isRecord(event) && event["willRetry"] === true),
+        compacting,
+      }, event);
+    } catch (error) {
+      if (isStaleContextError(error)) return;
+      throw error;
     }
-    await sendGoalContinuation(pi, core, ctx, false, {
-      hostIdle: hostIdle(ctx),
-      hasPendingMessages: hasPendingMessages(ctx),
-      retrying: retrying || (isRecord(event) && event["willRetry"] === true),
-      compacting,
-    }, event);
   });
 }

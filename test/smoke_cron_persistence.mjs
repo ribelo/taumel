@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { executeCronManager } from "../src/cron-manager.ts";
 
 const artifact = new URL("../dist/taumel.cjs", import.meta.url);
 const require = createRequire(import.meta.url);
@@ -61,14 +62,46 @@ const prompt = core.call("planCronPrompt", [
   { enabled: false, tasks: entries.at(-1)?.data?.tasks ?? [] },
   { uiAvailable: true },
 ]);
-assert.equal(prompt?.action, "select", `cron prompt should open a picker: ${JSON.stringify(prompt)}`);
-assert.equal(prompt?.title, "Manage cron tasks");
-assert(prompt?.labels?.includes("Enable cron"), `cron prompt should offer master enable: ${JSON.stringify(prompt)}`);
-assert(prompt?.labels?.some((label) => /^Disable task /.test(label)), `cron prompt should offer task disable: ${JSON.stringify(prompt)}`);
-assert(prompt?.labels?.some((label) => /^Cancel task /.test(label)), `cron prompt should offer task cancel: ${JSON.stringify(prompt)}`);
-assert(!prompt?.labels?.some((label) => /next=\d{10}/.test(label)), `cron prompt should not show raw epoch next times: ${JSON.stringify(prompt)}`);
+assert.equal(prompt?.action, "result", `deprecated cron prompt planner should not open multi-row picker: ${JSON.stringify(prompt)}`);
+assert(!Array.isArray(prompt?.labels), `deprecated cron prompt planner should not return action labels: ${JSON.stringify(prompt)}`);
 
-const disableLabel = prompt.labels.find((label) => /^Disable task /.test(label));
-const disabled = core.call("finishCronPrompt", [prompt, { status: "selected", selected: disableLabel }, ctx]);
+const taskId = entries.at(-1)?.data?.tasks?.[0]?.id;
+const disabled = core.call("handleCommand", ["cron", `disable ${taskId}`, ctx]);
 assert.equal(disabled?.details?.enabled, false, `task disable action should report disabled: ${JSON.stringify(disabled)}`);
 assert.equal(entries.at(-1)?.data?.tasks?.[0]?.enabled, false, "task disable action should persist task enabled=false");
+
+let renderedCronManagerLines = [];
+ctx.ui = {
+  custom: async (factory) => {
+    const component = factory(
+      { requestRender: () => undefined },
+      {
+        fg: (_color, text) => text,
+        bg: (_color, text) => text,
+        bold: (text) => text,
+      },
+      { matches: () => false },
+      () => undefined,
+    );
+    renderedCronManagerLines = component.render(120);
+    return { kind: "exit" };
+  },
+};
+const managerResult = await executeCronManager(core, { enabled: false, tasks: entries.at(-1)?.data?.tasks ?? [] }, ctx);
+assert.equal(managerResult?.ok, true, `cron manager should close cleanly: ${JSON.stringify(managerResult)}`);
+assert.equal(
+  renderedCronManagerLines.filter((line) => line.includes(taskId)).length,
+  1,
+  `cron manager should render one row per task: ${JSON.stringify(renderedCronManagerLines)}`,
+);
+assert(
+  !renderedCronManagerLines.some((line) => /Disable task|Cancel task/.test(line)),
+  `cron manager should not render action rows per task: ${JSON.stringify(renderedCronManagerLines)}`,
+);
+const headerLine = renderedCronManagerLines.find((line) => line.includes("ID") && line.includes("State"));
+const taskLine = renderedCronManagerLines.find((line) => line.includes(taskId));
+const masterLineIndex = renderedCronManagerLines.findIndex((line) => line.includes("Master switch:"));
+const headerLineIndex = renderedCronManagerLines.findIndex((line) => line === headerLine);
+assert(masterLineIndex >= 0 && masterLineIndex < headerLineIndex, "master switch row should be separate from the task table");
+assert.equal(headerLine?.indexOf("ID"), taskLine?.indexOf(taskId), "task id column should align with header");
+assert.equal(headerLine?.indexOf("State"), taskLine?.indexOf("disabled"), "task state column should align with header");

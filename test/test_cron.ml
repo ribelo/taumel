@@ -103,6 +103,53 @@ let test_coalescing_and_completion () =
   let state = Cron.complete_delivery ~now:60 delivery { Cron.enabled = true; tasks = [ one_shot ] } in
   assert_bool "one-shot deleted" (state.tasks = [])
 
+let test_task_updates () =
+  let pending = task "ffffffff" ~pending_since:(Some 60) ~next_due:60 in
+  let state = { Cron.enabled = true; tasks = [ pending ] } in
+
+  let prompt_updated =
+    expect_ok "update prompt" (Cron.update_task_prompt "ffffffff" "new prompt" state)
+  in
+  (match prompt_updated.tasks with
+  | [ updated ] ->
+      assert_bool "prompt updated" (updated.prompt = "new prompt");
+      assert_equal_int "prompt edit preserves next due" 60 updated.next_due;
+      assert_bool "prompt edit preserves pending" (updated.pending_since = Some 60)
+  | _ -> failwith "expected one prompt-updated task");
+
+  let schedule_updated =
+    expect_ok "update schedule"
+      (Cron.update_task_cron ~now:60 "ffffffff" "*/5 * * * *" state)
+  in
+  (match schedule_updated.tasks with
+  | [ updated ] ->
+      assert_bool "schedule updated" (updated.cron = "*/5 * * * *");
+      assert_equal_int "schedule edit recomputes next due" 300 updated.next_due;
+      assert_bool "schedule edit clears pending" (updated.pending_since = None)
+  | _ -> failwith "expected one schedule-updated task");
+
+  (match Cron.update_task_cron ~now:60 "ffffffff" "bad" state with
+  | Ok _ -> failwith "invalid schedule should fail"
+  | Error _ -> ());
+
+  let mode_updated =
+    expect_ok "update mode" (Cron.update_task_mode "ffffffff" Cron.Goal state)
+  in
+  (match mode_updated.tasks with
+  | [ updated ] ->
+      assert_bool "mode updated" (updated.mode = Cron.Goal);
+      assert_bool "mode edit preserves pending" (updated.pending_since = Some 60)
+  | _ -> failwith "expected one mode-updated task");
+
+  let recurring_updated =
+    expect_ok "update recurring" (Cron.update_task_recurring "ffffffff" false state)
+  in
+  match recurring_updated.tasks with
+  | [ updated ] ->
+      assert_bool "recurring updated" (not updated.recurring);
+      assert_bool "recurring edit preserves pending" (updated.pending_since = Some 60)
+  | _ -> failwith "expected one recurring-updated task"
+
 let test_startup_reason_matrix () =
   let armed =
     {
@@ -154,6 +201,7 @@ let () =
   test_disabled_state_holds_pending_fire ();
   test_disabled_task_holds_pending_fire ();
   test_coalescing_and_completion ();
+  test_task_updates ();
   test_startup_reason_matrix ();
   test_cron_expr_step_ranges ();
   test_cron_expr_local_time_and_dom_dow_or ()

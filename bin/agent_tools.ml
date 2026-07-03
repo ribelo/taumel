@@ -1064,9 +1064,13 @@ let render_agent_wait params owner_id ctx =
                  |]) );
         ]
 
-let js_profile_spec state (profile : Taumel.Agent_profiles.profile_spec) =
+let profile_visibility_enabled (profile : Taumel.Agent_profiles.profile_spec) =
+  Taumel.Visibility.is_enabled !visibility_state Taumel.Visibility.Agents
+    profile.spec_name
+
+let js_profile_spec (profile : Taumel.Agent_profiles.profile_spec) =
   let enabled =
-    Taumel.Agent_runs.profile_enabled state profile.spec_name
+    profile_visibility_enabled profile
   in
   Unsafe.obj
     [|
@@ -1076,12 +1080,17 @@ let js_profile_spec state (profile : Taumel.Agent_profiles.profile_spec) =
       ( "disabledReason",
         if enabled then inject Js.null
         else js_string "disabled for this session" );
-      ("sandbox", js_string (Taumel.Agent_profiles.sandbox_setting_to_summary profile.spec_sandbox));
-      ("tools", js_string (Taumel.Agent_profiles.tools_setting_to_summary profile.spec_tools));
+      ( "sandbox",
+        js_string
+          (Taumel.Agent_profiles.sandbox_setting_to_summary
+             profile.spec_sandbox) );
+      ( "tools",
+        js_string
+          (Taumel.Agent_profiles.tools_setting_to_summary profile.spec_tools) );
     |]
 
-let profile_summary state (profile : Taumel.Agent_profiles.profile_spec) =
-  let enabled = Taumel.Agent_runs.profile_enabled state profile.spec_name in
+let profile_summary (profile : Taumel.Agent_profiles.profile_spec) =
+  let enabled = profile_visibility_enabled profile in
   let disabled =
     if enabled then "" else "; disabledReason=disabled for this session"
   in
@@ -1099,8 +1108,8 @@ let profile_tool_xml = function
         (fun tool -> Printf.sprintf "    <tool name=\"%s\" />" (xml_attr tool))
         tools
 
-let profile_xml state (profile : Taumel.Agent_profiles.profile_spec) =
-  let enabled = Taumel.Agent_runs.profile_enabled state profile.spec_name in
+let profile_xml (profile : Taumel.Agent_profiles.profile_spec) =
+  let enabled = profile_visibility_enabled profile in
   let disabled_reason =
     if enabled then ""
     else " disabled_reason=\"disabled for this session\""
@@ -1120,24 +1129,29 @@ let profile_xml state (profile : Taumel.Agent_profiles.profile_spec) =
     @ [ "  </profile>" ])
 
 let render_profiles () =
-  let state = !agent_state in
   let catalog = !agent_catalog in
+  let visible_profiles =
+    catalog.catalog_profiles
+    |> List.filter (fun (profile : Taumel.Agent_profiles.profile_spec) ->
+           Taumel.Visibility.is_enabled !visibility_state
+             Taumel.Visibility.Agents profile.spec_name)
+  in
   let _profile_text =
-    match catalog.catalog_profiles with
+    match visible_profiles with
     | [] -> "No agent profiles."
-    | profiles -> String.concat "\n" (List.map (profile_summary state) profiles)
+    | profiles -> String.concat "\n" (List.map profile_summary profiles)
   in
   let text =
     match catalog.catalog_errors with
     | [] ->
         String.concat "\n"
           (["<taumel_agent_profiles>"]
-          @ List.map (profile_xml state) catalog.catalog_profiles
+          @ List.map profile_xml visible_profiles
           @ ["</taumel_agent_profiles>"])
     | errors ->
         String.concat "\n"
           (["<taumel_agent_profiles>"]
-          @ List.map (profile_xml state) catalog.catalog_profiles
+          @ List.map profile_xml visible_profiles
           @ [
               "  <error>";
               String.concat "\n" errors;
@@ -1156,8 +1170,7 @@ let render_profiles () =
                ("ok", js_bool true);
                ( "profiles",
                  js_array
-                   (List.map (js_profile_spec state)
-                      catalog.catalog_profiles) );
+                   (List.map js_profile_spec visible_profiles) );
                ("errors", js_array (List.map js_string catalog.catalog_errors));
              |]) );
     ]
@@ -1283,6 +1296,7 @@ let render_agent_close params (owner : Taumel.Subagents.owner) ctx now =
               close_tool_result ids))
 
 let prepare name params ctx =
+  Session_sync.sync_persisted_session ctx;
   with_gateway_authorized name (fun _ ->
       let owner = current_owner ctx in
       let now = now_seconds () in
@@ -1368,14 +1382,6 @@ let prepare name params ctx =
               match Taumel.Agent_profiles.find_profile_spec catalog request.name with
               | None -> error_obj ("unknown agent profile: " ^ request.name)
               | Some spec
-                when not
-                       (Taumel.Agent_runs.profile_enabled !agent_state
-                          request.name) ->
-                  error_obj
-                    ("agent profile is disabled for this session: "
-                   ^ request.name ^ "; enable it with /agents enable "
-                   ^ request.name)
-              | Some spec
                 when Taumel.Agent_runs.agent_id_used !agent_state request.id ->
                   error_obj
                     ("agent id was already used in this session: " ^ request.id)
@@ -1420,9 +1426,7 @@ let profiles_summary () =
   (!agent_catalog).catalog_profiles
   |> List.map (fun (profile : Taumel.Agent_profiles.profile_spec) ->
          let status =
-           if Taumel.Agent_runs.profile_enabled !agent_state profile.spec_name then
-             "enabled"
-           else "disabled"
+           if profile_visibility_enabled profile then "enabled" else "disabled"
          in
          profile.spec_name ^ " [" ^ status ^ "] - " ^ profile.spec_description)
   |> String.concat "\n"
@@ -1431,17 +1435,13 @@ let profiles_details () =
   Unsafe.obj
     [|
       ( "profiles",
-        js_array
-          (List.map (js_profile_spec !agent_state)
-             (!agent_catalog).catalog_profiles) );
+        js_array (List.map js_profile_spec (!agent_catalog).catalog_profiles) );
     |]
 
 let agent_menu_options () =
   (!agent_catalog).catalog_profiles
   |> List.map (fun (profile : Taumel.Agent_profiles.profile_spec) ->
-         let enabled =
-           Taumel.Agent_runs.profile_enabled !agent_state profile.spec_name
-         in
+         let enabled = profile_visibility_enabled profile in
          let verb = if enabled then "Disable" else "Enable" in
          let command = if enabled then "disable " else "enable " in
          js_agent_menu_option

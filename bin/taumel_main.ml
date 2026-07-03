@@ -75,6 +75,7 @@ let core_call name_js args_js =
   | "cronDelivered" -> Cron_tools.delivered (arg 0) (arg 1)
   | "cronGoalFacts" -> Cron_tools.goal_facts (arg 0)
   | "cronStartup" -> Cron_tools.startup (arg 0) (arg 1)
+  | "cronUpdateTask" -> Cron_tools.update_task (arg 0) (arg 1)
   | "planChildGoalContinuation" ->
       Goal_tools.plan_child_goal_continuation (arg 0)
   | "startGoalTurn" ->
@@ -115,6 +116,20 @@ let core_call name_js args_js =
   | "planCommandNotification" ->
       Tool_catalog_bridge.plan_command_notification (Unsafe.coerce (arg 0)) (arg 1)
         (arg 2)
+  | "visibilityRows" -> (
+      match Visibility_commands.category_of_name (string_arg args 0) with
+      | None -> error_obj "unknown visibility category"
+      | Some category -> Visibility_commands.rows category (arg 1))
+  | "toggleVisibilityRow" -> (
+      match Visibility_commands.category_of_name (string_arg args 0) with
+      | None -> error_obj "unknown visibility category"
+      | Some category ->
+          Visibility_commands.toggle_row category (string_arg args 1) (arg 2))
+  | "visibilityWarnings" -> Visibility_commands.warnings (arg 0)
+  | "reloadSessionState" ->
+      Session_sync.load_session_state (arg 0);
+      App_state.loaded_session_id := Some (Session_store.session_id_from_ctx (arg 0));
+      ok_obj []
   | "planAgentsPrompt" -> Agent_tools.plan_agents_prompt (arg 0) (arg 1)
   | "finishAgentsPrompt" -> Agent_tools.finish_agents_prompt (arg 0) (arg 1) (arg 2)
   | "planAgentRunsPrompt" -> Agent_tools.plan_agent_runs_prompt (arg 0) (arg 1)

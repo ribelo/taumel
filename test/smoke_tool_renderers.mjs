@@ -242,6 +242,11 @@ assert(patchCompact.includes("- beta"), `apply_patch collapsed should show the r
 assert(patchCompact.includes("+ BETA"), `apply_patch collapsed should show the added line: ${patchCompact}`);
 assert(!patchCompact.includes("  └ "), `apply_patch single-file body should use the line-number gutter, not the └ connector: ${patchCompact}`);
 assert(patchExpanded.includes("+ BETA") && patchExpanded.includes("- beta"), `apply_patch expanded should render the full diff: ${patchExpanded}`);
+const failedPatchResult = { content: [{ type: "text", text: "Patch failed: expected context not found\nat line 3" }], details: { ok: false, error: "expected context not found" } };
+const failedPatchCompact = renderText(renderersForTool("apply_patch").renderResult(failedPatchResult, { expanded: false, isPartial: false }, theme, { args: argsFor("apply_patch") }));
+const failedPatchExpanded = renderText(renderersForTool("apply_patch").renderResult(failedPatchResult, { expanded: true, isPartial: false }, theme, { args: argsFor("apply_patch") }));
+assert(failedPatchCompact.includes("Patch failed: expected context not found"), `failed apply_patch compact should show error reason: ${failedPatchCompact}`);
+assert(failedPatchExpanded.includes("at line 3"), `failed apply_patch expanded should show full error text: ${failedPatchExpanded}`);
 
 // read — collapsed is a single header line; expanded shows the body head-oriented.
 const readResult = {
@@ -275,6 +280,27 @@ assert(goalCompact.includes("  └ active · 10 tokens · 2s"), `create_goal fac
 
 const spawnCompact = renderText(renderersForTool("agent_spawn").renderResult(resultFor("agent_spawn"), { expanded: false, isPartial: false }, theme, { args: argsFor("agent_spawn") }));
 assert(/• agent_spawn · finder/.test(spawnCompact) && spawnCompact.includes("  └ run worker-1 · running"), `agent_spawn facts should be run <id> · <lifecycle>: ${spawnCompact}`);
+const spawnExpanded = renderText(renderersForTool("agent_spawn").renderResult(
+  { content: [{ type: "text", text: "<taumel_agent_spawn>raw xml</taumel_agent_spawn>" }], details: { ok: true, profile: "finder", agent_id: "finder-1", run_id: "finder-1-run-1", status: "running" } },
+  { expanded: true, isPartial: false },
+  theme,
+  { args: { profile: "finder", message: "inspect every file", create_goal: true } },
+));
+assert(spawnExpanded.includes("Objective sent:") && spawnExpanded.includes("inspect every file") && !spawnExpanded.includes("<taumel_agent_spawn>"), `agent_spawn expanded should render fields and sent objective, not XML: ${spawnExpanded}`);
+const waitPoll = renderText(renderersForTool("agent_wait").renderCall({ timeout_seconds: 0 }, theme, { isPartial: true }));
+const waitBounded = renderText(renderersForTool("agent_wait").renderCall({ agent_ids: ["finder-1"], timeout_seconds: 5 }, theme, { isPartial: true }));
+const waitForever = renderText(renderersForTool("agent_wait").renderCall({}, theme, { isPartial: true }));
+assert(waitPoll.includes("poll now") && waitBounded.includes("up to 5s") && waitForever.includes("until completion"), `agent_wait call labels should show poll/bounded/indefinite modes: ${JSON.stringify({ waitPoll, waitBounded, waitForever })}`);
+const waitExpanded = renderText(renderersForTool("agent_wait").renderResult(
+  { content: [{ type: "text", text: "<taumel_agent_wait>raw xml</taumel_agent_wait>" }], details: { ok: true, runs: [
+    { agent_id: "finder-1", run_id: "finder-1-run-1", status: "completed", finalOutput: "first child done", outputAvailable: true },
+    { agent_id: "review-2", run_id: "review-2-run-1", status: "failed", error: "review failed", outputAvailable: true },
+  ] } },
+  { expanded: true, isPartial: false },
+  theme,
+  { args: { run_ids: ["finder-1-run-1", "review-2-run-1"] } },
+));
+assert(waitExpanded.includes("finder-1 · finder-1-run-1 · completed") && waitExpanded.includes("first child done") && waitExpanded.includes("review failed") && !waitExpanded.includes("<taumel_agent_wait>"), `agent_wait expanded should group child responses without XML: ${waitExpanded}`);
 
 // Exa search — collapsed top 3 `idx · title · domain` (domain, not full URL).
 const exa = renderersForTool("web_search_exa");

@@ -26,9 +26,11 @@ import {
   applyChildActiveTools,
   childBridgeFacts,
   childSessionStartPlan,
+  contextIsLive,
   coreCall,
   execHostFacts,
   isRecord,
+  isStaleContextError,
   modelRegistryFrom,
   numberField,
   optionalNumberField,
@@ -989,6 +991,7 @@ async function flushPendingAgentNotifications(
   mode: NotificationDeliveryMode,
   pendingAgentWaits: PendingAgentWaits,
 ): Promise<void> {
+  if (!contextIsLive(ctx)) return;
   const result = coreCall(core, "pendingAgentNotifications", [ctx]);
   if (!isRecord(result)) return;
   const notifications = Array.isArray(result["notifications"]) ? result["notifications"] : [];
@@ -1038,6 +1041,7 @@ async function flushPendingExecNotifications(
   ctx: unknown,
   mode: NotificationDeliveryMode,
 ): Promise<void> {
+  if (!contextIsLive(ctx)) return;
   const ownerId = sessionInfoFromContext(ctx).sessionId ?? "current";
   const result = coreCall(core, "pendingExecNotifications", [ownerId]);
   if (!isRecord(result)) return;
@@ -1871,15 +1875,18 @@ export function registerGatewayTools(
       await flushPendingAgentNotifications(pi, core, ctx, "steer", pendingAgentWaits);
       await flushPendingExecNotifications(pi, core, ctx, "steer");
     } catch (error) {
+      if (isStaleContextError(error)) return;
       console.warn("Taumel agent turn_end notification flush failed:", error);
     }
   });
   pi.on("agent_end", (_event, ctx) => {
     setTimeout(() => {
       void flushPendingAgentNotifications(pi, core, ctx, "trigger", pendingAgentWaits).catch((error) => {
+        if (isStaleContextError(error)) return;
         console.warn("Taumel agent agent_end notification flush failed:", error);
       });
       void flushPendingExecNotifications(pi, core, ctx, "trigger").catch((error) => {
+        if (isStaleContextError(error)) return;
         console.warn("Taumel exec agent_end notification flush failed:", error);
       });
     }, 0);

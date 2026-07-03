@@ -47,7 +47,7 @@ thin bridge that registers the `input` handler and the `taumel.skill` renderer.
 
 - **skr-sc01** (ubiquitous): The system shall resolve `$name` skill mentions found anywhere in a submitted prompt by emitting each resolved skill as a separate custom message via `pi.sendMessage()`, then sending the original prose unchanged via `pi.sendUserMessage()`, and returning `{ action: "handled" }` from Pi's `input` event.
 - **skr-sc02** (ubiquitous): The system shall place discovery, mention recognition, and per‑skill block assembly in the OCaml core; the TypeScript host shall register the `input` handler and the `taumel.skill` message renderer.
-- **skr-sc03** (ubiquitous): The system shall run always‑on with no configuration surface, staying inert unless the prompt contains at least one mention that resolves to a known skill.
+- **skr-sc03** (ubiquitous): The system shall run always‑on under session-effective skill visibility controls, staying inert unless the prompt contains at least one mention that resolves to a known enabled skill.
 - **skr-sc04** (event‑driven): When `sendUserMessage` re‑triggers the `input` event with the unchanged prose, the system shall allow that one re-entry to return `{ action: "continue" }`, allowing the turn to proceed without infinite recursion while preserving the literal `$name` text.
 
 ### Token recognition
@@ -64,7 +64,7 @@ thin bridge that registers the `input` handler and the `taumel.skill` renderer.
 - **skr-ds01** (ubiquitous): The system shall build the name‑to‑skill map from the same sources Pi loads, in this precedence with first‑wins on name collision: user default `~/.pi/agent/skills`, project default `<cwd>/.pi/skills`, `skillPaths` from global then project settings, and `--skill` paths from the process arguments.
 - **skr-ds02** (ubiquitous): The system shall discover skills with Pi's rule — treat a directory containing `SKILL.md` as a skill root whose name is its frontmatter `name` (falling back to the directory name), and otherwise recurse into subdirectories.
 - **skr-ds03** (event‑driven): When a prompt contains at least one candidate mention, the system shall scan the sources at that moment and use the result for that turn only, holding no cache between turns.
-- **skr-ds04** (ubiquitous): The system shall resolve a mention to its skill regardless of that skill's `disable-model-invocation` flag, because a `$name` mention is an explicit user invocation.
+- **skr-ds04** (ubiquitous): The system shall resolve a mention to its skill regardless of that skill's `disable-model-invocation` flag, because a `$name` mention is an explicit user invocation; session-effective skill visibility still wins over that flag.
 - **skr-ds05** (ubiquitous): The system shall cover every skill a user configures through the sources in skr‑ds01; skills contributed at load time by other extensions stay out of scope, as Pi exposes no runtime API to enumerate them.
 - **skr-ds06** (ubiquitous): The system shall scan skill directories without applying `.gitignore`/`.ignore`/`.fdignore` filtering in v1.
 
@@ -80,6 +80,12 @@ thin bridge that registers the `input` handler and the `taumel.skill` renderer.
 ### Errors
 
 - **skr-er01** (event‑driven): When reading a matched skill's `SKILL.md` fails, the system shall omit that one block, continue emitting the remaining blocks, and emit one brief warning through the extension error channel.
+
+### Visibility controls
+
+- **skr-vs01** (event-driven): When a mentioned skill is disabled for the session, the resolver shall ignore that mention without emitting a skill block, warning, or error.
+- **skr-vs02** (event-driven): The skill autocomplete provider shall omit skills disabled for the session.
+- **skr-vs03** (event-driven): `/skills` in TUI mode shall open a cron-style skill manager; `/skills list`, `/skills enable <name>`, `/skills disable <name>`, and `/skills save` shall work in TUI and non-TUI modes.
 
 ### Architecture
 

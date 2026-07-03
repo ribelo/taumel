@@ -301,9 +301,16 @@ function subjectFromArgs(name: string, args: Record<string, unknown>): string {
     case "agent_wait": {
       const agentIds = Array.isArray(args["agent_ids"]) ? args["agent_ids"].length : 0;
       const runIds = Array.isArray(args["run_ids"]) ? args["run_ids"].length : 0;
-      if (runIds > 0) return `${runIds} run${runIds === 1 ? "" : "s"}`;
-      if (agentIds > 0) return `${agentIds} agent${agentIds === 1 ? "" : "s"}`;
-      return "active runs";
+      const timeout = numberField(args, "timeout_seconds");
+      const waitMode =
+        timeout === undefined ? "until completion" :
+        timeout === 0 ? "poll now" :
+        `up to ${timeout}s`;
+      const selector =
+        runIds > 0 ? `${runIds} run${runIds === 1 ? "" : "s"}` :
+        agentIds > 0 ? `${agentIds} agent${agentIds === 1 ? "" : "s"}` :
+        "active runs";
+      return `${selector} · ${waitMode}`;
     }
     case "agent_list":
       return args["include_closed"] === true ? "including closed" : "open agents";
@@ -563,6 +570,17 @@ function buildApplyPatch(name: string, result: unknown, options: unknown, theme:
   const deletes = stringArrayField(details, "deletes");
   const dotColor = dotFromDetails(details);
 
+  if (boolField(details, "ok") === false && writes.length === 0 && deletes.length === 0) {
+    const errorText = textContent(result) || stringField(details, "error") || compactJson(details);
+    const entries = expanded
+      ? fullTextEntries(errorText, theme)
+      : [{ text: themeFg(theme, "toolOutput", oneLine(errorText) || "apply_patch failed") }];
+    return {
+      header: headerSpec(name, subjectFromArgs(name, args), dotColor, theme),
+      body: { mode: "rail", entries },
+    };
+  }
+
   if (writes.length === 0 && deletes.length === 0) {
     return { header: headerSpec(name, subjectFromArgs(name, args), dotColor, theme), body: undefined };
   }
@@ -719,6 +737,8 @@ function buildReadThread(name: string, result: unknown, options: unknown, theme:
 function buildAgent(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
+  if (name === "agent_spawn") return buildAgentSpawn(name, result, expanded, theme, args);
+  if (name === "agent_wait") return buildAgentWait(name, result, expanded, theme, args);
   const workers = recordArrayField(details, "workers");
   const profiles = recordArrayField(details, "profiles");
   if (workers.length > 0) return buildCollection(name, details, options, theme, subjectFromArgs(name, args), workers);
@@ -735,6 +755,85 @@ function buildAgent(name: string, result: unknown, options: unknown, theme: unkn
   }
   if (expanded) entries.push(...fullTextEntries(textContent(result), theme));
   return { header, body: entries.length === 0 ? undefined : { mode: "rail", entries } };
+}
+
+function buildAgentSpawn(
+  name: string,
+  result: unknown,
+  expanded: boolean,
+  theme: unknown,
+  args: Record<string, unknown>,
+): Block {
+  const details = detailsRecord(result);
+  const worker = recordField(details, "worker");
+  const profile = stringField(details, "profile") ?? stringField(args, "profile") ?? "";
+  const agentId = stringField(details, "agent_id") ?? stringField(details, "workerId") ?? stringField(worker ?? {}, "id") ?? "";
+  const runId = stringField(details, "run_id") ?? "";
+  const status = stringField(details, "status") ?? stringField(worker ?? {}, "lifecycle") ?? "";
+  const header = headerSpec(name, subjectFromArgs(name, args), dotFromDetails(details), theme);
+  const facts = [agentId !== "" ? `run ${agentId}` : undefined, status].filter((part): part is string => part !== undefined && part !== "");
+  const entries: Entry[] = [];
+  if (facts.length > 0) entries.push({ text: themeFg(theme, "dim", facts.join(" · ")), exempt: true });
+  if (expanded) {
+    const message = stringField(args, "message") ?? stringField(args, "objective") ?? stringField(result as Record<string, unknown>, "prompt") ?? "";
+    const messageLabel = args["create_goal"] === true ? "Objective sent" : "Message sent";
+    for (const line of [
+      `Profile: ${profile}`,
+      `Agent id: ${agentId}`,
+      `Run id: ${runId}`,
+      `Status: ${status}`,
+      "",
+      `${messageLabel}:`,
+      message,
+    ]) {
+      entries.push({ text: themeFg(theme, line.endsWith(":") ? "dim" : "toolOutput", line) });
+    }
+  }
+  return { header, body: entries.length === 0 ? undefined : { mode: "rail", entries } };
+}
+
+function waitRunHeader(run: Record<string, unknown>, single: boolean): string {
+  const agentId = stringField(run, "agent_id") ?? "";
+  const runId = stringField(run, "run_id") ?? "";
+  const status = stringField(run, "status") ?? "";
+  if (single) return `${agentId}${agentId === "" ? "" : " "}${status}`.trim();
+  return [agentId, runId, status].filter((part) => part !== "").join(" · ");
+}
+
+function buildAgentWait(
+  name: string,
+  result: unknown,
+  expanded: boolean,
+  theme: unknown,
+  args: Record<string, unknown>,
+): Block {
+  const details = detailsRecord(result);
+  const header = headerSpec(name, subjectFromArgs(name, args), dotFromDetails(details), theme);
+  const runs = recordArrayField(details, "runs");
+  if (!expanded) return { header, body: undefined };
+  if (runs.length === 0) {
+    return {
+      header,
+      body: { mode: "rail", entries: [{ text: themeFg(theme, "dim", "(none)"), exempt: true }] },
+    };
+  }
+  const entries: Entry[] = [];
+  runs.forEach((run, index) => {
+    if (index > 0) entries.push({ text: "" });
+    entries.push({ text: themeFg(theme, "dim", waitRunHeader(run, runs.length === 1)), exempt: true });
+    const finalOutput = stringField(run, "finalOutput");
+    const error = stringField(run, "error");
+    const outputAvailable = boolField(run, "outputAvailable") !== false;
+    const body =
+      finalOutput !== undefined && finalOutput.trim() !== "" ? finalOutput :
+      error !== undefined && error.trim() !== "" ? error :
+      outputAvailable ? "" : "(output unavailable)";
+    if (body === "") return;
+    for (const line of body.split(/\r?\n/)) {
+      entries.push({ text: themeFg(theme, "toolOutput", line) });
+    }
+  });
+  return { header, body: { mode: "rail", entries } };
 }
 
 function buildRalph(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {

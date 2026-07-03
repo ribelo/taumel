@@ -46,6 +46,9 @@ let workers : Taumel.Subagents.worker list ref = ref []
 let exec_policy : Taumel.Exec_policy.compiled ref = ref Taumel.Exec_policy.empty
 let agent_state : Taumel.Agent_runs.session_state ref =
   ref Taumel.Agent_runs.empty_session_state
+let visibility_state : Taumel.Visibility.t ref = ref Taumel.Visibility.empty
+let visibility_warning_flags : Taumel.Visibility.warning_flags ref =
+  ref Taumel.Visibility.empty_warning_flags
 let agent_catalog : Taumel.Agent_profiles.profile_catalog ref =
   ref Taumel.Agent_profiles.default_profile_catalog
 let loaded_session_id : string option ref = ref None

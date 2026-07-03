@@ -1,4 +1,5 @@
 open Jsoo_bridge
+open App_state
 
 type skill = { name : string; path : string; base_dir : string; description : string }
 
@@ -176,16 +177,25 @@ let discover_skills cwd =
   Hashtbl.fold (fun _ skill acc -> skill :: acc) table []
   |> List.sort (fun a b -> compare a.name b.name)
 
+let skill_enabled name =
+  Taumel.Visibility.is_enabled !visibility_state Taumel.Visibility.Skills name
+
 let list_skills params =
   let cwd = match optional_string_field params "cwd" with Some cwd when cwd <> "" -> cwd | _ -> "." in
+  let include_disabled = get_bool params "includeDisabled" in
   Unsafe.obj
     [|
       ( "skills",
-        discover_skills cwd |> List.map skill_payload |> Array.of_list |> Js.array
+        discover_skills cwd
+        |> List.filter (fun skill -> include_disabled || skill_enabled skill.name)
+        |> List.map skill_payload |> Array.of_list |> Js.array
         |> Unsafe.inject );
     |]
 
 let resolve_mentions params =
+  (match optional_field params "ctx" with
+  | None -> ()
+  | Some ctx -> Session_sync.sync_persisted_session ctx);
   let prompt = get_string params "prompt" in
   let names = Taumel.Skill_resolver.mentions prompt in
   if names = [] then Unsafe.obj [| ("blocks", Unsafe.inject (Js.array [||])); ("warnings", Unsafe.inject (Js.array [||])) |]
@@ -199,6 +209,7 @@ let resolve_mentions params =
       (fun name ->
         match Hashtbl.find_opt table name with
         | None -> ()
+        | Some skill when not (skill_enabled skill.name) -> ()
         | Some skill -> (
             match read_file skill.path with
             | None -> warnings := warning ("Could not read skill: " ^ name) :: !warnings

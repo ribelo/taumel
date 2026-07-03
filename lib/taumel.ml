@@ -23,6 +23,7 @@ module Agent_profiles = Agent_profiles
 module Agent_runs = Agent_runs
 module Agent_runs_codec = Agent_runs_codec
 module Thread_tools = Thread_tools
+module Visibility = Visibility
 module Tool_catalog = Tool_catalog
 module Tool_gateway = Tool_gateway
 module Usage = Usage

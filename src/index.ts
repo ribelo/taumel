@@ -16,6 +16,7 @@ import { installCronLoop } from "./cron.ts";
 import { toolNames } from "./tool-contracts.ts";
 import { installSkillResolver } from "./skills.ts";
 import { skillMessageRenderer } from "./tool-renderer.ts";
+import { installVisibilityLifecycle } from "./visibility.ts";
 
 function requireCoreBridge(core: CoreBridge | undefined): CoreBridge {
   if (!core) {
@@ -279,6 +280,7 @@ export default async function taumel(pi: PiLike) {
   const core = requireCoreBridge(coreGlobal.taumel);
 
   core.init(makeHost(pi));
+  installVisibilityLifecycle(pi, core);
   const childSessions = new Map<string, ChildSessionBridge>();
   const composer = await createComposerController(pi);
   installSkillAutocomplete(pi, core, composer);
