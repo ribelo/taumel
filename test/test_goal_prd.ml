@@ -39,6 +39,45 @@ let test_turn_clock_excludes_pause_time () =
   assert_bool "elapsed excludes nested pause" (elapsed = 6);
   assert_bool "clock resets" (clock = Goal.empty_clock)
 
+let test_pending_terminal_accounting () =
+  let goal =
+    expect_ok "create"
+      (Goal.create ~thread_id:"thread" ~now:1 "finish with telemetry" None)
+  in
+  let terminal_goal = { goal with status = Goal.Complete; updated_at = 2 } in
+  let branch =
+    [
+      Shared.Object
+        [
+          ( "message",
+            Shared.Object
+              [
+                ("role", Shared.String "assistant");
+                ( "usage",
+                  Shared.Object
+                    [
+                      ("input_tokens", Shared.Number 20.);
+                      ("cached_input_tokens", Shared.Number 5.);
+                      ("output_tokens", Shared.Number 7.);
+                    ] );
+              ] );
+        ];
+    ]
+  in
+  let accounted =
+    Goal.account_turn_end ~pending_terminal_status:Goal.Complete
+      ~session_id:"session" ~now:9 ~active_time_seconds:4
+      ~last_accounting_key:None ~branch (Some terminal_goal)
+  in
+  assert_bool "pending terminal accounting changed" accounted.changed;
+  match accounted.goal with
+  | Some goal ->
+      assert_bool "terminal status reapplied" (goal.status = Goal.Complete);
+      assert_bool "terminal tokens accounted" (goal.tokens_used = 22);
+      assert_bool "terminal time accounted" (goal.time_used_seconds = 4);
+      assert_bool "terminal updated at accounting time" (goal.updated_at = 9)
+  | None -> failwith "pending terminal accounting returned no goal"
+
 let facts ?(automation = Goal.Automation_enabled) ?(host_idle = true)
     ?(has_pending_messages = false) ?(retrying = false) ?(compacting = false)
     ?latest_assistant_stop_reason goal =
@@ -160,6 +199,7 @@ let test_legacy_goal_rejected () =
 let () =
   test_time_limit_accounting ();
   test_turn_clock_excludes_pause_time ();
+  test_pending_terminal_accounting ();
   test_continuation_gates ();
   test_automation_codec ();
   test_commands ();

@@ -1,5 +1,6 @@
 open Jsoo_bridge
 open App_state
+open Runtime_access
 
 let prepare_find params =
   with_gateway_authorized "find_thread" (fun _ ->

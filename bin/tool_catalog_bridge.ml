@@ -1,4 +1,5 @@
 open Jsoo_bridge
+open Runtime_access
 
 let js_command_spec (spec : Taumel.Tool_catalog.command_spec) =
   Unsafe.obj
@@ -78,7 +79,7 @@ let tool_policy_names_js () =
   js_array (List.map js_string Taumel.Tool_catalog.tool_names)
 
 let allowed_tool_names_js () =
-  Taumel.Tool_gateway.exposeable_specs (App_state.active_profile ())
+  Taumel.Tool_gateway.exposeable_specs (active_profile ())
     Taumel.Runtime_policy.gateway_registry
   |> List.map (fun (spec : Taumel.Tool_gateway.spec) -> spec.name)
   |> js_array_of_strings

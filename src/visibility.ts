@@ -1,10 +1,26 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { Key, type KeyId, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Key, truncateToWidth } from "@earendil-works/pi-tui";
 
 import type { CoreBridge, PiLike } from "./types.ts";
 import { coreCallOptionalRecord, coreCallRecord, isRecord, stringArrayFromUnknown, stringField, writeFileAtomically } from "./util.ts";
 import { toolNames } from "./tool-contracts.ts";
+import {
+  bg,
+  bold,
+  column,
+  commandResult,
+  fg,
+  matchesSelect,
+  mutationOk,
+  notify,
+  requestRenderFromTui,
+  resultMessage,
+  type KeybindingsLike,
+  type ThemeLike,
+  type UiLike,
+  uiFromContext,
+} from "./manager-kit.ts";
 
 type Category = "agents" | "tools" | "skills";
 
@@ -23,18 +39,6 @@ type VisibilityState = {
   readonly unavailable: readonly string[];
 };
 
-type ThemeLike = {
-  readonly fg?: (color: string, text: string) => string;
-  readonly bg?: (color: string, text: string) => string;
-  readonly bold?: (text: string) => string;
-};
-
-type KeybindingsLike = {
-  readonly matches?: (data: string, id: string) => boolean;
-};
-
-type UiLike = Record<string, unknown>;
-
 type ManagerAction = { readonly kind: "exit" };
 
 type MutationOutcome = {
@@ -49,15 +53,6 @@ type ManagerCallbacks = {
   readonly onSave: () => Promise<MutationOutcome>;
   readonly requestRender: () => void;
 };
-
-function uiFromContext(ctx: unknown): UiLike | undefined {
-  return isRecord(ctx) && isRecord(ctx["ui"]) ? ctx["ui"] : undefined;
-}
-
-function notify(ui: UiLike | undefined, message: string, level: "info" | "warning" = "info"): void {
-  const fn = ui?.["notify"];
-  if (typeof fn === "function") fn.call(ui, message, level);
-}
 
 function isProjectTrusted(ctx: unknown): boolean {
   if (!isRecord(ctx)) return false;
@@ -173,41 +168,6 @@ function seedVisibilityFromProject(ctx: unknown): boolean {
   return true;
 }
 
-function fg(theme: ThemeLike, color: string, text: string): string {
-  return typeof theme.fg === "function" ? theme.fg(color, text) : text;
-}
-
-function bg(theme: ThemeLike, color: string, text: string): string {
-  return typeof theme.bg === "function" ? theme.bg(color, text) : text;
-}
-
-function bold(theme: ThemeLike, text: string): string {
-  return typeof theme.bold === "function" ? theme.bold(text) : text;
-}
-
-function padToWidth(text: string, width: number): string {
-  return text + " ".repeat(Math.max(0, width - visibleWidth(text)));
-}
-
-function column(text: string, width: number): string {
-  return padToWidth(truncateToWidth(text, width, "..."), width);
-}
-
-function keybindingMatches(keybindings: unknown, data: string, id: string): boolean {
-  if (!isRecord(keybindings)) return false;
-  const matches = keybindings["matches"];
-  if (typeof matches !== "function") return false;
-  try {
-    return matches.call(keybindings, data, id) === true;
-  } catch {
-    return false;
-  }
-}
-
-function matchesSelect(keybindings: unknown, data: string, id: string, fallback: KeyId): boolean {
-  return keybindingMatches(keybindings, data, id) || matchesKey(data, fallback);
-}
-
 function isCtrlS(data: string): boolean {
   return data === "\x13";
 }
@@ -242,18 +202,6 @@ function detailsFromCommandResult(result: unknown): unknown {
 function loadVisibilityState(core: CoreBridge, category: Category, ctx: unknown): VisibilityState {
   const result = coreCallRecord(core, "visibilityRows", [category, ctx], "visibility rows");
   return parseRows(detailsFromCommandResult(result));
-}
-
-function commandResult(ok: boolean, message: string, details: Record<string, unknown>): Record<string, unknown> {
-  return { ok, action: "command_result", message, ...(ok ? {} : { error: message }), details };
-}
-
-function resultMessage(result: Record<string, unknown>): string {
-  return typeof result["message"] === "string" ? result["message"] : "Visibility updated.";
-}
-
-function mutationOk(result: Record<string, unknown>): boolean {
-  return result["ok"] === true;
 }
 
 class VisibilityManagerComponent {
@@ -464,9 +412,7 @@ export async function executeVisibilityManager(
     keybindings: KeybindingsLike,
     done: (action: ManagerAction) => void,
   ) => {
-    const requestRender = () => {
-      if (isRecord(tui) && typeof tui["requestRender"] === "function") tui["requestRender"].call(tui);
-    };
+    const requestRender = requestRenderFromTui(tui);
     return new VisibilityManagerComponent(state, theme, keybindings, {
       onDone: done,
       requestRender,
@@ -479,7 +425,7 @@ export async function executeVisibilityManager(
           : undefined;
         if (category === "tools") syncTools(enabledName);
         state = loadVisibilityState(core, category, ctx);
-        const message = resultMessage(result);
+        const message = resultMessage(result, "Visibility updated.");
         notify(ui, message, ok ? "info" : "warning");
         return { ok, message, state };
       },
@@ -487,7 +433,7 @@ export async function executeVisibilityManager(
         const result = await saveFromCore(core, category, ctx);
         const ok = mutationOk(result);
         state = loadVisibilityState(core, category, ctx);
-        const message = resultMessage(result);
+        const message = resultMessage(result, "Visibility updated.");
         notify(ui, message, ok ? "info" : "warning");
         return { ok, message, state };
       },

@@ -1,5 +1,6 @@
 open Jsoo_bridge
 open App_state
+open Runtime_access
 
 let controller_session_id_from_ctx ctx =
   match optional_string_field ctx "taumelRalphControllerSessionId" with

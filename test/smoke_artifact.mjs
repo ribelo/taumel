@@ -27,11 +27,48 @@ if (
 const handlers = new Map();
 let footerFactory;
 let renderRequests = 0;
+let firstCostReads = 0;
+let tailCostReads = 0;
+let appendedCostReads = 0;
 
 const pushHandler = (event, handler) => {
   const list = handlers.get(event) ?? [];
   list.push(handler);
   handlers.set(event, list);
+};
+
+const assistantCostMessage = (value, counter) => {
+  const cost = {};
+  Object.defineProperty(cost, "total", {
+    configurable: true,
+    get() {
+      counter();
+      return value;
+    },
+  });
+  return {
+    type: "message",
+    message: { role: "assistant", content: `cost ${value}`, usage: { cost } },
+  };
+};
+
+const branch = [
+  { type: "message", message: { role: "user", content: "artifact smoke" } },
+  assistantCostMessage(0.1, () => {
+    firstCostReads += 1;
+  }),
+  assistantCostMessage(0.025, () => {
+    tailCostReads += 1;
+  }),
+];
+
+const ctx = {
+  ui: {},
+  sessionManager: {
+    getSessionId: () => "artifact-session",
+    getEntries: () => [],
+    getBranch: () => branch,
+  },
 };
 
 core.init({
@@ -63,7 +100,7 @@ core.init({
 });
 
 for (const handler of handlers.get("session_start") ?? []) {
-  handler({ type: "session_start" }, { ui: {} });
+  handler({ type: "session_start" }, ctx);
 }
 
 if (typeof footerFactory !== "function") {
@@ -74,6 +111,33 @@ const component = footerFactory({}, {}, {});
 const lines = component.render(120);
 if (!Array.isArray(lines) || typeof lines[0] !== "string") {
   throw new Error(`footer render did not return lines: ${JSON.stringify(lines)}`);
+}
+if (!lines[0].includes("$0.125")) {
+  throw new Error(`footer did not use branch-local cost: ${JSON.stringify(lines)}`);
+}
+if (firstCostReads === 0 || tailCostReads === 0) {
+  throw new Error(`artifact smoke did not exercise branch cost reads: ${JSON.stringify({ firstCostReads, tailCostReads })}`);
+}
+
+const firstReadsAfterStart = firstCostReads;
+for (const handler of handlers.get("session_switch") ?? []) {
+  handler({ type: "session_switch" }, ctx);
+}
+if (firstCostReads !== firstReadsAfterStart) {
+  throw new Error(`same-length session sync rescanned old branch costs: ${firstCostReads}`);
+}
+
+branch.push(
+  assistantCostMessage(0.25, () => {
+    appendedCostReads += 1;
+  }),
+);
+for (const handler of handlers.get("model_select") ?? []) {
+  handler({ type: "model_select" }, ctx);
+}
+const updatedLines = component.render(120);
+if (!updatedLines[0].includes("$0.375") || appendedCostReads === 0) {
+  throw new Error(`incremental branch cost did not update after append: ${JSON.stringify(updatedLines)}`);
 }
 component.dispose();
 

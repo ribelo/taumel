@@ -346,19 +346,51 @@ let account_turn_key ~session_id ~branch_length usage =
   Printf.sprintf "%s:%d:%d:%d:%d" session_id branch_length usage.input_tokens
     usage.cached_input_tokens usage.output_tokens
 
-let account_turn_end ~session_id ~now ~active_time_seconds ~last_accounting_key
-    ~branch (store : store) =
-  match (store, latest_assistant_usage branch) with
-  | Some goal, Some (branch_length, usage) when goal.status = Active ->
-      let accounting_key = account_turn_key ~session_id ~branch_length usage in
-      if last_accounting_key = Some accounting_key then
-        { goal = store; accounting_key = last_accounting_key; changed = false }
-      else
-        let updated =
-          account_usage ~now ~time_delta_seconds:active_time_seconds usage goal
-        in
-        { goal = Some updated; accounting_key = Some accounting_key; changed = true }
-  | _ -> { goal = store; accounting_key = last_accounting_key; changed = false }
+let apply_pending_terminal_status ~now pending_terminal_status result =
+  match (pending_terminal_status, result.goal) with
+  | Some status, Some goal ->
+      {
+        result with
+        goal = Some { goal with status; updated_at = now };
+        changed = true;
+      }
+  | Some _, None -> { result with changed = true }
+  | None, _ -> result
+
+let account_turn_end ?pending_terminal_status ~session_id ~now
+    ~active_time_seconds ~last_accounting_key ~branch (store : store) =
+  let accounting_store =
+    match (pending_terminal_status, store) with
+    | Some _, Some goal -> Some { goal with status = Active }
+    | _ -> store
+  in
+  let result =
+    match (accounting_store, latest_assistant_usage branch) with
+    | Some goal, Some (branch_length, usage) when goal.status = Active ->
+        let accounting_key = account_turn_key ~session_id ~branch_length usage in
+        if last_accounting_key = Some accounting_key then
+          {
+            goal = accounting_store;
+            accounting_key = last_accounting_key;
+            changed = false;
+          }
+        else
+          let updated =
+            account_usage ~now ~time_delta_seconds:active_time_seconds usage goal
+          in
+          {
+            goal = Some updated;
+            accounting_key = Some accounting_key;
+            changed = true;
+          }
+    | _ ->
+        {
+          goal = accounting_store;
+          accounting_key = last_accounting_key;
+          changed = false;
+        }
+  in
+  apply_pending_terminal_status ~now pending_terminal_status result
 
 let empty_clock =
   {

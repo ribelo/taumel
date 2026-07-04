@@ -1,5 +1,6 @@
 open Jsoo_bridge
 open App_state
+open Runtime_access
 
 let report_session_sync_error scope error =
   let console = Unsafe.get Unsafe.global "console" in
@@ -20,27 +21,121 @@ let message_cost entry =
   in
   if get_string message "role" <> "assistant" then None
   else
-    match first_object_field message [ "usage" ] with
+    match object_field message "usage" with
     | None -> None
     | Some usage -> (
-        match first_object_field usage [ "cost" ] with
+        match object_field usage "cost" with
         | None -> None
         | Some cost ->
             if not (has_property cost "total") then None
             else
               float_field cost "total")
 
+let assistant_message entry =
+  let message =
+    match object_field entry "message" with
+    | Some value -> value
+    | None -> entry
+  in
+  get_string message "role" = "assistant"
+
+type total_cost_cache = {
+  session_id : string;
+  branch_length : int;
+  total : float;
+  last_assistant_index : int option;
+  last_assistant_entry : Unsafe.any option;
+  last_assistant_cost : float option;
+}
+
+let total_cost_cache : total_cost_cache option ref = ref None
+
+let js_strict_equal =
+  let equal = Unsafe.js_expr "((a, b) => a === b)" in
+  fun left right ->
+    Js.to_bool (Unsafe.coerce (Unsafe.fun_call equal [| left; right |]))
+
+type total_cost_acc = {
+  acc_total : float;
+  acc_last_assistant_index : int option;
+  acc_last_assistant_entry : Unsafe.any option;
+  acc_last_assistant_cost : float option;
+}
+
+let scan_cost_entries entries ~start acc =
+  let next = ref acc in
+  for index = start to Array.length entries - 1 do
+    let entry = entries.(index) in
+    let cost = message_cost entry in
+    Option.iter
+      (fun cost ->
+        next := { !next with acc_total = !next.acc_total +. cost })
+      cost;
+    if assistant_message entry then
+      next :=
+        {
+          !next with
+          acc_last_assistant_index = Some index;
+          acc_last_assistant_entry = Some entry;
+          acc_last_assistant_cost = cost;
+        }
+  done;
+  !next
+
+let empty_cost_acc =
+  {
+    acc_total = 0.0;
+    acc_last_assistant_index = None;
+    acc_last_assistant_entry = None;
+    acc_last_assistant_cost = None;
+  }
+
+let cache_acc session_id branch_length acc =
+  total_cost_cache :=
+    Some
+      {
+        session_id;
+        branch_length;
+        total = acc.acc_total;
+        last_assistant_index = acc.acc_last_assistant_index;
+        last_assistant_entry = acc.acc_last_assistant_entry;
+        last_assistant_cost = acc.acc_last_assistant_cost;
+      };
+  acc.acc_total
+
+let cache_total_cost session_id entries =
+  let branch_length = Array.length entries in
+  let cache_scan acc = cache_acc session_id branch_length acc in
+  let recompute () = cache_scan (scan_cost_entries entries ~start:0 empty_cost_acc) in
+  match !total_cost_cache with
+  | Some cache
+    when cache.session_id = session_id && cache.branch_length <= branch_length -> (
+      let same_last_assistant =
+        match (cache.last_assistant_index, cache.last_assistant_entry) with
+        | None, None -> true
+        | Some index, Some previous when index < branch_length ->
+            js_strict_equal previous entries.(index)
+            && message_cost entries.(index) = cache.last_assistant_cost
+        | _ -> false
+      in
+      if not same_last_assistant then recompute ()
+      else if cache.branch_length = branch_length then cache.total
+      else
+        cache_scan
+          (scan_cost_entries entries ~start:cache.branch_length
+             {
+               acc_total = cache.total;
+               acc_last_assistant_index = cache.last_assistant_index;
+               acc_last_assistant_entry = cache.last_assistant_entry;
+               acc_last_assistant_cost = cache.last_assistant_cost;
+             }))
+  | _ -> recompute ()
+
 let total_cost_from_ctx ctx =
-  match Session_store.branch_entries_opt ctx with
+  match Session_store.branch_entries_array_opt ctx with
   | None -> None
   | Some entries ->
-      Some
-        (List.fold_left
-           (fun total entry ->
-             match message_cost entry with
-             | None -> total
-             | Some cost -> total +. cost)
-           0.0 entries)
+      Some (cache_total_cost (Session_store.session_id_from_ctx ctx) entries)
 
 let bool_of_flag_string value =
   match String.lowercase_ascii (String.trim value) with
@@ -260,26 +355,16 @@ let account_goal_turn_end ctx =
   in
   goal_turn_clock := next_clock;
   let now = now_seconds () in
-  let store_for_accounting =
-    match (!pending_goal_terminal_status, !current_goal) with
-    | Some _, Some goal -> Some { goal with status = Taumel.Goal.Active }
-    | _ -> !current_goal
-  in
   let result =
     Taumel.Goal.account_turn_end
+      ?pending_terminal_status:!pending_goal_terminal_status
       ~session_id:(Session_store.session_id_from_ctx ctx) ~now
       ~active_time_seconds ~last_accounting_key:!last_goal_accounting_key
-      ~branch:(Session_store.branch_json_entries ctx) store_for_accounting
+      ~branch:(Session_store.branch_json_entries ctx) !current_goal
   in
-  let result_goal =
-    match (!pending_goal_terminal_status, result.goal) with
-    | Some status, Some goal -> Some { goal with status; updated_at = now }
-    | _ -> result.goal
-  in
-  let changed = result.changed || !pending_goal_terminal_status <> None in
   pending_goal_terminal_status := None;
-  if changed then (
-    current_goal := result_goal;
+  if result.changed then (
+    current_goal := result.goal;
     last_goal_accounting_key := result.accounting_key;
     save_goal_state ctx)
 

@@ -1,5 +1,6 @@
 open Jsoo_bridge
 open App_state
+open Runtime_access
 
 let js_optional_int = function
   | None -> Unsafe.inject Js.null

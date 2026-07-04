@@ -1,7 +1,23 @@
-import { Key, type KeyId, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { Key, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 
 import type { CoreBridge } from "./types.ts";
 import { coreCallOptionalRecord, coreCallRecord, isRecord, stringField } from "./util.ts";
+import {
+  bg,
+  bold,
+  column,
+  commandResult,
+  fg,
+  matchesSelect,
+  mutationOk,
+  notify,
+  requestRenderFromTui,
+  resultMessage,
+  type KeybindingsLike,
+  type ThemeLike,
+  type UiLike,
+  uiFromContext,
+} from "./manager-kit.ts";
 
 type CronMode = "message" | "goal";
 
@@ -39,27 +55,11 @@ type MutationOutcome = {
   readonly state: CronState;
 };
 
-type ThemeLike = {
-  readonly fg?: (color: string, text: string) => string;
-  readonly bg?: (color: string, text: string) => string;
-  readonly bold?: (text: string) => string;
-};
-
-type KeybindingsLike = {
-  readonly matches?: (data: string, id: string) => boolean;
-};
-
-type UiLike = Record<string, unknown>;
-
 type CronManagerCallbacks = {
   readonly onDone: (action: ManagerAction) => void;
   readonly onMutate: (action: MutationAction) => Promise<MutationOutcome>;
   readonly requestRender: () => void;
 };
-
-function commandResult(ok: boolean, message: string, details: Record<string, unknown>): Record<string, unknown> {
-  return { ok, action: "command_result", message, ...(ok ? {} : { error: message }), details };
-}
 
 function boolFlag(record: Record<string, unknown>, name: string): boolean {
   return record[name] === true;
@@ -105,35 +105,6 @@ function loadCronState(core: CoreBridge, ctx: unknown): CronState {
   return parseStateFromDetails(result["details"]);
 }
 
-function uiFromContext(ctx: unknown): UiLike | undefined {
-  return isRecord(ctx) && isRecord(ctx["ui"]) ? ctx["ui"] : undefined;
-}
-
-function notify(ui: UiLike | undefined, message: string, level: "info" | "warning" = "info"): void {
-  const fn = ui?.["notify"];
-  if (typeof fn === "function") fn.call(ui, message, level);
-}
-
-function fg(theme: ThemeLike, color: string, text: string): string {
-  return typeof theme.fg === "function" ? theme.fg(color, text) : text;
-}
-
-function bg(theme: ThemeLike, color: string, text: string): string {
-  return typeof theme.bg === "function" ? theme.bg(color, text) : text;
-}
-
-function bold(theme: ThemeLike, text: string): string {
-  return typeof theme.bold === "function" ? theme.bold(text) : text;
-}
-
-function padToWidth(text: string, width: number): string {
-  return text + " ".repeat(Math.max(0, width - visibleWidth(text)));
-}
-
-function column(text: string, width: number): string {
-  return padToWidth(truncateToWidth(text, width, "…"), width);
-}
-
 function taskTableRow(
   id: string,
   state: string,
@@ -150,21 +121,6 @@ function taskTableRow(
     column(type, 9),
     next,
   ].join("  ");
-}
-
-function keybindingMatches(keybindings: unknown, data: string, id: string): boolean {
-  if (!isRecord(keybindings)) return false;
-  const matches = keybindings["matches"];
-  if (typeof matches !== "function") return false;
-  try {
-    return matches.call(keybindings, data, id) === true;
-  } catch {
-    return false;
-  }
-}
-
-function matchesSelect(keybindings: unknown, data: string, id: string, fallback: KeyId): boolean {
-  return keybindingMatches(keybindings, data, id) || matchesKey(data, fallback);
 }
 
 function normalizeCronInput(input: string): string {
@@ -446,14 +402,6 @@ function updateTask(core: CoreBridge, patch: Record<string, unknown>, ctx: unkno
   return coreCallRecord(core, "cronUpdateTask", [patch, ctx], "cron update result");
 }
 
-function resultMessage(result: Record<string, unknown>): string {
-  return typeof result["message"] === "string" ? result["message"] : "Cron updated.";
-}
-
-function mutationOk(result: Record<string, unknown>): boolean {
-  return result["ok"] === true;
-}
-
 async function runMutation(
   core: CoreBridge,
   action: MutationAction,
@@ -478,7 +426,7 @@ async function runMutation(
   })();
   const nextState = loadCronState(core, ctx);
   const ok = mutationOk(result);
-  const message = resultMessage(result);
+  const message = resultMessage(result, "Cron updated.");
   notify(ui, message, ok ? "info" : "warning");
   return { ok, message, state: nextState };
 }
@@ -497,7 +445,7 @@ async function editTaskPrompt(
   const edited = await editor.call(ui, `Edit cron prompt ${task.id}`, task.prompt);
   if (typeof edited !== "string") return false;
   const result = updateTask(core, { id: task.id, prompt: edited }, ctx);
-  notify(ui, resultMessage(result), mutationOk(result) ? "info" : "warning");
+  notify(ui, resultMessage(result, "Cron updated."), mutationOk(result) ? "info" : "warning");
   return mutationOk(result);
 }
 
@@ -515,7 +463,7 @@ async function editTaskSchedule(
   const edited = await editor.call(ui, `Edit cron schedule ${task.id}`, task.cron);
   if (typeof edited !== "string") return false;
   const result = updateTask(core, { id: task.id, cron: normalizeCronInput(edited) }, ctx);
-  notify(ui, resultMessage(result), mutationOk(result) ? "info" : "warning");
+  notify(ui, resultMessage(result, "Cron updated."), mutationOk(result) ? "info" : "warning");
   return mutationOk(result);
 }
 
@@ -549,9 +497,7 @@ export async function executeCronManager(
   while (true) {
     if (state.tasks.length === 0) return commandResult(true, "No cron tasks.", stateDetails(state));
     const action = parseManagerAction(await custom.call(ui, (tui: unknown, theme: ThemeLike, keybindings: KeybindingsLike, done: (action: ManagerAction) => void) => {
-      const requestRender = () => {
-        if (isRecord(tui) && typeof tui["requestRender"] === "function") tui["requestRender"].call(tui);
-      };
+      const requestRender = requestRenderFromTui(tui);
       return new CronManagerComponent(state, theme, keybindings, {
         onDone: done,
         requestRender,

@@ -1,5 +1,6 @@
 open Jsoo_bridge
 open App_state
+open Runtime_access
 
 let custom_type = "taumel.environment_context"
 let delivered_session_id : string option ref = ref None

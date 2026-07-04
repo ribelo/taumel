@@ -12,11 +12,13 @@ let session_id_from_ctx ctx =
         | _ -> "current")
       | _ -> "current")
 
-let branch_entries_opt ctx =
+let branch_entries_array_opt ctx =
   let session_manager = Unsafe.get ctx "sessionManager" in
   match function_field session_manager "getBranch" with
   | None -> None
-  | Some _ -> array_value (call0 session_manager "getBranch") |> Option.map Array.to_list
+  | Some _ -> array_value (call0 session_manager "getBranch")
+
+let branch_entries_opt ctx = Option.map Array.to_list (branch_entries_array_opt ctx)
 
 let branch_entries ctx = Option.value (branch_entries_opt ctx) ~default:[]
 

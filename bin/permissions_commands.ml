@@ -1,5 +1,6 @@
 open Jsoo_bridge
 open App_state
+open Runtime_access
 
 let apply_state (next : Taumel.Permissions.state) =
   active_profile_state := next.Taumel.Permissions.profile;
