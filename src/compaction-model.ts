@@ -8,7 +8,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import type { CoreBridge, PiLike } from "./types.ts";
-import { coreCall, isRecord, stringField, writeFileAtomically } from "./util.ts";
+import { coreCallOptionalRecord, coreCallRecord, isRecord, stringField, writeFileAtomically } from "./util.ts";
 
 function splitProviderModelId(modelId: string | undefined): { readonly provider: string; readonly model: string } | undefined {
   if (modelId === undefined) return undefined;
@@ -108,11 +108,11 @@ export function installCompactionModelHook(pi: PiLike, core: CoreBridge): void {
   pi.on("session_before_compact", async (event, ctx) => {
     if (!isRecord(event)) return undefined;
     const { global, project } = await compactionSettingsForContext(ctx);
-    const plan = coreCall(core, "planSessionBeforeCompact", [{
+    const plan = coreCallOptionalRecord(core, "planSessionBeforeCompact", [{
       global: global ?? "",
       project: project ?? "",
     }]);
-    if (!isRecord(plan)) return undefined;
+    if (plan === undefined) return undefined;
     if (stringField(plan, "action") !== "compact") return undefined;
     const modelId = stringField(plan, "model");
     const requested = splitProviderModelId(modelId);
@@ -206,11 +206,10 @@ export async function executeCompactionModelCommand(
   ctx: unknown,
 ): Promise<Record<string, unknown>> {
   const { global, project } = await compactionSettingsForContext(ctx);
-  const plan = coreCall(core, "planCompactionModelCommand", [
+  const plan = coreCallRecord(core, "planCompactionModelCommand", [
     args,
     { global: global ?? "", project: project ?? "" },
-  ]);
-  if (!isRecord(plan)) throw new Error("Invalid Taumel compaction-model command plan");
+  ], "compaction-model command plan");
   const action = stringField(plan, "action");
   if (action === "show") {
     const model = stringField(plan, "model");

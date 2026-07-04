@@ -13,7 +13,7 @@ import type {
 } from "./types.ts";
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function stringField(record: Record<string, unknown>, name: string): string {
@@ -22,6 +22,11 @@ export function stringField(record: Record<string, unknown>, name: string): stri
     throw new Error(`Invalid Taumel string field: ${name}`);
   }
   return value;
+}
+
+export function stringFieldOrUndefined(record: Record<string, unknown>, name: string): string | undefined {
+  const value = record[name];
+  return typeof value === "string" ? value : undefined;
 }
 
 export function optionalStringField(record: Record<string, unknown>, name: string): string | undefined {
@@ -41,6 +46,11 @@ export function numberField(record: Record<string, unknown>, name: string): numb
   return value;
 }
 
+export function numberFieldOrUndefined(record: Record<string, unknown>, name: string): number | undefined {
+  const value = record[name];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
 export function optionalNumberField(record: Record<string, unknown>, name: string): number | undefined {
   const value = record[name];
   if (value === undefined || value === null) return undefined;
@@ -50,10 +60,29 @@ export function optionalNumberField(record: Record<string, unknown>, name: strin
   return value;
 }
 
+export function boolFieldOrUndefined(record: Record<string, unknown>, name: string): boolean | undefined {
+  const value = record[name];
+  return typeof value === "boolean" ? value : undefined;
+}
+
+export function recordFieldOrUndefined(record: Record<string, unknown>, name: string): Record<string, unknown> | undefined {
+  const value = record[name];
+  return isRecord(value) ? value : undefined;
+}
+
 export function stringArrayFromUnknown(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   if (!value.every((item): item is string => typeof item === "string" && item !== "")) return undefined;
   return value;
+}
+
+export function stringArrayFieldOrUndefined(record: Record<string, unknown>, name: string): string[] | undefined {
+  const value = record[name];
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : undefined;
+}
+
+export function stringArrayFieldOrEmpty(record: Record<string, unknown>, name: string): string[] {
+  return stringArrayFieldOrUndefined(record, name) ?? [];
 }
 
 export function stringArrayField(record: Record<string, unknown>, name: string): string[] {
@@ -62,6 +91,15 @@ export function stringArrayField(record: Record<string, unknown>, name: string):
     throw new Error(`Invalid Taumel string array field: ${name}`);
   }
   return value;
+}
+
+export function recordArrayFieldOrUndefined(record: Record<string, unknown>, name: string): Record<string, unknown>[] | undefined {
+  const value = record[name];
+  return Array.isArray(value) ? value.filter(isRecord) : undefined;
+}
+
+export function recordArrayFieldOrEmpty(record: Record<string, unknown>, name: string): Record<string, unknown>[] {
+  return recordArrayFieldOrUndefined(record, name) ?? [];
 }
 
 export function recordArrayField(record: Record<string, unknown>, name: string): Record<string, unknown>[] {
@@ -89,8 +127,46 @@ export function maybeCall(receiver: unknown, name: string, args: readonly unknow
   return method.apply(receiver, args);
 }
 
-export function coreCall(core: CoreBridge, name: string, args: readonly unknown[] = []): unknown {
-  return core.call(name, args);
+export function coreCallRecord(
+  core: CoreBridge,
+  name: string,
+  args: readonly unknown[] = [],
+  label = `${name} result`,
+): Record<string, unknown> {
+  const result = core.call(name, args);
+  if (!isRecord(result)) throw new Error(`Invalid Taumel ${label}`);
+  return result;
+}
+
+export function coreCallOptionalRecord(
+  core: CoreBridge,
+  name: string,
+  args: readonly unknown[] = [],
+): Record<string, unknown> | undefined {
+  const result = core.call(name, args);
+  return isRecord(result) ? result : undefined;
+}
+
+export function coreCallStringArray(
+  core: CoreBridge,
+  name: string,
+  args: readonly unknown[] = [],
+  label = `${name} result`,
+): string[] {
+  const result = stringArrayFromUnknown(core.call(name, args));
+  if (result === undefined) throw new Error(`Invalid Taumel ${label}`);
+  return result;
+}
+
+export function coreCallRecordArray(
+  core: CoreBridge,
+  name: string,
+  args: readonly unknown[] = [],
+  label = `${name} result`,
+): Record<string, unknown>[] {
+  const result = core.call(name, args);
+  if (!Array.isArray(result) || !result.every(isRecord)) throw new Error(`Invalid Taumel ${label}`);
+  return result;
 }
 
 export function isStaleContextError(error: unknown): boolean {
@@ -207,20 +283,14 @@ export function sandboxStringArrayField(sandbox: unknown, name: string): string[
 }
 
 export function sandboxMetadataDirNames(core: CoreBridge): string[] {
-  const names = stringArrayFromUnknown(coreCall(core, "sandboxMetadataDirNames"));
-  if (names === undefined) throw new Error("Invalid Taumel sandbox metadata dir names");
-  return names;
+  return coreCallStringArray(core, "sandboxMetadataDirNames", [], "sandbox metadata dir names");
 }
 
 export function sandboxHostPathPlan(core: CoreBridge): Record<string, unknown> {
-  const plan = coreCall(core, "sandboxHostPathPlan", [{
+  return coreCallRecord(core, "sandboxHostPathPlan", [{
     tmpDir: tmpdir(),
     envTmpDir: process.env["TMPDIR"] ?? "",
-  }]);
-  if (!isRecord(plan)) {
-    throw new Error("Invalid Taumel sandbox host path plan");
-  }
-  return plan;
+  }], "sandbox host path plan");
 }
 
 export function workspaceMetadataListings(
@@ -266,14 +336,10 @@ export function childSessionStartPlan(
   metadata: Record<string, unknown>,
   parent: SessionInfo,
 ): Record<string, unknown> {
-  const plan = coreCall(core, "planChildSessionStart", [metadata, {
+  return coreCallRecord(core, "planChildSessionStart", [metadata, {
     parentSessionId: parent.sessionId ?? "",
     parentSessionFile: parent.sessionFile ?? "",
-  }]);
-  if (!isRecord(plan)) {
-    throw new Error("Invalid Taumel child session start plan");
-  }
-  return plan;
+  }], "child session start plan");
 }
 
 export function setActiveToolsOn(receiver: unknown, toolNames: readonly string[]): boolean {
@@ -336,9 +402,7 @@ export function currentThreadFacts(ctx: unknown): Record<string, unknown> {
 }
 
 export function currentThreadSource(core: CoreBridge, ctx: unknown): Record<string, unknown> {
-  const source = coreCall(core, "currentThreadSource", [currentThreadFacts(ctx)]);
-  if (!isRecord(source)) throw new Error("Invalid Taumel current thread source");
-  return source;
+  return coreCallRecord(core, "currentThreadSource", [currentThreadFacts(ctx)], "current thread source");
 }
 
 export async function discoverCatalogFiles(scan: Record<string, unknown>): Promise<string[]> {
@@ -381,11 +445,7 @@ export function threadCatalogFacts(ctx: unknown): Record<string, unknown> {
 }
 
 export function sessionCatalogScans(core: CoreBridge, ctx: unknown): Record<string, unknown>[] {
-  const planned = coreCall(core, "planThreadCatalogScans", [threadCatalogFacts(ctx)]);
-  if (!Array.isArray(planned) || !planned.every(isRecord)) {
-    throw new Error("Invalid Taumel thread catalog scans");
-  }
-  return planned;
+  return coreCallRecordArray(core, "planThreadCatalogScans", [threadCatalogFacts(ctx)], "thread catalog scans");
 }
 
 export async function fileThreadSources(core: CoreBridge, ctx: unknown): Promise<Record<string, unknown>[]> {
@@ -504,12 +564,9 @@ export async function validateWorkspaceMutationPaths(
   paths: readonly string[],
   workspaceRoots: readonly string[],
 ): Promise<void> {
-  const result = coreCall(core, "validateWorkspaceMutationPaths", [
+  const result = coreCallRecord(core, "validateWorkspaceMutationPaths", [
     await resolvedWorkspaceMutationPathFacts(paths, workspaceRoots),
-  ]);
-  if (!isRecord(result)) {
-    throw new Error("Invalid Taumel workspace mutation path validation");
-  }
+  ], "workspace mutation path validation");
   if (result["ok"] !== true) {
     throw new Error(requiredError(result, "workspace mutation path validation"));
   }

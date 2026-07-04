@@ -1,5 +1,6 @@
 import { Compile } from "typebox/compile";
 import Type from "typebox";
+import { isRecord } from "./util.ts";
 
 const stringArray = Type.Array(Type.String());
 
@@ -460,10 +461,6 @@ const schemaMetaKeys = new Set([
   "$defs",
   "definitions",
 ]);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function primitiveType(value: unknown): string | undefined {
   switch (typeof value) {

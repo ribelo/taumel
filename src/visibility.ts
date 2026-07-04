@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { Key, type KeyId, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 import type { CoreBridge, PiLike } from "./types.ts";
-import { coreCall, isRecord, stringArrayFromUnknown, stringField, writeFileAtomically } from "./util.ts";
+import { coreCallOptionalRecord, coreCallRecord, isRecord, stringArrayFromUnknown, stringField, writeFileAtomically } from "./util.ts";
 import { toolNames } from "./tool-contracts.ts";
 
 type Category = "agents" | "tools" | "skills";
@@ -240,8 +240,7 @@ function detailsFromCommandResult(result: unknown): unknown {
 }
 
 function loadVisibilityState(core: CoreBridge, category: Category, ctx: unknown): VisibilityState {
-  const result = coreCall(core, "visibilityRows", [category, ctx]);
-  if (!isRecord(result)) throw new Error("Invalid Taumel visibility rows");
+  const result = coreCallRecord(core, "visibilityRows", [category, ctx], "visibility rows");
   return parseRows(detailsFromCommandResult(result));
 }
 
@@ -438,8 +437,7 @@ export async function saveProjectVisibility(
 }
 
 async function saveFromCore(core: CoreBridge, category: Category, ctx: unknown): Promise<Record<string, unknown>> {
-  const plan = coreCall(core, "handleCommand", [category, "save", ctx]);
-  if (!isRecord(plan)) throw new Error("Invalid Taumel visibility save plan");
+  const plan = coreCallRecord(core, "handleCommand", [category, "save", ctx], "visibility save plan");
   if (plan["action"] !== "visibility_save_project") return plan;
   return saveProjectVisibility(category, stringArrayFromUnknown(plan["disabled"]) ?? [], plan["details"], ctx);
 }
@@ -454,7 +452,7 @@ export async function executeVisibilityManager(
   const ui = uiFromContext(ctx);
   const custom = ui?.["custom"];
   if (typeof custom !== "function") {
-    return coreCall(core, "handleCommand", [category, "list", ctx]);
+    return coreCallRecord(core, "handleCommand", [category, "list", ctx], "visibility list result");
   }
 
   let state = loadVisibilityState(core, category, ctx);
@@ -473,8 +471,7 @@ export async function executeVisibilityManager(
       onDone: done,
       requestRender,
       onToggle: async (name) => {
-        const result = coreCall(core, "toggleVisibilityRow", [category, name, ctx]);
-        if (!isRecord(result)) throw new Error("Invalid Taumel visibility toggle result");
+        const result = coreCallRecord(core, "toggleVisibilityRow", [category, name, ctx], "visibility toggle result");
         const ok = mutationOk(result);
         if (ok) dirty = true;
         const enabledName = isRecord(result["details"]) && typeof result["details"]["enabledName"] === "string"
@@ -521,8 +518,8 @@ function liveToolNames(pi: PiLike): string[] {
 }
 
 function listSkillNames(core: CoreBridge, ctx: unknown): string[] {
-  const result = coreCall(core, "listSkills", [{ cwd: cwdFromContext(ctx), includeDisabled: true }]);
-  if (!isRecord(result) || !Array.isArray(result["skills"])) return [];
+  const result = coreCallOptionalRecord(core, "listSkills", [{ cwd: cwdFromContext(ctx), includeDisabled: true }]);
+  if (result === undefined || !Array.isArray(result["skills"])) return [];
   return result["skills"].filter(isRecord).flatMap((skill) =>
     typeof skill["name"] === "string" && skill["name"] !== "" ? [skill["name"]] : []
   );
@@ -538,12 +535,12 @@ function listAgentNames(core: CoreBridge, ctx: unknown): string[] {
 }
 
 function notifyVisibilityWarnings(pi: PiLike, core: CoreBridge, ctx: unknown): void {
-  const result = coreCall(core, "visibilityWarnings", [{
+  const result = coreCallOptionalRecord(core, "visibilityWarnings", [{
     tools: liveToolNames(pi),
     skills: listSkillNames(core, ctx),
     agents: listAgentNames(core, ctx),
   }]);
-  if (!isRecord(result)) return;
+  if (result === undefined) return;
   const messages = stringArrayFromUnknown(result["messages"]) ?? [];
   const ui = uiFromContext(ctx);
   for (const message of messages) notify(ui, message, "warning");
@@ -552,7 +549,7 @@ function notifyVisibilityWarnings(pi: PiLike, core: CoreBridge, ctx: unknown): v
 export function installVisibilityLifecycle(pi: PiLike, core: CoreBridge): void {
   const sync = (_event: unknown, ctx?: unknown) => {
     if (seedVisibilityFromProject(ctx)) {
-      coreCall(core, "reloadSessionState", [ctx]);
+      core.call("reloadSessionState", [ctx]);
     }
     setTimeout(() => notifyVisibilityWarnings(pi, core, ctx), 0);
   };

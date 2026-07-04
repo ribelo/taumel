@@ -24,5 +24,10 @@ re-authorized before execution.
 - **exa-ap01** (event-driven): When the model invokes `exa_agent_create_run`, the system shall require explicit user approval before sending the request, even when network is enabled.
 - **exa-ap02** (event-driven): When an Exa approval is denied, times out, is interrupted, or has no UI, the system shall use the sandbox escalation approval-outcome taxonomy.
 - **exa-dn01** (event-driven): When the active capability profile disallows an Exa tool, the system shall deny the call.
+- **exa-rn01** (ubiquitous): Exa result normalization shall keep model-visible content useful without relying on hidden `details`; data the model needs to continue must be present in the tool result text.
+- **exa-rn02** (ubiquitous): When `web_search_exa` receives `summary`, `highlights`, or `text` fields, the model-visible tool result shall include all requested fields without Taumel-side truncation or newline compaction.
+- **exa-rn03** (ubiquitous): When `crawling_exa` receives a result `text` field, the model-visible tool result shall preserve that text without Taumel-side truncation or newline compaction; Exa's requested/returned character limit is the only content limit.
+- **exa-rn04** (ubiquitous): When `exa_agent_get_run` or `exa_agent_create_run` receives structured `output` without `output.text`, the model-visible tool result shall include the structured output JSON.
+- **exa-rn05** (ubiquitous): When `exa_agent_list_runs` or `exa_agent_list_events` returns data, the model-visible tool result shall include the returned payload so run ids, event ids, statuses, cursors, and event data are visible to the model.
 - **exa-om01** (ubiquitous): The system shall omit deprecated request fields (`context`, `livecrawl`, `livecrawlTimeout`), the agent delete endpoint, agent streaming, and ad hoc TypeScript HTTP clients.
 - **exa-dr01** (event-driven): When the TypeScript and OCaml Exa tool-name sets drift, the system shall fail fast at startup.

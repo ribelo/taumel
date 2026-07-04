@@ -1,5 +1,5 @@
 import type { CoreBridge, PiLike } from "./types.ts";
-import { contextIsLive, coreCall, isRecord, isStaleContextError, stringField } from "./util.ts";
+import { contextIsLive, coreCallOptionalRecord, isRecord, isStaleContextError, stringField } from "./util.ts";
 
 function canSend(pi: PiLike): boolean {
   return typeof pi.sendMessage === "function" || typeof pi.sendUserMessage === "function";
@@ -37,18 +37,18 @@ async function deliverCron(
   }
 
   const objective = coalesced > 1 ? `[cron: ${coalesced} coalesced fires]\n${content}` : content;
-  const result = coreCall(core, "prepareTool", ["create_goal", { objective }, ctx]);
-  if (!isRecord(result) || result["ok"] !== true) {
+  const result = coreCallOptionalRecord(core, "prepareTool", ["create_goal", { objective }, ctx]);
+  if (result === undefined || result["ok"] !== true) {
     await sendCronMessage(pi, content, deliveryKind, coalesced);
     return;
   }
-  const plan = coreCall(core, "planGoalContinuation", [true, {
+  const plan = coreCallOptionalRecord(core, "planGoalContinuation", [true, {
     hostIdle: true,
     hasPendingMessages: false,
     retrying: false,
     compacting: false,
   }, {}, ctx]);
-  if (!isRecord(plan) || stringField(plan, "action") !== "send_goal_continuation") return;
+  if (plan === undefined || stringField(plan, "action") !== "send_goal_continuation") return;
   if (typeof pi.sendMessage === "function") {
     await pi.sendMessage({
       customType: stringField(plan, "customType"),
@@ -98,20 +98,20 @@ export function installCronLoop(pi: PiLike, core: CoreBridge): void {
         if (latestCtx === ctx) latestCtx = undefined;
         return;
       }
-      const goalFacts = coreCall(core, "cronGoalFacts", [ctx]);
-      const goalSlotFree = isRecord(goalFacts) ? goalFacts["goalSlotFree"] === true : false;
-      const goalDriving = isRecord(goalFacts) ? goalFacts["goalDriving"] === true : false;
-      const plan = coreCall(core, "cronPoll", [{
+      const goalFacts = coreCallOptionalRecord(core, "cronGoalFacts", [ctx]);
+      const goalSlotFree = goalFacts?.["goalSlotFree"] === true;
+      const goalDriving = goalFacts?.["goalDriving"] === true;
+      const plan = coreCallOptionalRecord(core, "cronPoll", [{
         now: Date.now(),
         hostIdle: typeof pi.isIdle === "function" ? pi.isIdle() : true,
         goalDriving,
         goalSlotFree,
       }, ctx]);
       if (stopped || generation !== pollGeneration) return;
-      if (isRecord(plan) && stringField(plan, "action") === "deliver") {
+      if (plan !== undefined && stringField(plan, "action") === "deliver") {
         await deliverCron(pi, core, plan, ctx, deliveryKind);
         if (stopped || generation !== pollGeneration) return;
-        coreCall(core, "cronDelivered", [{ id: stringField(plan, "id"), now: Date.now() }, ctx]);
+        core.call("cronDelivered", [{ id: stringField(plan, "id"), now: Date.now() }, ctx]);
       }
     } catch (error) {
       if (isStaleContextError(error)) {
@@ -130,8 +130,8 @@ export function installCronLoop(pi: PiLike, core: CoreBridge): void {
   pi.on("session_start", (event, ctx) => {
     if (stopped) return;
     if (!rememberCtx(ctx)) return;
-    const result = coreCall(core, "cronStartup", [event, ctx]);
-    if (isRecord(result) && result["notify"] === true) notify(ctx, stringField(result, "message"));
+    const result = coreCallOptionalRecord(core, "cronStartup", [event, ctx]);
+    if (result !== undefined && result["notify"] === true) notify(ctx, stringField(result, "message"));
   });
   pi.on("turn_start", (_event, ctx) => {
     if (!stopped) rememberCtx(ctx);

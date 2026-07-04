@@ -32,38 +32,39 @@ let truncate max value =
   if String.length value <= max then value
   else String.sub value 0 (max - 3) ^ "..."
 
-let compact_line value =
-  value |> String.split_on_char '\n' |> List.map String.trim
-  |> List.filter (fun part -> part <> "")
-  |> String.concat " "
-
 let result_title index item =
   let title = Option.value (json_string "title" item) ~default:"Untitled" in
   let url = Option.value (json_string "url" item) ~default:"" in
   let header = Printf.sprintf "%d. %s" (index + 1) title in
   if url = "" then header else header ^ "\n   " ^ url
 
-let first_highlight item =
-  match json_array "highlights" item with
-  | Shared.String value :: _ -> Some value
-  | _ -> None
+let json_strings name item =
+  json_array name item
+  |> List.filter_map (function Shared.String value -> Some value | _ -> None)
 
-let result_description item =
-  match (json_string "summary" item, first_highlight item, json_string "text" item) with
-  | Some value, _, _ | None, Some value, _ | None, None, Some value ->
-      Some ("   " ^ truncate 700 (compact_line value))
-  | None, None, None -> None
+let non_empty_block label value =
+  if String.trim value = "" then None else Some (label ^ ":\n" ^ value)
+
+let result_blocks item =
+  let summary = Option.bind (json_string "summary" item) (non_empty_block "Summary") in
+  let highlights =
+    match json_strings "highlights" item with
+    | [] -> None
+    | values -> Some ("Highlights:\n" ^ String.concat "\n\n" values)
+  in
+  let text = Option.bind (json_string "text" item) (non_empty_block "Text") in
+  [ summary; highlights; text ] |> List.filter_map Fun.id
+
+let render_result_item index item =
+  let title = result_title index item in
+  match result_blocks item with
+  | [] -> title
+  | blocks -> title ^ "\n\n" ^ String.concat "\n\n" blocks
 
 let render_results empty payload =
   match json_array "results" payload with
   | [] -> empty
-  | results ->
-      results
-      |> List.mapi (fun index item ->
-             match result_description item with
-             | Some description -> result_title index item ^ "\n" ^ description
-             | None -> result_title index item)
-      |> String.concat "\n\n"
+  | results -> results |> List.mapi render_result_item |> String.concat "\n\n"
 
 let render_code_context payload =
   match json_string "response" payload with
@@ -73,20 +74,30 @@ let render_code_context payload =
 let render_agent_run payload =
   let id = Option.value (json_string "id" payload) ~default:"unknown" in
   let status = Option.value (json_string "status" payload) ~default:"unknown" in
+  let output = json_field "output" payload in
   let output_text =
-    match json_field "output" payload with
+    match output with
     | Some output -> json_string "text" output
     | None -> None
   in
   match output_text with
   | Some text when String.trim text <> "" ->
       Printf.sprintf "Exa Agent run %s is %s.\n\n%s" id status text
-  | _ -> Printf.sprintf "Exa Agent run %s is %s." id status
+  | _ -> (
+      match output with
+      | Some output ->
+          Printf.sprintf "Exa Agent run %s is %s.\n\nOutput:\n%s" id status
+            (Shared.encode_json output)
+      | None -> Printf.sprintf "Exa Agent run %s is %s." id status)
 
 let render_list noun payload =
-  let count = List.length (json_array "data" payload) in
-  Printf.sprintf "Exa returned %d %s%s." count noun
-    (if count = 1 then "" else "s")
+  let data = json_array "data" payload in
+  let count = List.length data in
+  let summary =
+    Printf.sprintf "Exa returned %d %s%s." count noun
+      (if count = 1 then "" else "s")
+  in
+  match data with [] -> summary | _ -> summary ^ "\n\n" ^ Shared.encode_json payload
 
 let render_success tool_name payload =
   match tool_name with

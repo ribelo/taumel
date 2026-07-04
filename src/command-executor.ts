@@ -21,7 +21,8 @@ import {
   childBridgeFacts,
   contextIsLive,
   contextWithOverrides,
-  coreCall,
+  coreCallRecord,
+  coreCallRecordArray,
   isRecord,
   isStaleContextError,
   stringArrayFromUnknown,
@@ -31,9 +32,7 @@ import {
 import { toolNames } from "./tool-contracts.ts";
 
 function commandResultFromToolResult(core: CoreBridge, result: unknown): Record<string, unknown> {
-  const converted = coreCall(core, "toolResultToCommandResult", [result]);
-  if (!isRecord(converted)) throw new Error("Invalid Taumel command result conversion");
-  return converted;
+  return coreCallRecord(core, "toolResultToCommandResult", [result], "command result conversion");
 }
 
 function hasPendingMessages(ctx: unknown): boolean {
@@ -70,8 +69,7 @@ function syncActiveTools(pi: PiLike, core: CoreBridge, ctx: unknown, enabledName
     current = [...current, enabledName];
     pi.setActiveTools(current);
   }
-  const plan = coreCall(core, "planActiveToolsSync", [current, ctx]);
-  if (!isRecord(plan)) throw new Error("Invalid Taumel active tools sync plan");
+  const plan = coreCallRecord(core, "planActiveToolsSync", [current, ctx], "active tools sync plan");
   const tools = stringArrayFromUnknown(plan["tools"]);
   if (tools === undefined) throw new Error("Invalid Taumel active tools sync plan");
   if (plan["changed"] === true) pi.setActiveTools(tools);
@@ -132,8 +130,7 @@ async function sendGoalContinuation(
   event: unknown,
 ): Promise<void> {
   if (!contextIsLive(ctx)) return;
-  const plan = coreCall(core, "planGoalContinuation", [initial, facts, event, ctx]);
-  if (!isRecord(plan)) throw new Error("Invalid Taumel goal continuation plan");
+  const plan = coreCallRecord(core, "planGoalContinuation", [initial, facts, event, ctx], "goal continuation plan");
   const action = stringField(plan, "action");
   if (action === "none") return;
   if (action !== "send_goal_continuation") {
@@ -186,15 +183,14 @@ async function executeSelectionPrompt(
   label: string,
 ): Promise<unknown> {
   const finish = (selection: Record<string, unknown>) => {
-    return coreCall(core, finishMethod, [prompt, selection, ctx]);
+    return coreCallRecord(core, finishMethod, [prompt, selection, ctx], `${label} prompt result`);
   };
 
   const ui = isRecord(ctx) && isRecord(ctx["ui"]) ? ctx["ui"] : {};
   const select = ui["select"];
-  const plan = coreCall(core, planMethod, [prompt, {
+  const plan = coreCallRecord(core, planMethod, [prompt, {
     uiAvailable: typeof select === "function",
-  }]);
-  if (!isRecord(plan)) throw new Error(`Invalid Taumel ${label} prompt plan`);
+  }], `${label} prompt plan`);
   if (stringField(plan, "action") === "result") {
     const result = plan["result"];
     if (!isRecord(result)) throw new Error(`Invalid Taumel ${label} prompt result`);
@@ -325,9 +321,8 @@ export async function executeGatewayCommand(
     }
   }
 
-  const callCore = (commandCtx: unknown) => coreCall(core, "handleCommand", [name, args, commandCtx]);
-  const plan = coreCall(core, "planCommandExecution", [name, args, ctx]);
-  if (!isRecord(plan)) throw new Error("Invalid Taumel command execution plan");
+  const callCore = (commandCtx: unknown) => coreCallRecord(core, "handleCommand", [name, args, commandCtx], "command result");
+  const plan = coreCallRecord(core, "planCommandExecution", [name, args, ctx], "command execution plan");
   if (plan["ok"] !== true) return plan;
 
   if (stringField(plan, "action") !== "command_child_session") {
@@ -345,12 +340,11 @@ export async function executeGatewayCommand(
   const contextOverrides = isRecord(plan["contextOverrides"]) ? plan["contextOverrides"] : {};
   let commandCtx = contextWithOverrides(ctx, contextOverrides);
   const currentActiveToolNames = typeof pi.getActiveTools === "function" ? pi.getActiveTools() : undefined;
-  const childSessionPlan = coreCall(core, "planCommandChildSession", [{
+  const childSessionPlan = coreCallRecord(core, "planCommandChildSession", [{
     plan,
     currentActiveToolsAvailable: currentActiveToolNames !== undefined,
     currentActiveTools: currentActiveToolNames ?? [],
-  }]);
-  if (!isRecord(childSessionPlan)) throw new Error("Invalid Taumel command child session plan");
+  }], "command child session plan");
   if (childSessionPlan["ok"] !== true) return childSessionPlan;
   const metadata = isRecord(childSessionPlan["metadata"]) ? childSessionPlan["metadata"] : {};
   const bridge = await createChildSession(pi, core, ctx, metadata);
@@ -361,11 +355,10 @@ export async function executeGatewayCommand(
   }
 
   const result = callCore(commandCtx);
-  const dispatchPlan = coreCall(core, "planCommandChildDispatch", [{
+  const dispatchPlan = coreCallRecord(core, "planCommandChildDispatch", [{
     result,
     bridge: childBridgeFacts(bridge),
-  }]);
-  if (!isRecord(dispatchPlan)) throw new Error("Invalid Taumel command child dispatch plan");
+  }], "command child dispatch plan");
   const plannedResult = dispatchPlan["result"];
   if (!isRecord(plannedResult)) throw new Error("Invalid Taumel command child dispatch result");
   if (stringField(dispatchPlan, "action") !== "command_child_dispatch") {
@@ -374,11 +367,10 @@ export async function executeGatewayCommand(
 
   await applyChildSessionUpdate(childSessions, dispatchPlan["bridgeUpdate"], bridge);
   const dispatch = await sendToChildSession(pi, core, bridge, stringField(dispatchPlan, "prompt"));
-  const finished = coreCall(core, "finishCommandChildDispatch", [{
+  const finished = coreCallRecord(core, "finishCommandChildDispatch", [{
     result: plannedResult,
     dispatch,
-  }]);
-  if (!isRecord(finished)) throw new Error("Invalid Taumel command child dispatch result");
+  }], "command child dispatch result");
   return finished;
 }
 
@@ -389,10 +381,7 @@ export function registerGatewayCommands(
   composer?: ComposerController,
 ): void {
   if (typeof pi.registerCommand !== "function") return;
-  const specs = coreCall(core, "commandSpecs");
-  if (!Array.isArray(specs) || !specs.every(isRecord)) {
-    throw new Error("Invalid Taumel command specs");
-  }
+  const specs = coreCallRecordArray(core, "commandSpecs", [], "command specs");
   for (const spec of specs) {
     const name = stringField(spec, "name");
     pi.registerCommand(name, {
@@ -409,10 +398,9 @@ export function registerGatewayCommands(
         );
         const ui = isRecord(ctx) && isRecord(ctx["ui"]) ? ctx["ui"] : {};
         const notify = ui["notify"];
-        const notification = coreCall(core, "planCommandNotification", [name, result, {
+        const notification = coreCallRecord(core, "planCommandNotification", [name, result, {
           uiAvailable: typeof notify === "function",
-        }]);
-        if (!isRecord(notification)) throw new Error("Invalid Taumel command notification plan");
+        }], "command notification plan");
         const action = stringField(notification, "action");
         if (action === "notify" && typeof notify === "function") {
           notify.call(
@@ -462,7 +450,7 @@ export function installGoalContinuationLoop(pi: PiLike, core: CoreBridge): void 
       if (!contextIsLive(ctx)) return;
       const stopReason = latestAssistantStopReason(event);
       if (stopReason === "aborted") {
-        coreCall(core, "interruptGoalAutomation", [ctx]);
+        core.call("interruptGoalAutomation", [ctx]);
       }
       await sendGoalContinuation(pi, core, ctx, false, {
         hostIdle: hostIdle(ctx),

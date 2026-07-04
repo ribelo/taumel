@@ -118,7 +118,7 @@ async function loadContracts() {
     },
     fileName: sourcePath,
   });
-  const tempPath = join(outputDir, "tool-contracts.generated.mjs");
+  const tempPath = join(dirname(sourcePath), "tool-contracts.generated.mjs");
   await writeFile(tempPath, transpiled.outputText, "utf8");
   try {
     return await import(`${pathToFileURL(tempPath).href}?v=${Date.now()}`);

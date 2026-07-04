@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 import type { ChildSessionBridge, CoreBridge, PiLike, TaumelGlobal } from "./types.ts";
-import { coreCall, isRecord, stringArrayFromUnknown } from "./util.ts";
+import { coreCallRecord, isRecord, stringArrayFromUnknown } from "./util.ts";
 import { createComposerController, installSkillAutocomplete } from "./composer.ts";
 import { makeHost } from "./host.ts";
 import { agentGatewayToolNames, registerGatewayTools, type GatewayToolRegistration } from "./tool-executor.ts";
@@ -32,8 +32,7 @@ function syncSandboxToolActivation(pi: PiLike, core: CoreBridge, ctx?: unknown):
   if (typeof pi.getActiveTools !== "function" || typeof pi.setActiveTools !== "function") {
     return;
   }
-  const plan = coreCall(core, "planActiveToolsSync", [pi.getActiveTools(), ctx]);
-  if (!isRecord(plan)) throw new Error("Invalid Taumel active tools sync plan");
+  const plan = coreCallRecord(core, "planActiveToolsSync", [pi.getActiveTools(), ctx], "active tools sync plan");
   if (plan["changed"] !== true) {
     return;
   }
@@ -96,8 +95,7 @@ function refreshExecPolicy(core: CoreBridge, ctx?: unknown): void {
     const projectScope = readExecPolicyScope("project", join(cwd, ".pi", "settings.json"));
     if (projectScope !== undefined) scopes.push(projectScope);
   }
-  const result = coreCall(core, "refreshExecPolicy", [{ scopes }]);
-  if (!isRecord(result)) throw new Error("Invalid Taumel exec policy refresh result");
+  const result = coreCallRecord(core, "refreshExecPolicy", [{ scopes }], "exec policy refresh result");
   notifyExecPolicyErrors(result, ctx);
 }
 
@@ -210,12 +208,11 @@ function refreshAgentProfileCatalog(
     isRecord(settings["taumel"]["agents"]["builtins"])
       ? settings["taumel"]["agents"]["builtins"]
       : {};
-  const result = coreCall(core, "refreshAgentProfileCatalog", [{
+  const result = coreCallRecord(core, "refreshAgentProfileCatalog", [{
     liveTools: liveToolNames(pi),
     profiles: readUserAgentProfiles(),
     builtinOverrides: builtins,
-  }]);
-  if (!isRecord(result)) throw new Error("Invalid Taumel agent profile catalog result");
+  }], "agent profile catalog result");
   if (result["valid"] !== true) {
     for (const name of removeActiveAgentTools(pi)) removedActiveAgentTools.add(name);
     notifyInvalidAgentProfileCatalog(result, ctx);
@@ -252,11 +249,10 @@ function insertBeforeCurrentUserMessage(
 function installEnvironmentContext(pi: PiLike, core: CoreBridge): void {
   pi.on("context", async (event, ctx) => {
     if (!isRecord(event) || !Array.isArray(event["messages"])) return undefined;
-    const plan = coreCall(core, "planEnvironmentContext", [
+    const plan = coreCallRecord(core, "planEnvironmentContext", [
       ctx,
       { shell: process.env.SHELL ?? "" },
-    ]);
-    if (!isRecord(plan)) throw new Error("Invalid Taumel environment context plan");
+    ], "environment context plan");
     const action = plan["action"];
     if (action === "none") return undefined;
     if (action !== "inject") throw new Error("Invalid Taumel environment context plan");

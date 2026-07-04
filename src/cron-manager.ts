@@ -1,7 +1,7 @@
 import { Key, type KeyId, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 
 import type { CoreBridge } from "./types.ts";
-import { coreCall, isRecord, stringField } from "./util.ts";
+import { coreCallOptionalRecord, coreCallRecord, isRecord, stringField } from "./util.ts";
 
 type CronMode = "message" | "goal";
 
@@ -61,7 +61,7 @@ function commandResult(ok: boolean, message: string, details: Record<string, unk
   return { ok, action: "command_result", message, ...(ok ? {} : { error: message }), details };
 }
 
-function boolField(record: Record<string, unknown>, name: string): boolean {
+function boolFlag(record: Record<string, unknown>, name: string): boolean {
   return record[name] === true;
 }
 
@@ -80,11 +80,11 @@ function parseTask(value: unknown): CronTask | undefined {
     id,
     cron,
     prompt: stringOr(value, "prompt", ""),
-    recurring: boolField(value, "recurring"),
+    recurring: boolFlag(value, "recurring"),
     mode,
-    enabled: boolField(value, "enabled"),
+    enabled: boolFlag(value, "enabled"),
     nextDueText: stringOr(value, "nextDueText", String(value["nextDue"] ?? "")),
-    pending: boolField(value, "pending"),
+    pending: boolFlag(value, "pending"),
   };
 }
 
@@ -97,12 +97,11 @@ function parseStateFromDetails(details: unknown): CronState {
   const tasks = Array.isArray(details["tasks"])
     ? details["tasks"].map(parseTask).filter((task): task is CronTask => task !== undefined)
     : [];
-  return { enabled: boolField(details, "enabled"), tasks };
+  return { enabled: boolFlag(details, "enabled"), tasks };
 }
 
 function loadCronState(core: CoreBridge, ctx: unknown): CronState {
-  const result = coreCall(core, "prepareTool", ["cron_list", {}, ctx]);
-  if (!isRecord(result)) throw new Error("Invalid Taumel cron list result");
+  const result = coreCallRecord(core, "prepareTool", ["cron_list", {}, ctx], "cron list result");
   return parseStateFromDetails(result["details"]);
 }
 
@@ -440,15 +439,11 @@ class CronManagerComponent {
 }
 
 function command(core: CoreBridge, args: string, ctx: unknown): Record<string, unknown> {
-  const result = coreCall(core, "handleCommand", ["cron", args, ctx]);
-  if (!isRecord(result)) throw new Error("Invalid Taumel cron command result");
-  return result;
+  return coreCallRecord(core, "handleCommand", ["cron", args, ctx], "cron command result");
 }
 
 function updateTask(core: CoreBridge, patch: Record<string, unknown>, ctx: unknown): Record<string, unknown> {
-  const result = coreCall(core, "cronUpdateTask", [patch, ctx]);
-  if (!isRecord(result)) throw new Error("Invalid Taumel cron update result");
-  return result;
+  return coreCallRecord(core, "cronUpdateTask", [patch, ctx], "cron update result");
 }
 
 function resultMessage(result: Record<string, unknown>): string {
@@ -525,8 +520,8 @@ async function editTaskSchedule(
 }
 
 function fallbackCronPrompt(core: CoreBridge, prompt: Record<string, unknown>, ctx: unknown): unknown {
-  const plan = coreCall(core, "planCronPrompt", [prompt, { uiAvailable: false }]);
-  if (isRecord(plan) && plan["action"] === "result" && isRecord(plan["result"])) return plan["result"];
+  const plan = coreCallOptionalRecord(core, "planCronPrompt", [prompt, { uiAvailable: false }]);
+  if (plan?.["action"] === "result" && isRecord(plan["result"])) return plan["result"];
   const state = loadCronState(core, ctx);
   return commandResult(true, state.tasks.length === 0 ? "No cron tasks." : "Cron tasks listed.", stateDetails(state));
 }

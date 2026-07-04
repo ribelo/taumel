@@ -16,7 +16,7 @@ import {
   taumelGlobalSettingsPath,
   writeTaumelGlobalSettings,
 } from "./global-settings.ts";
-import { coreCall, isRecord, maybeCall, stringField } from "./util.ts";
+import { coreCallOptionalRecord, coreCallRecord, isRecord, maybeCall, stringField } from "./util.ts";
 
 const EVERFOREST_BG1 = "\x1b[48;2;46;56;60m";
 const ANSI_PATTERN = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
@@ -242,7 +242,7 @@ function parseSkillEntries(value: unknown): SkillAutocompleteEntry[] {
 }
 
 function listSkills(core: CoreBridge, controller: ComposerController): SkillAutocompleteEntry[] {
-  const result = coreCall(core, "listSkills", [{ cwd: controller.latestCwd ?? process.cwd() }]);
+  const result = coreCallOptionalRecord(core, "listSkills", [{ cwd: controller.latestCwd ?? process.cwd() }]);
   return parseSkillEntries(result);
 }
 
@@ -287,11 +287,10 @@ export async function executeComposerCommand(
   if (!controller) {
     controller = { path: taumelGlobalSettingsPath(), settings: defaultTaumelGlobalSettings };
   }
-  const result = coreCall(core, "handleComposerCommand", [
+  const result = coreCallRecord(core, "handleComposerCommand", [
     args,
     { path: controller.path, settings: controller.settings },
-  ]);
-  if (!isRecord(result)) throw new Error("Invalid Taumel composer command result");
+  ], "composer command result");
   if (result["ok"] !== true) return result;
   if (result["ok"] === true && result["writeSettings"] === true) {
     const nextSettings = requireTaumelGlobalSettings(result["settings"]);

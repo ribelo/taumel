@@ -373,6 +373,46 @@ assert(/• skill: foo/.test(compactSkill), `skill renderer header wrong: ${comp
 assert(compactSkill.includes("auto from $foo") && compactSkill.includes("(expand)") && !compactSkill.includes("line-1"), `skill renderer should default collapsed: ${compactSkill}`);
 assert(expandedSkill.includes("because the user mentioned $foo"), `expanded skill renderer should show provenance: ${expandedSkill}`);
 assert(expandedSkill.includes("line-24"), `expanded skill renderer should show full body: ${expandedSkill}`);
+assert(!expandedSkill.includes("<skill") && !expandedSkill.includes("</skill>"), `expanded skill renderer leaked XML: ${expandedSkill}`);
+const multilineSkillBlock = [
+  '<skill name="grill-me"',
+  ' location="/skills/grill-me/SKILL.md">',
+  "References are relative to /skills/grill-me.",
+  "",
+  "Run a `/grilling` session.",
+  "</skill>",
+].join("\n");
+const compactMultilineSkill = renderText(renderSkill(
+  { customType: "taumel.skill", content: multilineSkillBlock, details: { trigger: "$grill-me" } },
+  { expanded: false },
+  theme,
+));
+const expandedMultilineSkill = renderText(renderSkill(
+  { customType: "taumel.skill", content: multilineSkillBlock, details: { trigger: "$grill-me" } },
+  { expanded: true },
+  theme,
+));
+assert(compactMultilineSkill.includes("grill-me") && compactMultilineSkill.includes("auto from $grill-me"), `multiline skill compact render failed: ${compactMultilineSkill}`);
+assert(expandedMultilineSkill.includes("Run a `/grilling` session."), `multiline skill expanded body missing: ${expandedMultilineSkill}`);
+assert(!compactMultilineSkill.includes("<skill") && !expandedMultilineSkill.includes("<skill"), `multiline skill renderer leaked XML: ${JSON.stringify({ compactMultilineSkill, expandedMultilineSkill })}`);
+const childTagSkillBlock = [
+  "<skill>",
+  "<name>grill-me</name>",
+  "<path>/skills/grill-me/SKILL.md</path>",
+  "---",
+  "name: grill-me",
+  "---",
+  "",
+  "Run a `/grilling` session.",
+  "</skill>",
+].join("\n");
+const expandedChildTagSkill = renderText(renderSkill(
+  { customType: "taumel.skill", content: childTagSkillBlock, details: { trigger: "$grill-me" } },
+  { expanded: true },
+  theme,
+));
+assert(expandedChildTagSkill.includes("grill-me") && expandedChildTagSkill.includes("Run a `/grilling` session."), `child-tag skill render failed: ${expandedChildTagSkill}`);
+assert(!expandedChildTagSkill.includes("<name>") && !expandedChildTagSkill.includes("<path>"), `child-tag skill renderer leaked XML: ${expandedChildTagSkill}`);
 assert(
   renderSkill({ customType: "taumel.skill", content: "<skill>bad</skill>" }, { expanded: false }, theme) === undefined,
   "invalid skill markup should render nothing",

@@ -1,44 +1,22 @@
-import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { structuredPatch } from "diff";
 import { getLanguageFromPath, highlightCode } from "@earendil-works/pi-coding-agent";
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Field accessors
-// ─────────────────────────────────────────────────────────────────────────────
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function stringField(record: Record<string, unknown>, name: string): string | undefined {
-  const value = record[name];
-  return typeof value === "string" ? value : undefined;
-}
-
-function numberField(record: Record<string, unknown>, name: string): number | undefined {
-  const value = record[name];
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-function boolField(record: Record<string, unknown>, name: string): boolean | undefined {
-  const value = record[name];
-  return typeof value === "boolean" ? value : undefined;
-}
-
-function recordField(record: Record<string, unknown>, name: string): Record<string, unknown> | undefined {
-  const value = record[name];
-  return isRecord(value) ? value : undefined;
-}
-
-function recordArrayField(record: Record<string, unknown>, name: string): Record<string, unknown>[] {
-  const value = record[name];
-  return Array.isArray(value) ? value.filter(isRecord) : [];
-}
-
-function stringArrayField(record: Record<string, unknown>, name: string): string[] {
-  const value = record[name];
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
-}
+import {
+  emptyComponent,
+  renderBlock,
+  withLeftGutter,
+  type Block,
+  type Entry,
+  type HeaderSpec,
+} from "./render-layout.ts";
+import {
+  boolFieldOrUndefined,
+  isRecord,
+  numberFieldOrUndefined,
+  recordArrayFieldOrEmpty,
+  recordFieldOrUndefined,
+  stringArrayFieldOrEmpty,
+  stringFieldOrUndefined,
+} from "./util.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Theme helpers
@@ -130,118 +108,6 @@ function compactJson(value: unknown): string {
 // wrapTextWithAnsi), so theme color codes never corrupt measurements.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// A header is `• <name> · <subject>[ <trailing>]`. `lead` is the fully-colored
-// `• name · ` prefix; `subject` and `trailing` are separately colored. The
-// subject-start column is visibleWidth(lead).
-type HeaderSpec = { readonly lead: string; readonly subject: string; readonly trailing: string };
-
-// A body is either a └-railed block or a flush (self-guttered) block.
-//   rail  — first physical line prefixed `  └ `, continuation `    ` (4 spaces).
-//            normal entries: collapsed clips each line to (width-4), expanded
-//            wraps to (width-4) with continuation at column 4.
-//            exempt entries (the `… N more` / expand hints): rendered as-is,
-//            never clipped — never clip a line whose job is to advertise hidden
-//            content.
-//   flush — self-guttered lines (diffs, apply_patch expanded). no └ rail. each
-//            line clipped to width when clip is set (diffs always clip in both
-//            modes; they are a structured grid, not a document).
-type Entry = { readonly text: string; readonly exempt?: boolean };
-type Body =
-  | { readonly mode: "rail"; readonly entries: readonly Entry[] }
-  | { readonly mode: "flush"; readonly entries: readonly Entry[]; readonly clip: boolean };
-
-const RAIL_FIRST = "  └ ";
-const RAIL_CONT = "    ";
-const ELLIPSIS = "…";
-
-type Block = { readonly header: HeaderSpec; readonly body: Body | undefined };
-
-function layoutHeader(header: HeaderSpec, expanded: boolean, width: number): string[] {
-  const full =
-    header.subject === ""
-      ? header.lead + header.trailing
-      : header.lead + header.subject + (header.trailing === "" ? "" : " " + header.trailing);
-  // Collapsed: always exactly one line, clipped to width.
-  // Expanded: one line if it fits, else wrap the subject under a hanging indent
-  // aligned to the subject-start column.
-  if (!expanded || visibleWidth(full) <= width) {
-    return [truncateToWidth(full, width, ELLIPSIS)];
-  }
-  const subjectStart = visibleWidth(header.lead);
-  const avail = Math.max(1, width - subjectStart);
-  const indent = " ".repeat(subjectStart);
-  const wrapped = wrapTextWithAnsi(header.subject, avail);
-  const lines = [header.lead + wrapped[0]];
-  for (let index = 1; index < wrapped.length; index += 1) {
-    lines.push(indent + wrapped[index]);
-  }
-  if (header.trailing !== "") {
-    lines[lines.length - 1] = lines[lines.length - 1] + " " + header.trailing;
-  }
-  return lines;
-}
-
-function railEntryPhysical(entry: Entry, expanded: boolean, contentWidth: number): string[] {
-  if (entry.exempt) return [entry.text];
-  if (expanded) return wrapTextWithAnsi(entry.text, contentWidth);
-  return entry.text.split(/\r?\n/).map((line) => truncateToWidth(line, contentWidth, ELLIPSIS));
-}
-
-function layoutRail(entries: readonly Entry[], expanded: boolean, width: number): string[] {
-  const contentWidth = Math.max(1, width - visibleWidth(RAIL_FIRST));
-  const physical = entries.flatMap((entry) => railEntryPhysical(entry, expanded, contentWidth));
-  return physical.map((line, index) => (index === 0 ? RAIL_FIRST + line : RAIL_CONT + line));
-}
-
-function layoutFlush(entries: readonly Entry[], clip: boolean, width: number): string[] {
-  return entries.flatMap((entry) => {
-    if (entry.exempt || !clip) return [entry.text];
-    return entry.text.split(/\r?\n/).map((line) => truncateToWidth(line, width, ELLIPSIS));
-  });
-}
-
-function renderBlock(block: Block, expanded: boolean): { render(width: number): string[]; invalidate(): void } {
-  let cache: { width: number; lines: string[] } | undefined;
-  return {
-    render(width: number): string[] {
-      if (cache !== undefined && cache.width === width) return cache.lines;
-      const lines = layoutHeader(block.header, expanded, width);
-      if (block.body !== undefined) {
-        if (block.body.mode === "rail") {
-          lines.push(...layoutRail(block.body.entries, expanded, width));
-        } else {
-          lines.push(...layoutFlush(block.body.entries, block.body.clip, width));
-        }
-      }
-      cache = { width, lines };
-      return lines;
-    },
-    invalidate() {
-      cache = undefined;
-    },
-  };
-}
-
-function emptyComponent(): { render(_width: number): string[]; invalidate(): void } {
-  return {
-    render(_width: number): string[] {
-      return [];
-    },
-    invalidate() {},
-  };
-}
-
-function withLeftGutter(component: { render(width: number): string[]; invalidate(): void }): { render(width: number): string[]; invalidate(): void } {
-  return {
-    render(width: number): string[] {
-      return component.render(Math.max(1, width - 1)).map((line) => ` ${line}`);
-    },
-    invalidate() {
-      component.invalidate();
-    },
-  };
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Grammar primitives
 // ─────────────────────────────────────────────────────────────────────────────
@@ -264,9 +130,9 @@ function moreLine(count: number, theme: unknown, unit: "more" | "more lines"): s
 // ─────────────────────────────────────────────────────────────────────────────
 
 function dotFromDetails(details: Record<string, unknown>): string {
-  const code = numberField(details, "exitCode") ?? numberField(details, "code");
+  const code = numberFieldOrUndefined(details, "exitCode") ?? numberFieldOrUndefined(details, "code");
   if (code !== undefined) return code === 0 ? "success" : "error";
-  if (boolField(details, "ok") === false) return "error";
+  if (boolFieldOrUndefined(details, "ok") === false) return "error";
   return "success";
 }
 
@@ -275,33 +141,33 @@ function dotFromDetails(details: Record<string, unknown>): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function quotedQuery(args: Record<string, unknown>): string {
-  return `"${oneLine(stringField(args, "query") ?? "")}"`;
+  return `"${oneLine(stringFieldOrUndefined(args, "query") ?? "")}"`;
 }
 
 function subjectFromArgs(name: string, args: Record<string, unknown>): string {
   switch (name) {
     case "exec_command":
-      return oneLine(stringField(args, "cmd") ?? "exec_command");
+      return oneLine(stringFieldOrUndefined(args, "cmd") ?? "exec_command");
     case "write_stdin": {
-      const chars = stringField(args, "chars") ?? "";
+      const chars = stringFieldOrUndefined(args, "chars") ?? "";
       if (chars.trim() !== "") return oneLine(chars);
-      const sid = numberField(args, "session_id");
+      const sid = numberFieldOrUndefined(args, "session_id");
       return sid === undefined ? "poll" : `poll session ${sid}`;
     }
     case "write":
     case "edit":
     case "read":
-      return stringField(args, "path") ?? "";
+      return stringFieldOrUndefined(args, "path") ?? "";
     case "apply_patch":
-      return oneLine(stringField(args, "input") ?? stringField(args, "patch") ?? "patch");
+      return oneLine(stringFieldOrUndefined(args, "input") ?? stringFieldOrUndefined(args, "patch") ?? "patch");
     case "agent_spawn":
-      return stringField(args, "profile") ?? "";
+      return stringFieldOrUndefined(args, "profile") ?? "";
     case "agent_send":
-      return stringField(args, "agent_id") ?? "";
+      return stringFieldOrUndefined(args, "agent_id") ?? "";
     case "agent_wait": {
       const agentIds = Array.isArray(args["agent_ids"]) ? args["agent_ids"].length : 0;
       const runIds = Array.isArray(args["run_ids"]) ? args["run_ids"].length : 0;
-      const timeout = numberField(args, "timeout_seconds");
+      const timeout = numberFieldOrUndefined(args, "timeout_seconds");
       const waitMode =
         timeout === undefined ? "until completion" :
         timeout === 0 ? "poll now" :
@@ -319,19 +185,19 @@ function subjectFromArgs(name: string, args: Record<string, unknown>): string {
     case "agent_profiles":
       return "profiles";
     case "create_goal":
-      return oneLine(stringField(args, "objective") ?? "");
+      return oneLine(stringFieldOrUndefined(args, "objective") ?? "");
     case "update_goal":
-      return stringField(args, "status") ?? "";
+      return stringFieldOrUndefined(args, "status") ?? "";
     case "find_thread":
     case "web_search_exa":
     case "get_code_context_exa":
     case "exa_agent_create_run":
       return quotedQuery(args);
     case "read_thread":
-      return stringField(args, "threadID") ?? "";
+      return stringFieldOrUndefined(args, "threadID") ?? "";
     case "ralph_continue":
     case "ralph_finish":
-      return stringField(args, "task_id") ?? "";
+      return stringFieldOrUndefined(args, "task_id") ?? "";
     case "crawling_exa": {
       const urls = Array.isArray(args["urls"]) ? args["urls"].length : 0;
       const ids = Array.isArray(args["ids"]) ? args["ids"].length : 0;
@@ -340,7 +206,7 @@ function subjectFromArgs(name: string, args: Record<string, unknown>): string {
     case "exa_agent_get_run":
     case "exa_agent_cancel_run":
     case "exa_agent_list_events":
-      return stringField(args, "id") ?? "";
+      return stringFieldOrUndefined(args, "id") ?? "";
     case "exa_agent_list_runs":
       return args["limit"] === undefined ? "recent runs" : `limit ${args["limit"]}`;
     default:
@@ -461,8 +327,8 @@ function buildShell(name: string, result: unknown, options: unknown, theme: unkn
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
   const subject = subjectFromArgs(name, args);
-  const sid = numberField(details, "sessionId") ?? numberField(details, "session_id");
-  const code = numberField(details, "exitCode") ?? numberField(details, "code");
+  const sid = numberFieldOrUndefined(details, "sessionId") ?? numberFieldOrUndefined(details, "session_id");
+  const code = numberFieldOrUndefined(details, "exitCode") ?? numberFieldOrUndefined(details, "code");
 
   // Async session still running: yellow dot, `(session N)` in the subject, no body yet.
   if (name === "exec_command" && sid !== undefined && code === undefined) {
@@ -470,11 +336,11 @@ function buildShell(name: string, result: unknown, options: unknown, theme: unkn
   }
 
   const header = headerSpec(name, subject, dotFromDetails(details), theme);
-  const output = stringField(details, "output") ?? textContent(result);
+  const output = stringFieldOrUndefined(details, "output") ?? textContent(result);
 
   // write_stdin poll with no new output.
   if (name === "write_stdin") {
-    const chars = stringField(args, "chars") ?? "";
+    const chars = stringFieldOrUndefined(args, "chars") ?? "";
     if (chars.trim() === "" && output.trim() === "") {
       return { header, body: { mode: "rail", entries: [{ text: themeFg(theme, "dim", "(still running; no new output)"), exempt: true }] } };
     }
@@ -486,9 +352,9 @@ function buildShell(name: string, result: unknown, options: unknown, theme: unkn
 function buildRead(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
-  const path = stringField(details, "path") ?? stringField(args, "path") ?? "";
-  const total = numberField(details, "totalLines");
-  const shown = numberField(details, "shownLines");
+  const path = stringFieldOrUndefined(details, "path") ?? stringFieldOrUndefined(args, "path") ?? "";
+  const total = numberFieldOrUndefined(details, "totalLines");
+  const shown = numberFieldOrUndefined(details, "shownLines");
   const subject =
     total === undefined
       ? path
@@ -513,9 +379,9 @@ function buildRead(name: string, result: unknown, options: unknown, theme: unkno
 function buildWrite(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
-  const path = stringField(details, "displayPath") ?? stringField(details, "path") ?? stringField(args, "path") ?? "";
-  const mode = stringField(details, "mode");
-  const contents = stringField(details, "contents") ?? "";
+  const path = stringFieldOrUndefined(details, "displayPath") ?? stringFieldOrUndefined(details, "path") ?? stringFieldOrUndefined(args, "path") ?? "";
+  const mode = stringFieldOrUndefined(details, "mode");
+  const contents = stringFieldOrUndefined(details, "contents") ?? "";
   const lineCount = contents === "" ? 0 : contents.trimEnd().split(/\r?\n/).length;
   const trailing = themeFg(theme, "dim", mode === "append" ? `(append +${lineCount})` : `(${lineCount} line${lineCount === 1 ? "" : "s"})`);
   const header = headerSpec("write", path, dotFromDetails(details), theme, trailing);
@@ -531,11 +397,11 @@ function buildWrite(name: string, result: unknown, options: unknown, theme: unkn
 function buildEdit(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
-  const path = stringField(details, "displayPath") ?? stringField(details, "path") ?? stringField(args, "path") ?? "";
-  const before = stringField(details, "before");
-  const after = stringField(details, "after");
+  const path = stringFieldOrUndefined(details, "displayPath") ?? stringFieldOrUndefined(details, "path") ?? stringFieldOrUndefined(args, "path") ?? "";
+  const before = stringFieldOrUndefined(details, "before");
+  const after = stringFieldOrUndefined(details, "after");
   if (before === undefined || after === undefined) {
-    const editCount = numberField(details, "editCount");
+    const editCount = numberFieldOrUndefined(details, "editCount");
     const summary = editCount !== undefined ? `${editCount} replacement${editCount === 1 ? "" : "s"}` : "";
     return {
       header: headerSpec("edit", path, dotFromDetails(details), theme),
@@ -562,16 +428,16 @@ function buildEdit(name: string, result: unknown, options: unknown, theme: unkno
 function buildApplyPatch(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
-  const writes = recordArrayField(details, "writes").map((write) => ({
-    path: stringField(write, "path") ?? "",
-    before: stringField(write, "before") ?? "",
-    after: stringField(write, "contents") ?? stringField(write, "after") ?? "",
+  const writes = recordArrayFieldOrEmpty(details, "writes").map((write) => ({
+    path: stringFieldOrUndefined(write, "path") ?? "",
+    before: stringFieldOrUndefined(write, "before") ?? "",
+    after: stringFieldOrUndefined(write, "contents") ?? stringFieldOrUndefined(write, "after") ?? "",
   }));
-  const deletes = stringArrayField(details, "deletes");
+  const deletes = stringArrayFieldOrEmpty(details, "deletes");
   const dotColor = dotFromDetails(details);
 
-  if (boolField(details, "ok") === false && writes.length === 0 && deletes.length === 0) {
-    const errorText = textContent(result) || stringField(details, "error") || compactJson(details);
+  if (boolFieldOrUndefined(details, "ok") === false && writes.length === 0 && deletes.length === 0) {
+    const errorText = textContent(result) || stringFieldOrUndefined(details, "error") || compactJson(details);
     const entries = expanded
       ? fullTextEntries(errorText, theme)
       : [{ text: themeFg(theme, "toolOutput", oneLine(errorText) || "apply_patch failed") }];
@@ -636,15 +502,15 @@ function buildApplyPatch(name: string, result: unknown, options: unknown, theme:
 function buildGoal(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
-  const goal = recordField(details, "goal");
-  const subject = goal !== undefined ? stringField(goal, "objective") ?? subjectFromArgs(name, args) : subjectFromArgs(name, args);
+  const goal = recordFieldOrUndefined(details, "goal");
+  const subject = goal !== undefined ? stringFieldOrUndefined(goal, "objective") ?? subjectFromArgs(name, args) : subjectFromArgs(name, args);
   const header = headerSpec(name, oneLine(subject), dotFromDetails(details), theme);
   const entries: Entry[] = [];
   if (goal !== undefined) {
     const facts = [
-      stringField(goal, "status"),
-      numberField(goal, "tokensUsed") !== undefined ? `${numberField(goal, "tokensUsed")} tokens` : undefined,
-      numberField(goal, "timeUsedSeconds") !== undefined ? `${numberField(goal, "timeUsedSeconds")}s` : undefined,
+      stringFieldOrUndefined(goal, "status"),
+      numberFieldOrUndefined(goal, "tokensUsed") !== undefined ? `${numberFieldOrUndefined(goal, "tokensUsed")} tokens` : undefined,
+      numberFieldOrUndefined(goal, "timeUsedSeconds") !== undefined ? `${numberFieldOrUndefined(goal, "timeUsedSeconds")}s` : undefined,
     ].filter((part): part is string => part !== undefined && part !== "");
     if (facts.length > 0) entries.push({ text: themeFg(theme, "dim", facts.join(" · ")), exempt: true });
   }
@@ -653,11 +519,11 @@ function buildGoal(name: string, result: unknown, options: unknown, theme: unkno
 }
 
 function listItemTitle(item: Record<string, unknown>, fallback: string): string {
-  return stringField(item, "title") ?? stringField(item, "id") ?? stringField(item, "url") ?? fallback;
+  return stringFieldOrUndefined(item, "title") ?? stringFieldOrUndefined(item, "id") ?? stringFieldOrUndefined(item, "url") ?? fallback;
 }
 
 function resultDescription(item: Record<string, unknown>): string | undefined {
-  const summary = stringField(item, "summary") ?? stringField(item, "text") ?? stringField(item, "content");
+  const summary = stringFieldOrUndefined(item, "summary") ?? stringFieldOrUndefined(item, "text") ?? stringFieldOrUndefined(item, "content");
   if (summary !== undefined) return summary;
   const highlights = item["highlights"];
   if (Array.isArray(highlights)) return highlights.find((part): part is string => typeof part === "string");
@@ -666,15 +532,15 @@ function resultDescription(item: Record<string, unknown>): string | undefined {
 
 function collectionMeta(item: Record<string, unknown>): string {
   const parts: string[] = [];
-  const url = stringField(item, "url");
+  const url = stringFieldOrUndefined(item, "url");
   if (url !== undefined) parts.push(domainOf(url));
-  const count = numberField(item, "messageCount") ?? numberField(item, "message_count");
+  const count = numberFieldOrUndefined(item, "messageCount") ?? numberFieldOrUndefined(item, "message_count");
   if (count !== undefined) parts.push(`${count} msgs`);
-  const status = stringField(item, "status");
+  const status = stringFieldOrUndefined(item, "status");
   if (status !== undefined) parts.push(status);
-  const lifecycle = stringField(item, "lifecycle");
+  const lifecycle = stringFieldOrUndefined(item, "lifecycle");
   if (lifecycle !== undefined) parts.push(lifecycle);
-  const sandbox = stringField(item, "sandbox");
+  const sandbox = stringFieldOrUndefined(item, "sandbox");
   if (sandbox !== undefined) parts.push(sandbox);
   return parts.join(" · ");
 }
@@ -712,20 +578,20 @@ function buildCollection(name: string, details: Record<string, unknown>, options
 
 function buildFindThread(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
   const details = detailsRecord(result);
-  return buildCollection(name, details, options, theme, subjectFromArgs(name, args), recordArrayField(details, "threads"));
+  return buildCollection(name, details, options, theme, subjectFromArgs(name, args), recordArrayFieldOrEmpty(details, "threads"));
 }
 
 function buildReadThread(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
-  const thread = recordField(details, "thread");
+  const thread = recordFieldOrUndefined(details, "thread");
   const header = headerSpec(name, subjectFromArgs(name, args), dotFromDetails(details), theme);
   const entries: Entry[] = [];
   if (thread !== undefined) {
     const facts = [
-      stringField(thread, "title"),
-      (numberField(thread, "messageCount") ?? numberField(thread, "message_count")) !== undefined
-        ? `${numberField(thread, "messageCount") ?? numberField(thread, "message_count")} msgs`
+      stringFieldOrUndefined(thread, "title"),
+      (numberFieldOrUndefined(thread, "messageCount") ?? numberFieldOrUndefined(thread, "message_count")) !== undefined
+        ? `${numberFieldOrUndefined(thread, "messageCount") ?? numberFieldOrUndefined(thread, "message_count")} msgs`
         : undefined,
     ].filter((part): part is string => part !== undefined && part !== "");
     if (facts.length > 0) entries.push({ text: themeFg(theme, "dim", facts.join(" · ")), exempt: true });
@@ -739,17 +605,17 @@ function buildAgent(name: string, result: unknown, options: unknown, theme: unkn
   const details = detailsRecord(result);
   if (name === "agent_spawn") return buildAgentSpawn(name, result, expanded, theme, args);
   if (name === "agent_wait") return buildAgentWait(name, result, expanded, theme, args);
-  const workers = recordArrayField(details, "workers");
-  const profiles = recordArrayField(details, "profiles");
+  const workers = recordArrayFieldOrEmpty(details, "workers");
+  const profiles = recordArrayFieldOrEmpty(details, "profiles");
   if (workers.length > 0) return buildCollection(name, details, options, theme, subjectFromArgs(name, args), workers);
   if (profiles.length > 0) return buildCollection(name, details, options, theme, subjectFromArgs(name, args), profiles);
 
-  const worker = recordField(details, "worker");
+  const worker = recordFieldOrUndefined(details, "worker");
   const header = headerSpec(name, subjectFromArgs(name, args), dotFromDetails(details), theme);
   const entries: Entry[] = [];
   if (worker !== undefined) {
-    const id = stringField(worker, "id");
-    const lifecycle = stringField(worker, "lifecycle");
+    const id = stringFieldOrUndefined(worker, "id");
+    const lifecycle = stringFieldOrUndefined(worker, "lifecycle");
     const facts = [id !== undefined ? `run ${id}` : undefined, lifecycle].filter((part): part is string => part !== undefined && part !== "");
     if (facts.length > 0) entries.push({ text: themeFg(theme, "dim", facts.join(" · ")), exempt: true });
   }
@@ -765,17 +631,17 @@ function buildAgentSpawn(
   args: Record<string, unknown>,
 ): Block {
   const details = detailsRecord(result);
-  const worker = recordField(details, "worker");
-  const profile = stringField(details, "profile") ?? stringField(args, "profile") ?? "";
-  const agentId = stringField(details, "agent_id") ?? stringField(details, "workerId") ?? stringField(worker ?? {}, "id") ?? "";
-  const runId = stringField(details, "run_id") ?? "";
-  const status = stringField(details, "status") ?? stringField(worker ?? {}, "lifecycle") ?? "";
+  const worker = recordFieldOrUndefined(details, "worker");
+  const profile = stringFieldOrUndefined(details, "profile") ?? stringFieldOrUndefined(args, "profile") ?? "";
+  const agentId = stringFieldOrUndefined(details, "agent_id") ?? stringFieldOrUndefined(details, "workerId") ?? stringFieldOrUndefined(worker ?? {}, "id") ?? "";
+  const runId = stringFieldOrUndefined(details, "run_id") ?? "";
+  const status = stringFieldOrUndefined(details, "status") ?? stringFieldOrUndefined(worker ?? {}, "lifecycle") ?? "";
   const header = headerSpec(name, subjectFromArgs(name, args), dotFromDetails(details), theme);
   const facts = [agentId !== "" ? `run ${agentId}` : undefined, status].filter((part): part is string => part !== undefined && part !== "");
   const entries: Entry[] = [];
   if (facts.length > 0) entries.push({ text: themeFg(theme, "dim", facts.join(" · ")), exempt: true });
   if (expanded) {
-    const message = stringField(args, "message") ?? stringField(args, "objective") ?? stringField(result as Record<string, unknown>, "prompt") ?? "";
+    const message = stringFieldOrUndefined(args, "message") ?? stringFieldOrUndefined(args, "objective") ?? stringFieldOrUndefined(result as Record<string, unknown>, "prompt") ?? "";
     const messageLabel = args["create_goal"] === true ? "Objective sent" : "Message sent";
     for (const line of [
       `Profile: ${profile}`,
@@ -793,9 +659,9 @@ function buildAgentSpawn(
 }
 
 function waitRunHeader(run: Record<string, unknown>, single: boolean): string {
-  const agentId = stringField(run, "agent_id") ?? "";
-  const runId = stringField(run, "run_id") ?? "";
-  const status = stringField(run, "status") ?? "";
+  const agentId = stringFieldOrUndefined(run, "agent_id") ?? "";
+  const runId = stringFieldOrUndefined(run, "run_id") ?? "";
+  const status = stringFieldOrUndefined(run, "status") ?? "";
   if (single) return `${agentId}${agentId === "" ? "" : " "}${status}`.trim();
   return [agentId, runId, status].filter((part) => part !== "").join(" · ");
 }
@@ -809,7 +675,7 @@ function buildAgentWait(
 ): Block {
   const details = detailsRecord(result);
   const header = headerSpec(name, subjectFromArgs(name, args), dotFromDetails(details), theme);
-  const runs = recordArrayField(details, "runs");
+  const runs = recordArrayFieldOrEmpty(details, "runs");
   if (!expanded) return { header, body: undefined };
   if (runs.length === 0) {
     return {
@@ -821,9 +687,9 @@ function buildAgentWait(
   runs.forEach((run, index) => {
     if (index > 0) entries.push({ text: "" });
     entries.push({ text: themeFg(theme, "dim", waitRunHeader(run, runs.length === 1)), exempt: true });
-    const finalOutput = stringField(run, "finalOutput");
-    const error = stringField(run, "error");
-    const outputAvailable = boolField(run, "outputAvailable") !== false;
+    const finalOutput = stringFieldOrUndefined(run, "finalOutput");
+    const error = stringFieldOrUndefined(run, "error");
+    const outputAvailable = boolFieldOrUndefined(run, "outputAvailable") !== false;
     const body =
       finalOutput !== undefined && finalOutput.trim() !== "" ? finalOutput :
       error !== undefined && error.trim() !== "" ? error :
@@ -839,12 +705,12 @@ function buildAgentWait(
 function buildRalph(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
-  const taskId = stringField(details, "taskId") ?? subjectFromArgs(name, args);
+  const taskId = stringFieldOrUndefined(details, "taskId") ?? subjectFromArgs(name, args);
   const header = headerSpec(name, taskId, dotFromDetails(details), theme);
   const facts = [
-    numberField(details, "iteration") !== undefined ? `iteration ${numberField(details, "iteration")}` : undefined,
-    stringField(details, "status"),
-    boolField(details, "reflection") === true ? "reflection" : undefined,
+    numberFieldOrUndefined(details, "iteration") !== undefined ? `iteration ${numberFieldOrUndefined(details, "iteration")}` : undefined,
+    stringFieldOrUndefined(details, "status"),
+    boolFieldOrUndefined(details, "reflection") === true ? "reflection" : undefined,
   ].filter((part): part is string => part !== undefined && part !== "");
   const entries: Entry[] = [];
   if (facts.length > 0) entries.push({ text: themeFg(theme, "dim", facts.join(" · ")), exempt: true });
@@ -855,8 +721,8 @@ function buildRalph(name: string, result: unknown, options: unknown, theme: unkn
 function buildExaSearch(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
-  const response = recordField(details, "response") ?? {};
-  const results = recordArrayField(response, "results");
+  const response = recordFieldOrUndefined(details, "response") ?? {};
+  const results = recordArrayFieldOrEmpty(response, "results");
   const header = headerSpec(name, subjectFromArgs(name, args), dotFromDetails(details), theme, themeFg(theme, "dim", `(${results.length} result${results.length === 1 ? "" : "s"})`));
   if (results.length === 0) {
     return { header, body: { mode: "rail", entries: [{ text: themeFg(theme, "dim", "(none)"), exempt: true }] } };
@@ -866,14 +732,14 @@ function buildExaSearch(name: string, result: unknown, options: unknown, theme: 
   const entries: Entry[] = [];
   results.slice(0, limit).forEach((item, index) => {
     const title = listItemTitle(item, `result ${index + 1}`);
-    const url = stringField(item, "url") ?? "";
+    const url = stringFieldOrUndefined(item, "url") ?? "";
     const domain = domainOf(url);
     let line = `${themeFg(theme, "accent", String(index + 1))}${sep}${themeFg(theme, "toolOutput", title)}`;
     if (domain !== "") line += `${sep}${themeFg(theme, "dim", domain)}`;
     entries.push({ text: line });
     if (expanded) {
       if (url !== "") entries.push({ text: themeFg(theme, "dim", url) });
-      const published = stringField(item, "publishedDate");
+      const published = stringFieldOrUndefined(item, "publishedDate");
       if (published !== undefined) entries.push({ text: themeFg(theme, "dim", published) });
       const description = resultDescription(item);
       if (description !== undefined && description.trim() !== "") {
@@ -888,8 +754,8 @@ function buildExaSearch(name: string, result: unknown, options: unknown, theme: 
 function buildCodeContext(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
-  const response = recordField(details, "response") ?? {};
-  const text = stringField(response, "response") ?? textContent(result);
+  const response = recordFieldOrUndefined(details, "response") ?? {};
+  const text = stringFieldOrUndefined(response, "response") ?? textContent(result);
   const header = headerSpec(name, subjectFromArgs(name, args), dotFromDetails(details), theme);
   return { header, body: { mode: "rail", entries: headEntries(text, expanded, theme, 5, 100000) } };
 }
@@ -897,23 +763,23 @@ function buildCodeContext(name: string, result: unknown, options: unknown, theme
 function buildExaAgent(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
-  const response = recordField(details, "response") ?? {};
+  const response = recordFieldOrUndefined(details, "response") ?? {};
 
   if (name === "exa_agent_list_runs" || name === "exa_agent_list_events") {
-    const data = recordArrayField(response, "data");
-    const items = data.length > 0 ? data : recordArrayField(response, "results");
+    const data = recordArrayFieldOrEmpty(response, "data");
+    const items = data.length > 0 ? data : recordArrayFieldOrEmpty(response, "results");
     return buildCollection(name, details, options, theme, subjectFromArgs(name, args), items);
   }
   if (name === "exa_agent_cancel_run") {
     return { header: headerSpec(name, subjectFromArgs(name, args), dotFromDetails(details), theme), body: undefined };
   }
   // create_run / get_run: single entity `<id> · <status>`, output.text full when expanded.
-  const id = stringField(response, "id") ?? subjectFromArgs(name, args);
-  const status = stringField(response, "status");
+  const id = stringFieldOrUndefined(response, "id") ?? subjectFromArgs(name, args);
+  const status = stringFieldOrUndefined(response, "status");
   const subject = status !== undefined ? `${id} · ${status}` : id;
   const header = headerSpec(name, subject, dotFromDetails(details), theme);
-  const output = recordField(response, "output");
-  const text = output !== undefined ? stringField(output, "text") ?? "" : stringField(response, "response") ?? "";
+  const output = recordFieldOrUndefined(response, "output");
+  const text = output !== undefined ? stringFieldOrUndefined(output, "text") ?? "" : stringFieldOrUndefined(response, "response") ?? "";
   const entries = expanded ? fullTextEntries(text, theme) : [];
   return { header, body: entries.length === 0 ? undefined : { mode: "rail", entries } };
 }
@@ -941,25 +807,39 @@ function blockBetween(content: string, tag: string): string {
   return match ? match[1] : "";
 }
 
+function parseSkillAttrs(rawAttrs: string): { name: string; location: string } | undefined {
+  const name = attrValue(rawAttrs, /\bname="([^"]*)"/);
+  const location = attrValue(rawAttrs, /\blocation="([^"]*)"/);
+  return name !== undefined && location !== undefined ? { name, location } : undefined;
+}
+
 function parseSkillBlocks(content: string): { name: string; location: string; body: string }[] {
-  const re = /<skill name="([^"]*)" location="([^"]*)">\nReferences are relative to [^\n]*\.\n\n([\s\S]*?)\n<\/skill>/g;
+  const re = /<skill\b([^>]*)>\s*References are relative to [^\n]*\.\s*\n\n([\s\S]*?)\n<\/skill>/g;
   const blocks: { name: string; location: string; body: string }[] = [];
   let match: RegExpExecArray | null;
   while ((match = re.exec(content)) !== null) {
-    blocks.push({ name: match[1], location: match[2], body: match[3] });
+    const attrs = parseSkillAttrs(match[1]);
+    if (attrs !== undefined) blocks.push({ ...attrs, body: match[2] });
+  }
+  const childTag = /<skill>\s*<name>([\s\S]*?)<\/name>\s*<path>([\s\S]*?)<\/path>\s*([\s\S]*?)\s*<\/skill>/g;
+  while ((match = childTag.exec(content)) !== null) {
+    const name = match[1].trim();
+    const location = match[2].trim();
+    const body = match[3].trim();
+    if (name !== "" && location !== "" && body !== "") blocks.push({ name, location, body });
   }
   return blocks;
 }
 
 export function skillMessageRenderer() {
   return (message: unknown, options: unknown, theme: unknown) => {
-    const content = isRecord(message) ? stringField(message, "content") ?? "" : "";
+    const content = isRecord(message) ? stringFieldOrUndefined(message, "content") ?? "" : "";
     const skills = parseSkillBlocks(content);
     if (skills.length === 0) return undefined;
     const expanded = expandedFromOptions(options);
     const skill = skills[0];
     const details = detailsRecord(message);
-    const trigger = stringField(details, "trigger") ?? `$${skill.name}`;
+    const trigger = stringFieldOrUndefined(details, "trigger") ?? `$${skill.name}`;
     const provenance = `Skill "${skill.name}" was injected automatically by the harness because the user mentioned ${trigger}.`;
     return withLeftGutter(
       renderBlock(
@@ -980,7 +860,7 @@ export function skillMessageRenderer() {
 }
 
 function buildNotificationBlock(message: unknown, options: unknown, theme: unknown): Block | undefined {
-  const content = isRecord(message) ? stringField(message, "content") ?? "" : "";
+  const content = isRecord(message) ? stringFieldOrUndefined(message, "content") ?? "" : "";
   if (content === "") return undefined;
   const expanded = expandedFromOptions(options);
   const kind = attrValue(content, /kind="([^"]*)"/) ?? "notification";

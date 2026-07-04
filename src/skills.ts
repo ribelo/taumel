@@ -1,5 +1,5 @@
 import type { CoreBridge, PiLike } from "./types.ts";
-import { coreCall, isRecord } from "./util.ts";
+import { coreCallRecord, isRecord } from "./util.ts";
 
 function promptFromEvent(event: unknown): string {
   if (!isRecord(event)) return "";
@@ -48,8 +48,7 @@ export function installSkillResolver(pi: PiLike, core: CoreBridge): void {
       return { action: "continue" };
     }
     const cwd = isRecord(ctx) && typeof ctx["cwd"] === "string" ? ctx["cwd"] : process.cwd();
-    const result = coreCall(core, "resolveSkillMentions", [{ prompt, cwd, ctx }]);
-    if (!isRecord(result)) throw new Error("Invalid Taumel skill resolver result");
+    const result = coreCallRecord(core, "resolveSkillMentions", [{ prompt, cwd, ctx }], "skill resolver result");
     notifyWarnings(result, ctx);
     const blocks = blockRecords(result);
     if (blocks.length === 0) return { action: "continue" };
