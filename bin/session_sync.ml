@@ -187,6 +187,7 @@ let load_session_state ctx =
   load_visibility_state ctx;
   last_goal_accounting_key := None;
   goal_turn_clock := Taumel.Goal.empty_clock;
+  pending_goal_terminal_status := None;
   goal_retrying := false;
   goal_compacting := false
 
@@ -258,14 +259,27 @@ let account_goal_turn_end ctx =
     Taumel.Goal.finish_turn_clock ~now_ms:(now_milliseconds ()) !goal_turn_clock
   in
   goal_turn_clock := next_clock;
+  let now = now_seconds () in
+  let store_for_accounting =
+    match (!pending_goal_terminal_status, !current_goal) with
+    | Some _, Some goal -> Some { goal with status = Taumel.Goal.Active }
+    | _ -> !current_goal
+  in
   let result =
     Taumel.Goal.account_turn_end
-      ~session_id:(Session_store.session_id_from_ctx ctx) ~now:(now_seconds ())
+      ~session_id:(Session_store.session_id_from_ctx ctx) ~now
       ~active_time_seconds ~last_accounting_key:!last_goal_accounting_key
-      ~branch:(Session_store.branch_json_entries ctx) !current_goal
+      ~branch:(Session_store.branch_json_entries ctx) store_for_accounting
   in
-  if result.changed then (
-    current_goal := result.goal;
+  let result_goal =
+    match (!pending_goal_terminal_status, result.goal) with
+    | Some status, Some goal -> Some { goal with status; updated_at = now }
+    | _ -> result.goal
+  in
+  let changed = result.changed || !pending_goal_terminal_status <> None in
+  pending_goal_terminal_status := None;
+  if changed then (
+    current_goal := result_goal;
     last_goal_accounting_key := result.accounting_key;
     save_goal_state ctx)
 

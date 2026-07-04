@@ -277,6 +277,21 @@ assert(findExpanded.includes("Thread 4"), `find_thread expanded should include m
 const goalCompact = renderText(renderersForTool("create_goal").renderResult(resultFor("create_goal"), { expanded: false, isPartial: false }, theme, { args: argsFor("create_goal") }));
 assert(/• create_goal · ship renderer coverage/.test(goalCompact), `create_goal subject should be the objective: ${goalCompact}`);
 assert(goalCompact.includes("  └ active · 10 tokens · 2s"), `create_goal facts line should be dim ·-joined: ${goalCompact}`);
+const pendingGoalCompact = renderText(renderersForTool("update_goal").renderResult({
+  content: [{ type: "text", text: "Goal updated." }],
+  details: {
+    ok: true,
+    accountingPending: true,
+    goal: {
+      objective: "ship renderer coverage",
+      status: "complete",
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
+    },
+  },
+}, { expanded: false, isPartial: false }, theme, { args: argsFor("update_goal") }));
+assert(pendingGoalCompact.includes("  └ complete · final accounting pending"), `update_goal should not render zero counters while final accounting is pending: ${pendingGoalCompact}`);
+assert(!pendingGoalCompact.includes("0 tokens · 0s"), `update_goal pending accounting should suppress zero counters: ${pendingGoalCompact}`);
 
 const spawnCompact = renderText(renderersForTool("agent_spawn").renderResult(resultFor("agent_spawn"), { expanded: false, isPartial: false }, theme, { args: argsFor("agent_spawn") }));
 assert(/• agent_spawn · finder/.test(spawnCompact) && spawnCompact.includes("  └ run worker-1 · running"), `agent_spawn facts should be run <id> · <lifecycle>: ${spawnCompact}`);

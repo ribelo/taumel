@@ -503,14 +503,16 @@ function buildGoal(name: string, result: unknown, options: unknown, theme: unkno
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
   const goal = recordFieldOrUndefined(details, "goal");
+  const accountingPending = details["accountingPending"] === true;
   const subject = goal !== undefined ? stringFieldOrUndefined(goal, "objective") ?? subjectFromArgs(name, args) : subjectFromArgs(name, args);
   const header = headerSpec(name, oneLine(subject), dotFromDetails(details), theme);
   const entries: Entry[] = [];
   if (goal !== undefined) {
     const facts = [
       stringFieldOrUndefined(goal, "status"),
-      numberFieldOrUndefined(goal, "tokensUsed") !== undefined ? `${numberFieldOrUndefined(goal, "tokensUsed")} tokens` : undefined,
-      numberFieldOrUndefined(goal, "timeUsedSeconds") !== undefined ? `${numberFieldOrUndefined(goal, "timeUsedSeconds")}s` : undefined,
+      accountingPending ? "final accounting pending" : undefined,
+      !accountingPending && numberFieldOrUndefined(goal, "tokensUsed") !== undefined ? `${numberFieldOrUndefined(goal, "tokensUsed")} tokens` : undefined,
+      !accountingPending && numberFieldOrUndefined(goal, "timeUsedSeconds") !== undefined ? `${numberFieldOrUndefined(goal, "timeUsedSeconds")}s` : undefined,
     ].filter((part): part is string => part !== undefined && part !== "");
     if (facts.length > 0) entries.push({ text: themeFg(theme, "dim", facts.join(" · ")), exempt: true });
   }

@@ -665,6 +665,46 @@ let test_goal_turn_accounting () =
   assert_int "goal accounting time delta" 10 updated.time_used_seconds;
   assert_bool "goal accounting time limit"
     (updated.status = Goal.Time_limited);
+  let pi_usage_goal =
+    expect_ok "goal create pi usage"
+      (Goal.create ~thread_id:"thread" ~now:40 "ship pi usage" None)
+  in
+  let pi_usage_branch =
+    [
+      Shared.Object
+        [
+          ( "message",
+            Shared.Object
+              [
+                ("role", Shared.String "assistant");
+                ( "usage",
+                  Shared.Object
+                    [
+                      ("input", Shared.Number 11.);
+                      ("output", Shared.Number 9.);
+                      ("cacheRead", Shared.Number 4.);
+                      ("cacheWrite", Shared.Number 6.);
+                      ("totalTokens", Shared.Number 30.);
+                    ] );
+              ] );
+        ];
+    ]
+  in
+  let pi_accounted =
+    Goal.account_turn_end ~session_id:"session" ~now:50
+      ~active_time_seconds:7 ~last_accounting_key:None ~branch:pi_usage_branch
+      (Some pi_usage_goal)
+  in
+  assert_bool "pi-native goal accounting changed" pi_accounted.changed;
+  let pi_updated =
+    match pi_accounted.goal with
+    | Some goal -> goal
+    | None -> fail "pi-native goal accounting" "expected updated goal"
+  in
+  assert_int "pi-native goal accounting token delta" 26
+    pi_updated.tokens_used;
+  assert_int "pi-native goal accounting time delta" 7
+    pi_updated.time_used_seconds;
   let repeated =
     Goal.account_turn_end ~session_id:"session" ~now:30
       ~active_time_seconds:10 ~last_accounting_key:accounted.accounting_key

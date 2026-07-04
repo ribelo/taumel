@@ -243,6 +243,8 @@ let first_json_int_field json names =
 let first_json_object_field json names =
   List.find_map (fun name -> json_object_field name json) names
 
+let option_int_default value = Option.value value ~default:0
+
 let rec token_usage_of_json usage =
   match
     List.find_map
@@ -254,9 +256,29 @@ let rec token_usage_of_json usage =
   with
   | Some _ as parsed -> parsed
   | None ->
-      let input_tokens =
+      let pi_input = first_json_int_field usage [ "input" ] in
+      let pi_cache_read =
         first_json_int_field usage
-          [ "input_tokens"; "inputTokens"; "prompt_tokens"; "promptTokens" ]
+          [ "cacheRead"; "cache_read"; "cache_read_input_tokens" ]
+      in
+      let pi_cache_write =
+        first_json_int_field usage
+          [ "cacheWrite"; "cache_write"; "cache_write_input_tokens" ]
+      in
+      let input_tokens =
+        match
+          first_json_int_field usage
+            [ "input_tokens"; "inputTokens"; "prompt_tokens"; "promptTokens" ]
+        with
+        | Some _ as value -> value
+        | None ->
+            if
+              pi_input = None && pi_cache_read = None && pi_cache_write = None
+            then None
+            else
+              Some
+                (option_int_default pi_input + option_int_default pi_cache_read
+               + option_int_default pi_cache_write)
       in
       let cached_input_tokens =
         match
@@ -273,13 +295,23 @@ let rec token_usage_of_json usage =
                   "promptTokensDetails";
                 ]
             with
-            | None -> None
+            | None -> pi_cache_read
             | Some details ->
-                first_json_int_field details [ "cached_tokens"; "cachedTokens" ])
+                (match
+                   first_json_int_field details [ "cached_tokens"; "cachedTokens" ]
+                 with
+                | Some _ as value -> value
+                | None -> pi_cache_read))
       in
       let output_tokens =
         first_json_int_field usage
-          [ "output_tokens"; "outputTokens"; "completion_tokens"; "completionTokens" ]
+          [
+            "output_tokens";
+            "outputTokens";
+            "completion_tokens";
+            "completionTokens";
+            "output";
+          ]
       in
       if input_tokens = None && cached_input_tokens = None && output_tokens = None then
         None

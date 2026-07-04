@@ -32,6 +32,7 @@ let active_host : Unsafe.any option ref = ref None
 let current_goal : Taumel.Goal.t option ref = ref None
 let goal_automation = ref Taumel.Goal.Automation_enabled
 let goal_turn_clock = ref Taumel.Goal.empty_clock
+let pending_goal_terminal_status : Taumel.Goal.status option ref = ref None
 let goal_retrying = ref false
 let goal_compacting = ref false
 let active_profile_state = ref Taumel.Capability_profile.default

@@ -27,24 +27,29 @@ let js_automation automation =
         js_bool (Taumel.Goal.automation_requires_user_input automation) );
     |]
 
-let details goal automation =
+let details ?(accounting_pending = false) goal automation =
   let goal_value =
     match goal with
     | None -> Unsafe.inject Js.null
     | Some goal -> inject (js_goal goal)
   in
-  Unsafe.obj
-    [|
+  let fields =
+    [
       ("goal", goal_value);
       ("automation", inject (js_automation automation));
-    |]
+    ]
+    @
+    if accounting_pending then [ ("accountingPending", js_bool true) ] else []
+  in
+  Unsafe.obj (Array.of_list fields)
 
-let tool_result goal text =
+let tool_result ?(accounting_pending = false) goal text =
   ok_obj
     [
       ("action", js_string "tool_result");
       ("text", js_string text);
-      ("details", inject (details goal !goal_automation));
+      ( "details",
+        inject (details ~accounting_pending goal !goal_automation) );
     ]
 
 let command_result ?(followup = false) goal message =
@@ -176,6 +181,7 @@ let prepare_create params ctx =
       | Ok goal ->
           current_goal := Some goal;
           goal_automation := Taumel.Goal.Automation_enabled;
+          pending_goal_terminal_status := None;
           Session_sync.save_goal_state ctx;
           Session_sync.save_goal_automation_state ctx;
           tool_result (Some goal) "Goal created.")
@@ -190,17 +196,19 @@ let prepare_update params ctx =
         | "blocked" -> Taumel.Goal.Blocked
         | _ -> failwith "invalid parsed update_goal.status"
       in
-      (* Account the in-flight turn before the goal leaves Active so the
-         returned totals include the work that produced this completion. The
-         turn_end pass dedupes on the same accounting key, so this never double
-         counts. *)
-      Session_sync.account_goal_turn_end ctx;
+      let accounting_pending =
+        match !current_goal with
+        | Some goal when goal.status = Taumel.Goal.Active -> true
+        | _ -> false
+      in
       match Taumel.Goal.update_status ~now:(now_seconds ()) status !current_goal with
       | Error message -> error_obj message
       | Ok goal ->
           current_goal := Some goal;
+          pending_goal_terminal_status :=
+            if accounting_pending then Some status else None;
           Session_sync.save_goal_state ctx;
-          tool_result (Some goal) "Goal updated.")
+          tool_result ~accounting_pending (Some goal) "Goal updated.")
 
 let handle_command args ctx =
   (* Mirror update_goal: a user-driven terminal transition accounts the
@@ -216,6 +224,7 @@ let handle_command args ctx =
   | Error message -> error_obj message
   | Ok plan ->
       if plan.changed then (
+        pending_goal_terminal_status := None;
         current_goal := plan.goal;
         (match plan.automation with
         | None -> ()

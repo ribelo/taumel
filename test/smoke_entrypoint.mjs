@@ -332,6 +332,10 @@ try {
   }
 
   const parentEntries = [];
+  const parentBranch = [
+    { type: "message", message: { role: "user", content: "bridge smoke" } },
+    { type: "message", message: { role: "assistant", content: "bridge response" } },
+  ];
   const ctx = {
     cwd,
     hasUI: true,
@@ -380,10 +384,7 @@ try {
         customEntries.push({ sessionId: "parent-session", type, value });
       },
       getEntries: () => parentEntries,
-      getBranch: () => [
-        { type: "message", message: { role: "user", content: "bridge smoke" } },
-        { type: "message", message: { role: "assistant", content: "bridge response" } },
-      ],
+      getBranch: () => parentBranch,
     },
   };
 
@@ -663,6 +664,64 @@ try {
   }
   if (sentMessages.length !== 0) {
     throw new Error(`goal agent_end queued after complete: ${JSON.stringify(sentMessages)}`);
+  }
+
+  const accountingGoalResult = await commands.get("goal").handler("terminal accounting goal", ctx);
+  if (
+    accountingGoalResult.action !== "command_result" ||
+    accountingGoalResult.details?.goal?.status !== "active"
+  ) {
+    throw new Error(`goal command did not create accounting test goal: ${JSON.stringify(accountingGoalResult)}`);
+  }
+  const realDateNow = Date.now;
+  try {
+    Date.now = () => 100_000;
+    for (const handler of handlers.get("turn_start") ?? []) {
+      await handler({ type: "turn_start" }, ctx);
+    }
+    Date.now = () => 104_000;
+    const updateGoalResult = await tools.get("update_goal").execute(
+      "update-goal-terminal-accounting",
+      { status: "complete" },
+      undefined,
+      undefined,
+      ctx,
+    );
+    if (
+      updateGoalResult.details?.goal?.status !== "complete" ||
+      updateGoalResult.details?.accountingPending !== true
+    ) {
+      throw new Error(`update_goal did not mark terminal accounting pending: ${JSON.stringify(updateGoalResult)}`);
+    }
+    parentBranch.push({
+      type: "message",
+      message: {
+        role: "assistant",
+        content: "terminal accounting response",
+        usage: {
+          input: 11,
+          output: 9,
+          cacheRead: 4,
+          cacheWrite: 6,
+          totalTokens: 30,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+      },
+    });
+    Date.now = () => 109_000;
+    for (const handler of handlers.get("turn_end") ?? []) {
+      await handler({ type: "turn_end" }, ctx);
+    }
+  } finally {
+    Date.now = realDateNow;
+  }
+  const accountedGoalResult = await commands.get("goal").handler("status", ctx);
+  if (
+    accountedGoalResult.details?.goal?.status !== "complete" ||
+    accountedGoalResult.details?.goal?.tokensUsed !== 26 ||
+    accountedGoalResult.details?.goal?.timeUsedSeconds !== 9
+  ) {
+    throw new Error(`turn_end did not finalize pending update_goal accounting: ${JSON.stringify(accountedGoalResult)}`);
   }
 
   if (activeToolUpdates.length === 0) {
