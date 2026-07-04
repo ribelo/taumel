@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readdirSync, realpathSync } from "node:fs";
-import { appendFile, mkdir, open, readFile, readdir, realpath, rename, rm } from "node:fs/promises";
+import { appendFile, lstat, mkdir, open, readFile, readdir, readlink, realpath, rename, rm, rmdir, symlink } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -488,14 +488,14 @@ export async function appendToFile(path: string, contents: string): Promise<void
   await appendFile(path, contents, "utf8");
 }
 
-export async function writeFileAtomically(path: string, contents: string): Promise<void> {
+async function writeDataAtomically(path: string, contents: string | Uint8Array): Promise<void> {
   const parent = dirname(path);
   await mkdir(parent, { recursive: true });
   const tempPath = join(parent, `.${basename(path)}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`);
   let handle: FileHandle | undefined;
   try {
     handle = await open(tempPath, "w");
-    await handle.writeFile(contents, "utf8");
+    await handle.writeFile(contents);
     await handle.sync();
     await handle.close();
     handle = undefined;
@@ -508,6 +508,82 @@ export async function writeFileAtomically(path: string, contents: string): Promi
   }
 }
 
+export async function writeFileAtomically(path: string, contents: string): Promise<void> {
+  await writeDataAtomically(path, contents);
+}
+
+type PatchWrite = {
+  path: string;
+  contents: string;
+};
+
+type PatchFileSnapshot =
+  | { kind: "missing" }
+  | { kind: "file"; contents: Uint8Array }
+  | { kind: "symlink"; target: string }
+  | { kind: "other" };
+
+async function snapshotPatchFile(path: string): Promise<PatchFileSnapshot> {
+  try {
+    const stats = await lstat(path);
+    if (stats.isSymbolicLink()) return { kind: "symlink", target: await readlink(path) };
+    if (stats.isFile()) return { kind: "file", contents: await readFile(path) };
+    return { kind: "other" };
+  } catch (error) {
+    if (isRecord(error) && error["code"] === "ENOENT") return { kind: "missing" };
+    throw error;
+  }
+}
+
+function missingParentDirs(path: string): string[] {
+  const dirs: string[] = [];
+  let parent = dirname(path);
+  while (parent !== "." && parent !== "/" && !existsSync(parent)) {
+    dirs.push(parent);
+    parent = dirname(parent);
+  }
+  return dirs.reverse();
+}
+
+async function restorePatchFile(path: string, snapshot: PatchFileSnapshot): Promise<void> {
+  switch (snapshot.kind) {
+    case "missing":
+      await rm(path, { force: true });
+      return;
+    case "file":
+      await writeDataAtomically(path, snapshot.contents);
+      return;
+    case "symlink":
+      await rm(path, { force: true });
+      await mkdir(dirname(path), { recursive: true });
+      await symlink(snapshot.target, path);
+      await syncDirectory(dirname(path));
+      return;
+    case "other":
+      return;
+  }
+}
+
+async function rollbackPatchFiles(
+  snapshots: Map<string, PatchFileSnapshot>,
+  createdParentDirs: readonly string[],
+): Promise<void> {
+  for (const [path, snapshot] of snapshots) {
+    try {
+      await restorePatchFile(path, snapshot);
+    } catch {
+      // Keep rollback best-effort so the original filesystem error remains visible.
+    }
+  }
+  for (const dir of [...createdParentDirs].sort((left, right) => right.length - left.length)) {
+    try {
+      await rmdir(dir);
+    } catch {
+      // Parent directories are removed only when they are still empty.
+    }
+  }
+}
+
 export async function writePatchFiles(application: Record<string, unknown>): Promise<void> {
   const deletes = stringArrayFromUnknown(application["deletes"]);
   if (deletes === undefined) throw new Error("Invalid Taumel apply_patch result");
@@ -515,16 +591,32 @@ export async function writePatchFiles(application: Record<string, unknown>): Pro
   if (!Array.isArray(writes) || !writes.every(isRecord)) {
     throw new Error("Invalid Taumel apply_patch result");
   }
+  const parsedWrites: PatchWrite[] = [];
   for (const write of writes) {
     const path = stringField(write, "path");
     const contents = write["contents"];
     if (path === "" || typeof contents !== "string") {
       throw new Error("Invalid Taumel apply_patch result");
     }
-    await writeFileAtomically(path, contents);
+    parsedWrites.push({ path, contents });
   }
-  for (const path of deletes) {
-    await rm(path, { force: true });
+
+  const snapshots = new Map<string, PatchFileSnapshot>();
+  for (const path of [...parsedWrites.map((write) => write.path), ...deletes]) {
+    if (!snapshots.has(path)) snapshots.set(path, await snapshotPatchFile(path));
+  }
+  const createdParentDirs = [...new Set(parsedWrites.flatMap((write) => missingParentDirs(write.path)))];
+
+  try {
+    for (const write of parsedWrites) {
+      await writeFileAtomically(write.path, write.contents);
+    }
+    for (const path of deletes) {
+      await rm(path, { force: true });
+    }
+  } catch (error) {
+    await rollbackPatchFiles(snapshots, createdParentDirs);
+    throw error;
   }
 }
 
