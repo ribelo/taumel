@@ -13,11 +13,12 @@ profiles are exposed in a session. They are a UX preference, not a security
 boundary: disabled items should disappear from the model-facing surface instead
 of producing noisy "disabled by user" errors during normal use.
 
-The current session has precedence. A trusted project may provide default
-disabled lists in `<cwd>/.pi/settings.json`; a session starts from those defaults
-when it has no saved session visibility state. Session changes apply immediately,
-persist with the thread, and can be saved back to project config with `Ctrl+S`
-or a command-form `save` action.
+The current session has precedence. Global Pi config may provide personal
+default disabled lists in `~/.pi/agent/settings.json`, and a trusted project may
+provide project defaults in `<cwd>/.pi/settings.json`. A session starts from
+those defaults when it has no saved session visibility state. Session changes
+apply immediately, persist with the thread, and can be saved back to project
+config with `Ctrl+S` or a command-form `save` action.
 
 ## Requirements
 
@@ -25,14 +26,14 @@ or a command-form `save` action.
 
 - **vis-sc01** (ubiquitous): The system shall treat tool, skill, and agent-profile visibility as session-effective state, not as a hard authorization policy.
 - **vis-sc02** (ubiquitous): The system shall persist session-effective visibility in session custom entries and restore it when the same thread resumes.
-- **vis-sc03** (event-driven): When a new session starts and no session visibility state exists, the system shall seed session-effective visibility from trusted project config.
-- **vis-sc04** (ubiquitous): The session-effective state shall take precedence over project defaults for the lifetime of that session.
+- **vis-sc03** (event-driven): When a new session starts and no session visibility state exists, the system shall seed session-effective visibility from global Pi config and trusted project Pi config according to the shared Taumel config precedence.
+- **vis-sc04** (ubiquitous): The session-effective state shall take precedence over config defaults for the lifetime of that session.
 - **vis-sc05** (ubiquitous): Visibility shall apply to the whole thread/session, not to individual conversation-tree branches.
 - **vis-sc06** (event-driven): Visibility changes from managers or command forms shall apply immediately for the next model turn or skill-resolution pass.
 
-### Project config
+### Config defaults
 
-- **vis-pc01** (ubiquitous): The project settings file shall store disabled lists only, preserving unrelated settings:
+- **vis-cf01** (ubiquitous): Global and project Pi config files shall store visibility defaults as disabled lists only, preserving unrelated settings:
 
   ```json
   {
@@ -44,12 +45,15 @@ or a command-form `save` action.
   }
   ```
 
-- **vis-pc02** (ubiquitous): New tools, skills, and agent profiles shall default to enabled unless their names appear in the relevant disabled list.
-- **vis-pc03** (event-driven): The system shall read project visibility defaults only when `ctx.isProjectTrusted()` is true.
-- **vis-pc04** (event-driven): When the user saves visibility to project config in an untrusted project, the system shall leave the file unchanged and show a clear warning.
-- **vis-pc05** (ubiquitous): Project save shall update only `taumel.agents.disabled`, `taumel.tools.disabled`, and `taumel.skills.disabled`, preserving other `taumel` settings such as built-in agent routing.
-- **vis-pc06** (event-driven): Restore-time warnings for unavailable visibility names shall be emitted at most once per session per category, with managers/lists allowed to show the same warning again when explicitly opened.
-- **vis-pc07** (event-driven): Project save shall write the current stored disabled set exactly, including unavailable names, and shall warn when unavailable names remain.
+- **vis-cf02** (ubiquitous): New tools, skills, and agent profiles shall default to enabled unless their names appear in the relevant resolved disabled list.
+- **vis-cf03** (ubiquitous): The system shall resolve visibility defaults independently per category, so a trusted project `taumel.tools.disabled` replaces global `taumel.tools.disabled`, while missing project categories still inherit their global disabled lists.
+- **vis-cf04** (event-driven): The system shall read project visibility defaults only when `ctx.isProjectTrusted()` is true.
+- **vis-cf05** (event-driven): When the user saves visibility to project config in an untrusted project, the system shall leave the file unchanged and show a clear warning.
+- **vis-cf06** (ubiquitous): Project save shall update only `taumel.agents.disabled`, `taumel.tools.disabled`, and `taumel.skills.disabled`, preserving other `taumel` settings such as direct `taumel.agents.<profile>` routing entries.
+- **vis-cf07** (event-driven): Restore-time warnings for unavailable visibility names shall be emitted at most once per session per category, with managers/lists allowed to show the same warning again when explicitly opened.
+- **vis-cf08** (event-driven): Project save shall write the current stored disabled set exactly, including unavailable names, and shall warn when unavailable names remain.
+- **vis-cf09** (ubiquitous): Visibility save actions shall write only trusted project Pi config and shall not write global Pi config.
+- **vis-cf10** (event-driven): When the user runs `/taumel init`, the system shall create missing global visibility defaults as empty `taumel.agents.disabled`, `taumel.tools.disabled`, and `taumel.skills.disabled` lists.
 
 ### Tool visibility
 

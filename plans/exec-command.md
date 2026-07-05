@@ -23,7 +23,7 @@ the one intentional difference.
 - **exec-tc01** (ubiquitous): The system shall expose `exec_command` requiring a non-empty `cmd`, with optional `workdir`, `yield_time_ms`, `tty`, `sandbox_permissions` (`require_escalated`), `justification`, and `prefix_rule`, and no `shell` or `login` parameter.
 - **exec-tc02** (unwanted): If `cmd` is empty or whitespace, or a parameter is unknown, then the system shall reject the call through the TypeBox schema.
 - **exec-tc03** (ubiquitous): The system shall expose `write_stdin` requiring a numeric `session_id`, with optional `chars` (empty meaning poll) and `yield_time_ms`.
-- **exec-tc04** (unwanted): If `session_id` is negative, missing, unknown, or owned by another parent session, or non-empty stdin targets a non-TTY or stdin-closed session, then the system shall reject the call.
+- **exec-tc04** (unwanted): If `session_id` is negative, missing, unknown with no retained terminal state, or owned by another parent session, or non-empty stdin targets a non-TTY, stdin-closed, or completed session, then the system shall reject the call.
 
 ### Shell selection
 
@@ -45,27 +45,44 @@ the one intentional difference.
 
 ### Runtime and sessions
 
-- **exec-rt01** (ubiquitous): The system shall create an in-memory command session tracking its id, owning parent session, TTY flag, child process, a temp-file full-output record plus a bounded rolling tail, unread-output position, exit status, background-delivery state, and waiters.
+- **exec-rt01** (ubiquitous): The system shall create an in-memory command session tracking its id, owning parent session, TTY flag, child process, a temp-file full-output record plus a bounded rolling tail, unread-output position, exit status, terminal-result consumption state, completion-notification state, and waiters.
 - **exec-rt02** (ubiquitous): The system shall stream all output to a temp file, keep only a bounded rolling tail in memory (last 2000 lines / 50KB), merge stdout and stderr into one ordered stream, and drain incremental deltas per call.
 - **exec-rt03** (event-driven): When the first `exec_command` call runs, the system shall wait up to `yield_time_ms` (default 10000, minimum 250, maximum 30000); if the process exits first it shall return an exit code and no `sessionId`, otherwise it shall return a `sessionId` and no exit code.
-- **exec-rt04** (event-driven): When `write_stdin` runs, the system shall write to stdin for non-empty `chars` on a TTY-backed session, or poll for empty `chars` (default 250 ms write; empty poll 5000–300000 ms), and remove a session after its final drain or notification delivery.
+- **exec-rt04** (event-driven): When `write_stdin` runs, the system shall write to stdin for non-empty `chars` on a TTY-backed running session, or poll for empty `chars` (default 250 ms write; empty poll 5000–300000 ms), and remove a live session only after its terminal result has been consumed by an explicit tool response or after owner shutdown.
 - **exec-rt05** (event-driven): When a wait is aborted, the system shall kill the process and reject with "Shell command aborted"; owner shutdown shall kill every live session for that owner; the system shall provide no wall-clock auto-kill timeout.
+- **exec-rt06** (event-driven): When a live session is removed after terminal output has been consumed, the system shall retain a bounded per-owner terminal session record containing the session id and terminal metadata until at least the next owner turn, and may expire retained records after that bounded window.
+- **exec-rt07** (ubiquitous): The system shall represent terminal-result consumption state as a closed enum with exactly `pending` and `consumed_by_tool`; status-only polls, non-terminal output, and completion notifications shall not change this state.
+- **exec-rt08** (unwanted): If a command's terminal-result consumption state is `consumed_by_tool`, then the system shall reject or make impossible any later transition that would return the terminal result content again.
+- **exec-rt09** (ubiquitous): The system shall represent completion-notification state separately from terminal-result consumption state, so sending an `exec_completion` notification cannot consume, discard, or otherwise satisfy the terminal result.
+- **exec-rt10** (ubiquitous): The system shall represent completion-notification state as a closed enum with exactly `pending` and `sent`; failed notification sends leave the state `pending`, and successful sends transition it to `sent`.
 
 ### Result
 
 - **exec-rs01** (ubiquitous): The system shall match Pi `bash` result text: completed exit 0 shows the truncated output or "(no output)"; non-zero shows the output and "Command exited with code N" marked as an error; aborted shows the drained output and "Command aborted"; timed out shows the drained output and "Command timed out after N seconds"; a still-running async session shows the drained output and a status line naming the session and pointing to `write_stdin`.
 - **exec-rs02** (ubiquitous): The system shall keep command duration out of the model text and include it only in the UI render and the `wallTimeMs` detail.
 - **exec-rs03** (ubiquitous): The system shall include details `ok`, `output`, `stdout`, `stderr`, `truncation` and `fullOutputPath` when truncated, `wallTimeMs`, `exitCode`/`code` when complete, `sessionId`/`session_id` when running, `sandboxed`, and `escalated`.
-- **exec-rs04** (ubiquitous): The system shall truncate displayed output to the last 2000 lines or 50KB with a temp-file footer and apply no token budget.
+- **exec-rs04** (ubiquitous): The system shall truncate displayed output with Pi `bash` tail semantics: keep the last output lines subject to hard limits of 2000 lines and 50KB, whichever is hit first; apply no token budget; write full output to a temp file whenever truncated; and include a model-visible footer naming the shown line range/counts, the limit hit, and `fullOutputPath`.
 - **exec-rs05** (event-driven): When a sandboxed command fails, the system shall scan for network and filesystem failure evidence and append `SANDBOX_DIAGNOSTIC=<json>` plus a human message, with `sandboxDiagnostic` in details.
+- **exec-rs06** (event-driven): When empty `write_stdin` polls a retained terminal session owned by the caller, the system shall return success with no new output, terminal metadata, and text equivalent to "(session N already completed; no new output)" rather than a tool error.
+- **exec-rs07** (unwanted): If non-empty `write_stdin` targets a retained terminal session, then the system shall reject the write with "session N already completed; cannot write stdin" or an equivalent clear non-retryable message.
+- **exec-rs08** (event-driven): When truncated exec output can fit at least one complete line, the system shall render only complete output lines and shall not begin the visible output in the middle of a line.
+- **exec-rs09** (event-driven): When the tail-oriented output consists of a single line larger than the 50KB byte cap and no complete line can fit, the system may render a UTF-8-boundary-safe suffix of that line within the byte cap, shall set `lastLinePartial`, and shall include a footer equivalent to Pi `bash`: "Showing last X of line N (line is Y). Full output: PATH".
+- **exec-rs10** (ubiquitous): The `truncation` detail shall preserve structured metadata needed to render and reason about truncation: `truncated`, `truncatedBy`, `totalLines`, `totalBytes`, `outputLines`, `outputBytes`, `maxLines`, `maxBytes`, `lastLinePartial`, `firstLineExceedsLimit`, and `fullOutputPath` when available.
 
 ### Background completion
 
-- **exec-bg01** (event-driven): When an async session exits while unpolled and undelivered, the system shall deliver a background completion notification to its owner exactly once.
-- **exec-bg02** (event-driven): When `write_stdin` observes the exit and drains the final output, the system shall consume the session and suppress the background notification.
-- **exec-bg03** (event-driven): When the owner's turn ends, the system shall flush each pending, unconsumed, exited session as a `taumel.notification` steering message with `kind = exec_completion`, flushing via `triggerTurn` when the owner is idle and never as a follow-up.
-- **exec-bg04** (ubiquitous): The system shall mark a session delivered only after the Pi send succeeds and shall deliver exactly once through the consumed and delivered flags.
-- **exec-bg05** (ubiquitous): The system shall produce no background notification for synchronous commands or for aborted or owner-killed sessions.
+- **exec-bg01** (event-driven): When an async session exits while its terminal result has not been consumed by `write_stdin`, the system shall send a background availability notification to its owner at most once after a successful send, unless the terminal result was already consumed by the initial `exec_command` response.
+- **exec-bg02** (event-driven): When `write_stdin` returns a terminal command result to the parent, including exit, abort, timeout, or final error, the system shall mark that terminal result consumed and suppress any future completion-availability notifications for that session.
+- **exec-bg03** (event-driven): When `write_stdin` returns only non-terminal output or a still-running status, the system shall not mark the terminal result consumed and shall not suppress a later completion-availability notification.
+- **exec-bg04** (event-driven): When the owner's turn ends, the system shall flush each exited session whose terminal result is unconsumed and completion-notification state is `pending` as a `notification` custom message for `exec_completion`, flushing via `triggerTurn` when the owner is idle and never as a follow-up.
+- **exec-bg05** (ubiquitous): An `exec_completion` notification shall be plain text and opaque: it shall not include the command text, terminal output, exit code, `ok`, terminal status, or error class. It shall include only the `session_id` locator and a visible instruction equivalent to: `Command session N has finished. To read and consume the result, call write_stdin with session_id=N, chars="", yield_time_ms=5000.`
+- **exec-bg06** (ubiquitous): The system shall mark a completion notification sent only after the Pi send succeeds, leave failed notification sends pending for a later flush, and never resend a successfully sent notification even while its terminal result remains unconsumed.
+- **exec-bg07** (ubiquitous): The system shall produce no background notification for synchronous commands whose terminal result was consumed by the initial `exec_command` response or for sessions killed because the owner shut down.
+- **exec-bg08** (event-driven): When the initial `exec_command` response or `write_stdin` returns a terminal command result, the system shall transition terminal-result consumption state from `pending` to `consumed_by_tool`.
+- **exec-bg09** (event-driven): When an `exec_completion` notification send succeeds, the system shall transition only the completion-notification state; it shall leave terminal-result consumption state as `pending`.
+- **exec-bg10** (ubiquitous): While the owner session remains live, every completed async command whose terminal result is unconsumed shall remain readable through `write_stdin` until it is consumed or the owner shuts down.
+- **exec-bg11** (ubiquitous): The read instruction in an `exec_completion` notification shall name a poll read and shall not rely on the default empty-poll wait; it shall use the shortest valid empty-poll cap, currently `yield_time_ms = 5000`.
+- **exec-bg12** (ubiquitous): The read instruction shall appear in the visible `notification` content itself; structured details may mirror it for rendering and tests, but hidden details shall not be the only source of the read instruction.
 
 ### Rendering and security
 

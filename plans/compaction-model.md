@@ -15,8 +15,8 @@ both and swaps only the model and its auth, so Pi keeps ownership of the
 summarization prompt, split-turn merge, file tracking, and structured format.
 
 Configuration lives in Pi-owned settings: a `taumel.compaction.model` string in
-project and global scope, with project taking precedence. The setting is
-optional; absence inherits the session model, matching Pi's default. A
+trusted project and global scope, following the shared Taumel config precedence.
+The setting is optional; absence inherits the session model, matching Pi's default. A
 `/compaction-model` command reads and writes the setting and offers a searchable
 picker that reuses Pi's model selector.
 
@@ -29,11 +29,12 @@ validation and persistence policy live in the OCaml core.
 - **compaction-rs01** (ubiquitous): The system shall reuse Pi's exported `compact()` and swap only the model and its auth, inheriting Pi's summarization prompt, split-turn merge, file tracking, and structured summary format.
 - **compaction-hk01** (event-driven): When `session_before_compact` fires and a compaction model resolves, the system shall summarize through `compact()` with the resolved model and its auth and return the result to Pi.
 - **compaction-in01** (state-driven): While no compaction model is configured, the system shall defer to Pi's default compaction and summarize with the session model.
-- **compaction-cf01** (ubiquitous): The system shall read `taumel.compaction.model` as a `provider/model` string from project `<cwd>/.pi/settings.json` and global `~/.pi/agent/settings.json`, and the project value shall take precedence over the global value.
-- **compaction-cf02** (ubiquitous): The system shall read the project compaction-model setting directly, as a personal and company preference, without a project-trust gate.
-- **compaction-cmd01** (event-driven): When the user runs `/compaction-model <provider/model>`, the system shall set the session compaction model and persist it to the project settings file in one step.
-- **compaction-cmd02** (event-driven): When the user runs `/compaction-model` with no argument, the system shall open a searchable model picker and, on selection, set and persist the chosen model.
-- **compaction-cmd03** (event-driven): When the user runs `/compaction-model clear`, the system shall remove the project compaction-model setting and restore the global value, then inherit.
+- **compaction-cf01** (ubiquitous): The system shall read `taumel.compaction.model` as a `provider/model` string from trusted project `<cwd>/.pi/settings.json` and global `~/.pi/agent/settings.json`, following the shared Taumel config precedence.
+- **compaction-cf02** (ubiquitous): The system shall not read project compaction-model config while the project is untrusted.
+- **compaction-cmd01** (event-driven): When the user runs `/compaction-model <provider/model>`, the system shall set the session compaction model and, while the project is trusted, persist it to the project settings file in one step.
+- **compaction-cmd02** (event-driven): When the user runs `/compaction-model` with no argument, the system shall open a searchable model picker and, on selection, set the chosen session compaction model and apply the same project persistence rule as `/compaction-model <provider/model>`.
+- **compaction-cmd03** (event-driven): When the user runs `/compaction-model clear`, the system shall clear the session compaction model and, while the project is trusted, remove the project compaction-model setting so the global value can apply.
+- **compaction-cmd04** (unwanted): If `/compaction-model` would persist to project config while the project is untrusted, then the system shall leave the project file unchanged and warn that project persistence was skipped.
 - **compaction-pk01** (ubiquitous): The system shall present the picker by reusing Pi's `ModelSelectorComponent` through `ctx.ui.custom`, supply a `SettingsManager.inMemory()` instance to absorb the component's default-model write, and take the chosen model from the select callback.
 - **compaction-pk02** (ubiquitous): The system shall mark the current resolved compaction model in the picker and shall source the candidate list from `ctx.modelRegistry`.
 - **compaction-fb01** (unwanted): If the configured compaction model is absent from the registry or lacks auth, then the system shall fall back to Pi's default compaction and notify the user once with a warning.

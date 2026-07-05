@@ -47,16 +47,19 @@ readable, and separate from that markup.
 ### agent_wait
 
 - **sub-wt01** (ubiquitous): The system shall accept at most one selector kind (`run_ids` or `agent_ids`) plus optional `timeout_seconds`, and shall treat multiple kinds, empty arrays, or invalid ids as tool errors.
-- **sub-wt02** (event-driven): When no selector is given, the system shall wait on all deliverable runs owned by the session, meaning active runs plus fresh undelivered terminal runs.
-- **sub-wt03** (event-driven): When `run_ids` is given, the system shall wait on exactly those runs including terminal and delivered ones, reporting missing ids as `not_found` and not-owned ids as `not_owned` without cross-session metadata.
-- **sub-wt04** (event-driven): When `agent_ids` is given, the system shall wait on each agent's active or fresh undelivered terminal run and skip consumed or notified history.
+- **sub-wt02** (event-driven): When no selector is given, the system shall wait on all waitable runs owned by the session, meaning active runs plus unconsumed terminal runs, including runs that have already sent completion-availability notifications.
+- **sub-wt03** (event-driven): When `run_ids` is given, the system shall address exactly those runs, reporting missing ids as `not_found`, not-owned ids as `not_owned` without cross-session metadata, unconsumed terminal runs with their terminal response, and consumed terminal runs as status-only `already_consumed`.
+- **sub-wt04** (event-driven): When `agent_ids` is given, the system shall wait on each agent's active run or unconsumed terminal run, including a terminal run that has already sent a completion-availability notification, and skip consumed history.
 - **sub-wt05** (ubiquitous): The system shall report suspended runs immediately and never block on them.
-- **sub-wt06** (event-driven): When the selector resolves to nothing, the system shall return a successful no-active or no-deliverable status rather than a tool error.
+- **sub-wt06** (event-driven): When the selector resolves to nothing, the system shall return a successful no-active or no-waitable status rather than a tool error.
 - **sub-wt07** (ubiquitous): The system shall wait by run, treat `timeout_seconds` omitted as indefinite, `0` as poll-once, and positive as bounded, and affect only the wait call.
 - **sub-wt08** (event-driven): When the user interrupts a pending wait, the system shall interrupt only the wait and let child runs continue.
 - **sub-wt09** (ubiquitous): The system shall return final child answers and run metadata only, as XML-style markup for terminal runs, excluding raw transcript, tool logs, and hidden reasoning.
 - **sub-wt10** (event-driven): When terminal output is unavailable through Pi/worker history or process memory, the system shall return `output_available = false` with no `final_output` or `error` block, not a tool error.
-- **sub-wt11** (ubiquitous): The system shall mark a fresh terminal run consumed when returned and suppress its background completion, while allowing explicit `run_ids` to reread consumed or delivered runs without changing delivery state.
+- **sub-wt11** (ubiquitous): The system shall mark a terminal run consumed when its terminal response body is returned and suppress any future completion-availability notification, while making every later model-facing read of that run status-only.
+- **sub-wt12** (event-driven): When `agent_wait` returns a terminal run response to the parent, including final output, final error, cancellation, timeout, lost state, or `output_available = false`, the system shall mark that run consumed and suppress future completion-availability notifications for that run.
+- **sub-wt13** (unwanted): If `agent_wait` returns only a bounded-wait timeout, no-active/no-waitable status, running status, or another status-only response without terminal output or terminal failure information, then the system shall not mark the selected run consumed and shall not suppress a later completion-availability notification.
+- **sub-wt14** (unwanted): If a selected run is terminal and its final output, final error, or `output_available = false` terminal record is available to the completion-read path, then `agent_wait` shall not return `no_waitable_run` for that run.
 
 ### agent_list and agent_close
 
@@ -86,7 +89,10 @@ readable, and separate from that markup.
 - **sub-dm01** (ubiquitous): The system shall keep an agent identity durable until closed, with `agent_id`, parent session, profile, attached live child session, and created/closed timestamps, reusing one Pi child session across runs.
 - **sub-dm02** (ubiquitous): The system shall snapshot provider, model, thinking, tools, sandbox, and prompt at spawn time, so later config changes affect only future spawns.
 - **sub-dm03** (ubiquitous): The system shall generate `agent_id` as `<profile>-<shortid>` (4–6 lowercase unambiguous characters, retrying on collision), never reuse it within a session, never accept it from the model, and allow multiple open agents per profile.
-- **sub-dm04** (ubiquitous): The system shall give a run `run_id`, `agent_id`, initial submission kind, submission ids and kinds, status, reason code, parent delivery state, and timestamps, with statuses `queued`, `running`, `suspended`, `completed`, `failed`, `cancelled`, `timed_out`, and `lost`.
+- **sub-dm04** (ubiquitous): The system shall give a run `run_id`, `agent_id`, initial submission kind, submission ids and kinds, status, reason code, parent terminal-consumption state, completion-notification state, and timestamps, with statuses `queued`, `running`, `suspended`, `completed`, `failed`, `cancelled`, `timed_out`, and `lost`.
+- **sub-dm07** (ubiquitous): The system shall represent parent terminal-consumption state as a closed enum with exactly `pending` and `consumed_by_agent_wait`; status-only waits, bounded wait timeouts, non-terminal run updates, and completion notifications shall not change this state.
+- **sub-dm08** (unwanted): If a run's parent terminal-consumption state is `consumed_by_agent_wait`, then the system shall reject or make impossible any later transition that would consume the same terminal run again or return its final output/error body again.
+- **sub-dm09** (ubiquitous): The system shall represent completion-notification state as a closed enum with exactly `pending` and `sent`; failed notification sends leave the state `pending`, and successful sends transition it to `sent`.
 - **sub-dm05** (ubiquitous): The system shall create a `submission_id` per spawn and send, attaching an active-run send to that run by steering and starting a new non-goal run for an idle send.
 - **sub-dm06** (event-driven): When a Pi child session is lost after exit or resume, the system shall not auto-recreate it during `/resume`; a later `agent_send` shall create a new child runtime behind the same `agent_id` as a new run.
 
@@ -96,7 +102,13 @@ readable, and separate from that markup.
 - **sub-pr02** (ubiquitous): The system shall require frontmatter `name`, `description`, `provider`, `model`, `thinking`, `sandbox`, and `tools`, allow `inherit`, and treat omission, Tau keys (`models`, `spawns`, `approval_timeout`), and built-in prompt text that tells a child to spawn agents as errors.
 - **sub-pr03** (ubiquitous): The system shall treat `provider` and `model` as an atomic pair (both `inherit` or both concrete), keep `thinking` independently inheritable, restrict `sandbox` to `inherit`, `read-only`, or `workspace-write`, and accept an optional `approval` field restricted to `inherit`, `never`, `on-request`, `on-failure`, or `untrusted` and defaulting to `inherit`.
 - **sub-pr04** (ubiquitous): The system shall load user profiles from `~/.pi/agent/taumel/agents/*.md`, reserve built-in names, reject a user profile using a built-in name, and exclude project-local profiles.
-- **sub-pr05** (ubiquitous): The system shall override built-in profile model routing only from Pi config JSON (global and trusted project) under `taumel.agents.builtins`, with complete inherit-or-concrete `provider`/`model`/`thinking` entries, creating the section on first run.
+- **sub-pr05** (ubiquitous): The system shall override built-in profile model routing only from Pi config JSON (global and trusted project) under direct `taumel.agents.<profile>` entries for built-in profile names, with complete inherit-or-concrete `provider`/`model`/`thinking` entries.
+- **sub-pr10** (ubiquitous): The system shall resolve built-in profile routing by whole profile entry according to the shared Taumel config precedence, so a valid higher-precedence entry for a built-in profile replaces a lower-precedence entry for that profile rather than merging fields.
+- **sub-pr07** (ubiquitous): The system shall not apply Pi config routing overrides to user profile markdown files; user profile routing shall come from the profile frontmatter.
+- **sub-pr08** (ubiquitous): The system shall ignore unknown keys under `taumel.agents` that are neither `disabled` nor built-in profile names, preserving them on writes and emitting no warning for their presence.
+- **sub-pr09** (unwanted): If a built-in profile routing entry in Pi config is malformed, then the system shall warn and skip only that profile's malformed override while keeping valid routing entries from the same and other config scopes.
+- **sub-pr06** (event-driven): When the user runs `/taumel init` and global Pi config is missing built-in profile routing entries, the system shall create complete `provider = inherit`, `model = inherit`, and `thinking = inherit` entries for every missing built-in profile only in global Pi config.
+- **sub-pr11** (ubiquitous): The system shall not materialize built-in profile routing entries during extension startup, session start, model-facing agent tool calls, or any other background path.
 
 ### Tool visibility and validation
 
@@ -121,10 +133,11 @@ readable, and separate from that markup.
 
 ### Markup and rendering
 
-- **sub-mk01** (ubiquitous): The system shall emit model-visible subagent outputs and notifications as XML-style markup with controlled metadata as attributes and freeform child text as raw, unescaped block elements, keeping the stored final output plain.
+- **sub-mk01** (ubiquitous): The system shall emit model-visible subagent outputs as XML-style markup with controlled metadata as attributes and freeform child text as raw, unescaped block elements, keeping the stored final output plain; completion-availability notifications shall use plain text.
 - **sub-mk02** (ubiquitous): The system shall mirror the same domain concepts in structured details and keep important semantic data in model-visible content and details rather than only in UI.
+- **sub-mk03** (ubiquitous): When a subagent completion-availability notification includes a read instruction, that instruction shall be plain text rather than XML or JSON.
 - **sub-rn01** (ubiquitous): The system shall render subagent tools with one shared agent-event grammar keyed on run state, one line compact and minimal structured metadata plus final output or error expanded, never raw transcript or the XML envelope.
-- **sub-rn02** (ubiquitous): The system shall keep `agent_list` free of full terminal output, allowing only bounded summaries, with full output available through `agent_wait run_ids` or `/agent-runs output`.
+- **sub-rn02** (ubiquitous): The system shall keep `agent_list` free of full terminal output, allowing only bounded summaries, with unconsumed terminal output available through `agent_wait run_ids` and historical user-facing output available through `/agent-runs output`.
 - **sub-rn03** (ubiquitous): The system shall render `agent_profiles` with a separate catalog renderer (counts compact; name, enabled state, sandbox, tools, and description expanded).
 - **sub-rn04** (ubiquitous): The system shall render `agent_spawn` expanded output as human-readable profile/id/status fields plus the full message or objective that the parent sent, not as raw XML.
 - **sub-rn05** (ubiquitous): The system shall render `agent_wait` expanded output as grouped child responses with tiny run headers, not as raw XML, and shall show omitted timeouts as `until completion`, positive timeouts as `up to Ns`, and zero timeouts as `poll now`.
@@ -141,12 +154,20 @@ readable, and separate from that markup.
 - **sub-sa01** (ubiquitous): The system shall never allow `no_sandbox` for subagents, clamp a child sandbox preset to at most the parent's and a child approval policy to at least the parent's strictness, reject `danger-full-access` declarations, and clamp an inherited `danger-full-access` to `workspace-write`.
 - **sub-sa02** (event-driven): When a child tool needs escalation, the system shall show the approval prompt to the user identifying the requesting agent or profile and run child tools under the child session sandbox.
 
-### Completion delivery
+### Completion availability
 
-- **sub-cd01** (ubiquitous): The system shall own a single in-process notification queue of pending deliverable completions backed by run state (terminal, not consumed, not delivered).
-- **sub-cd02** (event-driven): When `agent_wait` reaches a terminal run first, the system shall consume it and return its output; otherwise it shall flush at the parent's `turn_end` as a steering `taumel.notification` with `kind = agent_completion`, and via `triggerTurn` when the parent is idle, never as a follow-up.
-- **sub-cd03** (ubiquitous): The system shall mark a run delivered only after the Pi send succeeds, deliver exactly once, and leave a failed send pending for a later flush.
-- **sub-cd04** (ubiquitous): The system shall exclude suspended runs from background completion, keep completion events visible in the UI, and limit model-facing content to final output and run metadata.
+- **sub-cd01** (ubiquitous): The system shall own a single in-process notification queue of pending completion-availability notifications backed by run state (terminal, not consumed by a terminal `agent_wait` response, and not already notification-sent).
+- **sub-cd02** (event-driven): When `agent_wait` returns a terminal run response first, the system shall mark it consumed and suppress background notification. Otherwise, each terminal run that has not been consumed and not notification-sent shall flush at the parent's `turn_end` as a steering `notification` custom message for `agent_completion`, and via `triggerTurn` when the parent is idle, never as a follow-up.
+- **sub-cd03** (ubiquitous): The system shall mark a completion notification sent only after the Pi send succeeds, leave failed sends pending for a later flush, and never resend a successfully sent notification even while its terminal response remains unconsumed.
+- **sub-cd04** (ubiquitous): The system shall exclude suspended runs from background completion notifications, keep completion events visible in the UI, and keep final output/error out of the notification body.
+- **sub-cd05** (ubiquitous): An `agent_completion` notification shall be plain text and opaque: it shall not include the subagent's final output, error body, final run status, reason code, or error class. It shall include only locator metadata (`run_id`, `agent_id`, and profile when available) and a visible instruction equivalent to: `Agent run RUN_ID for AGENT_ID (PROFILE) has finished. To read and consume the result, call agent_wait with run_ids=[RUN_ID], timeout_seconds=0.`
+- **sub-cd06** (ubiquitous): The system shall use one shared terminal-run source for `agent_wait` and `agent_completion`, so the notification path cannot claim a run is ready while `agent_wait` cannot read it.
+- **sub-cd07** (event-driven): When `agent_wait` returns a terminal run response, the system shall transition parent terminal-consumption state from `pending` to `consumed_by_agent_wait`.
+- **sub-cd08** (event-driven): When an `agent_completion` notification send succeeds, the system shall transition only the completion-notification state; it shall leave parent terminal-consumption state as `pending`.
+- **sub-cd09** (ubiquitous): While the parent session remains live, every terminal run whose response is unconsumed shall remain readable through `agent_wait` until consumed or the parent shuts down.
+- **sub-cd10** (unwanted): An `agent_completion` notification shall never instruct the model to use `agent_ids`, because completion availability is scoped to one `run_id` and `agent_ids` may resolve to a later active or terminal run.
+- **sub-cd11** (ubiquitous): The read instruction in an `agent_completion` notification shall be a poll-once read with `timeout_seconds = 0`; it shall not omit `timeout_seconds` or use a positive timeout.
+- **sub-cd12** (ubiquitous): The read instruction shall appear in the visible `notification` content itself; structured details may mirror it for rendering and tests, but hidden details shall not be the only source of the read instruction.
 
 ### Startup validation
 
