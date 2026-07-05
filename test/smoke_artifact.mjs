@@ -26,6 +26,7 @@ if (
 
 const handlers = new Map();
 let footerFactory;
+const footerInstallSessionIds = [];
 let renderRequests = 0;
 let firstCostReads = 0;
 let tailCostReads = 0;
@@ -64,6 +65,7 @@ const branch = [
 
 const ctx = {
   ui: {},
+  model: { provider: "openai-codex", id: "gpt-test" },
   sessionManager: {
     getSessionId: () => "artifact-session",
     getEntries: () => [],
@@ -78,16 +80,20 @@ core.init({
   exec: async () => ({ code: 0, stdout: "", stderr: "" }),
   setFooter: (_ctx, factory) => {
     footerFactory = factory;
+    footerInstallSessionIds.push(_ctx.sessionManager.getSessionId());
   },
-  sessionSnapshot: () => ({
-    cwd: "/home/ribelo/projects/ribelo/taumel",
-    provider: "openai-codex",
-    model: "gpt-test",
-    thinking: "medium",
-    totalCost: 0.125,
-    contextPercent: 12,
-    contextWindow: 200000,
-  }),
+  sessionSnapshot: (snapshotCtx) => {
+    const model = snapshotCtx?.model ?? {};
+    return {
+      cwd: "/home/ribelo/projects/ribelo/taumel",
+      provider: model.provider ?? "openai-codex",
+      model: model.id ?? "gpt-test",
+      thinking: "medium",
+      totalCost: 0.125,
+      contextPercent: 12,
+      contextWindow: 200000,
+    };
+  },
   getGitBranch: () => "main",
   onBranchChange: (_footerData, handler) => {
     handler();
@@ -115,8 +121,41 @@ if (!Array.isArray(lines) || typeof lines[0] !== "string") {
 if (!lines[0].includes("$0.125")) {
   throw new Error(`footer did not use branch-local cost: ${JSON.stringify(lines)}`);
 }
+if (!lines[0].includes("gpt-test")) {
+  throw new Error(`footer did not render parent model: ${JSON.stringify(lines)}`);
+}
 if (firstCostReads === 0 || tailCostReads === 0) {
   throw new Error(`artifact smoke did not exercise branch cost reads: ${JSON.stringify({ firstCostReads, tailCostReads })}`);
+}
+
+const childCtx = {
+  ...ctx,
+  model: {
+    provider: "amazon-bedrock",
+    id: "arn:aws:bedrock:us-east-1:284227543028:application-inference-profile/4stpxjpc6efk",
+  },
+  sessionManager: {
+    getSessionId: () => "artifact-child-session",
+    getEntries: () => [{
+      type: "custom",
+      customType: "taumel.childSession",
+      data: { kind: "agent", subagent: true },
+    }],
+    getBranch: () => [],
+  },
+};
+for (const handler of handlers.get("session_start") ?? []) {
+  handler({ type: "session_start" }, childCtx);
+}
+for (const handler of handlers.get("model_select") ?? []) {
+  handler({ type: "model_select" }, childCtx);
+}
+const childLines = component.render(120);
+if (!childLines[0].includes("gpt-test") || childLines[0].includes("amazon-bedrock")) {
+  throw new Error(`subagent context overwrote parent footer model: ${JSON.stringify(childLines)}`);
+}
+if (footerInstallSessionIds.includes("artifact-child-session")) {
+  throw new Error(`subagent session_start reinstalled the parent footer: ${JSON.stringify(footerInstallSessionIds)}`);
 }
 
 const firstReadsAfterStart = firstCostReads;

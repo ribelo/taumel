@@ -61,7 +61,13 @@ function splitProviderModelId(modelId: string | undefined): { readonly provider:
   return { provider: modelId.slice(0, separator), model: modelId.slice(separator + 1) };
 }
 
+function normalizeChildModelId(modelId: string | undefined): string | undefined {
+  const trimmed = modelId?.trim();
+  return trimmed === undefined || trimmed === "" || trimmed === "inherit" ? undefined : trimmed;
+}
+
 function resolveChildModel(pi: PiLike, ctx: unknown, modelId: string | undefined): { readonly model?: unknown; readonly applied: boolean } {
+  modelId = normalizeChildModelId(modelId);
   const registry = modelRegistryFrom(pi, ctx);
   const requested = splitProviderModelId(modelId);
   if (requested !== undefined && isRecord(registry) && typeof registry["find"] === "function") {
@@ -75,6 +81,23 @@ function resolveChildModel(pi: PiLike, ctx: unknown, modelId: string | undefined
   }
   const inherited = currentModelFromContext(ctx);
   return inherited === undefined || inherited === null ? { applied: false } : { model: inherited, applied: true };
+}
+
+function hasCustomEntry(sessionManager: unknown, customType: string): boolean {
+  if (!isRecord(sessionManager) || typeof sessionManager["getEntries"] !== "function") return false;
+  try {
+    const entries = sessionManager["getEntries"].call(sessionManager);
+    return Array.isArray(entries) && entries.some((entry) =>
+      isRecord(entry) &&
+      (
+        entry["customType"] === customType ||
+        entry["type"] === customType ||
+        (entry["type"] === "custom" && entry["customType"] === customType)
+      )
+    );
+  } catch {
+    return false;
+  }
 }
 
 function appendSetupEntries(sessionManager: unknown, entries: readonly Record<string, unknown>[]): SessionInfo {
@@ -216,9 +239,11 @@ export async function createChildSession(
   }
   const setupEntries = setupEntriesRaw;
   const cwd = cwdFromContext(ctx);
-  const model = resolveChildModel(pi, ctx, modelId);
+  const normalizedModelId = normalizeChildModelId(modelId);
+  const model = resolveChildModel(pi, ctx, normalizedModelId);
   const systemPrompt = agentSystemPromptFromMetadata(metadata);
   const sessionManager = SessionManager.inMemory(cwd);
+  appendSetupEntries(sessionManager, setupEntries);
   const resourceLoader =
     systemPrompt === undefined
       ? undefined
@@ -244,7 +269,10 @@ export async function createChildSession(
     const session = isRecord(result) ? result["session"] : undefined;
     if (!isRecord(session)) return { error: "createAgentSession did not return a session" };
     const childSessionManager = session["sessionManager"] ?? sessionManager;
-    const setupInfo = appendSetupEntries(childSessionManager, setupEntries);
+    const setupInfo =
+      childSessionManager === sessionManager || hasCustomEntry(childSessionManager, "taumel.childSession")
+        ? sessionInfoFromManager(childSessionManager)
+        : appendSetupEntries(childSessionManager, setupEntries);
     const sessionId =
       typeof session["sessionId"] === "string" && session["sessionId"] !== ""
         ? session["sessionId"]
@@ -264,7 +292,7 @@ export async function createChildSession(
       sessionManager: childSessionManager,
       activeTools,
       activeToolsApplied,
-      modelId,
+      modelId: normalizedModelId,
       modelApplied: model.applied,
       thinkingLevel,
       thinkingApplied: thinkingLevel !== undefined,

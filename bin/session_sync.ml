@@ -143,19 +143,18 @@ let bool_of_flag_string value =
   | "0" | "false" | "no" | "off" | "disabled" -> Some false
   | _ -> None
 
+let session_is_subagent ctx =
+  match Session_store.custom_entry_data ctx "taumel.childSession" with
+  | None -> false
+  | Some data ->
+      get_bool data "subagent"
+      ||
+      match get_string data "kind" with
+      | "agent" | "ralph" -> true
+      | _ -> false
+
 let update_session_state host ctx =
-  let previous_cwd = state.cwd in
   let snapshot = call1 host "sessionSnapshot" (inject ctx) in
-  state.cwd <- get_string snapshot "cwd";
-  state.provider <- get_string snapshot "provider";
-  state.model <- get_string snapshot "model";
-  state.thinking <- get_string snapshot "thinking";
-  state.total_cost <-
-    (match total_cost_from_ctx ctx with
-    | Some cost -> cost
-    | None -> float_field_default snapshot "totalCost" 0.0);
-  state.context_percent <- float_field_default snapshot "contextPercent" 0.0;
-  state.context_window <- float_field_default snapshot "contextWindow" 0.0;
   host_sandbox_preset :=
     Taumel.Capability_profile.sandbox_of_string (get_string snapshot "sandboxMode");
   host_network_mode :=
@@ -163,8 +162,20 @@ let update_session_state host ctx =
   host_no_sandbox :=
     if has_property snapshot "noSandbox" then Some (get_bool snapshot "noSandbox")
     else bool_of_flag_string (get_string snapshot "noSandboxFlag");
-  if previous_cwd <> "" && previous_cwd <> state.cwd then
-    state.git_delta <- Model.empty_git_delta
+  if not (session_is_subagent ctx) then (
+    let previous_cwd = state.cwd in
+    state.cwd <- get_string snapshot "cwd";
+    state.provider <- get_string snapshot "provider";
+    state.model <- get_string snapshot "model";
+    state.thinking <- get_string snapshot "thinking";
+    state.total_cost <-
+      (match total_cost_from_ctx ctx with
+      | Some cost -> cost
+      | None -> float_field_default snapshot "totalCost" 0.0);
+    state.context_percent <- float_field_default snapshot "contextPercent" 0.0;
+    state.context_window <- float_field_default snapshot "contextWindow" 0.0;
+    if previous_cwd <> "" && previous_cwd <> state.cwd then
+      state.git_delta <- Model.empty_git_delta)
 
 let refresh_session_state_from_host ?(scope = "session state refresh") ctx =
   try update_session_state (active_host_or_empty ()) ctx
@@ -198,16 +209,6 @@ let apply_active_permissions (resolved : Taumel.Permissions.active) =
   active_no_sandbox := resolved.no_sandbox;
   active_subagent := resolved.subagent;
   state.filesystem_mode <- resolved.filesystem_mode
-
-let session_is_subagent ctx =
-  match Session_store.custom_entry_data ctx "taumel.childSession" with
-  | None -> false
-  | Some data ->
-      get_bool data "subagent"
-      ||
-      match get_string data "kind" with
-      | "agent" | "ralph" -> true
-      | _ -> false
 
 let load_permissions_state ctx =
   let session_subagent = session_is_subagent ctx in

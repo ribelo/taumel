@@ -2506,6 +2506,39 @@ try {
     ctx,
   );
 
+  const inheritedProfileSessionCountBefore = agentSessionCalls.length;
+  const inheritedProfileResult = await tools.get("agent_spawn").execute(
+    "agent-inherited-profile-call",
+    { profile: "scout", message: "spawn inherited model worker" },
+    undefined,
+    undefined,
+    ctx,
+  );
+  if (agentSessionCalls.length !== inheritedProfileSessionCountBefore + 1 || inheritedProfileResult.details?.childSession?.created !== true) {
+    throw new Error(`agent spawn did not create inherited profile child session: ${JSON.stringify(inheritedProfileResult)}`);
+  }
+  const inheritedProfileOptions = agentSessionCalls.at(-1);
+  const inheritedProfileSetupEntries =
+    typeof inheritedProfileOptions?.sessionManager?.getEntries === "function"
+      ? inheritedProfileOptions.sessionManager.getEntries()
+      : [];
+  if (
+    inheritedProfileOptions?.model?.provider !== "openai-codex" ||
+    inheritedProfileOptions?.model?.id !== "gpt-test" ||
+    inheritedProfileResult.details?.childSession?.modelId !== null ||
+    inheritedProfileResult.details?.childSession?.modelApplied !== true ||
+    !inheritedProfileSetupEntries.some((entry) => entry?.type === "custom" && entry?.customType === "taumel.childSession")
+  ) {
+    throw new Error(`agent spawn did not inherit parent model or preseed child metadata: ${JSON.stringify({ inheritedProfileResult, inheritedProfileOptions, inheritedProfileSetupEntries })}`);
+  }
+  await tools.get("agent_close").execute(
+    "agent-inherited-profile-close",
+    { agent_ids: [inheritedProfileResult.details?.agent_id] },
+    undefined,
+    undefined,
+    ctx,
+  );
+
   const agentSessionCountBeforeSmoke = agentSessionCalls.length;
   const agentResult = await tools.get("agent_spawn").execute(
     "agent-call",

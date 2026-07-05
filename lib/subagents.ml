@@ -262,6 +262,11 @@ let string_option_json value =
   | None -> Shared.Null
   | Some value -> Shared.String value
 
+let model_id_option_json value =
+  match Option.bind value Shared.trim_non_empty with
+  | None | Some "inherit" -> Shared.Null
+  | Some value -> Shared.String value
+
 let string_list_option_json = function
   | None -> Shared.Null
   | Some values -> Shared.Array (List.map (fun value -> Shared.String value) values)
@@ -283,7 +288,7 @@ let plan_child_session_spawn_from_input ?initial_goal_objective ~prompt input =
           ("subagent", Shared.Bool input.subagent);
           ("capabilityProfile", Capability_profile.to_json input.profile);
           ("agentSystemPrompt", string_option_json (Some input.system_prompt));
-          ("modelId", string_option_json (Some input.profile.model_id));
+          ("modelId", model_id_option_json (Some input.profile.model_id));
           ( "thinkingLevel",
             string_option_json (Some input.profile.thinking_level) );
           ("activeTools", string_list_option_json input.active_tools);

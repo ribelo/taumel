@@ -124,6 +124,14 @@ let test_agent_child_metadata_uses_core_catalog_rules () =
   assert_bool "metadata active tools"
     (string_array (object_field "activeTools" child.metadata)
     = [ "exec_command"; "write_stdin"; "update_goal" ]);
+  let inherited_model_child =
+    expect_ok "inherited model child session metadata"
+      (Subagents.plan_child_session_spawn ~prompt:"inspect repo"
+         { worker with profile = { profile with Capability.model_id = "inherit" } }
+         ~active_tools:inherited)
+  in
+  assert_bool "inherited model is not serialized as a concrete model id"
+    (object_field "modelId" inherited_model_child.metadata = Some Shared.Null);
   let recreated_for_message =
     expect_ok "message child session metadata"
       (Subagents.plan_child_session_spawn_from_input ~prompt:"plain message"

@@ -62,9 +62,10 @@ let ensure_refresh_loop host =
 let register_handlers host =
   let update_handler install_footer =
     Js.wrap_callback (fun _event ctx ->
+        let subagent = Session_sync.session_is_subagent ctx in
         Session_sync.update_session_state host ctx;
         Session_sync.sync_persisted_session ctx;
-        if install_footer then install host ctx;
+        if install_footer && not subagent then install host ctx;
         ensure_refresh_loop host;
         emit_changed host)
   in
