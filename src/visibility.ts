@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { Key, truncateToWidth } from "@earendil-works/pi-tui";
+import { type Focusable, fuzzyFilter, Input, Key, truncateToWidth } from "@earendil-works/pi-tui";
 
 import type { CoreBridge, PiLike } from "./types.ts";
 import { coreCallOptionalRecord, coreCallRecord, isRecord, stringArrayFromUnknown, stringField, writeFileAtomically } from "./util.ts";
@@ -204,10 +204,27 @@ function loadVisibilityState(core: CoreBridge, category: Category, ctx: unknown)
   return parseRows(detailsFromCommandResult(result));
 }
 
-class VisibilityManagerComponent {
+const MAX_VISIBLE_ROWS = 10;
+
+function rowSearchText(row: Row): string {
+  return `${row.name} ${row.description}`;
+}
+
+class VisibilityManagerComponent implements Focusable {
   private selected = 0;
   private busy: string | undefined;
   private status: string | undefined;
+  private readonly searchInput = new Input();
+  private _focused = false;
+
+  get focused(): boolean {
+    return this._focused;
+  }
+
+  set focused(value: boolean) {
+    this._focused = value;
+    this.searchInput.focused = value;
+  }
 
   constructor(
     private state: VisibilityState,
@@ -220,12 +237,29 @@ class VisibilityManagerComponent {
 
   render(width: number): string[] {
     const lines = this.baseHeader(width);
+    const rows = this.filteredRows();
+    for (const inputLine of this.searchInput.render(Math.max(0, width - 2))) {
+      lines.push(this.line(`  ${inputLine}`, width));
+    }
+    lines.push("");
     lines.push(this.line(this.dim(`  ${column("State", 12)}  ${column("Name", 24)}  Description`), width));
-    for (const row of this.state.rows) lines.push(this.renderRow(row, width));
+    const startIndex = Math.max(
+      0,
+      Math.min(this.selected - Math.floor(MAX_VISIBLE_ROWS / 2), rows.length - MAX_VISIBLE_ROWS),
+    );
+    const endIndex = Math.min(startIndex + MAX_VISIBLE_ROWS, rows.length);
+    for (let index = startIndex; index < endIndex; index += 1) {
+      const row = rows[index];
+      if (row) lines.push(this.renderRow(row, index === this.selected, width));
+    }
     if (this.state.rows.length === 0) lines.push(this.line(this.dim("  Nothing registered."), width));
+    else if (rows.length === 0) lines.push(this.line(this.dim("  No matching entries."), width));
+    if (startIndex > 0 || endIndex < rows.length) {
+      lines.push(this.line(this.dim(`  (${this.selected + 1}/${rows.length})`), width));
+    }
     this.addStatus(lines, width);
     lines.push("");
-    lines.push(this.line(this.dim("  e toggle • ctrl+s save to project • esc close"), width));
+    lines.push(this.line(this.dim("  type search • ↑↓ select • e toggle • enter toggle • ctrl+s save to project • esc close"), width));
     lines.push(this.border(width));
     return lines;
   }
@@ -249,9 +283,13 @@ class VisibilityManagerComponent {
       return;
     }
     if (data === "e" || this.isConfirm(data)) {
-      const row = this.state.rows[this.selected];
+      const row = this.filteredRows()[this.selected];
       if (row) this.runToggle(row.name);
+      return;
     }
+    this.searchInput.handleInput(data);
+    this.clampSelection();
+    this.callbacks.requestRender();
   }
 
   private baseHeader(width: number): string[] {
@@ -265,8 +303,7 @@ class VisibilityManagerComponent {
     ];
   }
 
-  private renderRow(row: Row, width: number): string {
-    const selected = this.state.rows[this.selected]?.name === row.name;
+  private renderRow(row: Row, selected: boolean, width: number): string {
     const state = row.available ? row.state : "unavailable";
     const text = `${column(state, 12)}  ${column(row.name, 24)}  ${row.description}`;
     const rowText = selected ? bg(this.theme, "selectedBg", this.accent(text)) : text;
@@ -300,9 +337,16 @@ class VisibilityManagerComponent {
     return fg(this.theme, "dim", text);
   }
 
+  private filteredRows(): Row[] {
+    const query = this.searchInput.getValue().trim();
+    const rows = [...this.state.rows];
+    return query === "" ? rows : fuzzyFilter(rows, query, rowSearchText);
+  }
+
   private moveSelection(delta: number): void {
-    if (this.state.rows.length === 0) return;
-    this.selected = (this.selected + delta + this.state.rows.length) % this.state.rows.length;
+    const rows = this.filteredRows();
+    if (rows.length === 0) return;
+    this.selected = (this.selected + delta + rows.length) % rows.length;
     this.callbacks.requestRender();
   }
 
@@ -333,7 +377,7 @@ class VisibilityManagerComponent {
   }
 
   private clampSelection(): void {
-    this.selected = Math.max(0, Math.min(this.selected, Math.max(0, this.state.rows.length - 1)));
+    this.selected = Math.max(0, Math.min(this.selected, Math.max(0, this.filteredRows().length - 1)));
   }
 
   private isUp(data: string): boolean {

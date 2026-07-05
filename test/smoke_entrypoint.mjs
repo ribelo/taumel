@@ -1399,6 +1399,36 @@ try {
   ) {
     throw new Error(`agents manager did not render cron-style visibility rows: ${JSON.stringify({ agentsManager, renderedVisibilityManagerLines })}`);
   }
+  let renderedToolsManagerLines = [];
+  let renderedToolsSearchLines = [];
+  ctx.ui.custom = async (factory) => {
+    const component = factory(
+      { requestRender: () => undefined },
+      {
+        fg: (_color, text) => text,
+        bg: (_color, text) => text,
+        bold: (text) => text,
+      },
+      { matches: () => false },
+      () => undefined,
+    );
+    renderedToolsManagerLines = component.render(120);
+    component.handleInput("write_stdin");
+    renderedToolsSearchLines = component.render(120);
+    return { kind: "exit" };
+  };
+  const toolsManager = await commands.get("tools").handler("", ctx);
+  delete ctx.ui.custom;
+  if (
+    toolsManager.action !== "command_result" ||
+    !renderedToolsManagerLines.some((line) => line.includes("Taumel tools")) ||
+    !renderedToolsManagerLines.some((line) => line.startsWith("  > ")) ||
+    !renderedToolsManagerLines.some((line) => line.includes("(1/")) ||
+    !renderedToolsSearchLines.some((line) => line.includes("write_stdin")) ||
+    renderedToolsSearchLines.some((line) => line.includes("exec_command"))
+  ) {
+    throw new Error(`tools manager did not render searchable scrolling visibility rows: ${JSON.stringify({ toolsManager, renderedToolsManagerLines, renderedToolsSearchLines })}`);
+  }
   const disableScout = await commands.get("agents").handler("disable scout", ctx);
   const savedScoutDisabledState = parentEntries.filter((entry) => entry.customType === "taumel.visibility").at(-1);
   if (
