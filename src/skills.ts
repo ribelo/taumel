@@ -62,7 +62,7 @@ export function installSkillResolver(pi: PiLike, core: CoreBridge): void {
       if (content === "" || name === "") continue;
       sentCount += 1;
       await pi.sendMessage({
-        customType: "taumel.skill",
+        customType: "skill",
         content,
         display: true,
         details: { source: "auto-skill-mention", trigger: `$${name}`, name },

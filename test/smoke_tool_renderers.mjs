@@ -431,7 +431,7 @@ const skillBlock = [
   longLines,
   "</skill>",
 ].join("\n");
-const skillMessage = { customType: "taumel.skill", content: skillBlock, details: { trigger: "$foo" } };
+const skillMessage = { customType: "skill", content: skillBlock, details: { trigger: "$foo" } };
 const compactSkill = renderText(renderSkill(skillMessage, { expanded: false }, theme));
 const expandedSkill = renderText(renderSkill(skillMessage, { expanded: true }, theme));
 assert(/• skill: foo/.test(compactSkill), `skill renderer header wrong: ${compactSkill}`);
@@ -448,12 +448,12 @@ const multilineSkillBlock = [
   "</skill>",
 ].join("\n");
 const compactMultilineSkill = renderText(renderSkill(
-  { customType: "taumel.skill", content: multilineSkillBlock, details: { trigger: "$grill-me" } },
+  { customType: "skill", content: multilineSkillBlock, details: { trigger: "$grill-me" } },
   { expanded: false },
   theme,
 ));
 const expandedMultilineSkill = renderText(renderSkill(
-  { customType: "taumel.skill", content: multilineSkillBlock, details: { trigger: "$grill-me" } },
+  { customType: "skill", content: multilineSkillBlock, details: { trigger: "$grill-me" } },
   { expanded: true },
   theme,
 ));
@@ -472,14 +472,14 @@ const childTagSkillBlock = [
   "</skill>",
 ].join("\n");
 const expandedChildTagSkill = renderText(renderSkill(
-  { customType: "taumel.skill", content: childTagSkillBlock, details: { trigger: "$grill-me" } },
+  { customType: "skill", content: childTagSkillBlock, details: { trigger: "$grill-me" } },
   { expanded: true },
   theme,
 ));
 assert(expandedChildTagSkill.includes("grill-me") && expandedChildTagSkill.includes("Run a `/grilling` session."), `child-tag skill render failed: ${expandedChildTagSkill}`);
 assert(!expandedChildTagSkill.includes("<name>") && !expandedChildTagSkill.includes("<path>"), `child-tag skill renderer leaked XML: ${expandedChildTagSkill}`);
 assert(
-  renderSkill({ customType: "taumel.skill", content: "<skill>bad</skill>" }, { expanded: false }, theme) === undefined,
+  renderSkill({ customType: "skill", content: "<skill>bad</skill>" }, { expanded: false }, theme) === undefined,
   "invalid skill markup should render nothing",
 );
 

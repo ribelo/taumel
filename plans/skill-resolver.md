@@ -18,7 +18,7 @@ into **N + 1 messages**: one rendered skill block per unique resolved mention
 combines codex's `$name` trigger syntax with Pi's eager inlining.
 
 The resolver hooks Pi's `input` extension event. It resolves mentions, emits
-each resolved skill as a separate custom message (`customType: "taumel.skill"`)
+each resolved skill as a separate custom message (`customType: "skill"`)
 via `pi.sendMessage()` — which appends to the agent's state and renders a
 collapsed skill block in the transcript — then sends the user's prose unchanged
 via `pi.sendUserMessage()` to start the actual turn, and
@@ -39,14 +39,14 @@ details and renderer text, not inserted into the skill body.
 
 The OCaml core owns the algorithm — skill discovery, mention recognition, and
 per‑skill block assembly — as the reference implementation; TypeScript is a
-thin bridge that registers the `input` handler and the `taumel.skill` renderer.
+thin bridge that registers the `input` handler and the `skill` renderer.
 
 ## Requirements
 
 ### Scope and hook
 
 - **skr-sc01** (ubiquitous): The system shall resolve `$name` skill mentions found anywhere in a submitted prompt by emitting each resolved skill as a separate custom message via `pi.sendMessage()`, then sending the original prose unchanged via `pi.sendUserMessage()`, and returning `{ action: "handled" }` from Pi's `input` event.
-- **skr-sc02** (ubiquitous): The system shall place discovery, mention recognition, and per‑skill block assembly in the OCaml core; the TypeScript host shall register the `input` handler and the `taumel.skill` message renderer.
+- **skr-sc02** (ubiquitous): The system shall place discovery, mention recognition, and per‑skill block assembly in the OCaml core; the TypeScript host shall register the `input` handler and the `skill` message renderer.
 - **skr-sc03** (ubiquitous): The system shall run always‑on under session-effective skill visibility controls, staying inert unless the prompt contains at least one mention that resolves to a known enabled skill.
 - **skr-sc04** (event‑driven): When `sendUserMessage` re‑triggers the `input` event with the unchanged prose, the system shall allow that one re-entry to return `{ action: "continue" }`, allowing the turn to proceed without infinite recursion while preserving the literal `$name` text.
 
@@ -70,11 +70,11 @@ thin bridge that registers the `input` handler and the `taumel.skill` renderer.
 
 ### Skill message emission
 
-- **skr-em01** (ubiquitous): The system shall emit one custom message with `customType: "taumel.skill"` per unique matched skill, so each mention becomes its own rendered message and its own block for the model.
+- **skr-em01** (ubiquitous): The system shall emit one custom message with `customType: "skill"` per unique matched skill, so each mention becomes its own rendered message and its own block for the model.
 - **skr-em02** (ubiquitous): The system shall order the emitted messages by the first appearance of their mentions and deduplicate by name, emitting each matched skill at most once per turn.
 - **skr-em03** (ubiquitous): The system shall send the user's prose via `pi.sendUserMessage()` after all skill messages, so skills precede the prose in the transcript and for the model.
-- **skr-em04** (ubiquitous): The OCaml core shall return one ordered per‑skill block payload per mention; the TypeScript handler shall iterate them, calling `pi.sendMessage({ customType: "taumel.skill", content: block, display: true })` for each.
-- **skr-em05** (ubiquitous): The system shall register a message renderer for `taumel.skill` that draws each block as a collapsed‑by‑default, collapsible skill component (header = `skill: <name>`, body expandable), and never as raw markup.
+- **skr-em04** (ubiquitous): The OCaml core shall return one ordered per‑skill block payload per mention; the TypeScript handler shall iterate them, calling `pi.sendMessage({ customType: "skill", content: block, display: true })` for each.
+- **skr-em05** (ubiquitous): The system shall register a message renderer for `skill` that draws each block as a collapsed‑by‑default, collapsible skill component (header = `skill: <name>`, body expandable), and never as raw markup.
 - **skr-em06** (ubiquitous): The system shall attach renderer-visible provenance to each skill custom message indicating that the harness injected the skill because the user mentioned `$name`, without modifying the `<skill>` block content sent to the model.
 
 ### Errors

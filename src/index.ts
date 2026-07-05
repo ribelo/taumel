@@ -359,7 +359,7 @@ export default async function taumel(pi: PiLike) {
   installSkillAutocomplete(pi, core, composer);
   const gatewayTools = registerGatewayTools(pi, core, childSessions);
   if (typeof pi.registerMessageRenderer === "function") {
-    pi.registerMessageRenderer("taumel.skill", skillMessageRenderer());
+    pi.registerMessageRenderer("skill", skillMessageRenderer());
   }
   registerGatewayCommands(pi, core, childSessions, composer);
   installGoalContinuationLoop(pi, core);

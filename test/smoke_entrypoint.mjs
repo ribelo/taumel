@@ -68,6 +68,7 @@ const activeToolUpdates = [];
 const fetchCalls = [];
 const sentMessages = [];
 const sentUserMessages = [];
+const messageRenderers = new Map();
 const childSendResponses = [];
 const childDispatchCalls = [];
 const childLifecycleCalls = [];
@@ -190,6 +191,9 @@ const pi = {
   },
   registerCommand: (name, command) => {
     commands.set(name, command);
+  },
+  registerMessageRenderer: (customType, renderer) => {
+    messageRenderers.set(customType, renderer);
   },
   sendMessage: (message, options) => {
     runtimeActionGuard();
@@ -330,6 +334,10 @@ try {
   for (const name of agentToolNames) {
     if (tools.has(name)) throw new Error(`agent tool registered before profile validation: ${name}`);
   }
+  const oldSkillCustomType = ["taumel", "skill"].join(".");
+  if (!messageRenderers.has("skill") || messageRenderers.has(oldSkillCustomType)) {
+    throw new Error(`skill renderer registered under wrong custom type: ${JSON.stringify([...messageRenderers.keys()])}`);
+  }
 
   const parentEntries = [];
   const parentBranch = [
@@ -434,9 +442,9 @@ try {
   const handledSkill = skillReturns.find((result) => result?.action === "handled");
   if (
     handledSkill === undefined || sentMessages.length !== 2 || sentUserMessages.at(-1)?.content !== "$foo $bar explain both" ||
-    sentMessages[0]?.message?.customType !== "taumel.skill" || !sentMessages[0]?.message?.content?.includes('name="foo"') ||
+    sentMessages[0]?.message?.customType !== "skill" || !sentMessages[0]?.message?.content?.includes('name="foo"') ||
     sentMessages[0]?.message?.details?.trigger !== "$foo" ||
-    sentMessages[1]?.message?.customType !== "taumel.skill" || !sentMessages[1]?.message?.content?.includes('name="bar"') ||
+    sentMessages[1]?.message?.customType !== "skill" || !sentMessages[1]?.message?.content?.includes('name="bar"') ||
     sentMessages[1]?.message?.details?.trigger !== "$bar"
   ) {
     throw new Error(`skill resolver input handling failed: ${JSON.stringify({ skillReturns, sentMessages, sentUserMessages })}`);
