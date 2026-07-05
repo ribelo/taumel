@@ -36,6 +36,7 @@ function isProjectTrusted(ctx: unknown): boolean {
 }
 
 const sessionCompactionModels = new Map<string, string>();
+const warnedCompactionFallbacks = new Set<string>();
 
 function sessionKey(ctx: unknown): string {
   return sessionInfoFromContext(ctx).sessionId ?? "current";
@@ -97,6 +98,13 @@ function notifyWarning(ctx: unknown, message: string): void {
   }
 }
 
+function notifyFallbackWarningOnce(ctx: unknown, modelId: string, reason: string, message: string): void {
+  const key = `${sessionKey(ctx)}\0${modelId}\0${reason}`;
+  if (warnedCompactionFallbacks.has(key)) return;
+  warnedCompactionFallbacks.add(key);
+  notifyWarning(ctx, message);
+}
+
 function currentThinkingLevelFromContext(ctx: unknown): string | undefined {
   if (!isRecord(ctx)) return undefined;
   if (typeof ctx["thinkingLevel"] === "string" && ctx["thinkingLevel"] !== "") return ctx["thinkingLevel"];
@@ -135,22 +143,22 @@ export function installCompactionModelHook(pi: PiLike, core: CoreBridge): void {
     const modelId = stringField(plan, "model");
     const requested = splitProviderModelId(modelId);
     if (requested === undefined) {
-      notifyWarning(ctx, `Taumel compaction model is invalid: ${modelId}`);
+      notifyFallbackWarningOnce(ctx, modelId, "invalid", `Taumel compaction model is invalid: ${modelId}`);
       return undefined;
     }
     const registry = modelRegistryFromContext(pi, ctx);
     if (!isRecord(registry) || typeof registry["find"] !== "function" || typeof registry["getApiKeyAndHeaders"] !== "function") {
-      notifyWarning(ctx, "Taumel compaction model cannot resolve the model registry.");
+      notifyFallbackWarningOnce(ctx, modelId, "registry", "Taumel compaction model cannot resolve the model registry.");
       return undefined;
     }
     const model = registry["find"].call(registry, requested.provider, requested.model);
     if (model === undefined || model === null) {
-      notifyWarning(ctx, `Taumel compaction model is not available: ${modelId}`);
+      notifyFallbackWarningOnce(ctx, modelId, "missing", `Taumel compaction model is not available: ${modelId}`);
       return undefined;
     }
     const auth = registry["getApiKeyAndHeaders"].call(registry, model);
     if (!isRecord(auth) || auth["ok"] !== true || typeof auth["apiKey"] !== "string") {
-      notifyWarning(ctx, `Taumel compaction model lacks auth: ${modelId}`);
+      notifyFallbackWarningOnce(ctx, modelId, "auth", `Taumel compaction model lacks auth: ${modelId}`);
       return undefined;
     }
     const preparation = event["preparation"];

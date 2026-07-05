@@ -3,7 +3,7 @@ type compaction_model =
   | Model of string
 
 type command =
-  | Show
+  | Pick
   | Set of string
   | Clear
 
@@ -48,7 +48,7 @@ let resolve_configured settings =
 
 let parse_command input =
   let input = String.trim input in
-  if input = "" then Ok Show
+  if input = "" then Ok Pick
   else if input = "clear" then Ok Clear
   else if is_valid_model_id input then Ok (Set input)
   else Error "usage: /compaction-model [<provider/model>|clear]"
@@ -57,7 +57,7 @@ let plan_command ~settings input =
   let current, source = resolve_configured settings in
   match parse_command input with
   | Error _ as error -> error
-  | Ok Show -> Ok (Show_current { model = current; source })
+  | Ok Pick -> Ok (Open_picker { current })
   | Ok Clear -> (
       match (settings.session, settings.project) with
       | Some _, _ | None, Some _ -> Ok Clear_project

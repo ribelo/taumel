@@ -21,8 +21,8 @@ let test_validation () =
     (not (Compaction_model.is_valid_model_id "openai/gpt-4o/reasoning"))
 
 let test_parse_command () =
-  let open_ok = expect_ok "show" (Compaction_model.parse_command "") in
-  assert_bool "empty parses to Show" (open_ok = Compaction_model.Show);
+  let open_ok = expect_ok "picker" (Compaction_model.parse_command "") in
+  assert_bool "empty parses to Pick" (open_ok = Compaction_model.Pick);
   let clear_ok = expect_ok "clear" (Compaction_model.parse_command "clear") in
   assert_bool "clear parses to Clear" (clear_ok = Compaction_model.Clear);
   let set_ok = expect_ok "set" (Compaction_model.parse_command "openai/gpt-4o") in
@@ -33,18 +33,18 @@ let test_parse_command () =
 
 let test_plan_command () =
   let settings = { Compaction_model.session = None; global = Some "openai/gpt-4o"; project = None } in
-  let show = expect_ok "show inherits global" (Compaction_model.plan_command ~settings "") in
-  assert_bool "show reports global model"
-    (show = Compaction_model.Show_current { model = Compaction_model.Model "openai/gpt-4o"; source = "global" });
+  let picker = expect_ok "picker inherits global" (Compaction_model.plan_command ~settings "") in
+  assert_bool "empty command opens picker with current model"
+    (picker = Compaction_model.Open_picker { current = Compaction_model.Model "openai/gpt-4o" });
   let set = expect_ok "set project" (Compaction_model.plan_command ~settings "anthropic/claude-3-5-sonnet") in
   assert_bool "set plans project write"
     (set = Compaction_model.Set_project "anthropic/claude-3-5-sonnet");
   let project_settings = { Compaction_model.session = None; global = Some "openai/gpt-4o"; project = Some "anthropic/claude-3-5-sonnet" } in
   let show_project =
-    expect_ok "show prefers project" (Compaction_model.plan_command ~settings:project_settings "")
+    expect_ok "picker prefers project" (Compaction_model.plan_command ~settings:project_settings "")
   in
-  assert_bool "show reports project model"
-    (show_project = Compaction_model.Show_current { model = Compaction_model.Model "anthropic/claude-3-5-sonnet"; source = "project" });
+  assert_bool "picker marks project model"
+    (show_project = Compaction_model.Open_picker { current = Compaction_model.Model "anthropic/claude-3-5-sonnet" });
   let clear = expect_ok "clear project" (Compaction_model.plan_command ~settings:project_settings "clear") in
   assert_bool "clear plans project removal" (clear = Compaction_model.Clear_project);
   let clear_inherit =
@@ -54,14 +54,14 @@ let test_plan_command () =
     (clear_inherit = Compaction_model.Show_current { model = Compaction_model.Model "openai/gpt-4o"; source = "global" });
   let session_settings = { project_settings with session = Some "openai/gpt-5" } in
   let show_session =
-    expect_ok "show prefers session" (Compaction_model.plan_command ~settings:session_settings "")
+    expect_ok "picker prefers session" (Compaction_model.plan_command ~settings:session_settings "")
   in
-  assert_bool "show reports session model"
-    (show_session = Compaction_model.Show_current { model = Compaction_model.Model "openai/gpt-5"; source = "session" });
+  assert_bool "picker marks session model"
+    (show_session = Compaction_model.Open_picker { current = Compaction_model.Model "openai/gpt-5" });
   let empty_settings = { Compaction_model.session = None; global = None; project = None } in
-  let show_empty = expect_ok "show inherit" (Compaction_model.plan_command ~settings:empty_settings "") in
-  assert_bool "show reports inherit when unset"
-    (show_empty = Compaction_model.Show_current { model = Compaction_model.Inherit; source = "inherit" })
+  let show_empty = expect_ok "picker inherit" (Compaction_model.plan_command ~settings:empty_settings "") in
+  assert_bool "picker reports inherit when unset"
+    (show_empty = Compaction_model.Open_picker { current = Compaction_model.Inherit })
 
 let test_plan_session_before_compact () =
   let inherit_settings = { Compaction_model.session = None; global = None; project = None } in

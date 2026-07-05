@@ -1,4 +1,4 @@
-import { toolContracts } from "../src/tool-contracts.ts";
+import { parseToolParams, toolContracts } from "../src/tool-contracts.ts";
 
 const assert = (condition, message) => {
   if (!condition) throw new Error(message);
@@ -38,3 +38,7 @@ for (const tool of toolContracts) {
     `provider-facing tool schema includes unsupported schema metadata:\n${forbidden.join("\n")}`,
   );
 }
+
+assert(parseToolParams("exec_command", { cmd: "printf ok" }).ok, "exec_command should accept a non-empty command");
+assert(!parseToolParams("exec_command", { cmd: "" }).ok, "exec_command should reject an empty command");
+assert(!parseToolParams("exec_command", { cmd: " \t\n" }).ok, "exec_command should reject a whitespace-only command");

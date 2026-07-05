@@ -9,6 +9,7 @@ type session = {
   pending : Buffer.t;
   mutable chunk_bytes : int;
   mutable chunk_lines : int;
+  mutable chunk_ends_with_newline : bool;
   mutable chunk_trimmed : bool;
   mutable temp_path : string option;
   mutable temp_fd : Unsafe.any option;
@@ -27,10 +28,23 @@ type retained_session = {
   retained_exit_code : int option;
 }
 
+type truncation = {
+  trunc_truncated : bool;
+  trunc_truncated_by : string;
+  trunc_total_lines : int;
+  trunc_total_bytes : int;
+  trunc_output_lines : int;
+  trunc_output_bytes : int;
+  trunc_max_lines : int;
+  trunc_max_bytes : int;
+  trunc_last_line_partial : bool;
+  trunc_first_line_exceeds_limit : bool;
+  trunc_full_output_path : string option;
+}
+
 type run_result = {
   output : string;
-  truncated : bool;
-  full_output_path : string option;
+  truncation : truncation;
   wall_time_ms : float;
   session_id : int option;
   exit_code : int option;
@@ -89,31 +103,40 @@ let count_newlines s =
   String.iter (fun c -> if c = '\n' then incr n) s;
   !n
 
-(* Return the suffix of [s] holding at most its last [n] lines. *)
-let last_lines s n =
-  if n <= 0 || s = "" then ""
+let line_count text =
+  if text = "" then 0
   else
-    let len = String.length s in
-    (* Ignore a single trailing newline so it is not counted as a separator. *)
-    let scan_from = if s.[len - 1] = '\n' then len - 2 else len - 1 in
-    let rec scan i seen =
-      if i < 0 then 0
-      else if s.[i] = '\n' then
-        if seen + 1 >= n then i + 1 else scan (i - 1) (seen + 1)
-      else scan (i - 1) seen
-    in
-    let start = if scan_from < 0 then 0 else scan (scan_from) 0 in
-    String.sub s start (len - start)
+    count_newlines text
+    + if text.[String.length text - 1] = '\n' then 0 else 1
 
-(* Last [max_display_bytes] bytes, then further limited to the last
-   [max_display_lines] lines (whichever tail is shorter), matching Pi. *)
-let display_tail s =
-  let by_bytes =
-    if String.length s > max_display_bytes then
-      String.sub s (String.length s - max_display_bytes) max_display_bytes
-    else s
-  in
-  last_lines by_bytes max_display_lines
+let split_display_lines text =
+  if text = "" then []
+  else
+    match List.rev (String.split_on_char '\n' text) with
+    | "" :: rest -> List.rev rest
+    | rest -> List.rev rest
+
+let safe_suffix max_bytes text =
+  let len = String.length text in
+  if len <= max_bytes then text
+  else
+    let raw_start = len - max_bytes in
+    let rec boundary index =
+      if index >= len then len
+      else
+        let code = Char.code text.[index] in
+        if code land 0b1100_0000 = 0b1000_0000 then boundary (index + 1)
+        else index
+    in
+    let start = boundary raw_start in
+    String.sub text start (len - start)
+
+let truncation_reason ~by_lines ~by_bytes =
+  match (by_lines, by_bytes) with
+  | false, false -> "none"
+  | true, false -> "lines"
+  | false, true -> "bytes"
+  | true, true -> "lines,bytes"
 
 let js_require name =
   Unsafe.fun_call (Unsafe.js_expr "require") [| js_string name |]
@@ -200,6 +223,7 @@ let add_output (session : session) text =
     write_temp session text;
     session.chunk_bytes <- session.chunk_bytes + String.length text;
     session.chunk_lines <- session.chunk_lines + count_newlines text;
+    session.chunk_ends_with_newline <- text.[String.length text - 1] = '\n';
     Buffer.add_string session.pending text;
     if Buffer.length session.pending > pending_cap then begin
       let s = Buffer.contents session.pending in
@@ -315,56 +339,153 @@ let close_temp (session : session) =
       with _ -> ()));
   session.temp_fd <- None
 
-(* Compute the display output (last 2000 lines / 50KB) with Pi's truncation
-   footer, WITHOUT mutating the session. Shared by the inline drain
-   (make_result) and the background completion notification. *)
+let make_truncation ?full_output_path ?(last_line_partial = false)
+    ?(first_line_exceeds_limit = false) ~truncated ~truncated_by ~total_lines
+    ~total_bytes ~output_lines ~output_bytes () =
+  {
+    trunc_truncated = truncated;
+    trunc_truncated_by = truncated_by;
+    trunc_total_lines = total_lines;
+    trunc_total_bytes = total_bytes;
+    trunc_output_lines = output_lines;
+    trunc_output_bytes = output_bytes;
+    trunc_max_lines = max_display_lines;
+    trunc_max_bytes = max_display_bytes;
+    trunc_last_line_partial = last_line_partial;
+    trunc_first_line_exceeds_limit = first_line_exceeds_limit;
+    trunc_full_output_path = full_output_path;
+  }
+
+let truncation_footer ?(last_line_partial = false) ~start_line ~end_line
+    ~total_lines ~shown_bytes ~line_bytes ~reason full_output_path =
+  match full_output_path with
+  | None -> ""
+  | Some path when last_line_partial ->
+      Printf.sprintf
+        "[Showing last %d bytes of line %d (line is %d bytes). Full output: %s]"
+        shown_bytes end_line line_bytes path
+  | Some path ->
+      Printf.sprintf
+        "[Showing lines %d-%d of %d (limited by %s; max %d lines / %d bytes). Full output: %s]"
+        start_line end_line total_lines reason max_display_lines max_display_bytes
+        path
+
+(* Compute the display output (last 2000 complete lines / 50KB, with an
+   explicit partial-line fallback for one overlarge tail line), WITHOUT mutating
+   the session. Shared by the inline drain (make_result) and notifications. *)
 let display_output (session : session) =
   let raw = Buffer.contents session.pending in
-  let disp = display_tail raw in
+  let total_lines =
+    session.chunk_lines
+    + if session.chunk_bytes > 0 && not session.chunk_ends_with_newline then 1 else 0
+  in
+  let total_bytes = session.chunk_bytes in
   let truncated =
     session.chunk_trimmed
-    || session.chunk_bytes > max_display_bytes
-    || session.chunk_lines > max_display_lines
+    || total_bytes > max_display_bytes
+    || total_lines > max_display_lines
   in
-  let output =
-    if not truncated then disp
-    else begin
-      let shown =
-        count_newlines disp
-        + (if disp <> "" && disp.[String.length disp - 1] <> '\n' then 1 else 0)
-      in
-      let footer =
-        match session.temp_path with
-        | None -> ""
-        | Some path ->
-            let total = max session.chunk_lines shown in
-            let start_line = max 1 (total - shown + 1) in
-            Printf.sprintf
-              "[Showing lines %d-%d of %d. Full output: %s]" start_line total
-              total path
-      in
-      if footer = "" then disp
-      else if disp = "" then footer
-      else disp ^ "\n\n" ^ footer
-    end
-  in
-  let full_output_path = if truncated then session.temp_path else None in
-  (output, truncated, full_output_path)
+  if not truncated then
+    let truncation =
+      make_truncation ~truncated:false ~truncated_by:"none" ~total_lines
+        ~total_bytes ~output_lines:(line_count raw) ~output_bytes:(String.length raw)
+        ()
+    in
+    (raw, truncation)
+  else
+    let full_output_path = session.temp_path in
+    let by_lines = total_lines > max_display_lines in
+    let by_bytes = session.chunk_trimmed || total_bytes > max_display_bytes in
+    let reason = truncation_reason ~by_lines ~by_bytes in
+    let indexed =
+      raw |> split_display_lines
+      |> List.mapi (fun index line -> (index + 1, line))
+    in
+    let rec take_tail selected selected_bytes selected_count = function
+      | [] -> (`Lines selected, selected_bytes, selected_count)
+      | (line_no, line) :: rest ->
+          if selected_count >= max_display_lines then
+            (`Lines selected, selected_bytes, selected_count)
+          else
+            let separator = if selected_count = 0 then 0 else 1 in
+            let line_bytes = String.length line + separator in
+            if selected_bytes + line_bytes <= max_display_bytes then
+              take_tail ((line_no, line) :: selected)
+                (selected_bytes + line_bytes) (selected_count + 1) rest
+            else if selected_count = 0 then
+              (`Partial_line (line_no, line), selected_bytes, selected_count)
+            else (`Lines selected, selected_bytes, selected_count)
+    in
+    let selection, selected_bytes, selected_count =
+      take_tail [] 0 0 (List.rev indexed)
+    in
+    match selection with
+    | `Partial_line (line_no, line) ->
+        let shown = safe_suffix max_display_bytes line in
+        let shown_bytes = String.length shown in
+        let footer =
+          truncation_footer ~last_line_partial:true ~start_line:line_no
+            ~end_line:line_no ~total_lines ~shown_bytes
+            ~line_bytes:(if total_lines = 1 then max (String.length line) total_bytes else String.length line)
+            ~reason full_output_path
+        in
+        let output =
+          if footer = "" then shown
+          else if shown = "" then footer
+          else shown ^ "\n\n" ^ footer
+        in
+        let truncation =
+          make_truncation ?full_output_path ~last_line_partial:true
+            ~first_line_exceeds_limit:true ~truncated:true ~truncated_by:reason
+            ~total_lines ~total_bytes ~output_lines:1 ~output_bytes:shown_bytes ()
+        in
+        (output, truncation)
+    | `Lines selected ->
+        let payload =
+          selected |> List.map snd |> String.concat "\n"
+        in
+        let start_line, end_line =
+          match selected with
+          | [] -> (0, 0)
+          | (first, _) :: rest ->
+              let last =
+                match List.rev rest with
+                | (line_no, _) :: _ -> line_no
+                | [] -> first
+              in
+              (first, last)
+        in
+        let footer =
+          truncation_footer ~start_line ~end_line ~total_lines
+            ~shown_bytes:selected_bytes ~line_bytes:selected_bytes ~reason
+            full_output_path
+        in
+        let output =
+          if footer = "" then payload
+          else if payload = "" then footer
+          else payload ^ "\n\n" ^ footer
+        in
+        let truncation =
+          make_truncation ?full_output_path ~truncated:true
+            ~truncated_by:reason ~total_lines ~total_bytes
+            ~output_lines:selected_count ~output_bytes:selected_bytes ()
+        in
+        (output, truncation)
 
 (* Drain the unread chunk for display: the last 2000 lines / 50KB, with a Pi
    footer when the chunk was truncated (the full output stays in the temp file).
    Resets the per-chunk accounting so the next call returns only new output. *)
 let make_result (session : session) =
-  let output, truncated, full_output_path = display_output session in
+  let output, truncation = display_output session in
   Buffer.clear session.pending;
   session.chunk_bytes <- 0;
   session.chunk_lines <- 0;
+  session.chunk_ends_with_newline <- false;
   session.chunk_trimmed <- false;
   let base =
     {
       output;
-      truncated;
-      full_output_path;
+      truncation;
       wall_time_ms = now_ms () -. session.started_at;
       session_id = None;
       exit_code = None;
@@ -391,6 +512,28 @@ let shell_result_text result =
       append (Printf.sprintf "Command exited with code %d" code)
   | _ -> body
 
+let js_truncation truncation =
+  let fields =
+    [
+      ("truncated", js_bool truncation.trunc_truncated);
+      ("truncatedBy", js_string truncation.trunc_truncated_by);
+      ("totalLines", js_number (float_of_int truncation.trunc_total_lines));
+      ("totalBytes", js_number (float_of_int truncation.trunc_total_bytes));
+      ("outputLines", js_number (float_of_int truncation.trunc_output_lines));
+      ("outputBytes", js_number (float_of_int truncation.trunc_output_bytes));
+      ("maxLines", js_number (float_of_int truncation.trunc_max_lines));
+      ("maxBytes", js_number (float_of_int truncation.trunc_max_bytes));
+      ("lastLinePartial", js_bool truncation.trunc_last_line_partial);
+      ("firstLineExceedsLimit", js_bool truncation.trunc_first_line_exceeds_limit);
+    ]
+  in
+  let fields =
+    match truncation.trunc_full_output_path with
+    | Some path -> fields @ [ ("fullOutputPath", js_string path) ]
+    | None -> fields
+  in
+  Unsafe.obj (Array.of_list fields)
+
 let shell_result_details result extra =
   let fields =
     [
@@ -398,14 +541,18 @@ let shell_result_details result extra =
         js_bool (match result.exit_code with None -> true | Some code -> code = 0)
       );
       ("output", js_string result.output);
+      ("stdout", js_string result.output);
+      ("stderr", js_string "");
+      ("truncation", inject (js_truncation result.truncation));
       ("wallTimeMs", js_number result.wall_time_ms);
     ]
   in
   let fields =
-    if result.truncated then fields @ [ ("truncated", js_bool true) ] else fields
+    if result.truncation.trunc_truncated then fields @ [ ("truncated", js_bool true) ]
+    else fields
   in
   let fields =
-    match result.full_output_path with
+    match result.truncation.trunc_full_output_path with
     | Some path -> fields @ [ ("fullOutputPath", js_string path) ]
     | None -> fields
   in
@@ -558,6 +705,7 @@ let new_session owner_id tty =
     pending = Buffer.create 256;
     chunk_bytes = 0;
     chunk_lines = 0;
+    chunk_ends_with_newline = false;
     chunk_trimmed = false;
     temp_path = None;
     temp_fd = None;
@@ -708,8 +856,10 @@ let write_stdin prepared owner_id =
                 output =
                   Printf.sprintf
                     "(session %d already completed; no new output)" session_id;
-                truncated = false;
-                full_output_path = None;
+                truncation =
+                  make_truncation ~truncated:false ~truncated_by:"none"
+                    ~total_lines:1 ~total_bytes:0 ~output_lines:1
+                    ~output_bytes:0 ();
                 wall_time_ms = 0.;
                 session_id = None;
                 exit_code = None;

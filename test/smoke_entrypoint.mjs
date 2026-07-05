@@ -933,6 +933,33 @@ try {
   if (!execResult.content?.[0]?.text.includes("exec-ready")) {
     throw new Error(`exec_command did not run command: ${JSON.stringify({ execCalls, execResult })}`);
   }
+  if (
+    execResult.details?.stdout !== execResult.details?.output ||
+    execResult.details?.stderr !== "" ||
+    execResult.details?.truncation?.truncated !== false
+  ) {
+    throw new Error(`exec_command details missing stdout/stderr/truncation: ${JSON.stringify(execResult)}`);
+  }
+
+  const byteTruncatedExec = await tools
+    .get("exec_command")
+    .execute(
+      "exec-byte-truncation",
+      { cmd: "for i in $(seq 1 4000); do printf 'line-%04d abcdefghijklmnopqrstuvwxyz\\n' \"$i\"; done", workdir: cwd },
+      undefined,
+      undefined,
+      ctx,
+    );
+  const byteTruncation = byteTruncatedExec.details?.truncation;
+  const firstVisibleExecLine = byteTruncatedExec.details?.output?.split(/\r?\n/).find((line) => line.trim() !== "" && !line.startsWith("["));
+  if (
+    byteTruncation?.truncated !== true ||
+    typeof byteTruncatedExec.details?.fullOutputPath !== "string" ||
+    byteTruncation?.outputBytes > 50 * 1024 ||
+    !/^line-\d{4} abcdefghijklmnopqrstuvwxyz$/.test(firstVisibleExecLine ?? "")
+  ) {
+    throw new Error(`exec byte truncation did not preserve complete first visible line: ${JSON.stringify({ firstVisibleExecLine, byteTruncatedExec })}`);
+  }
 
   const legacyWriteTarget = join(cwd, "legacy-write.txt");
   const legacyWriteResult = await tools.get("write").execute(

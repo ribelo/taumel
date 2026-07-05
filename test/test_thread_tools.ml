@@ -109,11 +109,12 @@ let query query =
   | Ok request -> Threads.plan_query ~workspace:"/repo" request catalog
 
 let read_request ?mode ?locator ?entry_id ?line ?cursor thread_id =
-  let locator_thread_id, locator_entry_id, locator_line =
+  let locator_thread_id, locator_source_path, locator_entry_id, locator_line =
     match locator with
-    | None -> (None, None, None)
+    | None -> (None, None, None, None)
     | Some (locator : Threads.locator) ->
         ( Some locator.Threads.locator_thread_id,
+          locator.locator_source_path,
           locator.locator_entry_id,
           locator.locator_line )
   in
@@ -122,7 +123,7 @@ let read_request ?mode ?locator ?entry_id ?line ?cursor thread_id =
       {
         thread_id = Some thread_id;
         locator_thread_id;
-        locator_source_path = None;
+        locator_source_path;
         locator_entry_id;
         locator_line;
         entry_id;
@@ -175,6 +176,15 @@ let test_read_modes () =
   let window = Threads.plan_read ~id:window_request.thread_id window_request catalog in
   assert_bool "window ok" window.ok;
   assert_bool "window marks target" (contains window.text ">> ");
+  assert_bool "locator preserves source path"
+    (window_request.locator
+    = Some
+        {
+          Threads.locator_thread_id = "thread-1";
+          locator_source_path = Some "/repo/.pi/agent/sessions/thread-1.jsonl";
+          locator_entry_id = Some "03";
+          locator_line = Some 4;
+        });
   let full_request = read_request ~mode:"full" "thread-1" in
   let full = Threads.plan_read ~id:full_request.thread_id full_request catalog in
   assert_bool "full ok" full.ok;
@@ -189,6 +199,24 @@ let test_request_preparation () =
   | Error "query_threads requires query" -> ()
   | Error message -> fail "query request empty" ("unexpected error: " ^ message)
   | Ok _ -> fail "query request empty" "expected error");
+  (match
+     Threads.prepare_read_request
+       {
+         thread_id = Some "thread-1";
+         locator_thread_id = None;
+         locator_source_path = None;
+         locator_entry_id = None;
+         locator_line = None;
+         entry_id = None;
+         line = None;
+         mode = Some "window";
+         around = None;
+         cursor = Some (Threads.encode_cursor "thread-1" 10);
+       }
+   with
+  | Error "read_thread window mode requires locator, entryID, or line" -> ()
+  | Error message -> fail "window cursor request" ("unexpected error: " ^ message)
+  | Ok _ -> fail "window cursor request" "expected error");
   (match
      Threads.prepare_read_request
        {
@@ -208,8 +236,21 @@ let test_request_preparation () =
   | Error message -> fail "read request empty" ("unexpected error: " ^ message)
   | Ok _ -> fail "read request empty" "expected error")
 
+let test_cursor_validation () =
+  let invalid_request = read_request ~mode:"full" ~cursor:"not-a-cursor" "thread-1" in
+  let invalid = Threads.plan_read ~id:invalid_request.thread_id invalid_request catalog in
+  assert_bool "invalid cursor fails" (not invalid.ok);
+  assert_bool "invalid cursor explains failure" (contains invalid.text "cursor is invalid");
+  let wrong_request =
+    read_request ~mode:"full" ~cursor:(Threads.encode_cursor "other-thread" 5) "thread-1"
+  in
+  let wrong = Threads.plan_read ~id:wrong_request.thread_id wrong_request catalog in
+  assert_bool "wrong-thread cursor fails" (not wrong.ok);
+  assert_bool "wrong-thread cursor explains failure" (contains wrong.text "other-thread")
+
 let () =
   test_query_jsonl_tool_hits ();
   test_hidden_reasoning_not_searched ();
   test_read_modes ();
-  test_request_preparation ()
+  test_request_preparation ();
+  test_cursor_validation ()

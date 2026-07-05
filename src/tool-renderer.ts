@@ -1,5 +1,4 @@
 import { structuredPatch } from "diff";
-import { getLanguageFromPath, highlightCode } from "@earendil-works/pi-coding-agent";
 import {
   emptyComponent,
   renderBlock,
@@ -30,21 +29,6 @@ function themeFg(theme: unknown, color: string, value: string): string {
   return typeof rendered === "string" ? rendered : value;
 }
 
-// Syntax highlighting via pi's bundled cli-highlight (the same call pi's own
-// read/write tools make). Synchronous, ANSI-colored, theme-aware at runtime.
-// `highlightCode(code, lang)` returns an ANSI-colored string array, one per line;
-// it no-ops (plain output) when the language is unknown. Returns plain lines on
-// any failure so rendering never breaks.
-function highlightLines(code: string, lang: string | undefined): string[] {
-  if (!lang) return (code ?? "").split(/\r?\n/);
-  try {
-    const out = highlightCode(code, lang);
-    return Array.isArray(out) ? out : (code ?? "").split(/\r?\n/);
-  } catch {
-    return (code ?? "").split(/\r?\n/);
-  }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Text helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -59,10 +43,6 @@ function domainOf(url: string): string {
   } catch {
     return url;
   }
-}
-
-function langFromPath(path: string): string | undefined {
-  return getLanguageFromPath(path);
 }
 
 function textContent(result: unknown): string {
@@ -236,7 +216,7 @@ function countChanges(hunks: { readonly lines: readonly string[] }[]): { added: 
   return { added, removed };
 }
 
-function renderDiff(before: string, after: string, expanded: boolean, theme: unknown, lang: string | undefined = undefined): DiffRender {
+function renderDiff(before: string, after: string, expanded: boolean, theme: unknown): DiffRender {
   const context = expanded ? 3 : 2;
   let patch: { hunks: { oldStart: number; oldLines: number; newStart: number; newLines: number; lines: string[] }[] };
   try {
@@ -250,19 +230,9 @@ function renderDiff(before: string, after: string, expanded: boolean, theme: unk
     maxLine = Math.max(maxLine, hunk.newStart + hunk.newLines, hunk.oldStart + hunk.oldLines);
   }
   const width = Math.max(2, String(maxLine).length);
-  // Highlight the full before/after once so multi-line tokens (strings, block
-  // comments) tokenize correctly; each diff line pulls its own highlighted copy
-  // by line number. `+` and context lines come from `after`; `-` from `before`.
-  const highlightedAfter = lang !== undefined ? highlightLines(after ?? "", lang) : undefined;
-  const highlightedBefore = lang !== undefined ? highlightLines(before ?? "", lang) : undefined;
-  const codeAt = (marker: string, oldLine: number, newLine: number, raw: string): string => {
+  const codeAt = (_marker: string, _oldLine: number, _newLine: number, raw: string): string => {
     const plain = raw.slice(1);
-    if (marker === "-") {
-      const hl = highlightedBefore?.[oldLine - 1];
-      return hl ?? themeFg(theme, "toolOutput", plain);
-    }
-    const hl = highlightedAfter?.[newLine - 1];
-    return hl ?? themeFg(theme, "toolOutput", plain);
+    return themeFg(theme, "toolOutput", plain);
   };
   const lines: string[] = [];
   const markers: string[] = [];
@@ -369,10 +339,8 @@ function buildRead(name: string, result: unknown, options: unknown, theme: unkno
   if (!expanded) return { header, body: undefined };
 
   const rawText = textContent(result);
-  const lang = langFromPath(path);
-  const highlighted = lang !== undefined ? highlightLines(rawText, lang) : undefined;
-  const physical = (highlighted ?? rawText.trimEnd().split(/\r?\n/));
-  const entries: Entry[] = (highlighted ?? physical.map((line) => themeFg(theme, "toolOutput", line))).map((text) => ({ text }));
+  const physical = rawText.trimEnd().split(/\r?\n/);
+  const entries: Entry[] = physical.map((line) => ({ text: themeFg(theme, "toolOutput", line) }));
   if (shown !== undefined && total !== undefined && shown < total) {
     entries.push({ text: moreLine(total - shown, theme, "more lines"), exempt: true });
   }
@@ -390,8 +358,7 @@ function buildWrite(name: string, result: unknown, options: unknown, theme: unkn
   const trailing = themeFg(theme, "dim", mode === "append" ? `(append +${lineCount})` : `(${lineCount} line${lineCount === 1 ? "" : "s"})`);
   const header = headerSpec("write", path, dotFromDetails(details), theme, trailing);
   if (contents.trim() === "") return { header, body: undefined };
-  const lang = langFromPath(path);
-  const all = lang !== undefined ? highlightLines(contents, lang) : contents.trimEnd().split(/\r?\n/).map((line) => themeFg(theme, "toolOutput", line));
+  const all = contents.trimEnd().split(/\r?\n/).map((line) => themeFg(theme, "toolOutput", line));
   const limit = expanded ? 120 : 3;
   const entries: Entry[] = all.slice(0, limit).map((text) => ({ text }));
   if (all.length > limit) entries.push({ text: moreLine(all.length - limit, theme, "more lines"), exempt: true });
@@ -412,7 +379,7 @@ function buildEdit(name: string, result: unknown, options: unknown, theme: unkno
       body: summary === "" ? undefined : { mode: "rail", entries: [{ text: themeFg(theme, "dim", summary), exempt: true }] },
     };
   }
-  const diff = renderDiff(before, after, expanded, theme, langFromPath(path));
+  const diff = renderDiff(before, after, expanded, theme);
   const header = headerSpec("edit", path, dotFromDetails(details), theme, themeFg(theme, "dim", `(+${diff.added} -${diff.removed})`));
   const entries: Entry[] = diff.lines.map((text) => ({ text }));
   // Collapsed: cap to ~6 changed lines; advertise the rest with an exempt hint.
@@ -467,7 +434,7 @@ function buildApplyPatch(name: string, result: unknown, options: unknown, theme:
   if (!expanded) {
     if (writes.length === 1 && deletes.length === 0) {
       const file = perFile[0];
-      const diff = renderDiff(file.before, file.after, false, theme, langFromPath(file.path));
+      const diff = renderDiff(file.before, file.after, false, theme);
       const singleHeader = headerSpec(name, file.path, dotColor, theme, themeFg(theme, "dim", `(+${diff.added} -${diff.removed})`));
       const entries: Entry[] = diff.lines.map((text) => ({ text }));
       if (diff.lines.length > 6) {
@@ -494,7 +461,7 @@ function buildApplyPatch(name: string, result: unknown, options: unknown, theme:
   const entries: Entry[] = [];
   for (const file of perFile) {
     entries.push({ text: `${themeFg(theme, "toolTitle", file.path)} ${themeFg(theme, "dim", `(+${file.added} -${file.removed})`)}` });
-    const diff = renderDiff(file.before, file.after, true, theme, langFromPath(file.path));
+    const diff = renderDiff(file.before, file.after, true, theme);
     entries.push(...diff.lines.map((text) => ({ text })));
   }
   for (const path of deletes) {

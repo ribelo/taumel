@@ -75,7 +75,7 @@ const EmptyParamsSchema = Type.Object({}, { $id: "EmptyParams", additionalProper
 
 const ExecCommandParamsSchema = Type.Object(
   {
-    cmd: Type.String({ description: "Shell command to execute." }),
+    cmd: Type.String({ minLength: 1, pattern: "\\S", description: "Shell command to execute." }),
     workdir: Type.Optional(Type.String({ description: "Working directory for the command." })),
     yield_time_ms: Type.Optional(
       Type.Number({
@@ -195,6 +195,7 @@ const QueryThreadsParamsSchema = Type.Object(
 const ThreadLocatorSchema = Type.Object(
   {
     threadID: Type.String({ minLength: 1 }),
+    sourcePath: Type.Optional(Type.String({ minLength: 1 })),
     entryID: Type.Optional(Type.String({ minLength: 1 })),
     line: Type.Optional(Type.Integer({ minimum: 1 })),
   },
