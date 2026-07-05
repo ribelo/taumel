@@ -30,6 +30,7 @@ let tool_specs =
 
 let command_specs =
   [
+    { name = "taumel"; description = "Show Taumel status or initialize global Taumel config." };
     {
       name = "permissions";
       description = "Configure sandbox preset, approval, and tool/agent access.";

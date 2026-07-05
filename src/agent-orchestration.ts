@@ -130,7 +130,7 @@ async function prepareAgentCompletionForRecording(
 
 type NotificationDeliveryMode = "steer" | "trigger";
 
-// Deliver one queued completion as a taumel.notification custom message.
+// Deliver one queued completion as a notification custom message.
 // 'trigger' wakes a fresh turn (parent idle); 'steer' injects at the start of
 // the next turn (parent mid-turn / turn_end). A notification is inherently a
 // custom message (it carries customType/display/details for the renderer), so

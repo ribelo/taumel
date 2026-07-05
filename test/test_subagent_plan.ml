@@ -45,7 +45,7 @@ let profile =
     Capability.default with
     model_id = "openai-codex/gpt-worker";
     thinking_level = "high";
-    tools = Capability.of_list [ "bash"; "write"; "find_thread" ];
+    tools = Capability.of_list [ "bash"; "write"; "query_threads" ];
   }
 
 let sandbox =
@@ -313,7 +313,7 @@ let test_markdown_profile_validation () =
         "approval: on-failure";
         "tools:";
         "  - exec_command";
-        "  - find_thread";
+        "  - query_threads";
         "---";
         "You inspect the repository directly.";
       ]
@@ -345,7 +345,7 @@ let test_markdown_profile_validation () =
     (child_profile.approval_policy = Capability.On_request);
   let catalog =
     Agent_profiles.build_profile_catalog
-      ~live_tools:[ "exec_command"; "find_thread" ]
+      ~live_tools:[ "exec_command"; "query_threads" ]
       [ scout ]
   in
   assert_bool "valid catalog has scout"
@@ -718,31 +718,39 @@ let test_agent_wait_state () =
     Agent_runs.wait_for_selector notified ~parent_session_id:"parent"
       Agent_runs.Wait_all_active
   in
-  assert_equal "default wait ignores background-notified terminal runs"
-    "No active runs." default_after_notification.wait_message;
+  assert_equal "default wait reads background-notified terminal runs"
+    "finder-a1 finder-a1-run-1 [completed]\n\ndone"
+    default_after_notification.wait_message;
+  (match Agent_runs.find_run default_after_notification.wait_state "finder-a1-run-1" with
+  | Some run ->
+      assert_bool "default notified wait consumes run" run.run_consumed;
+      assert_bool "default notified wait preserves notification flag"
+        run.run_background_notified
+  | None -> fail "default notified run" "expected run");
   let explicit_after_notification =
-    Agent_runs.wait_for_selector notified ~parent_session_id:"parent"
+    Agent_runs.wait_for_selector default_after_notification.wait_state
+      ~parent_session_id:"parent"
       (Agent_runs.Wait_run_ids [ "finder-a1-run-1" ])
   in
   (match explicit_after_notification.wait_items with
   | [ item ] ->
-      assert_equal "explicit notified readback status" "completed"
+      assert_equal "explicit notified readback status" "already_consumed"
         item.wait_status;
-      assert_bool "explicit notified readback reports delivered"
+      assert_bool "explicit notified readback reports consumed"
         item.wait_consumed;
       assert_bool "explicit notified readback preserves notification flag"
         item.wait_background_notified
   | _ -> fail "explicit notified readback" "expected one item");
-  assert_equal "explicit notified readback includes output"
-    "finder-a1 finder-a1-run-1 [completed]\n\ndone"
+  assert_equal "explicit notified readback is status-only"
+    "finder-a1 finder-a1-run-1 [already_consumed]"
     explicit_after_notification.wait_message;
   (match
      Agent_runs.find_run explicit_after_notification.wait_state
        "finder-a1-run-1"
    with
   | Some run ->
-      assert_bool "explicit notified readback does not consume persisted run"
-        (not run.run_consumed);
+      assert_bool "explicit notified readback keeps run consumed"
+        run.run_consumed;
       assert_bool
         "explicit notified readback keeps background notification metadata"
         run.run_background_notified

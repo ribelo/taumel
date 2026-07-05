@@ -3,14 +3,14 @@ open Jsoo_bridge
 let builtin_overrides_from_js settings =
   match
     Option.bind (optional_field settings "taumel") (fun taumel ->
-        Option.bind (optional_field taumel "agents") (fun agents ->
-            optional_field agents "builtins"))
+        optional_field taumel "agents")
   with
-  | None -> Taumel.Global_settings.default.taumel.agents.builtins
-  | Some builtins ->
-      object_keys builtins
+  | None -> Taumel.Global_settings.default.taumel.agents
+  | Some agents ->
+      object_keys agents
+      |> List.filter (fun name -> List.mem name Taumel.Global_settings.builtin_profile_names)
       |> List.map (fun name ->
-             let override = Unsafe.get builtins name in
+             let override = Unsafe.get agents name in
              ( name,
                ({
                   provider = get_string override "provider";
@@ -20,12 +20,12 @@ let builtin_overrides_from_js settings =
                  : Taumel.Global_settings.agent_builtin_override) ))
 
 let settings_from_js settings =
-  let composer = Unsafe.get settings "composer" in
+  let taumel = Unsafe.get settings "taumel" in
+  let composer = Unsafe.get taumel "composer" in
   let builtins = builtin_overrides_from_js settings in
   {
-    Taumel.Global_settings.composer =
-      { enabled = get_bool composer "enabled" };
-    taumel = { agents = { builtins } };
+    Taumel.Global_settings.taumel =
+      { composer = { enabled = get_bool composer "enabled" }; agents = builtins };
   }
 
 let handle args facts =

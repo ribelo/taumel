@@ -12,6 +12,7 @@ import { makeHost } from "./host.ts";
 import { agentGatewayToolNames, registerGatewayTools, type GatewayToolRegistration } from "./tool-executor.ts";
 import { installGoalContinuationLoop, registerGatewayCommands } from "./command-executor.ts";
 import { installCompactionModelHook } from "./compaction-model.ts";
+import { builtinAgentProfileNames, taumelGlobalSettingsPath, type TaumelConfigDiagnostic } from "./global-settings.ts";
 import { installCronLoop } from "./cron.ts";
 import { toolNames } from "./tool-contracts.ts";
 import { installSkillResolver } from "./skills.ts";
@@ -193,25 +194,102 @@ function notifyInvalidAgentProfileCatalog(result: Record<string, unknown>, ctx?:
   notify.call(ui, message, "warning");
 }
 
+function notifyAgentProfileConfigDiagnostics(diagnostics: readonly TaumelConfigDiagnostic[], ctx?: unknown): void {
+  if (diagnostics.length === 0) return;
+  const ui = isRecord(ctx) && isRecord(ctx["ui"]) ? ctx["ui"] : undefined;
+  const notify = isRecord(ui) ? ui["notify"] : undefined;
+  if (typeof notify !== "function") return;
+  notify.call(
+    ui,
+    `Taumel agent profile config has validation warnings:\n${diagnostics.map((item) => `${item.path}: ${item.key}: ${item.message}`).join("\n")}`,
+    "warning",
+  );
+}
+
+function readSettingsObject(path: string): { readonly settings: Record<string, unknown> | undefined; readonly diagnostics: TaumelConfigDiagnostic[] } {
+  if (!existsSync(path)) return { settings: undefined, diagnostics: [] };
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    if (!isRecord(parsed)) {
+      return { settings: undefined, diagnostics: [{ path, key: "<root>", message: "settings must be a JSON object" }] };
+    }
+    return { settings: parsed, diagnostics: [] };
+  } catch (error) {
+    return {
+      settings: undefined,
+      diagnostics: [{ path, key: "<root>", message: `settings could not be read as JSON: ${error instanceof Error ? error.message : String(error)}` }],
+    };
+  }
+}
+
+function builtinOverridesFromSettings(path: string, settings: Record<string, unknown> | undefined): { readonly overrides: Record<string, unknown>; readonly diagnostics: TaumelConfigDiagnostic[] } {
+  if (settings === undefined) return { overrides: {}, diagnostics: [] };
+  const diagnostics: TaumelConfigDiagnostic[] = [];
+  const taumel = settings["taumel"];
+  if (taumel === undefined) return { overrides: {}, diagnostics };
+  if (!isRecord(taumel)) {
+    return { overrides: {}, diagnostics: [{ path, key: "taumel", message: "taumel must be an object" }] };
+  }
+  const agents = taumel["agents"];
+  if (agents === undefined) return { overrides: {}, diagnostics };
+  if (!isRecord(agents)) {
+    return { overrides: {}, diagnostics: [{ path, key: "taumel.agents", message: "agents must be an object" }] };
+  }
+  const overrides: Record<string, unknown> = {};
+  for (const name of builtinAgentProfileNames) {
+    const value = agents[name];
+    if (value === undefined) continue;
+    const key = `taumel.agents.${name}`;
+    if (!isRecord(value)) {
+      diagnostics.push({ path, key, message: "built-in agent routing entry must be an object" });
+      continue;
+    }
+    const provider = value["provider"];
+    const model = value["model"];
+    const thinking = value["thinking"];
+    if (typeof provider !== "string" || typeof model !== "string" || typeof thinking !== "string") {
+      diagnostics.push({ path, key, message: "built-in agent routing entry requires string provider, model, and thinking" });
+      continue;
+    }
+    if ((provider === "inherit") !== (model === "inherit")) {
+      diagnostics.push({ path, key, message: "provider and model must both be inherit or both be concrete" });
+      continue;
+    }
+    overrides[name] = { provider, model, thinking };
+  }
+  return { overrides, diagnostics };
+}
+
+function resolvedBuiltinOverrides(ctx?: unknown): { readonly overrides: Record<string, unknown>; readonly diagnostics: TaumelConfigDiagnostic[] } {
+  const globalPath = taumelGlobalSettingsPath();
+  const globalRead = readSettingsObject(globalPath);
+  const globalParsed = builtinOverridesFromSettings(globalPath, globalRead.settings);
+  let overrides = { ...globalParsed.overrides };
+  let diagnostics = [...globalRead.diagnostics, ...globalParsed.diagnostics];
+  if (isProjectTrusted(ctx)) {
+    const cwd = isRecord(ctx) && typeof ctx["cwd"] === "string" && ctx["cwd"] !== "" ? ctx["cwd"] : process.cwd();
+    const projectPath = join(cwd, ".pi", "settings.json");
+    const projectRead = readSettingsObject(projectPath);
+    const projectParsed = builtinOverridesFromSettings(projectPath, projectRead.settings);
+    overrides = { ...overrides, ...projectParsed.overrides };
+    diagnostics = [...diagnostics, ...projectRead.diagnostics, ...projectParsed.diagnostics];
+  }
+  return { overrides, diagnostics };
+}
+
 function refreshAgentProfileCatalog(
   pi: PiLike,
   core: CoreBridge,
-  settings: unknown,
   tools: GatewayToolRegistration,
   removedActiveAgentTools: Set<string>,
   ctx?: unknown,
 ): void {
-  const builtins =
-    isRecord(settings) &&
-    isRecord(settings["taumel"]) &&
-    isRecord(settings["taumel"]["agents"]) &&
-    isRecord(settings["taumel"]["agents"]["builtins"])
-      ? settings["taumel"]["agents"]["builtins"]
-      : {};
+  const builtins = resolvedBuiltinOverrides(ctx);
+  notifyAgentProfileConfigDiagnostics(builtins.diagnostics, ctx);
   const result = coreCallRecord(core, "refreshAgentProfileCatalog", [{
     liveTools: liveToolNames(pi),
     profiles: readUserAgentProfiles(),
-    builtinOverrides: builtins,
+    builtinOverrides: builtins.overrides,
   }], "agent profile catalog result");
   if (result["valid"] !== true) {
     for (const name of removeActiveAgentTools(pi)) removedActiveAgentTools.add(name);
@@ -225,11 +303,10 @@ function refreshAgentProfileCatalog(
 function installAgentProfileCatalog(
   pi: PiLike,
   core: CoreBridge,
-  settings: unknown,
   tools: GatewayToolRegistration,
 ): void {
   const removedActiveAgentTools = new Set<string>();
-  const sync = (_event: unknown, ctx?: unknown) => refreshAgentProfileCatalog(pi, core, settings, tools, removedActiveAgentTools, ctx);
+  const sync = (_event: unknown, ctx?: unknown) => refreshAgentProfileCatalog(pi, core, tools, removedActiveAgentTools, ctx);
   pi.on("session_start", sync);
   pi.on("session_resume", sync);
 }
@@ -287,7 +364,7 @@ export default async function taumel(pi: PiLike) {
   registerGatewayCommands(pi, core, childSessions, composer);
   installGoalContinuationLoop(pi, core);
   installCronLoop(pi, core);
-  installAgentProfileCatalog(pi, core, composer?.settings, gatewayTools);
+  installAgentProfileCatalog(pi, core, gatewayTools);
   installSandboxToolActivation(pi, core);
   installExecPolicyLoader(pi, core);
   installEnvironmentContext(pi, core);

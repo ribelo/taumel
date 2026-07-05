@@ -3,6 +3,22 @@ type message = {
   content : string;
 }
 
+type visible_entry = {
+  entry_id : string option;
+  line : int option;
+  timestamp : string option;
+  role : string option;
+  kind : string;
+  tool_name : string option;
+  text : string;
+}
+
+type diagnostic = {
+  source_path : string option;
+  line : int option;
+  message : string;
+}
+
 type thread = {
   id : string;
   title : string;
@@ -11,6 +27,11 @@ type thread = {
   goal_summary : string option;
   branch_summary : string option;
   compaction_summary : string option;
+  source_path : string option;
+  started_at : string option;
+  updated_at : string option;
+  entries : visible_entry list;
+  diagnostics : diagnostic list;
 }
 
 type read_result =
@@ -23,6 +44,97 @@ type catalog_scan = {
   max_depth : int;
   max_files : int;
   suffix : string;
+}
+
+type catalog = {
+  threads : thread list;
+  diagnostics : diagnostic list;
+}
+
+type locator = {
+  locator_thread_id : string;
+  locator_source_path : string option;
+  locator_entry_id : string option;
+  locator_line : int option;
+}
+
+type hit = {
+  hit_locator : locator;
+  hit_kind : string;
+  hit_field : string;
+  hit_role : string option;
+  hit_tool_name : string option;
+  hit_timestamp : string option;
+  hit_snippet : string;
+}
+
+type thread_summary = {
+  id : string;
+  title : string;
+  workspace : string option;
+  message_count : int;
+  source_path : string option;
+  goal_summary : string option;
+  branch_summary : string option;
+  compaction_summary : string option;
+  hits : hit list;
+}
+
+type query_result = {
+  text : string;
+  ok : bool;
+  query : string;
+  scope : string;
+  threads : thread_summary list;
+  diagnostics : diagnostic list;
+}
+
+type read_mode =
+  | Overview
+  | Window
+  | Full
+
+type read_request_input = {
+  thread_id : string option;
+  locator_thread_id : string option;
+  locator_source_path : string option;
+  locator_entry_id : string option;
+  locator_line : int option;
+  entry_id : string option;
+  line : int option;
+  mode : string option;
+  around : int option;
+  cursor : string option;
+}
+
+type read_request = {
+  thread_id : string;
+  locator : locator option;
+  entry_id : string option;
+  line : int option;
+  mode : read_mode;
+  around : int;
+  cursor : string option;
+}
+
+type read_tool_result = {
+  text : string;
+  ok : bool;
+  thread : thread_summary option;
+  entries : visible_entry list;
+  diagnostics : diagnostic list;
+  ambiguous : bool;
+  matches : string list;
+  mode : string;
+  cursor : string option;
+  truncation : (string * string) list;
+}
+
+type query_request = {
+  query : string;
+  limit : int;
+  scope : string;
+  include_tools : bool;
 }
 
 let join_path root suffix =
@@ -61,17 +173,20 @@ let catalog_roots ?override ~cwd ~home () =
 
 let default_catalog_scan_max_depth = 4
 let default_catalog_scan_max_files = 200
-let default_catalog_scan_suffix = ".json"
+let default_catalog_scan_suffixes = [ ".jsonl"; ".json" ]
 
 let catalog_scans ?override ~cwd ~home () =
   catalog_roots ?override ~cwd ~home ()
-  |> List.map (fun root ->
-         {
-           root;
-           max_depth = default_catalog_scan_max_depth;
-           max_files = default_catalog_scan_max_files;
-           suffix = default_catalog_scan_suffix;
-         })
+  |> List.concat_map (fun root ->
+         List.map
+           (fun suffix ->
+             {
+               root;
+               max_depth = default_catalog_scan_max_depth;
+               max_files = default_catalog_scan_max_files;
+               suffix;
+             })
+           default_catalog_scan_suffixes)
 
 let contains haystack needle =
   let haystack = String.lowercase_ascii haystack in
@@ -86,6 +201,11 @@ let contains haystack needle =
   in
   loop 0
 
+let starts_with value prefix =
+  let value_len = String.length value in
+  let prefix_len = String.length prefix in
+  prefix_len <= value_len && String.sub value 0 prefix_len = prefix
+
 let basename path =
   let trimmed =
     let rec trim_end index =
@@ -99,14 +219,16 @@ let basename path =
   | name :: _ when name <> "" -> name
   | _ -> if trimmed = "" then "current" else trimmed
 
-let drop_json_suffix value =
-  let suffix = ".json" in
+let drop_suffix suffix value =
   let suffix_len = String.length suffix in
   let value_len = String.length value in
   if value_len >= suffix_len
      && String.sub value (value_len - suffix_len) suffix_len = suffix
   then String.sub value 0 (value_len - suffix_len)
   else value
+
+let thread_id_from_path path =
+  path |> basename |> drop_suffix ".jsonl" |> drop_suffix ".json"
 
 let object_field name = function
   | Shared.Object fields -> List.assoc_opt name fields
@@ -127,23 +249,31 @@ let string_from_fields json names =
     names
   |> Option.value ~default:""
 
+let int_field name json =
+  match object_field name json with
+  | Some (Shared.Number value) when Float.is_finite value -> Some (int_of_float value)
+  | _ -> None
+
 let array_field name json =
   match object_field name json with Some (Shared.Array values) -> values | _ -> []
 
-let rec content_to_text = function
+let rec content_to_visible_text = function
   | Shared.String value -> value
   | Shared.Array values ->
       values
       |> List.filter_map (function
            | Shared.String value -> Some value
            | Shared.Object _ as json -> (
-               match string_field "text" json with
-               | Some value -> Some value
-               | None -> None)
+               match string_field "type" json with
+               | Some ("thinking" | "reasoning") -> None
+               | Some "text" -> string_field "text" json
+               | _ -> string_field "text" json)
            | _ -> None)
       |> String.concat "\n"
   | Shared.Object _ as json -> (
-      match string_field "text" json with Some value -> value | None -> "")
+      match string_field "type" json with
+      | Some ("thinking" | "reasoning") -> ""
+      | _ -> (match string_field "text" json with Some value -> value | None -> ""))
   | Shared.Null | Bool _ | Number _ -> ""
 
 let summary_candidate_text json =
@@ -156,7 +286,6 @@ let summary_candidate_text json =
             "summary";
             "text";
             "content";
-            "message";
             "body";
             "branchSummary";
             "branch_summary";
@@ -169,13 +298,11 @@ let summary_candidate_text json =
       in
       if direct <> "" then direct
       else
-        content_to_text
-          (Option.value
-             (object_field "content" json
-             |> fun value -> option_or_else value (object_field "text" json)
-             |> fun value -> option_or_else value (object_field "message" json))
-             ~default:Shared.Null)
-  | _ -> content_to_text json
+        content_to_visible_text
+          (object_field "content" json
+          |> fun value -> option_or_else value (object_field "text" json)
+          |> Option.value ~default:Shared.Null)
+  | _ -> content_to_visible_text json
 
 let matches_summary_kind kind value =
   match kind with
@@ -185,7 +312,7 @@ let matches_summary_kind kind value =
 
 let summary_from_entries entries kind =
   let rec loop = function
-    | [] -> ""
+    | [] -> None
     | entry :: rest ->
         let custom_type =
           string_from_fields entry [ "customType"; "custom_type"; "type"; "kind" ]
@@ -194,7 +321,7 @@ let summary_from_entries entries kind =
         if direct <> ""
            && (matches_summary_kind kind custom_type
               || matches_summary_kind kind direct)
-        then direct
+        then Some direct
         else if not (matches_summary_kind kind custom_type) then loop rest
         else
           let data =
@@ -205,175 +332,803 @@ let summary_from_entries entries kind =
             |> Option.value ~default:Shared.Null
           in
           let text = summary_candidate_text data in
-          if text <> "" then text else loop rest
+          if text <> "" then Some text else loop rest
   in
   loop entries
 
-let message_json entry =
-  match object_field "message" entry with Some (Shared.Object _ as message) -> message | _ -> entry
-
-let messages_from_json json =
-  let values = match json with Shared.Array values -> values | _ -> [] in
-  values
-  |> List.filter_map (fun entry ->
-         let message = message_json entry in
-         let role = string_from_fields message [ "role"; "author"; "speaker" ] in
-         let content =
-           object_field "content" message
-           |> fun value -> option_or_else value (object_field "text" message)
-           |> fun value -> option_or_else value (object_field "message" message)
-           |> fun value -> option_or_else value (object_field "body" message)
-           |> Option.value ~default:Shared.Null
-           |> content_to_text
-         in
-         if role = "" && content = "" then None else Some { role; content })
-
-let normalized_thread_of_json json =
-  let id = string_from_fields json [ "id"; "threadId"; "thread_id"; "sessionId"; "session_id" ] in
-  if id = "" then None
+let safe_prefix max_bytes value =
+  if String.length value <= max_bytes then value
   else
-    let workspace = string_from_fields json [ "workspace"; "cwd"; "workdir" ] in
-    let title =
-      match string_from_fields json [ "title"; "name"; "preview" ] with
-      | "" when workspace <> "" -> basename workspace
-      | "" -> id
-      | value -> value
+    let rec boundary index =
+      if index <= 0 then 0
+      else
+        let code = Char.code value.[index] in
+        if code land 0b1100_0000 = 0b1000_0000 then boundary (index - 1)
+        else index
     in
-    Some
+    String.sub value 0 (boundary max_bytes)
+
+let take n values =
+  let rec loop acc remaining = function
+    | [] -> List.rev acc
+    | _ when remaining <= 0 -> List.rev acc
+    | value :: rest -> loop (value :: acc) (remaining - 1) rest
+  in
+  loop [] n values
+
+let bounded_text ~max_lines ~max_bytes text =
+  let lines = String.split_on_char '\n' text in
+  let clipped_by_lines = List.length lines > max_lines in
+  let text = lines |> take max_lines |> String.concat "\n" in
+  let clipped_by_bytes = String.length text > max_bytes in
+  let text = if clipped_by_bytes then safe_prefix max_bytes text else text in
+  let omitted = clipped_by_lines || clipped_by_bytes in
+  if omitted then
+    if text = "" then "… omitted"
+    else text ^ "\n… omitted"
+  else text
+
+let snippet text = bounded_text ~max_lines:5 ~max_bytes:1024 text
+
+let make_entry ?entry_id ?line ?timestamp ?role ?tool_name kind text =
+  {
+    entry_id;
+    line;
+    timestamp;
+    role;
+    kind;
+    tool_name;
+    text = String.trim text;
+  }
+
+let compact_json json = Shared.encode_json json
+
+let tool_arguments_text json =
+  match
+    object_field "arguments" json
+    |> fun value -> option_or_else value (object_field "args" json)
+  with
+  | Some (Shared.String value) -> value
+  | Some value -> compact_json value
+  | None -> ""
+
+let content_item_entries ?entry_id ?line ?timestamp ?role item =
+  match item with
+  | Shared.String value -> [ make_entry ?entry_id ?line ?timestamp ?role "message" value ]
+  | Shared.Object _ as json -> (
+      match string_field "type" json with
+      | Some ("thinking" | "reasoning") -> []
+      | Some "toolCall" ->
+          let tool_name = string_from_fields json [ "name"; "toolName"; "tool_name" ] in
+          let args = tool_arguments_text json in
+          let text =
+            if args = "" then tool_name else String.concat "\n" [ tool_name; args ]
+          in
+          [ make_entry ?entry_id ?line ?timestamp ?role ~tool_name "tool_call" text ]
+      | Some "toolResult" ->
+          let tool_name = string_from_fields json [ "name"; "toolName"; "tool_name" ] in
+          let text = content_to_visible_text (Option.value (object_field "content" json) ~default:json) in
+          [ make_entry ?entry_id ?line ?timestamp ?role ~tool_name "tool_result" text ]
+      | Some "text" -> (
+          match string_field "text" json with
+          | Some value -> [ make_entry ?entry_id ?line ?timestamp ?role "message" value ]
+          | None -> [])
+      | _ -> (
+          match string_field "text" json with
+          | Some value -> [ make_entry ?entry_id ?line ?timestamp ?role "message" value ]
+          | None -> []))
+  | _ -> []
+
+let message_entries ?entry_id ?line ?timestamp role message =
+  let content =
+    object_field "content" message
+    |> fun value -> option_or_else value (object_field "text" message)
+    |> fun value -> option_or_else value (object_field "message" message)
+    |> fun value -> option_or_else value (object_field "body" message)
+    |> Option.value ~default:Shared.Null
+  in
+  let tool_name = string_from_fields message [ "toolName"; "tool_name"; "name" ] in
+  match role with
+  | "toolResult" | "tool" ->
+      [
+        make_entry ?entry_id ?line ?timestamp ~role
+          ?tool_name:(if tool_name = "" then None else Some tool_name)
+          "tool_result"
+          (content_to_visible_text content);
+      ]
+  | _ -> (
+      match content with
+      | Shared.Array values ->
+          List.concat_map (content_item_entries ?entry_id ?line ?timestamp ~role) values
+      | value -> content_item_entries ?entry_id ?line ?timestamp ~role value)
+
+let event_entries ?line event =
+  let entry_id =
+    match string_from_fields event [ "id"; "entryId"; "entry_id" ] with
+    | "" -> None
+    | value -> Some value
+  in
+  let timestamp =
+    match string_from_fields event [ "timestamp"; "createdAt"; "created_at" ] with
+    | "" -> None
+    | value -> Some value
+  in
+  match string_field "type" event with
+  | Some "message" ->
+      let message =
+        match object_field "message" event with
+        | Some (Shared.Object _ as message) -> message
+        | _ -> event
+      in
+      let role = string_from_fields message [ "role"; "author"; "speaker" ] in
+      if role = "" then [] else message_entries ?entry_id ?line ?timestamp role message
+  | Some "custom_message" | Some "custom" -> (
+      let custom_type =
+        string_from_fields event [ "customType"; "custom_type"; "kind" ]
+      in
+      let content =
+        string_from_fields event [ "content"; "text"; "message"; "body" ]
+      in
+      if content <> "" && custom_type = "notification" then
+        [ make_entry ?entry_id ?line ?timestamp "notification" content ]
+      else [])
+  | _ -> []
+
+let messages_from_entries entries =
+  entries
+  |> List.filter_map (fun entry ->
+         match entry.role with
+         | Some ("user" | "assistant" as role) when entry.kind = "message" ->
+             Some { role; content = entry.text }
+         | _ -> None)
+
+let diagnostic ?source_path ?line message = { source_path; line; message }
+
+let jsonl_thread_of_text ~path text : (thread, diagnostic list) result =
+  let lines = String.split_on_char '\n' text in
+  let session_id = ref None in
+  let workspace = ref None in
+  let started_at = ref None in
+  let updated_at = ref None in
+  let entries = ref [] in
+  let json_entries = ref [] in
+  let diagnostics = ref [] in
+  lines
+  |> List.iteri (fun index line_text ->
+         let line_number = index + 1 in
+         if String.trim line_text <> "" then
+           match Shared.decode_json_string line_text with
+           | Error message ->
+               diagnostics :=
+                 diagnostic ~source_path:path ~line:line_number
+                   ("invalid JSONL entry: " ^ message)
+                 :: !diagnostics
+           | Ok (Shared.Object _ as json) ->
+               json_entries := json :: !json_entries;
+               (match string_field "type" json with
+               | Some "session" ->
+                   let id =
+                     string_from_fields json
+                       [ "id"; "threadId"; "thread_id"; "sessionId"; "session_id" ]
+                   in
+                   if id <> "" then session_id := Some id;
+                   let cwd = string_from_fields json [ "cwd"; "workspace"; "workdir" ] in
+                   if cwd <> "" then workspace := Some cwd;
+                   let timestamp = string_from_fields json [ "timestamp"; "createdAt"; "created_at" ] in
+                   if timestamp <> "" then started_at := Some timestamp
+               | _ -> ());
+               let event_timestamp =
+                 string_from_fields json [ "timestamp"; "createdAt"; "created_at" ]
+               in
+               if event_timestamp <> "" then updated_at := Some event_timestamp;
+               entries := event_entries ~line:line_number json @ !entries
+           | Ok _ ->
+               diagnostics :=
+                 diagnostic ~source_path:path ~line:line_number
+                   "invalid JSONL entry: expected object"
+                 :: !diagnostics);
+  let id = Option.value !session_id ~default:(thread_id_from_path path) in
+  if id = "" then Error [ diagnostic ~source_path:path "thread source has no usable id" ]
+  else
+    let entries = List.rev !entries in
+    let json_entries = List.rev !json_entries in
+    let title = match !workspace with Some cwd -> basename cwd | None -> id in
+    Ok
       {
         id;
         title;
-        workspace = (if workspace = "" then None else Some workspace);
-        messages = messages_from_json (Option.value (object_field "messages" json) ~default:Shared.Null);
-        goal_summary =
-          (string_field "goalSummary" json
-          |> fun value -> option_or_else value (string_field "goal_summary" json));
-        branch_summary =
-          (string_field "branchSummary" json
-          |> fun value -> option_or_else value (string_field "branch_summary" json));
-        compaction_summary =
-          (string_field "compactionSummary" json
-          |> fun value -> option_or_else value (string_field "compaction_summary" json)
-          |> fun value -> option_or_else value (string_field "compactSummary" json));
+        workspace = !workspace;
+        messages = messages_from_entries entries;
+        goal_summary = summary_from_entries json_entries `Goal;
+        branch_summary = summary_from_entries json_entries `Branch;
+        compaction_summary = summary_from_entries json_entries `Compaction;
+        source_path = Some path;
+        started_at = !started_at;
+        updated_at = !updated_at;
+        entries;
+        diagnostics = List.rev !diagnostics;
       }
 
-let thread_of_session_json ~path json =
+let legacy_thread_of_json ~path json : thread option =
   match json with
   | Shared.Object _ ->
-      let entries = array_field "entries" json in
-      let branch = array_field "branch" json in
-      let messages =
-        let from_messages =
-          messages_from_json
-            (Option.value (object_field "messages" json) ~default:Shared.Null)
-        in
-        if from_messages <> [] then from_messages
-        else
-          let from_branch =
-            messages_from_json
-              (Option.value (object_field "branch" json) ~default:Shared.Null)
-          in
-          if from_branch <> [] then from_branch
-          else
-            let from_entries =
-              messages_from_json
-                (Option.value (object_field "entries" json) ~default:Shared.Null)
-            in
-            if from_entries <> [] then from_entries
-            else
-              messages_from_json
-                (Option.value (object_field "turns" json) ~default:Shared.Null)
-      in
       let id =
         match
           string_from_fields json
             [ "id"; "threadId"; "thread_id"; "sessionId"; "session_id" ]
         with
-        | "" -> path |> basename |> drop_json_suffix
+        | "" -> thread_id_from_path path
         | value -> value
       in
-      let workspace = string_from_fields json [ "cwd"; "workspace"; "workdir" ] in
-      let title =
-        match string_from_fields json [ "title"; "name"; "preview" ] with
-        | "" when workspace <> "" -> basename workspace
-        | "" -> id
-        | value -> value
-      in
-      Some
-        {
-          id;
-          title;
-          workspace = (if workspace = "" then None else Some workspace);
-          messages;
-          goal_summary =
-            (match
-               string_field "goalSummary" json
-               |> fun value -> option_or_else value (string_field "goal_summary" json)
-             with
-            | Some _ as value -> value
-            | None -> (
-                match summary_from_entries entries `Goal with
-                | "" -> (
-                    match summary_from_entries branch `Goal with "" -> None | value -> Some value)
-                | value -> Some value));
-          branch_summary =
-            (match
-               string_field "branchSummary" json
-               |> fun value -> option_or_else value (string_field "branch_summary" json)
-             with
-            | Some _ as value -> value
-            | None -> (
-                match summary_from_entries entries `Branch with
-                | "" -> (
-                    match summary_from_entries branch `Branch with "" -> None | value -> Some value)
-                | value -> Some value));
-          compaction_summary =
-            (match
-               string_field "compactionSummary" json
-               |> fun value -> option_or_else value (string_field "compaction_summary" json)
-               |> fun value -> option_or_else value (string_field "compactSummary" json)
-             with
-            | Some _ as value -> value
-            | None -> (
-                match summary_from_entries entries `Compaction with
-                | "" -> (
-                    match summary_from_entries branch `Compaction with
-                    | "" -> None
-                    | value -> Some value)
-                | value -> Some value));
-        }
+      if id = "" then None
+      else
+        let workspace = string_from_fields json [ "cwd"; "workspace"; "workdir" ] in
+        let title =
+          match string_from_fields json [ "title"; "name"; "preview" ] with
+          | "" when workspace <> "" -> basename workspace
+          | "" -> id
+          | value -> value
+        in
+        let raw_messages =
+          object_field "messages" json
+          |> fun value -> option_or_else value (object_field "branch" json)
+          |> fun value -> option_or_else value (object_field "entries" json)
+          |> fun value -> option_or_else value (object_field "turns" json)
+          |> Option.value ~default:Shared.Null
+        in
+        let summary_entries = array_field "entries" json @ array_field "branch" json in
+        let entries =
+          match raw_messages with
+          | Shared.Array values ->
+              values
+              |> List.mapi (fun index value ->
+                     let message =
+                       match object_field "message" value with
+                       | Some (Shared.Object _ as message) -> message
+                       | _ -> value
+                     in
+                     let role = string_from_fields message [ "role"; "author"; "speaker" ] in
+                     if role = "" then []
+                     else message_entries ~line:(index + 1) role message)
+              |> List.concat
+          | _ -> []
+        in
+        Some
+          {
+            id;
+            title;
+            workspace = (if workspace = "" then None else Some workspace);
+            messages = messages_from_entries entries;
+            goal_summary =
+              (string_field "goalSummary" json
+              |> fun value -> option_or_else value (string_field "goal_summary" json)
+              |> fun value -> option_or_else value (summary_from_entries summary_entries `Goal));
+            branch_summary =
+              (string_field "branchSummary" json
+              |> fun value -> option_or_else value (string_field "branch_summary" json)
+              |> fun value -> option_or_else value (summary_from_entries summary_entries `Branch));
+            compaction_summary =
+              (string_field "compactionSummary" json
+              |> fun value -> option_or_else value (string_field "compaction_summary" json)
+              |> fun value -> option_or_else value (string_field "compactSummary" json)
+              |> fun value -> option_or_else value (summary_from_entries summary_entries `Compaction));
+            source_path = Some path;
+            started_at = string_field "timestamp" json;
+            updated_at = string_field "updatedAt" json;
+            entries;
+            diagnostics = [];
+          }
   | _ -> None
 
-let current_thread_of_source json =
-  let cwd = string_from_fields json [ "cwd"; "workspace"; "workdir" ] in
-  let id =
-    match string_from_fields json [ "sessionId"; "session_id"; "id" ] with
-    | "" -> "current"
-    | value -> value
+let thread_of_source_json json : (thread, diagnostic list) result =
+  match string_field "kind" json with
+  | Some "diagnostic" ->
+      let path = string_from_fields json [ "path"; "file" ] in
+      let message = string_from_fields json [ "error"; "message" ] in
+      Error
+        [
+          diagnostic
+            ?source_path:(if path = "" then None else Some path)
+            (if message = "" then "thread source is unreadable" else message);
+        ]
+  | Some "sessionFile" ->
+      let path = string_from_fields json [ "path"; "file" ] in
+      let text = string_from_fields json [ "text"; "contents"; "content" ] in
+      if path = "" then Error [ diagnostic "thread source is missing path" ]
+      else if text = "" then
+        Error [ diagnostic ~source_path:path "thread source is empty or unreadable" ]
+      else if Filename.check_suffix path ".jsonl" then jsonl_thread_of_text ~path text
+      else (
+        match Shared.decode_json_string text with
+        | Ok json -> (
+            match legacy_thread_of_json ~path json with
+            | Some thread -> Ok thread
+            | None -> Error [ diagnostic ~source_path:path "thread source has no usable id" ])
+        | Error message -> Error [ diagnostic ~source_path:path message ])
+  | _ -> (
+      match legacy_thread_of_json ~path:"" json with
+      | Some thread -> Ok thread
+      | None -> Error [ diagnostic "thread source has no usable id" ])
+
+let unique_catalog (parsed : (thread, diagnostic list) result list) : catalog =
+  let by_id : (string, thread) Hashtbl.t = Hashtbl.create 16 in
+  let diagnostics = ref [] in
+  let add_thread (thread : thread) =
+    match Hashtbl.find_opt by_id thread.id with
+    | None -> Hashtbl.add by_id thread.id thread
+    | Some existing when existing.source_path = thread.source_path -> ()
+    | Some _ ->
+        diagnostics :=
+          diagnostic ?source_path:thread.source_path
+            ("duplicate threadID from distinct sources: " ^ thread.id)
+          :: !diagnostics
   in
-  let branch = array_field "branch" json in
-  let entries = array_field "entries" json in
+  List.iter
+    (function
+      | Ok (thread : thread) ->
+          diagnostics := thread.diagnostics @ !diagnostics;
+          add_thread thread
+      | Error source_diagnostics ->
+          diagnostics := source_diagnostics @ !diagnostics)
+    parsed;
+  let catalog_threads : thread list =
+    Hashtbl.to_seq_values by_id |> List.of_seq
+    |> List.sort (fun (left : thread) (right : thread) -> compare left.id right.id)
+  in
+  ({ threads = catalog_threads; diagnostics = List.rev !diagnostics } : catalog)
+
+let catalog_of_sources sources =
+  sources |> List.map thread_of_source_json |> unique_catalog
+
+let trim_option = function
+  | Some value -> Shared.trim_non_empty value
+  | None -> None
+
+let normalize_limit = function
+  | Some value -> max 1 (min 50 value)
+  | None -> 10
+
+let prepare_query_request ?limit ?scope ?(include_tools = true) query =
+  match Shared.trim_non_empty query with
+  | None -> Error "query_threads requires query"
+  | Some query ->
+      let scope = Option.value scope ~default:"current_workspace" in
+      if scope <> "current_workspace" && scope <> "all" then
+        Error "query_threads scope must be current_workspace or all"
+      else Ok { query; limit = normalize_limit limit; scope; include_tools }
+
+let read_mode_of_string = function
+  | None | Some "overview" -> Ok Overview
+  | Some "window" -> Ok Window
+  | Some "full" -> Ok Full
+  | Some _ -> Error "read_thread mode must be overview, window, or full"
+
+let read_mode_to_string = function
+  | Overview -> "overview"
+  | Window -> "window"
+  | Full -> "full"
+
+let prepare_read_request (input : read_request_input) =
+  let thread_id =
+    match trim_option input.thread_id with
+    | Some _ as value -> value
+    | None -> trim_option input.locator_thread_id
+  in
+  match (thread_id, read_mode_of_string input.mode) with
+  | None, _ -> Error "read_thread requires threadID"
+  | _, Error message -> Error message
+  | Some thread_id, Ok mode ->
+      let around = Option.value input.around ~default:3 |> max 0 |> min 10 in
+      let locator =
+        match trim_option input.locator_thread_id with
+        | None -> None
+        | Some locator_thread_id ->
+            Some
+              {
+                locator_thread_id;
+                locator_source_path = trim_option input.locator_source_path;
+                locator_entry_id = trim_option input.locator_entry_id;
+                locator_line = input.locator_line;
+              }
+      in
+      let has_window_target =
+        Option.is_some locator
+        || Option.is_some (trim_option input.entry_id)
+        || Option.is_some input.line
+        || Option.is_some input.cursor
+      in
+      if mode = Window && not has_window_target then
+        Error "read_thread window mode requires locator, entryID, line, or cursor"
+      else
+        Ok
+          {
+            thread_id;
+            locator;
+            entry_id = trim_option input.entry_id;
+            line = input.line;
+            mode;
+            around;
+            cursor = trim_option input.cursor;
+          }
+
+let entry_is_toolish (entry : visible_entry) =
+  match entry.kind with
+  | "tool_call" | "tool_result" | "notification" -> true
+  | _ -> false
+
+let entry_matches ~include_tools query (entry : visible_entry) =
+  (include_tools || not (entry_is_toolish entry)) && contains entry.text query
+
+let thread_in_scope ~workspace scope (thread : thread) =
+  scope = "all"
+  ||
+  match thread.workspace with
+  | Some cwd -> cwd = workspace
+  | None -> (
+      match thread.source_path with
+      | Some path when workspace <> "" -> starts_with path workspace
+      | _ -> false)
+
+let locator_of_entry (thread : thread) (entry : visible_entry) =
   {
-    id;
-    title = (match string_field "title" json with Some value -> value | None -> basename cwd);
-    workspace = (if cwd = "" then None else Some cwd);
-    messages =
-      messages_from_json
-        (Option.value (object_field "branch" json) ~default:Shared.Null);
-    goal_summary =
-      (match summary_from_entries entries `Goal with
-      | "" -> (match summary_from_entries branch `Goal with "" -> None | value -> Some value)
-      | value -> Some value);
-    branch_summary =
-      (match summary_from_entries entries `Branch with
-      | "" -> (match summary_from_entries branch `Branch with "" -> None | value -> Some value)
-      | value -> Some value);
-    compaction_summary =
-      (match summary_from_entries entries `Compaction with
-      | "" -> (
-          match summary_from_entries branch `Compaction with "" -> None | value -> Some value)
-      | value -> Some value);
+    locator_thread_id = thread.id;
+    locator_source_path = thread.source_path;
+    locator_entry_id = entry.entry_id;
+    locator_line = entry.line;
   }
+
+let hit_of_entry (thread : thread) query (entry : visible_entry) =
+  {
+    hit_locator = locator_of_entry thread entry;
+    hit_kind = entry.kind;
+    hit_field = if entry_matches ~include_tools:true query entry then entry.kind else "metadata";
+    hit_role = entry.role;
+    hit_tool_name = entry.tool_name;
+    hit_timestamp = entry.timestamp;
+    hit_snippet = snippet entry.text;
+  }
+
+let metadata_hits (thread : thread) query =
+  let add field value hits =
+    match value with
+    | Some value when contains value query ->
+        {
+          hit_locator =
+            {
+              locator_thread_id = thread.id;
+              locator_source_path = thread.source_path;
+              locator_entry_id = None;
+              locator_line = None;
+            };
+          hit_kind = "metadata";
+          hit_field = field;
+          hit_role = None;
+          hit_tool_name = None;
+          hit_timestamp = None;
+          hit_snippet = snippet value;
+        }
+        :: hits
+    | _ -> hits
+  in
+  []
+  |> add "id" (Some thread.id)
+  |> add "title" (Some thread.title)
+  |> add "workspace" thread.workspace
+  |> add "goal_summary" thread.goal_summary
+  |> add "branch_summary" thread.branch_summary
+  |> add "compaction_summary" thread.compaction_summary
+  |> List.rev
+
+let query_hits ~include_tools query (thread : thread) =
+  let entry_hits =
+    thread.entries
+    |> List.filter (entry_matches ~include_tools query)
+    |> List.map (hit_of_entry thread query)
+  in
+  metadata_hits thread query @ entry_hits
+
+let score_thread ~workspace query hits (thread : thread) =
+  let score = ref 0 in
+  if thread.id = query then score := !score + 10_000;
+  if starts_with thread.id query then score := !score + 4_000;
+  if contains thread.title query then score := !score + 1_000;
+  if List.exists (fun hit -> contains hit.hit_field "summary") hits then
+    score := !score + 500;
+  score := !score + (List.length hits * 50);
+  (match thread.workspace with
+  | Some cwd when cwd = workspace -> score := !score + 25
+  | _ -> ());
+  !score
+
+let summarize ?(hits = []) (thread : thread) =
+  {
+    id = thread.id;
+    title = thread.title;
+    workspace = thread.workspace;
+    message_count = List.length thread.messages;
+    source_path = thread.source_path;
+    goal_summary = thread.goal_summary;
+    branch_summary = thread.branch_summary;
+    compaction_summary = thread.compaction_summary;
+    hits;
+  }
+
+let plan_query ~workspace (request : query_request) (catalog : catalog) =
+  let ranked =
+    catalog.threads
+    |> List.filter (thread_in_scope ~workspace request.scope)
+    |> List.filter_map (fun thread ->
+           let hits = query_hits ~include_tools:request.include_tools request.query thread in
+           if hits = [] then None
+           else
+             let top_hits = take 3 hits in
+             Some (score_thread ~workspace request.query hits thread, thread, top_hits))
+    |> List.sort (fun (left_score, (left : thread), _) (right_score, (right : thread), _) ->
+           let by_score = compare right_score left_score in
+           if by_score <> 0 then by_score else compare left.id right.id)
+    |> take request.limit
+  in
+  let threads =
+    List.map (fun (_, thread, hits) -> summarize ~hits thread) ranked
+  in
+  let text =
+    match threads with
+    | [] -> "No threads found matching the query."
+    | threads ->
+        threads
+        |> List.mapi (fun index thread ->
+               let hits =
+                 thread.hits
+                 |> List.map (fun hit ->
+                        Printf.sprintf "- %s%s: %s" hit.hit_kind
+                          (match hit.hit_tool_name with
+                          | None -> ""
+                          | Some tool -> "/" ^ tool)
+                          hit.hit_snippet)
+                 |> String.concat "\n"
+               in
+               Printf.sprintf "[%d] %s\nID: %s\nHits: %d%s%s" (index + 1)
+                 thread.title thread.id (List.length thread.hits)
+                 (match thread.workspace with
+                 | None -> ""
+                 | Some workspace -> "\nWorkspace: " ^ workspace)
+                 (if hits = "" then "" else "\n" ^ hits))
+        |> String.concat "\n\n"
+  in
+  { text; ok = true; query = request.query; scope = request.scope; threads; diagnostics = catalog.diagnostics }
+
+let read ~id (catalog : catalog) =
+  match List.filter (fun (thread : thread) -> thread.id = id) catalog.threads with
+  | [ thread ] -> Found thread
+  | _ :: _ -> Ambiguous [ id ]
+  | [] -> (
+      let matches =
+        List.filter (fun (thread : thread) -> starts_with thread.id id) catalog.threads
+      in
+      match matches with
+      | [] -> Not_found
+      | [ thread ] -> Found thread
+      | threads -> Ambiguous (List.map (fun (thread : thread) -> thread.id) threads))
+
+let entry_label (entry : visible_entry) =
+  let who =
+    match (entry.role, entry.tool_name) with
+    | Some role, Some tool -> role ^ "/" ^ tool
+    | Some role, None -> role
+    | None, Some tool -> entry.kind ^ "/" ^ tool
+    | None, None -> entry.kind
+  in
+  match entry.timestamp with None -> who | Some timestamp -> timestamp ^ " " ^ who
+
+let entry_line ?(target = false) (entry : visible_entry) =
+  let prefix = if target then ">> " else "- " in
+  prefix ^ entry_label entry ^ ": " ^ snippet entry.text
+
+let overview_text (thread : thread) entries =
+  let summaries =
+    [
+      Option.map (fun value -> "Goal: " ^ value) thread.goal_summary;
+      Option.map (fun value -> "Branch: " ^ value) thread.branch_summary;
+      Option.map (fun value -> "Compaction: " ^ value) thread.compaction_summary;
+    ]
+    |> List.filter_map Fun.id
+  in
+  let facts =
+    [
+      "Thread: " ^ thread.title;
+      "ID: " ^ thread.id;
+      (match thread.workspace with None -> "" | Some workspace -> "Workspace: " ^ workspace);
+      (match thread.started_at with None -> "" | Some value -> "Started: " ^ value);
+      (match thread.updated_at with None -> "" | Some value -> "Updated: " ^ value);
+    ]
+    |> List.filter (( <> ) "")
+  in
+  String.concat "\n"
+    (facts @ summaries
+    @ [ "Recent visible entries:" ]
+    @ (if entries = [] then [ "(none)" ] else List.map entry_line entries))
+
+let cursor_prefix = "thread-v1:"
+
+let encode_cursor thread_id index =
+  cursor_prefix ^ thread_id ^ ":" ^ string_of_int index
+
+let decode_cursor cursor =
+  if not (starts_with cursor cursor_prefix) then None
+  else
+    let rest =
+      String.sub cursor (String.length cursor_prefix)
+        (String.length cursor - String.length cursor_prefix)
+    in
+    match List.rev (String.split_on_char ':' rest) with
+    | index :: id_parts -> (
+        match int_of_string_opt index with
+        | Some index -> Some (String.concat ":" (List.rev id_parts), index)
+        | None -> None)
+    | _ -> None
+
+let find_entry_index request (thread : thread) =
+  let locator = request.locator in
+  let target_entry_id =
+    match request.entry_id with
+    | Some _ as value -> value
+    | None -> Option.bind locator (fun locator -> locator.locator_entry_id)
+  in
+  let target_line =
+    match request.line with
+    | Some _ as value -> value
+    | None -> Option.bind locator (fun locator -> locator.locator_line)
+  in
+  match target_entry_id with
+  | Some entry_id -> (
+      List.find_index
+        (fun (entry : visible_entry) -> entry.entry_id = Some entry_id)
+        thread.entries)
+  | None -> (
+      match target_line with
+      | Some line ->
+          List.find_index (fun (entry : visible_entry) -> entry.line = Some line) thread.entries
+      | None -> None)
+
+let plan_read ~id (request : read_request) (catalog : catalog) =
+  match read ~id catalog with
+  | Not_found ->
+      {
+        text = "Thread \"" ^ id ^ "\" not found.";
+        ok = false;
+        thread = None;
+        entries = [];
+        diagnostics = catalog.diagnostics;
+        ambiguous = false;
+        matches = [];
+        mode = read_mode_to_string request.mode;
+        cursor = None;
+        truncation = [];
+      }
+  | Ambiguous ids ->
+      {
+        text = "Thread ID \"" ^ id ^ "\" is ambiguous:\n" ^ String.concat "\n" ids;
+        ok = false;
+        thread = None;
+        entries = [];
+        diagnostics = catalog.diagnostics;
+        ambiguous = true;
+        matches = ids;
+        mode = read_mode_to_string request.mode;
+        cursor = None;
+        truncation = [];
+      }
+  | Found thread -> (
+      let diagnostics = catalog.diagnostics @ thread.diagnostics in
+      match request.mode with
+      | Overview ->
+          let entries =
+            thread.entries |> List.rev |> take 10 |> List.rev
+          in
+          {
+            text = overview_text thread entries;
+            ok = true;
+            thread = Some (summarize thread);
+            entries;
+            diagnostics;
+            ambiguous = false;
+            matches = [];
+            mode = "overview";
+            cursor = None;
+            truncation = [];
+          }
+      | Window -> (
+          match find_entry_index request thread with
+          | None ->
+              {
+                text = "Thread entry locator was not found.";
+                ok = false;
+                thread = Some (summarize thread);
+                entries = [];
+                diagnostics;
+                ambiguous = false;
+                matches = [];
+                mode = "window";
+                cursor = None;
+                truncation = [];
+              }
+          | Some index ->
+              let start = max 0 (index - request.around) in
+              let stop = min (List.length thread.entries - 1) (index + request.around) in
+              let entries =
+                thread.entries
+                |> List.mapi (fun i entry -> (i, entry))
+                |> List.filter_map (fun (i, entry) ->
+                       if i >= start && i <= stop then Some entry else None)
+              in
+              let text =
+                Printf.sprintf "Thread: %s\nID: %s\nWindow around entry %d:\n%s"
+                  thread.title thread.id (index + 1)
+                  (entries
+                  |> List.mapi (fun offset entry ->
+                         entry_line ~target:(start + offset = index) entry)
+                  |> String.concat "\n")
+              in
+              {
+                text;
+                ok = true;
+                thread = Some (summarize thread);
+                entries;
+                diagnostics;
+                ambiguous = false;
+                matches = [];
+                mode = "window";
+                cursor = None;
+                truncation = [];
+              })
+      | Full ->
+          let start =
+            match request.cursor with
+            | Some cursor -> (
+                match decode_cursor cursor with
+                | Some (thread_id, index) when thread_id = thread.id -> max 0 index
+                | _ -> 0)
+            | None -> 0
+          in
+          let max_entries = 80 in
+          let entries =
+            thread.entries
+            |> List.mapi (fun i entry -> (i, entry))
+            |> List.filter_map (fun (i, entry) ->
+                   if i >= start && i < start + max_entries then Some entry
+                   else None)
+          in
+          let next_index = start + List.length entries in
+          let has_more = next_index < List.length thread.entries in
+          let cursor = if has_more then Some (encode_cursor thread.id next_index) else None in
+          let text =
+            Printf.sprintf "Thread: %s\nID: %s\nTranscript entries %d-%d of %d:\n%s%s"
+              thread.title thread.id (if entries = [] then 0 else start + 1)
+              next_index (List.length thread.entries)
+              (if entries = [] then "(none)"
+               else entries |> List.map entry_line |> String.concat "\n")
+              (match cursor with
+              | None -> ""
+              | Some cursor -> "\nMore entries available. Cursor: " ^ cursor)
+          in
+          {
+            text;
+            ok = true;
+            thread = Some (summarize thread);
+            entries;
+            diagnostics;
+            ambiguous = false;
+            matches = [];
+            mode = "full";
+            cursor;
+            truncation =
+              (if has_more then
+                 [
+                   ("truncated", "true");
+                   ("nextCursor", Option.value cursor ~default:"");
+                 ]
+               else [ ("truncated", "false") ]);
+          })
 
 let current_source_json ~cwd ~session_id ~branch ~entries =
   Shared.Object
@@ -385,28 +1140,11 @@ let current_source_json ~cwd ~session_id ~branch ~entries =
       ("entries", entries);
     ]
 
-let thread_of_source_json json =
-  match string_field "kind" json with
-  | Some "current" -> Some (current_thread_of_source json)
-  | Some "sessionFile" ->
-      let path = string_from_fields json [ "path"; "file" ] in
-      let data = Option.value (object_field "data" json) ~default:Shared.Null in
-      thread_of_session_json ~path data
-  | _ -> (
-      match normalized_thread_of_json json with
-      | Some _ as value -> value
-      | None -> thread_of_session_json ~path:"" json)
-
 let unique_by_id threads =
-  let rec loop seen acc = function
-    | [] -> List.rev acc
-    | thread :: rest ->
-        if List.mem thread.id seen then loop seen acc rest
-        else loop (thread.id :: seen) (thread :: acc) rest
-  in
-  loop [] [] threads
+  let catalog = unique_catalog (List.map (fun thread -> Ok thread) threads) in
+  catalog.threads
 
-let message_content thread =
+let message_content (thread : thread) =
   [
     thread.goal_summary;
     thread.branch_summary;
@@ -418,127 +1156,18 @@ let message_content thread =
   @ List.map (fun message -> message.content) thread.messages
   |> String.concat "\n"
 
-let score ~workspace query thread =
-  let score = ref 0 in
-  if thread.id = query then score := !score + 1000;
-  if String.length thread.id >= String.length query
-     && String.sub thread.id 0 (String.length query) = query
-  then score := !score + 400;
-  if contains thread.title query then score := !score + 100;
-  if contains (message_content thread) query then score := !score + 30;
-  if thread.workspace = Some workspace then score := !score + 10;
-  !score
+let find ~workspace ~query threads =
+  let catalog = { threads; diagnostics = [] } in
+  match prepare_query_request ~scope:"all" query with
+  | Error _ -> []
+  | Ok request ->
+      plan_query ~workspace request catalog
+      |> fun result ->
+      result.threads
+      |> List.filter_map (fun summary ->
+             List.find_opt (fun (thread : thread) -> thread.id = summary.id) threads)
 
-let find ~workspace ~query catalog =
-  catalog
-  |> List.filter_map (fun thread ->
-         let score = score ~workspace query thread in
-         if score <= 0 then None else Some (score, thread))
-  |> List.sort (fun (left_score, left) (right_score, right) ->
-         let by_score = compare right_score left_score in
-         if by_score <> 0 then by_score
-         else
-           match (left.workspace = Some workspace, right.workspace = Some workspace) with
-           | true, false -> -1
-           | false, true -> 1
-           | _ -> compare left.id right.id)
-  |> List.map snd
-
-let read ~id catalog =
-  match List.filter (fun thread -> thread.id = id) catalog with
-  | [ thread ] -> Found thread
-  | _ :: _ -> Ambiguous [ id ]
-  | [] -> (
-      let matches =
-        List.filter
-          (fun thread ->
-            String.length thread.id >= String.length id
-            && String.sub thread.id 0 (String.length id) = id)
-          catalog
-      in
-      match matches with
-      | [] -> Not_found
-      | [ thread ] -> Found thread
-      | threads -> Ambiguous (List.map (fun thread -> thread.id) threads))
-
-type thread_summary = {
-  id : string;
-  title : string;
-  workspace : string option;
-  message_count : int;
-}
-
-type tool_result = {
-  text : string;
-  ok : bool;
-  threads : thread_summary list;
-  thread : thread_summary option;
-  ambiguous : bool;
-  matches : string list;
-}
-
-type find_request = { query : string }
-
-type read_request_input = {
-  thread_id : string option;
-  thread_id_snake : string option;
-  id : string option;
-  goal : string;
-}
-
-type read_request = {
-  thread_id : string;
-  goal : string;
-}
-
-let trim_option = function
-  | Some value -> Shared.trim_non_empty value
-  | None -> None
-
-let prepare_find_request query =
-  match Shared.trim_non_empty query with
-  | None -> Error "find_thread requires query"
-  | Some query -> Ok { query }
-
-let prepare_read_request (input : read_request_input) =
-  let thread_id =
-    match trim_option input.thread_id with
-    | Some _ as value -> value
-    | None -> (
-        match trim_option input.thread_id_snake with
-        | Some _ as value -> value
-        | None -> trim_option input.id)
-  in
-  match thread_id with
-  | None -> Error "read_thread requires threadID"
-  | Some thread_id -> Ok { thread_id; goal = input.goal }
-
-let summarize (thread : thread) =
-  {
-    id = thread.id;
-    title = thread.title;
-    workspace = thread.workspace;
-    message_count = List.length thread.messages;
-  }
-
-let empty_result ?(ok = true) ?(threads = []) ?thread ?(ambiguous = false)
-    ?(matches = []) text =
-  { text; ok; threads; thread; ambiguous; matches }
-
-let find_line index (thread : thread) =
-  Printf.sprintf "[%d] %s\nID: %s\nMessages: %d" (index + 1) thread.title
-    thread.id (List.length thread.messages)
-
-let plan_find ~workspace ~query catalog =
-  let threads = find ~workspace ~query catalog in
-  let text =
-    match threads with
-    | [] -> "No threads found matching the query."
-    | threads -> String.concat "\n\n" (List.mapi find_line threads)
-  in
-  empty_result ~threads:(List.map summarize threads) text
-
-let transcript ?(goal_only = false) thread =
+let transcript ?(goal_only = false) (thread : thread) =
   let summaries =
     [
       thread.goal_summary;
@@ -551,22 +1180,35 @@ let transcript ?(goal_only = false) thread =
     if goal_only then []
     else
       List.map
-        (fun message -> Printf.sprintf "%s: %s" message.role message.content)
+        (fun (message : message) -> Printf.sprintf "%s: %s" message.role message.content)
         thread.messages
   in
   String.concat "\n" (summaries @ messages)
 
-let plan_read ~id ~goal_only catalog =
-  match read ~id catalog with
-  | Not_found -> empty_result ~ok:false ("Thread \"" ^ id ^ "\" not found.")
-  | Ambiguous ids ->
-      empty_result ~ok:false ~ambiguous:true ~matches:ids
-        ("Thread ID \"" ^ id ^ "\" is ambiguous:\n" ^ String.concat "\n" ids)
-  | Found thread ->
-      empty_result ~thread:(summarize thread) (transcript ~goal_only thread)
+let plan_find ~workspace ~query threads =
+  let catalog = { threads; diagnostics = [] } in
+  match prepare_query_request query with
+  | Error message ->
+      { text = message; ok = false; query; scope = "current_workspace"; threads = []; diagnostics = [] }
+  | Ok request -> plan_query ~workspace request catalog
+
+let plan_read_legacy ~id ~goal_only:_ threads =
+  let catalog = { threads; diagnostics = [] } in
+  let request =
+    {
+      thread_id = id;
+      locator = None;
+      entry_id = None;
+      line = None;
+      mode = Full;
+      around = 3;
+      cursor = None;
+    }
+  in
+  plan_read ~id request catalog
 
 let tool_specs =
   [
-    { Tool_gateway.name = "find_thread"; effect_kind = Tool_gateway.Pure };
+    { Tool_gateway.name = "query_threads"; effect_kind = Tool_gateway.Pure };
     { Tool_gateway.name = "read_thread"; effect_kind = Tool_gateway.Pure };
   ]

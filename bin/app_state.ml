@@ -47,6 +47,14 @@ let workers : Taumel.Subagents.worker list ref = ref []
 let exec_policy : Taumel.Exec_policy.compiled ref = ref Taumel.Exec_policy.empty
 let agent_state : Taumel.Agent_runs.session_state ref =
   ref Taumel.Agent_runs.empty_session_state
+type retained_agent_output = {
+  retained_owner_id : string;
+  retained_run_id : string;
+  retained_final_output : string;
+}
+
+let retained_agent_outputs : retained_agent_output list ref = ref []
+
 let visibility_state : Taumel.Visibility.t ref = ref Taumel.Visibility.empty
 let visibility_warning_flags : Taumel.Visibility.warning_flags ref =
   ref Taumel.Visibility.empty_warning_flags

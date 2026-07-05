@@ -8,10 +8,12 @@ import { applyChildSessionUpdate } from "../src/tool-executor.ts";
 
 const cwd = await mkdtemp(join(tmpdir(), "taumel-entrypoint-"));
 const originalFetch = globalThis.fetch;
-const originalSettingsPath = process.env.TAUMEL_SETTINGS_PATH;
+const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
 const originalAgentProfileDir = process.env.TAUMEL_AGENT_PROFILE_DIR;
-process.env.TAUMEL_SETTINGS_PATH = join(cwd, "taumel-settings.json");
+process.env.PI_CODING_AGENT_DIR = join(cwd, "agent");
 process.env.TAUMEL_AGENT_PROFILE_DIR = join(cwd, "agent-profiles");
+const globalSettingsPath = join(process.env.PI_CODING_AGENT_DIR, "settings.json");
+await mkdir(process.env.PI_CODING_AGENT_DIR, { recursive: true });
 await mkdir(process.env.TAUMEL_AGENT_PROFILE_DIR, { recursive: true });
 await mkdir(join(cwd, ".pi", "skills", "foo"), { recursive: true });
 await mkdir(join(cwd, ".pi", "skills", "bar"), { recursive: true });
@@ -35,17 +37,15 @@ await writeFile(
   "utf8",
 );
 await writeFile(
-  process.env.TAUMEL_SETTINGS_PATH,
+  globalSettingsPath,
   `${JSON.stringify({
-    composer: { enabled: true },
     taumel: {
+      composer: { enabled: true },
       agents: {
-        builtins: {
-          finder: {
-            provider: "openai-codex",
-            model: "gpt-override",
-            thinking: "high",
-          },
+        finder: {
+          provider: "openai-codex",
+          model: "gpt-override",
+          thinking: "high",
         },
       },
     },
@@ -527,20 +527,20 @@ try {
   if (
     composerShow.action !== "command_result" ||
     !composerShow.message.includes("Composer: on") ||
-    !composerShow.message.includes(process.env.TAUMEL_SETTINGS_PATH)
+    !composerShow.message.includes(globalSettingsPath)
   ) {
     throw new Error(`composer show did not report global state and path: ${JSON.stringify(composerShow)}`);
   }
   const composerOff = await commands.get("composer").handler("off", ctx);
-  const composerFile = JSON.parse(await readFile(process.env.TAUMEL_SETTINGS_PATH, "utf8"));
+  const composerFile = JSON.parse(await readFile(globalSettingsPath, "utf8"));
   if (
     composerOff.action !== "command_result" ||
     !composerOff.message.includes("Composer: off") ||
-    composerFile?.composer?.enabled !== false ||
-    composerFile?.taumel?.agents?.builtins?.finder?.provider !== "openai-codex" ||
-    composerFile?.taumel?.agents?.builtins?.finder?.model !== "gpt-override" ||
-    composerFile?.taumel?.agents?.builtins?.finder?.thinking !== "high" ||
-    composerFile?.taumel?.agents?.builtins?.smart?.provider !== "inherit" ||
+    composerFile?.taumel?.composer?.enabled !== false ||
+    composerFile?.taumel?.agents?.finder?.provider !== "openai-codex" ||
+    composerFile?.taumel?.agents?.finder?.model !== "gpt-override" ||
+    composerFile?.taumel?.agents?.finder?.thinking !== "high" ||
+    composerFile?.taumel?.agents?.smart !== undefined ||
     renderRequests === 0
   ) {
     throw new Error(`composer off did not persist and rerender: ${JSON.stringify({ composerOff, composerFile, renderRequests })}`);
@@ -1257,10 +1257,10 @@ try {
     const bgNotification = await waitFor(() => {
       const message = sentMessages.at(-1);
       return sentMessages.length === bgExecNotifyCount + 1 &&
-        message?.message?.customType === "taumel.notification" &&
-        message?.message?.content?.includes("exec_completion") &&
-        message?.message?.content?.includes("bg-complete") &&
-        message?.message?.content?.includes(`id=\"${bgSessionId}\"`)
+        message?.message?.customType === "notification" &&
+        message?.message?.content?.includes(`Command session ${bgSessionId} has finished`) &&
+        message?.message?.content?.includes(`write_stdin with session_id=${bgSessionId}`) &&
+        !message?.message?.content?.includes("bg-complete")
         ? message
         : undefined;
     }, "background exec completion notification was not delivered", 3000);
@@ -1272,17 +1272,21 @@ try {
     if (sentMessages.length !== bgExecNotifyCount + 1) {
       throw new Error(`background exec notification delivered more than once: ${JSON.stringify(sentMessages.slice(bgExecNotifyCount))}`);
     }
-    // The delivered session is consumed/removed: a later poll cannot find it.
-    let bgGone = false;
-    try {
-      await tools
-        .get("write_stdin")
-        .execute("stdin-bg-after", { session_id: bgSessionId, chars: "", yield_time_ms: 10 }, undefined, undefined, ctx);
-    } catch (error) {
-      bgGone = String(error instanceof Error ? error.message : error).toLowerCase().includes("unknown");
+    // The notification does not consume the terminal result: the explicit poll reads it once.
+    const bgRead = await tools
+      .get("write_stdin")
+      .execute("stdin-bg-after", { session_id: bgSessionId, chars: "", yield_time_ms: 5000 }, undefined, undefined, ctx);
+    if (!bgRead.content?.[0]?.text?.includes("bg-complete") || bgRead.details?.exitCode !== 0) {
+      throw new Error(`delivered background exec session was not readable after notification: ${JSON.stringify(bgRead)}`);
     }
-    if (!bgGone) {
-      throw new Error("delivered background exec session should be removed after notification");
+    const bgReadAgain = await tools
+      .get("write_stdin")
+      .execute("stdin-bg-after-again", { session_id: bgSessionId, chars: "", yield_time_ms: 5000 }, undefined, undefined, ctx);
+    if (
+      !bgReadAgain.content?.[0]?.text?.includes(`session ${bgSessionId} already completed`) ||
+      bgReadAgain.details?.alreadyCompleted !== true
+    ) {
+      throw new Error(`second background exec read should be status-only retained metadata: ${JSON.stringify(bgReadAgain)}`);
     }
 
     // read tool: line-numbered output, negative-offset tail, and missing-file error.
@@ -1587,7 +1591,7 @@ try {
   const projectSettingsPath = join(cwd, ".pi", "settings.json");
   await writeFile(
     projectSettingsPath,
-    `${JSON.stringify({ unrelated: true, taumel: { otherSetting: 1, agents: { builtins: { smart: { provider: "inherit" } } } } }, null, 2)}\n`,
+    `${JSON.stringify({ unrelated: true, taumel: { otherSetting: 1, agents: { smart: { provider: "inherit", model: "inherit", thinking: "inherit" } } } }, null, 2)}\n`,
   );
   const trustedCtx = { ...ctx, isProjectTrusted: () => true };
   const saveSkills = await commands.get("skills").handler("save", trustedCtx);
@@ -1597,7 +1601,9 @@ try {
     saveSkills.ok !== true ||
     savedProjectSettings.unrelated !== true ||
     savedProjectSettings.taumel?.otherSetting !== 1 ||
-    savedProjectSettings.taumel?.agents?.builtins?.smart?.provider !== "inherit" ||
+    savedProjectSettings.taumel?.agents?.smart?.provider !== "inherit" ||
+    savedProjectSettings.taumel?.agents?.smart?.model !== "inherit" ||
+    savedProjectSettings.taumel?.agents?.smart?.thinking !== "inherit" ||
     !savedProjectSettings.taumel?.skills?.disabled?.includes("foo")
   ) {
     throw new Error(`skills save did not preserve project settings while writing disabled list: ${JSON.stringify({ saveSkills, savedProjectSettings })}`);
@@ -1733,9 +1739,10 @@ try {
   const crossSessionNotification = await waitFor(() => {
     const message = sentMessages.at(-1);
     return sentMessages.length === crossSessionNotificationCount + 1 &&
-      message?.message?.customType === "taumel.notification" &&
+      message?.message?.customType === "notification" &&
       message?.message?.content?.includes(crossSessionRunId) &&
-      message?.message?.content?.includes(crossSessionFinalOutput)
+      message?.message?.content?.includes("agent_wait with run_ids=") &&
+      !message?.message?.content?.includes(crossSessionFinalOutput)
       ? message
       : undefined;
   }, "async completion notification did not reload captured session agent state", 2500);
@@ -2972,16 +2979,17 @@ try {
   const completionMessage = await waitFor(() => {
     const message = sentMessages.at(-1);
     return sentMessages.length === completionMessageCount + 1 &&
-      message?.message?.customType === "taumel.notification"
+      message?.message?.customType === "notification"
       ? message
       : undefined;
   }, "agent completion notification was not delivered", 2500);
   if (
     sentMessages.length !== completionMessageCount + 1 ||
-    completionMessage?.message?.customType !== "taumel.notification" ||
+    completionMessage?.message?.customType !== "notification" ||
     completionMessage?.message?.display !== true ||
     !completionMessage.message.content.includes(`${smokeAgentId}-run-2`) ||
-    !completionMessage.message.content.includes("final smoke summary") ||
+    !completionMessage.message.content.includes("agent_wait with run_ids=") ||
+    completionMessage.message.content.includes("final smoke summary") ||
     completionMessage?.options?.triggerTurn !== true
   ) {
     throw new Error(`agent completion was not delivered visibly to the parent: ${JSON.stringify(sentMessages.slice(completionMessageCount))}`);
@@ -3012,10 +3020,10 @@ try {
   const afterExplicitNotifiedWait = parentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
   const afterExplicitNotifiedWaitRun = afterExplicitNotifiedWait?.data?.runs?.find((run) => run.run_id === `${smokeAgentId}-run-2`);
   if (
-    afterExplicitNotifiedWaitRun?.consumed !== false ||
+    afterExplicitNotifiedWaitRun?.consumed !== true ||
     afterExplicitNotifiedWaitRun?.background_notified !== true
   ) {
-    throw new Error(`explicit agent_wait mutated background-notified delivery state: ${JSON.stringify({
+    throw new Error(`explicit agent_wait did not consume background-notified delivery state exactly once: ${JSON.stringify({
       waitCompleted,
       afterExplicitNotifiedWait,
     })}`);
@@ -3609,10 +3617,10 @@ try {
   }
 } finally {
   globalThis.fetch = originalFetch;
-  if (originalSettingsPath === undefined) {
-    delete process.env.TAUMEL_SETTINGS_PATH;
+  if (originalAgentDir === undefined) {
+    delete process.env.PI_CODING_AGENT_DIR;
   } else {
-    process.env.TAUMEL_SETTINGS_PATH = originalSettingsPath;
+    process.env.PI_CODING_AGENT_DIR = originalAgentDir;
   }
   if (originalAgentProfileDir === undefined) {
     delete process.env.TAUMEL_AGENT_PROFILE_DIR;

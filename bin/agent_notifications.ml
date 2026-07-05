@@ -73,30 +73,15 @@ let completion_status completion =
   | Some "timed_out" -> Taumel.Agent_runs.Run_timed_out
   | _ -> Taumel.Agent_runs.Run_completed
 
-let agent_completion_message run status ?reason ?final_output () =
+let agent_completion_message run =
   let profile =
     match Taumel.Agent_runs.find_identity !agent_state run.Taumel.Agent_runs.run_agent_id with
     | Some identity -> identity.identity_profile_name
     | None -> "unknown"
   in
-  let status = Taumel.Agent_runs.run_status_to_string status in
-  let block =
-    match (final_output, reason) with
-    | Some output, _ ->
-        [ "  <final_output>"; output; "  </final_output>" ]
-    | None, Some reason -> [ "  <error>"; reason; "  </error>" ]
-    | None, None -> []
-  in
-  String.concat "\n"
-    ([
-       "<taumel_notification kind=\"agent_completion\" severity=\"info\">";
-       Printf.sprintf "  <agent id=\"%s\" profile=\"%s\" />"
-         (xml_attr run.run_agent_id) (xml_attr profile);
-       Printf.sprintf "  <run id=\"%s\" status=\"%s\" />"
-         (xml_attr run.run_id) (xml_attr status);
-     ]
-    @ block
-    @ [ "</taumel_notification>" ])
+  Printf.sprintf
+    "Agent run %s for %s (%s) has finished. To read and consume the result, call agent_wait with run_ids=[%s], timeout_seconds=0."
+    run.run_id run.run_agent_id profile run.run_id
 
 let latest_submission_id (run : Taumel.Agent_runs.agent_run) =
   match List.rev run.run_submissions with
@@ -144,6 +129,26 @@ let merge_volatile_run_into_state volatile_run state run_id =
           let updated = merge_volatile_run_fields ~from:volatile run in
           { state with runs = Taumel.Agent_runs.replace_run updated state.runs })
 
+let retain_agent_output ctx run =
+  match run.Taumel.Agent_runs.run_final_output with
+  | None -> ()
+  | Some output
+    when Taumel.Agent_runs.run_owned_by_parent !agent_state
+           ~parent_session_id:(Session_store.session_id_from_ctx ctx) run ->
+      let owner_id = Session_store.session_id_from_ctx ctx in
+      retained_agent_outputs :=
+        {
+          retained_owner_id = owner_id;
+          retained_run_id = run.run_id;
+          retained_final_output = output;
+        }
+        :: List.filter
+             (fun retained ->
+               retained.retained_owner_id <> owner_id
+               || retained.retained_run_id <> run.run_id)
+             !retained_agent_outputs
+  | Some _ -> ()
+
 let record_dispatch_completion params ctx =
   Session_sync.sync_persisted_session ctx;
   let prepared = Unsafe.get params "prepared" in
@@ -164,13 +169,11 @@ let record_dispatch_completion params ctx =
         Option.bind (optional_string_field prepared "submission_id")
           Taumel.Shared.trim_non_empty
       in
-      let completion_result_fields run status ?reason ?final_output () =
+      let completion_result_fields run =
         [
           ("notify", js_bool true);
-          ("customType", js_string "taumel.notification");
-          ( "content",
-            js_string
-              (agent_completion_message run status ?reason ?final_output ()) );
+          ("customType", js_string "notification");
+          ("content", js_string (agent_completion_message run));
           ("display", js_bool true);
           ("triggerTurn", js_bool true);
           ("deliverAs", js_string "followUp");
@@ -194,19 +197,12 @@ let record_dispatch_completion params ctx =
               !agent_state with
               runs = Taumel.Agent_runs.replace_run run !agent_state.runs;
             };
-          ok_obj
-            (completion_result_fields run run.run_status
-               ?reason:
-                 (match reason with
-                 | Some _ -> reason
-                 | None -> run.run_reason)
-               ?final_output:
-                 (match final_output with
-                 | Some _ -> final_output
-                 | None -> run.run_final_output)
-               ())
+          retain_agent_output ctx run;
+          ok_obj (completion_result_fields run)
       | _ -> (
-          let previous_run = Taumel.Agent_runs.find_run !agent_state run_id in
+          let had_previous_run =
+            Option.is_some (Taumel.Agent_runs.find_run !agent_state run_id)
+          in
           match
             Taumel.Agent_runs.record_run_completion !agent_state
               ~now:(now_seconds ()) ~run_id ~status ?reason ?final_output ()
@@ -214,24 +210,31 @@ let record_dispatch_completion params ctx =
           | Error message -> error_obj message
           | Ok state ->
               agent_state := state;
+              let updated_run = Taumel.Agent_runs.find_run !agent_state run_id in
+              Option.iter (retain_agent_output ctx) updated_run;
               Session_sync.save_agent_state ctx;
               let fields = [ ("ok", js_bool true) ] in
               let fields =
-                match previous_run with
-                | None -> ("notify", js_bool false) :: fields
-                | Some run ->
-                    completion_result_fields run status ?reason ?final_output ()
-                    @ fields
+                match updated_run with
+                | Some run when had_previous_run -> completion_result_fields run @ fields
+                | _ -> ("notify", js_bool false) :: fields
               in
               ok_obj fields))
 
 let record_background_notification params ctx =
   let prepared = Unsafe.get params "prepared" in
   let run_id = Taumel.Shared.trim_non_empty (get_string prepared "run_id") in
-  Session_sync.sync_persisted_session ctx;
+  let owner_id = Session_store.session_id_from_ctx ctx in
   let volatile_run =
-    Option.bind run_id (Taumel.Agent_runs.find_run !agent_state)
+    Option.bind run_id (fun run_id ->
+        match Taumel.Agent_runs.find_run !agent_state run_id with
+        | Some run
+          when Taumel.Agent_runs.run_owned_by_parent !agent_state
+                 ~parent_session_id:owner_id run ->
+            Some run
+        | _ -> None)
   in
+  Session_sync.sync_persisted_session ctx;
   match run_id with
   | None -> error_obj "missing agent run id"
   | Some run_id -> (
@@ -241,6 +244,8 @@ let record_background_notification params ctx =
       | Error message -> error_obj message
       | Ok state ->
           agent_state := merge_volatile_run_into_state volatile_run state run_id;
+          Option.iter (retain_agent_output ctx)
+            (Taumel.Agent_runs.find_run !agent_state run_id);
           Session_sync.save_agent_state ctx;
           ok_obj [ ("ok", js_bool true) ])
 
@@ -313,4 +318,3 @@ let plan_bridge_update params =
   | Delete_child_session key ->
       ok_obj
         [ ("action", js_string "delete_child_session"); ("key", js_string key) ]
-

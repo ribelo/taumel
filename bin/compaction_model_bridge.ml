@@ -2,6 +2,7 @@ open Jsoo_bridge
 
 let settings_from_js values =
   {
+    Taumel.Compaction_model.session = optional_string_field values "session";
     Taumel.Compaction_model.global = optional_string_field values "global";
     project = optional_string_field values "project";
   }

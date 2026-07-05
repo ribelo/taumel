@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { type Focusable, fuzzyFilter, Input, Key, truncateToWidth } from "@earendil-works/pi-tui";
 
 import type { CoreBridge, PiLike } from "./types.ts";
+import { taumelGlobalSettingsPath } from "./global-settings.ts";
 import { coreCallOptionalRecord, coreCallRecord, isRecord, stringArrayFromUnknown, stringField, writeFileAtomically } from "./util.ts";
 import { toolNames } from "./tool-contracts.ts";
 import {
@@ -80,24 +81,33 @@ function uniqueStrings(values: readonly string[]): string[] {
   return result;
 }
 
-function visibilityFromSettings(settings: unknown): Record<Category, string[]> {
+function visibilityFromSettings(settings: unknown): Partial<Record<Category, string[]>> {
   const taumel = isRecord(settings) && isRecord(settings["taumel"]) ? settings["taumel"] : {};
-  const category = (name: Category): string[] => {
-    const block = isRecord(taumel) && isRecord(taumel[name]) ? taumel[name] : {};
-    return isRecord(block) ? stringArray(block["disabled"]) : [];
+  const category = (name: Category): string[] | undefined => {
+    const block = isRecord(taumel) && isRecord(taumel[name]) ? taumel[name] : undefined;
+    if (!isRecord(block) || block["disabled"] === undefined) return undefined;
+    return stringArray(block["disabled"]);
   };
   return { agents: category("agents"), tools: category("tools"), skills: category("skills") };
 }
 
-function readProjectVisibilityDefaults(ctx: unknown): Record<Category, string[]> {
-  if (!isProjectTrusted(ctx)) return { agents: [], tools: [], skills: [] };
-  const path = projectSettingsPath(ctx);
-  if (!existsSync(path)) return { agents: [], tools: [], skills: [] };
+function readVisibilityFile(path: string): Partial<Record<Category, string[]>> {
+  if (!existsSync(path)) return {};
   try {
     return visibilityFromSettings(JSON.parse(readFileSync(path, "utf8")) as unknown);
   } catch {
-    return { agents: [], tools: [], skills: [] };
+    return {};
   }
+}
+
+function readConfigVisibilityDefaults(ctx: unknown): Record<Category, string[]> {
+  const global = readVisibilityFile(taumelGlobalSettingsPath());
+  const project = isProjectTrusted(ctx) ? readVisibilityFile(projectSettingsPath(ctx)) : {};
+  return {
+    agents: project.agents ?? global.agents ?? [],
+    tools: project.tools ?? global.tools ?? [],
+    skills: project.skills ?? global.skills ?? [],
+  };
 }
 
 function hasSessionVisibilityEntry(ctx: unknown): boolean {
@@ -152,7 +162,7 @@ function appendSessionVisibilityEntry(ctx: unknown, disabled: Record<Category, s
 
 function seedVisibilityFromProject(ctx: unknown): boolean {
   if (hasSessionVisibilityEntry(ctx)) return false;
-  const projectDisabled = readProjectVisibilityDefaults(ctx);
+  const projectDisabled = readConfigVisibilityDefaults(ctx);
   if (
     projectDisabled.agents.length === 0 &&
     projectDisabled.tools.length === 0 &&

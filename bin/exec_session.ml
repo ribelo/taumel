@@ -14,8 +14,17 @@ type session = {
   mutable temp_fd : Unsafe.any option;
   mutable exited : bool;
   mutable exit_code : int option;
+  mutable session_id_exposed : bool;
+  mutable terminal_consumed : bool;
+  mutable notification_sent : bool;
   mutable waiters : (int * (unit -> unit)) list;
   mutable next_waiter_id : int;
+}
+
+type retained_session = {
+  retained_id : int;
+  retained_owner_id : string;
+  retained_exit_code : int option;
 }
 
 type run_result = {
@@ -35,6 +44,7 @@ let min_empty_write_stdin_yield_time_ms = 5_000.
 let max_empty_write_stdin_yield_time_ms = 300_000.
 
 let sessions : (int, session) Hashtbl.t = Hashtbl.create 16
+let retained_sessions : (int, retained_session) Hashtbl.t = Hashtbl.create 16
 let next_session_id = ref 1
 
 let now_ms () =
@@ -362,7 +372,9 @@ let make_result (session : session) =
   in
   if session.exited then
     { base with exit_code = Some (Option.value session.exit_code ~default:1) }
-  else { base with session_id = Some session.id }
+  else (
+    session.session_id_exposed <- true;
+    { base with session_id = Some session.id })
 
 let shell_result_text result =
   let body =
@@ -551,14 +563,44 @@ let new_session owner_id tty =
     temp_fd = None;
     exited = false;
     exit_code = None;
+    session_id_exposed = false;
+    terminal_consumed = false;
+    notification_sent = false;
     waiters = [];
     next_waiter_id = 1;
   }
 
+let retained_session_cap_per_owner = 128
+
+let prune_retained_sessions owner_id =
+  let owned =
+    Hashtbl.fold
+      (fun _ retained acc ->
+        if retained.retained_owner_id = owner_id then retained :: acc else acc)
+      retained_sessions []
+    |> List.sort (fun a b -> compare b.retained_id a.retained_id)
+  in
+  owned
+  |> List.mapi (fun index retained -> (index, retained))
+  |> List.iter (fun (index, retained) ->
+         if index >= retained_session_cap_per_owner then
+           Hashtbl.remove retained_sessions retained.retained_id)
+
+let retain_completed_session session =
+  Hashtbl.replace retained_sessions session.id
+    {
+      retained_id = session.id;
+      retained_owner_id = session.owner_id;
+      retained_exit_code = session.exit_code;
+    };
+  prune_retained_sessions session.owner_id
+
 let finish_session session extra resolve =
   let result = make_result session in
   if session.exited then (
+    session.terminal_consumed <- true;
     close_temp session;
+    if session.session_id_exposed then retain_completed_session session;
     Hashtbl.remove sessions session.id);
   ignore (Unsafe.fun_call resolve [| inject (shell_tool_result result extra) |])
 
@@ -650,14 +692,51 @@ let write_stdin prepared owner_id =
   | None -> rejected_promise "write_stdin requires sessionId"
   | Some session_id -> (
   match Hashtbl.find_opt sessions session_id with
-  | None -> rejected_promise (Printf.sprintf "Unknown shell session: %d" session_id)
+  | None -> (
+      match Hashtbl.find_opt retained_sessions session_id with
+      | Some retained when retained.retained_owner_id <> owner_id ->
+          rejected_promise
+            (Printf.sprintf "Shell session %d belongs to another pi session" session_id)
+      | Some retained ->
+          let chars = get_string prepared "chars" in
+          if chars <> "" then
+            rejected_promise
+              (Printf.sprintf "session %d already completed; cannot write stdin" session_id)
+          else
+            let result =
+              {
+                output =
+                  Printf.sprintf
+                    "(session %d already completed; no new output)" session_id;
+                truncated = false;
+                full_output_path = None;
+                wall_time_ms = 0.;
+                session_id = None;
+                exit_code = None;
+              }
+            in
+            let extra_fields =
+              [ ("kind", js_string "write_stdin"); ("alreadyCompleted", js_bool true) ]
+              @
+              match retained.retained_exit_code with
+              | None -> []
+              | Some code -> [ ("exitCode", js_number (float_of_int code)) ]
+            in
+            resolved_promise
+              (shell_tool_result result (Unsafe.obj (Array.of_list extra_fields)))
+      | None ->
+          rejected_promise (Printf.sprintf "Unknown shell session: %d" session_id))
   | Some session when session.owner_id <> owner_id ->
       rejected_promise
         (Printf.sprintf "Shell session %d belongs to another pi session" session_id)
   | Some session ->
       let chars = get_string prepared "chars" in
       let stdin_error =
-        if chars = "" || session.exited then None
+        if chars <> "" && session.exited then
+          Some
+            (Printf.sprintf "session %d already completed; cannot write stdin"
+               session_id)
+        else if chars = "" then None
         else
           match (session.tty, Option.bind session.child (fun child -> property child "stdin")) with
           | true, Some stdin when get_bool stdin "writable" ->
@@ -688,35 +767,38 @@ let shutdown_owner owner_id =
         None)
       else Some session)
     sessions;
+  Hashtbl.filter_map_inplace
+    (fun _ retained ->
+      if retained.retained_owner_id = owner_id then None else Some retained)
+    retained_sessions;
   ok_obj [ ("action", js_string "shutdown_exec_owner") ]
 
 (* Background completion notification (mirrors subagent completion delivery).
 
    An async session (one that returned a sessionId) that exits while no call is
-   draining it is left in [sessions] with [exited = true]: that is exactly a
-   pending, undelivered background completion. Synchronous commands, aborted
-   commands, and owner-shutdown kills are all removed from [sessions], so they
-   never appear here. A write_stdin poll that drains the terminal exit removes
-   the session too (the inline first-claim path), suppressing any notification. *)
+   consuming its terminal result is left in [sessions] with [exited = true].
+   Notification delivery marks only [notification_sent]; an explicit
+   write_stdin poll is still required to consume and remove the terminal
+   result. Synchronous commands, aborted commands, and owner-shutdown kills are
+   removed, so they never appear here. *)
 
 let exec_notification_content (session : session) =
-  let output, _truncated, _path = display_output session in
-  let code = Option.value session.exit_code ~default:1 in
-  let body = if output = "" then "(no output)" else output in
   Printf.sprintf
-    "<taumel_notification kind=\"exec_completion\" severity=\"info\">\n  \
-     <session id=\"%d\" exit_code=\"%d\" />\n  <output>\n%s\n  </output>\n\
-     </taumel_notification>"
-    session.id code body
+    "Command session %d has finished. To read and consume the result, call write_stdin with session_id=%d, chars=\"\", yield_time_ms=5000."
+    session.id session.id
 
 (* Pending deliverable background completions for [owner_id]: terminal sessions
-   that have not yet been drained or delivered. Read-only; the session is removed
-   only once delivery succeeds (mark_exec_notification_delivered). *)
+   that have not yet been consumed and whose completion notification has not
+   been sent. Read-only; successful delivery updates only notification state. *)
 let pending_exec_notifications owner_id =
   let pending =
     Hashtbl.fold
       (fun _ session acc ->
-        if session.owner_id = owner_id && session.exited then session :: acc
+        if
+          session.owner_id = owner_id && session.exited
+          && (not session.terminal_consumed)
+          && not session.notification_sent
+        then session :: acc
         else acc)
       sessions []
   in
@@ -725,7 +807,7 @@ let pending_exec_notifications owner_id =
     Unsafe.obj
       [|
         ("session_id", js_number (float_of_int session.id));
-        ("customType", js_string "taumel.notification");
+        ("customType", js_string "notification");
         ("content", js_string (exec_notification_content session));
         ("display", js_bool true);
       |]
@@ -735,8 +817,7 @@ let pending_exec_notifications owner_id =
 let mark_exec_notification_delivered session_id =
   (match Hashtbl.find_opt sessions session_id with
   | Some session ->
-      close_temp session;
-      Hashtbl.remove sessions session_id
+      session.notification_sent <- true
   | None -> ());
   ok_obj [ ("action", js_string "mark_exec_notification_delivered") ]
 

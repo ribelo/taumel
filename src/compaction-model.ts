@@ -8,7 +8,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import type { CoreBridge, PiLike } from "./types.ts";
-import { coreCallOptionalRecord, coreCallRecord, isRecord, stringField, writeFileAtomically } from "./util.ts";
+import { coreCallOptionalRecord, coreCallRecord, isRecord, sessionInfoFromContext, stringField, writeFileAtomically } from "./util.ts";
 
 function splitProviderModelId(modelId: string | undefined): { readonly provider: string; readonly model: string } | undefined {
   if (modelId === undefined) return undefined;
@@ -27,6 +27,18 @@ function globalSettingsPath(): string {
 
 function projectSettingsPath(cwd: string): string {
   return join(cwd, ".pi", "settings.json");
+}
+
+function isProjectTrusted(ctx: unknown): boolean {
+  if (!isRecord(ctx)) return false;
+  const trusted = ctx["isProjectTrusted"];
+  return typeof trusted === "function" ? trusted.call(ctx) === true : false;
+}
+
+const sessionCompactionModels = new Map<string, string>();
+
+function sessionKey(ctx: unknown): string {
+  return sessionInfoFromContext(ctx).sessionId ?? "current";
 }
 
 async function readSettingsJson(path: string): Promise<Record<string, unknown>> {
@@ -99,16 +111,22 @@ function modelRegistryFromContext(pi: PiLike, ctx: unknown): unknown {
   return pi.modelRegistry;
 }
 
-function compactionSettingsForContext(ctx: unknown): Promise<{ readonly global: string | undefined; readonly project: string | undefined }> {
+function compactionSettingsForContext(ctx: unknown): Promise<{ readonly session: string | undefined; readonly global: string | undefined; readonly project: string | undefined }> {
   const cwd = cwdFromContext(ctx);
-  return Promise.all([readGlobalCompactionModel(), readProjectCompactionModel(cwd)]).then(([global, project]) => ({ global, project }));
+  const project = isProjectTrusted(ctx) ? readProjectCompactionModel(cwd) : Promise.resolve(undefined);
+  return Promise.all([readGlobalCompactionModel(), project]).then(([global, project]) => ({
+    session: sessionCompactionModels.get(sessionKey(ctx)),
+    global,
+    project,
+  }));
 }
 
 export function installCompactionModelHook(pi: PiLike, core: CoreBridge): void {
   pi.on("session_before_compact", async (event, ctx) => {
     if (!isRecord(event)) return undefined;
-    const { global, project } = await compactionSettingsForContext(ctx);
+    const { session, global, project } = await compactionSettingsForContext(ctx);
     const plan = coreCallOptionalRecord(core, "planSessionBeforeCompact", [{
+      session: session ?? "",
       global: global ?? "",
       project: project ?? "",
     }]);
@@ -195,8 +213,27 @@ async function openCompactionModelPicker(
   if (modelId === undefined || modelId === "") {
     return { ok: false, action: "command_result", message: "No model selected.", error: "No model selected." };
   }
-  await writeProjectCompactionModel(cwdFromContext(ctx), modelId);
-  return { ok: true, action: "command_result", message: `Compaction model set to ${modelId} (project).` };
+  return setSessionCompactionModel(ctx, modelId);
+}
+
+async function setSessionCompactionModel(ctx: unknown, modelId: string): Promise<Record<string, unknown>> {
+  sessionCompactionModels.set(sessionKey(ctx), modelId);
+  if (isProjectTrusted(ctx)) {
+    await writeProjectCompactionModel(cwdFromContext(ctx), modelId);
+    return { ok: true, action: "command_result", message: `Compaction model set to ${modelId} (session and project).` };
+  }
+  notifyWarning(ctx, "Project is untrusted; compaction model was set for this session only and project persistence was skipped.");
+  return { ok: true, action: "command_result", message: `Compaction model set to ${modelId} (session only; project persistence skipped because the project is untrusted).` };
+}
+
+async function clearSessionCompactionModel(ctx: unknown): Promise<Record<string, unknown>> {
+  sessionCompactionModels.delete(sessionKey(ctx));
+  if (isProjectTrusted(ctx)) {
+    await writeProjectCompactionModel(cwdFromContext(ctx), undefined);
+    return { ok: true, action: "command_result", message: "Compaction model cleared for this session and project; inheriting." };
+  }
+  notifyWarning(ctx, "Project is untrusted; compaction model was cleared for this session only and project persistence was skipped.");
+  return { ok: true, action: "command_result", message: "Compaction model cleared for this session; project persistence skipped because the project is untrusted." };
 }
 
 export async function executeCompactionModelCommand(
@@ -205,10 +242,10 @@ export async function executeCompactionModelCommand(
   args: string,
   ctx: unknown,
 ): Promise<Record<string, unknown>> {
-  const { global, project } = await compactionSettingsForContext(ctx);
+  const { session, global, project } = await compactionSettingsForContext(ctx);
   const plan = coreCallRecord(core, "planCompactionModelCommand", [
     args,
-    { global: global ?? "", project: project ?? "" },
+    { session: session ?? "", global: global ?? "", project: project ?? "" },
   ], "compaction-model command plan");
   const action = stringField(plan, "action");
   if (action === "show") {
@@ -219,12 +256,10 @@ export async function executeCompactionModelCommand(
   }
   if (action === "set_project") {
     const model = stringField(plan, "model");
-    await writeProjectCompactionModel(cwdFromContext(ctx), model);
-    return { ok: true, action: "command_result", message: `Compaction model set to ${model} (project).` };
+    return setSessionCompactionModel(ctx, model);
   }
   if (action === "clear_project") {
-    await writeProjectCompactionModel(cwdFromContext(ctx), undefined);
-    return { ok: true, action: "command_result", message: "Compaction model cleared; inheriting." };
+    return clearSessionCompactionModel(ctx);
   }
   if (action === "open_picker") {
     return openCompactionModelPicker(pi, stringField(plan, "current"), ctx);

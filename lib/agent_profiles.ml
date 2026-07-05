@@ -340,7 +340,7 @@ let validate_builtin_overrides overrides =
         let errors =
           match
             validate_provider_model_pair
-              ("taumel.agents.builtins." ^ name)
+              ("taumel.agents." ^ name)
               override.override_provider override.override_model
           with
           | Ok () -> errors

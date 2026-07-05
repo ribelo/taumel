@@ -126,9 +126,36 @@ let current_owner ctx =
         { id = worker_id; is_subagent = true; depth }
   | _ -> root_owner ()
 
+let memory_has_runs_for_owner (owner : Taumel.Subagents.owner) =
+  List.exists
+    (fun (run : Taumel.Agent_runs.agent_run) ->
+      Taumel.Agent_runs.run_owned_by_parent !agent_state
+        ~parent_session_id:owner.id run)
+    !agent_state.runs
+
 let pending_agent_notifications ctx =
-  Session_sync.sync_persisted_session ctx;
   let owner = current_owner ctx in
+  let may_use_loaded_state =
+    !loaded_session_id = None || !loaded_session_id = Some owner.id
+    || memory_has_runs_for_owner owner
+  in
+  let volatile_runs =
+    if may_use_loaded_state then
+      List.filter
+        (fun (run : Taumel.Agent_runs.agent_run) ->
+          notifiable_terminal_run run
+          && Taumel.Agent_runs.run_owned_by_parent !agent_state
+               ~parent_session_id:owner.id run)
+        !agent_state.runs
+    else []
+  in
+  if not may_use_loaded_state then
+    Session_sync.sync_persisted_session ctx;
+  agent_state :=
+    List.fold_left
+      (fun state run ->
+        merge_volatile_run_into_state (Some run) state run.Taumel.Agent_runs.run_id)
+      !agent_state volatile_runs;
   let pending =
     List.filter
       (fun (run : Taumel.Agent_runs.agent_run) ->
@@ -138,14 +165,11 @@ let pending_agent_notifications ctx =
       !agent_state.runs
   in
   let notification (run : Taumel.Agent_runs.agent_run) =
-    let content =
-      agent_completion_message run run.run_status ?reason:run.run_reason
-        ?final_output:run.run_final_output ()
-    in
+    let content = agent_completion_message run in
     Unsafe.obj
       [|
         ("run_id", js_string run.run_id);
-        ("customType", js_string "taumel.notification");
+        ("customType", js_string "notification");
         ("content", js_string content);
         ("display", js_bool true);
       |]
@@ -201,9 +225,13 @@ let request_from_params (owner : Taumel.Subagents.owner) name params =
   | _ -> Error ("tool executor is not connected yet: " ^ name)
 
 let prepare name params ctx =
-  Session_sync.sync_persisted_session ctx;
+  let owner = current_owner ctx in
+  let had_owner_runs_before_sync = memory_has_runs_for_owner owner in
+  if
+    not
+      (name = "agent_wait" && had_owner_runs_before_sync)
+  then Session_sync.sync_persisted_session ctx;
   with_gateway_authorized name (fun _ ->
-      let owner = current_owner ctx in
       let now = now_seconds () in
       let run_request request =
         match
@@ -746,7 +774,7 @@ let parse_override_field path obj name =
   parse_override_inherit_string (path ^ "." ^ name) (get_string obj name)
 
 let parse_builtin_override name override =
-  let path = "taumel.agents.builtins." ^ name in
+  let path = "taumel.agents." ^ name in
   if not (is_js_object override) then Error (path ^ " must be an object")
   else
     let ( let* ) = Result.bind in
@@ -765,7 +793,7 @@ let parse_builtin_overrides facts =
   match optional_field facts "builtinOverrides" with
   | None -> ([], [])
   | Some builtins when not (is_js_object builtins) ->
-      ([], [ "taumel.agents.builtins must be an object" ])
+      ([], [ "taumel.agents must be an object" ])
   | Some builtins ->
       object_keys builtins
       |> List.fold_left

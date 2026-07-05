@@ -8,6 +8,7 @@ import type {
 import { executeComposerCommand } from "./composer.ts";
 import { executeCompactionModelCommand } from "./compaction-model.ts";
 import { executeCronManager } from "./cron-manager.ts";
+import { initializeTaumelGlobalConfig, taumelStatus } from "./global-settings.ts";
 import { executeVisibilityManager, saveProjectVisibility } from "./visibility.ts";
 import {
   applyChildSessionUpdate,
@@ -306,6 +307,13 @@ export async function executeGatewayCommand(
   args: string,
   ctx: unknown,
 ): Promise<unknown> {
+  if (name === "taumel") {
+    const trimmed = args.trim();
+    if (trimmed === "") return taumelStatus();
+    if (trimmed === "init") return initializeTaumelGlobalConfig();
+    const message = "Usage: /taumel [init]";
+    return { ok: false, action: "command_result", message, error: message, details: { ok: false, error: message } };
+  }
   if (name === "composer") {
     return executeComposerCommand(core, composer, args, ctx);
   }

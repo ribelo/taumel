@@ -6,13 +6,12 @@ type agent_builtin_override = {
   thinking : string;
 }
 
-type agents = { builtins : (string * agent_builtin_override) list }
-type taumel = { agents : agents }
-
-type t = {
+type taumel = {
   composer : composer;
-  taumel : taumel;
+  agents : (string * agent_builtin_override) list;
 }
+
+type t = { taumel : taumel }
 
 type composer_command_result = {
   settings : t;
@@ -36,8 +35,8 @@ let default_builtin_overrides =
 
 let default =
   {
-    composer = { enabled = true };
-    taumel = { agents = { builtins = default_builtin_overrides } };
+    taumel =
+      { composer = { enabled = true }; agents = default_builtin_overrides };
   }
 
 let parse_words input =
@@ -52,16 +51,24 @@ let parse_composer_command input =
   | [ "toggle" ] -> Ok Toggle
   | _ -> Error "usage: /composer [show|on|off|toggle]"
 
-let composer_text settings = if settings.composer.enabled then "on" else "off"
+let composer_text settings = if settings.taumel.composer.enabled then "on" else "off"
 
 let message ~path settings =
   Printf.sprintf "Composer: %s (%s)" (composer_text settings) path
 
 let apply_composer_command settings = function
   | Show -> (settings, false)
-  | Set_enabled enabled -> ({ settings with composer = { enabled } }, true)
+  | Set_enabled enabled ->
+      ({ taumel = { settings.taumel with composer = { enabled } } }, true)
   | Toggle ->
-      ({ settings with composer = { enabled = not settings.composer.enabled } }, true)
+      ( {
+          taumel =
+            {
+              settings.taumel with
+              composer = { enabled = not settings.taumel.composer.enabled };
+            };
+        },
+        true )
 
 let plan_composer_command ~settings ~path input =
   Result.map
@@ -73,26 +80,22 @@ let plan_composer_command ~settings ~path input =
 let to_json settings =
   Shared.Object
     [
-      ( "composer",
-        Shared.Object [ ("enabled", Shared.Bool settings.composer.enabled) ] );
       ( "taumel",
         Shared.Object
           [
+            ( "composer",
+              Shared.Object [ ("enabled", Shared.Bool settings.taumel.composer.enabled) ] );
             ( "agents",
               Shared.Object
-                [
-                  ( "builtins",
-                    Shared.Object
-                      (List.map
-                         (fun (name, override) ->
-                           ( name,
-                             Shared.Object
-                               [
-                                 ("provider", Shared.String override.provider);
-                                 ("model", Shared.String override.model);
-                                 ("thinking", Shared.String override.thinking);
-                               ] ))
-                         settings.taumel.agents.builtins) );
-                ] );
+                (List.map
+                   (fun (name, override) ->
+                     ( name,
+                       Shared.Object
+                         [
+                           ("provider", Shared.String override.provider);
+                           ("model", Shared.String override.model);
+                           ("thinking", Shared.String override.thinking);
+                         ] ))
+                   settings.taumel.agents) );
           ] );
     ]

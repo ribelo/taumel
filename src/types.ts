@@ -134,13 +134,11 @@ export type ChildSessionBridge = SessionInfo & {
 export type ComposerController = {
   readonly path: string;
   settings: {
-    readonly composer: {
-      readonly enabled: boolean;
-    };
     readonly taumel: {
-      readonly agents: {
-        readonly builtins: Record<string, unknown>;
+      readonly composer: {
+        readonly enabled: boolean;
       };
+      readonly agents: Record<string, unknown>;
     };
   };
   latestTui?: unknown;

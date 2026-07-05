@@ -32,14 +32,14 @@ let test_parse_command () =
     (expect_ok "trim" (Compaction_model.parse_command "  openai/gpt-4o  ") = Compaction_model.Set "openai/gpt-4o")
 
 let test_plan_command () =
-  let settings = { Compaction_model.global = Some "openai/gpt-4o"; project = None } in
+  let settings = { Compaction_model.session = None; global = Some "openai/gpt-4o"; project = None } in
   let show = expect_ok "show inherits global" (Compaction_model.plan_command ~settings "") in
   assert_bool "show reports global model"
     (show = Compaction_model.Show_current { model = Compaction_model.Model "openai/gpt-4o"; source = "global" });
   let set = expect_ok "set project" (Compaction_model.plan_command ~settings "anthropic/claude-3-5-sonnet") in
   assert_bool "set plans project write"
     (set = Compaction_model.Set_project "anthropic/claude-3-5-sonnet");
-  let project_settings = { Compaction_model.global = Some "openai/gpt-4o"; project = Some "anthropic/claude-3-5-sonnet" } in
+  let project_settings = { Compaction_model.session = None; global = Some "openai/gpt-4o"; project = Some "anthropic/claude-3-5-sonnet" } in
   let show_project =
     expect_ok "show prefers project" (Compaction_model.plan_command ~settings:project_settings "")
   in
@@ -52,21 +52,30 @@ let test_plan_command () =
   in
   assert_bool "clear without project shows current"
     (clear_inherit = Compaction_model.Show_current { model = Compaction_model.Model "openai/gpt-4o"; source = "global" });
-  let empty_settings = { Compaction_model.global = None; project = None } in
+  let session_settings = { project_settings with session = Some "openai/gpt-5" } in
+  let show_session =
+    expect_ok "show prefers session" (Compaction_model.plan_command ~settings:session_settings "")
+  in
+  assert_bool "show reports session model"
+    (show_session = Compaction_model.Show_current { model = Compaction_model.Model "openai/gpt-5"; source = "session" });
+  let empty_settings = { Compaction_model.session = None; global = None; project = None } in
   let show_empty = expect_ok "show inherit" (Compaction_model.plan_command ~settings:empty_settings "") in
   assert_bool "show reports inherit when unset"
     (show_empty = Compaction_model.Show_current { model = Compaction_model.Inherit; source = "inherit" })
 
 let test_plan_session_before_compact () =
-  let inherit_settings = { Compaction_model.global = None; project = None } in
+  let inherit_settings = { Compaction_model.session = None; global = None; project = None } in
   assert_bool "inherit means default"
     (Compaction_model.plan_session_before_compact inherit_settings = Compaction_model.Use_default);
-  let global_settings = { Compaction_model.global = Some "openai/gpt-4o"; project = None } in
+  let global_settings = { Compaction_model.session = None; global = Some "openai/gpt-4o"; project = None } in
   assert_bool "global model is used"
     (Compaction_model.plan_session_before_compact global_settings = Compaction_model.Use_model "openai/gpt-4o");
-  let project_settings = { Compaction_model.global = Some "openai/gpt-4o"; project = Some "anthropic/claude-3-5-sonnet" } in
+  let project_settings = { Compaction_model.session = None; global = Some "openai/gpt-4o"; project = Some "anthropic/claude-3-5-sonnet" } in
   assert_bool "project model takes precedence"
-    (Compaction_model.plan_session_before_compact project_settings = Compaction_model.Use_model "anthropic/claude-3-5-sonnet")
+    (Compaction_model.plan_session_before_compact project_settings = Compaction_model.Use_model "anthropic/claude-3-5-sonnet");
+  let session_settings = { project_settings with session = Some "openai/gpt-5" } in
+  assert_bool "session model takes precedence"
+    (Compaction_model.plan_session_before_compact session_settings = Compaction_model.Use_model "openai/gpt-5")
 
 let () =
   test_validation ();

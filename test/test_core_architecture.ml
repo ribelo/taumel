@@ -525,16 +525,16 @@ let test_thread_tools () =
   let scans =
     Threads.catalog_scans ~override:"/override" ~cwd:"/repo" ~home:"/home/me" ()
   in
-  assert_int "thread scan count" 5 (List.length scans);
+  assert_int "thread scan count" 10 (List.length scans);
   assert_equal "thread override scan root" "/override" (List.hd scans).root;
   assert_int "thread scan max depth" 4 (List.hd scans).max_depth;
   assert_int "thread scan max files" 200 (List.hd scans).max_files;
-  assert_equal "thread scan suffix" ".json" (List.hd scans).suffix;
+  assert_equal "thread scan suffix" ".jsonl" (List.hd scans).suffix;
   let catalog =
     [
-      (Option.get
-         (Threads.thread_of_source_json
-            (Threads.current_source_json ~cwd:"/repo" ~session_id:"current-1"
+      (match
+         Threads.thread_of_source_json
+           (Threads.current_source_json ~cwd:"/repo" ~session_id:"current-1"
                ~branch:
                  (Shared.Array
                     [
@@ -551,7 +551,10 @@ let test_thread_tools () =
                           ("customType", Shared.String "summary:branch");
                           ("data", Shared.Object [ ("summary", Shared.String "Current branch summary") ]);
                         ];
-                    ]))));
+                    ]))
+       with
+      | Ok thread -> thread
+      | Error _ -> fail "current source parse" "expected thread");
       {
         Threads.id = "abc-local";
         title = "Local build";
@@ -560,6 +563,11 @@ let test_thread_tools () =
         goal_summary = Some "Goal: ship sandbox";
         branch_summary = Some "Branch summary";
         compaction_summary = None;
+        source_path = Some "/repo/.pi/agent/sessions/abc-local.jsonl";
+        started_at = None;
+        updated_at = None;
+        entries = [ { entry_id = Some "abc-local-1"; line = Some 1; timestamp = None; role = Some "user"; kind = "message"; tool_name = None; text = "fix sandbox" } ];
+        diagnostics = [];
       };
       {
         Threads.id = "abc-global";
@@ -569,6 +577,11 @@ let test_thread_tools () =
         goal_summary = None;
         branch_summary = None;
         compaction_summary = None;
+        source_path = Some "/other/.pi/agent/sessions/abc-global.jsonl";
+        started_at = None;
+        updated_at = None;
+        entries = [ { entry_id = Some "abc-global-1"; line = Some 1; timestamp = None; role = Some "user"; kind = "message"; tool_name = None; text = "fix sandbox" } ];
+        diagnostics = [];
       };
     ]
   in
@@ -576,17 +589,18 @@ let test_thread_tools () =
     Threads.find ~workspace:"/repo" ~query:"current branch signal" catalog
   in
   assert_equal "current source id" "current-1" (List.hd current_results).id;
-  (match Threads.read ~id:"current-1" catalog with
+  let thread_catalog : Threads.catalog = { threads = catalog; diagnostics = [] } in
+  (match Threads.read ~id:"current-1" thread_catalog with
   | Threads.Found thread ->
       assert_equal "current source branch summary" "Current branch summary"
         (Option.value thread.branch_summary ~default:"")
   | _ -> fail "current source read" "expected current thread");
   let results = Threads.find ~workspace:"/repo" ~query:"sandbox" catalog in
   assert_equal "current workspace first" "abc-local" (List.hd results).id;
-  (match Threads.read ~id:"abc-" catalog with
+  (match Threads.read ~id:"abc-" thread_catalog with
   | Threads.Ambiguous ids -> assert_int "ambiguous ids" 2 (List.length ids)
   | _ -> fail "ambiguous read" "expected ambiguous prefix");
-  (match Threads.read ~id:"abc-local" catalog with
+  (match Threads.read ~id:"abc-local" thread_catalog with
   | Threads.Found thread ->
       assert_equal "goal transcript" "Goal: ship sandbox"
         (Threads.transcript ~goal_only:true thread)
@@ -713,7 +727,7 @@ let test_tool_catalog_scope () =
       "update_goal";
       "ralph_continue";
       "ralph_finish";
-      "find_thread";
+      "query_threads";
       "read_thread";
     ];
   List.iter
@@ -725,23 +739,23 @@ let test_tool_catalog_scope () =
          "bash";
          "write";
          "usage";
-         "find_thread";
+         "query_threads";
          "user_detection_tool";
          "ralph_continue";
          "ralph_finish";
        ]
-    = [ "exec_command"; "write_stdin"; "apply_patch"; "find_thread" ]);
+    = [ "exec_command"; "write_stdin"; "apply_patch"; "query_threads" ]);
   assert_bool "non-openai active tools keep sandboxed legacy mutation wrappers"
     (Tool_catalog.rewrite_active_tools ~provider:"anthropic"
-       [ "bash"; "apply_patch"; "find_thread" ]
-    = [ "exec_command"; "write_stdin"; "edit"; "write"; "find_thread" ]);
+       [ "bash"; "apply_patch"; "query_threads" ]
+    = [ "exec_command"; "write_stdin"; "edit"; "write"; "query_threads" ]);
   assert_bool "ralph child active tools include scoped controls"
     (Tool_catalog.rewrite_active_tools ~provider:"openai-codex" ~ralph_child:true
-       [ "exec_command"; "write_stdin"; "find_thread" ]
+       [ "exec_command"; "write_stdin"; "query_threads" ]
     = [
         "exec_command";
         "write_stdin";
-        "find_thread";
+        "query_threads";
         "ralph_continue";
         "ralph_finish";
       ]);

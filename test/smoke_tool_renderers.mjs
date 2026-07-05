@@ -29,6 +29,14 @@ const threadSummaries = Array.from({ length: 12 }, (_, index) => ({
   id: `thread-${index + 1}`,
   title: `Thread ${index + 1}`,
   messageCount: index + 3,
+  hits: [
+    {
+      kind: "message",
+      role: "assistant",
+      snippet: `renderer hit ${index + 1}`,
+      locator: { threadID: `thread-${index + 1}`, entryID: `entry-${index + 1}` },
+    },
+  ],
 }));
 
 function argsFor(name) {
@@ -46,7 +54,7 @@ function argsFor(name) {
       return { objective: "ship renderer coverage" };
     case "update_goal":
       return { status: "complete" };
-    case "find_thread":
+    case "query_threads":
       return { query: "renderer" };
     case "read_thread":
       return { threadID: "thread-1" };
@@ -98,7 +106,7 @@ function resultFor(name) {
   if (name === "get_goal" || name === "create_goal" || name === "update_goal") {
     return { content: [{ type: "text", text: "Goal updated." }], details: { ok: true, goal: { objective: "ship renderer coverage", status: "active", tokensUsed: 10, timeUsedSeconds: 2 } } };
   }
-  if (name === "find_thread") {
+  if (name === "query_threads") {
     return { content: [{ type: "text", text: "threads" }], details: { ok: true, threads: threadSummaries } };
   }
   if (name === "read_thread") {
@@ -321,13 +329,13 @@ const truncatedRead = renderText(readRenderer.renderResult(
 ));
 assert(truncatedRead.includes("… 8 more lines"), `truncated read should append … N more lines at the bottom: ${truncatedRead}`);
 
-// Collection — collapsed top 3 + `… N more`, `idx · title · meta` one line each.
-const findCompact = renderText(renderersForTool("find_thread").renderResult(resultFor("find_thread"), { expanded: false, isPartial: false }, theme, { args: argsFor("find_thread") }));
-const findExpanded = renderText(renderersForTool("find_thread").renderResult(resultFor("find_thread"), { expanded: true, isPartial: false }, theme, { args: argsFor("find_thread") }));
-assert(/• find_thread · "renderer" \(12 results\)/.test(findCompact), `find_thread subject should be "query" (N results): ${findCompact}`);
-assert(findCompact.includes("  └ 1 · Thread 1 · 3 msgs"), `find_thread collapsed first item should be idx · title · meta: ${findCompact}`);
-assert(!findCompact.includes("Thread 4") && findCompact.includes("… 9 more"), `find_thread collapsed should clip to top 3 with … N more: ${findCompact}`);
-assert(findExpanded.includes("Thread 4"), `find_thread expanded should include more results: ${findExpanded}`);
+// Thread query — collapsed top 3 + `… N more`, expanded hit snippets.
+const queryCompact = renderText(renderersForTool("query_threads").renderResult(resultFor("query_threads"), { expanded: false, isPartial: false }, theme, { args: argsFor("query_threads") }));
+const queryExpanded = renderText(renderersForTool("query_threads").renderResult(resultFor("query_threads"), { expanded: true, isPartial: false }, theme, { args: argsFor("query_threads") }));
+assert(/• query_threads · "renderer" \(12 threads, 12 hits\)/.test(queryCompact), `query_threads subject should be "query" (N threads, M hits): ${queryCompact}`);
+assert(queryCompact.includes("  └ 1 · Thread 1 · thread-1 · 1 hit"), `query_threads collapsed first item should be idx · title · id · hits: ${queryCompact}`);
+assert(!queryCompact.includes("Thread 4") && queryCompact.includes("… 9 more"), `query_threads collapsed should clip to top 3 with … N more: ${queryCompact}`);
+assert(queryExpanded.includes("Thread 4") && queryExpanded.includes("message/assistant: renderer hit 1"), `query_threads expanded should include more threads and hit snippets: ${queryExpanded}`);
 
 // Single-entity — header + dim facts line.
 const goalCompact = renderText(renderersForTool("create_goal").renderResult(resultFor("create_goal"), { expanded: false, isPartial: false }, theme, { args: argsFor("create_goal") }));
@@ -393,39 +401,25 @@ const runExpanded = renderText(renderersForTool("exa_agent_get_run").renderResul
 assert(/• exa_agent_get_run · run_1 · completed/.test(runCompact), `exa_agent_get_run subject should be id · status: ${runCompact}`);
 assert(!runCompact.includes("line-1") && runExpanded.includes("line-1"), `exa_agent_get_run should only show output.text when expanded: ${runExpanded}`);
 
-// taumel.notification — exec_completion + agent_completion.
+// notification — opaque exec_completion + agent_completion ready signals.
 const renderNotification = notificationMessageRenderer();
-const execNote = [
-  '<taumel_notification kind="exec_completion" severity="info">',
-  '  <session id="3" exit_code="0" />',
-  "  <output>",
-  longLines,
-  "  </output>",
-  "</taumel_notification>",
-].join("\n");
-const compactExecNote = renderText(renderNotification({ customType: "taumel.notification", content: execNote }, { expanded: false }, theme));
-const expandedExecNote = renderText(renderNotification({ customType: "taumel.notification", content: execNote }, { expanded: true }, theme));
+const execNote = 'Command session 3 has finished. To read and consume the result, call write_stdin with session_id=3, chars="", yield_time_ms=5000.';
+const compactExecNote = renderText(renderNotification({ customType: "notification", content: execNote }, { expanded: false }, theme));
+const expandedExecNote = renderText(renderNotification({ customType: "notification", content: execNote }, { expanded: true }, theme));
 assert(compactExecNote.startsWith(" • exec_completion"), `exec notification should include custom-message left gutter: ${compactExecNote}`);
-assert(/• exec_completion · session 3/.test(compactExecNote), `exec notification header wrong: ${compactExecNote}`);
-assert(!/exit 0/.test(compactExecNote), `exec notification should not repeat the exit code (green dot signals it): ${compactExecNote}`);
-assert(compactExecNote.includes("… 19 more lines"), `exec notification tail body was not compacted: ${compactExecNote}`);
-assert(expandedExecNote.includes("line-1"), `expanded exec notification did not include full output: ${expandedExecNote}`);
+assert(/• exec_completion · session 3 ready/.test(compactExecNote), `exec notification header wrong: ${compactExecNote}`);
+assert(!/exit|code|line-1/.test(compactExecNote), `exec notification should not include terminal status or output: ${compactExecNote}`);
+assert(compactExecNote.includes("write_stdin"), `exec notification instruction missing from collapsed body: ${compactExecNote}`);
+assert(expandedExecNote.includes("Command session 3 has finished") && expandedExecNote.includes("yield_time_ms=5000"), `expanded exec notification should preserve visible body: ${expandedExecNote}`);
 
-const agentNote = [
-  '<taumel_notification kind="agent_completion" severity="info">',
-  '  <agent id="finder-7" profile="finder" />',
-  '  <run id="finder-7-run-1" status="completed" />',
-  "  <final_output>",
-  "all done here",
-  "  </final_output>",
-  "</taumel_notification>",
-].join("\n");
-const compactAgentNote = renderText(renderNotification({ customType: "taumel.notification", content: agentNote }, { expanded: false }, theme));
-assert(/• agent_completion · finder-7 \(finder\)/.test(compactAgentNote), `agent notification header wrong: ${compactAgentNote}`);
-assert(compactAgentNote.includes("all done here"), `agent notification body missing: ${compactAgentNote}`);
+const agentNote = "Agent run finder-7-run-1 for finder-7 (finder) has finished. To read and consume the result, call agent_wait with run_ids=[finder-7-run-1], timeout_seconds=0.";
+const compactAgentNote = renderText(renderNotification({ customType: "notification", content: agentNote }, { expanded: false }, theme));
+assert(/• agent_completion · finder-7 \(finder\) ready/.test(compactAgentNote), `agent notification header wrong: ${compactAgentNote}`);
+assert(!compactAgentNote.includes("all done here"), `agent notification must not include final output: ${compactAgentNote}`);
+assert(compactAgentNote.includes("agent_wait"), `agent notification instruction missing from collapsed body: ${compactAgentNote}`);
 
 assert(
-  renderNotification({ customType: "taumel.notification", content: "" }, { expanded: false }, theme) === undefined,
+  renderNotification({ customType: "notification", content: "" }, { expanded: false }, theme) === undefined,
   "empty notification content should render nothing",
 );
 

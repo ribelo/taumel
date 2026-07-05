@@ -8,6 +8,7 @@ type command =
   | Clear
 
 type settings_values = {
+  session : string option;
   global : string option;
   project : string option;
 }
@@ -39,10 +40,11 @@ let is_valid_model_id value =
         && String.index_from_opt value (index + 1) '/' = None
 
 let resolve_configured settings =
-  match (settings.project, settings.global) with
-  | Some value, _ -> (Model value, "project")
-  | None, Some value -> (Model value, "global")
-  | None, None -> (Inherit, "inherit")
+  match (settings.session, settings.project, settings.global) with
+  | Some value, _, _ -> (Model value, "session")
+  | None, Some value, _ -> (Model value, "project")
+  | None, None, Some value -> (Model value, "global")
+  | None, None, None -> (Inherit, "inherit")
 
 let parse_command input =
   let input = String.trim input in
@@ -57,9 +59,10 @@ let plan_command ~settings input =
   | Error _ as error -> error
   | Ok Show -> Ok (Show_current { model = current; source })
   | Ok Clear -> (
-      match settings.project with
-      | Some _ -> Ok Clear_project
-      | None -> Ok (Show_current { model = current; source }))
+      match (settings.session, settings.project) with
+      | Some _, _ | None, Some _ -> Ok Clear_project
+      | None, None ->
+          Ok (Show_current { model = current; source }))
   | Ok (Set value) -> Ok (Set_project value)
 
 let plan_session_before_compact settings =

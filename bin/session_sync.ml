@@ -295,12 +295,21 @@ let has_persisted_component_entry ctx =
   || Session_store.custom_entry_data ctx "taumel.agents" <> None
   || Session_store.custom_entry_data ctx "taumel.visibility" <> None
 
-let sync_persisted_session ?(reset_missing = true) ctx =
+let clear_retained_agent_outputs_for_session session_id =
+  retained_agent_outputs :=
+    List.filter
+      (fun retained -> retained.retained_owner_id = session_id)
+      !retained_agent_outputs
+
+let sync_persisted_session ?(reset_missing = true)
+    ?(clear_retained_outputs = false) ctx =
   let session_id = Session_store.session_id_from_ctx ctx in
   if
     !loaded_session_id <> Some session_id
     && (reset_missing || has_persisted_component_entry ctx)
   then (
+    if clear_retained_outputs then
+      clear_retained_agent_outputs_for_session session_id;
     load_session_state ctx;
     loaded_session_id := Some session_id)
 

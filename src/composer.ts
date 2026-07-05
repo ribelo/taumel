@@ -11,10 +11,10 @@ import {
 import type { ComposerController, CoreBridge, PiLike } from "./types.ts";
 import {
   defaultTaumelGlobalSettings,
-  ensureTaumelGlobalSettings,
   requireTaumelGlobalSettings,
+  readTaumelGlobalSettings,
   taumelGlobalSettingsPath,
-  writeTaumelGlobalSettings,
+  writeTaumelComposerEnabled,
 } from "./global-settings.ts";
 import { coreCallOptionalRecord, coreCallRecord, isRecord, maybeCall, stringField } from "./util.ts";
 
@@ -194,7 +194,7 @@ class TaumelComposerEditor extends CustomEditor {
     return renderComposerInput(
       width,
       (innerWidth: number) => super.render(innerWidth),
-      this.controller.settings.composer.enabled,
+      this.controller.settings.taumel.composer.enabled,
     );
   }
 
@@ -269,7 +269,7 @@ export async function createComposerController(pi: PiLike): Promise<ComposerCont
   const path = taumelGlobalSettingsPath();
   const controller: ComposerController = {
     path,
-    settings: await ensureTaumelGlobalSettings(path),
+    settings: await readTaumelGlobalSettings(path),
   };
   const install = (_event: unknown, ctx?: unknown) => installComposerForContext(controller, ctx);
   pi.on("session_start", install);
@@ -295,7 +295,7 @@ export async function executeComposerCommand(
   if (result["ok"] === true && result["writeSettings"] === true) {
     const nextSettings = requireTaumelGlobalSettings(result["settings"]);
     controller.settings = nextSettings;
-    await writeTaumelGlobalSettings(controller.path, nextSettings);
+    await writeTaumelComposerEnabled(controller.path, nextSettings.taumel.composer.enabled);
     requestRender(controller, ctx);
   }
   if (stringField(result, "action") !== "command_result") {

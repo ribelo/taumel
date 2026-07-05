@@ -182,17 +182,34 @@ const CronDeleteParamsSchema = Type.Object(
   { $id: "CronDeleteParams", additionalProperties: false },
 );
 
-const FindThreadParamsSchema = Type.Object(
+const QueryThreadsParamsSchema = Type.Object(
   {
     query: Type.String({ minLength: 1, maxLength: 500 }),
+    limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
+    scope: Type.Optional(Type.Union([Type.Literal("current_workspace"), Type.Literal("all")])),
+    includeTools: Type.Optional(Type.Boolean()),
   },
-  { $id: "FindThreadParams", additionalProperties: false },
+  { $id: "QueryThreadsParams", additionalProperties: false },
+);
+
+const ThreadLocatorSchema = Type.Object(
+  {
+    threadID: Type.String({ minLength: 1 }),
+    entryID: Type.Optional(Type.String({ minLength: 1 })),
+    line: Type.Optional(Type.Integer({ minimum: 1 })),
+  },
+  { $id: "ThreadLocator", additionalProperties: false },
 );
 
 const ReadThreadParamsSchema = Type.Object(
   {
-    threadID: Type.String({ minLength: 1 }),
-    goal: Type.Optional(Type.String({ maxLength: 500 })),
+    threadID: Type.Optional(Type.String({ minLength: 1 })),
+    locator: Type.Optional(ThreadLocatorSchema),
+    entryID: Type.Optional(Type.String({ minLength: 1 })),
+    line: Type.Optional(Type.Integer({ minimum: 1 })),
+    mode: Type.Optional(Type.Union([Type.Literal("overview"), Type.Literal("window"), Type.Literal("full")])),
+    around: Type.Optional(Type.Integer({ minimum: 0, maximum: 10 })),
+    cursor: Type.Optional(Type.String({ minLength: 1 })),
   },
   { $id: "ReadThreadParams", additionalProperties: false },
 );
@@ -352,7 +369,8 @@ export const dtsSchemas = [
   ["UpdateGoalParams", UpdateGoalParamsSchema],
   ["CronCreateParams", CronCreateParamsSchema],
   ["CronDeleteParams", CronDeleteParamsSchema],
-  ["FindThreadParams", FindThreadParamsSchema],
+  ["ThreadLocator", ThreadLocatorSchema],
+  ["QueryThreadsParams", QueryThreadsParamsSchema],
   ["ReadThreadParams", ReadThreadParamsSchema],
   ["AgentSpawnParams", AgentSpawnParamsSchema],
   ["AgentSendParams", AgentSendParamsSchema],
@@ -385,7 +403,7 @@ export const toolParamSchemas = [
   { name: "cron_create", interfaceName: "CronCreateParams", schema: CronCreateParamsSchema },
   { name: "cron_list", interfaceName: "EmptyParams", schema: EmptyParamsSchema },
   { name: "cron_delete", interfaceName: "CronDeleteParams", schema: CronDeleteParamsSchema },
-  { name: "find_thread", interfaceName: "FindThreadParams", schema: FindThreadParamsSchema },
+  { name: "query_threads", interfaceName: "QueryThreadsParams", schema: QueryThreadsParamsSchema },
   { name: "read_thread", interfaceName: "ReadThreadParams", schema: ReadThreadParamsSchema },
   { name: "ralph_continue", interfaceName: "RalphTaskParams", schema: RalphTaskParamsSchema },
   { name: "ralph_finish", interfaceName: "RalphTaskParams", schema: RalphTaskParamsSchema },
@@ -672,16 +690,16 @@ export const toolContracts: readonly ToolContract[] = [
     parameters: toolParameters(CronDeleteParamsSchema),
   },
   {
-    name: "find_thread",
-    label: "find_thread",
-    description: "Search thread ids, titles, and transcript content.",
+    name: "query_threads",
+    label: "query_threads",
+    description: "Search persisted thread ids, titles, visible messages, summaries, tool calls, tool results, and notifications.",
     promptSnippet: "",
-    parameters: toolParameters(FindThreadParamsSchema),
+    parameters: toolParameters(QueryThreadsParamsSchema),
   },
   {
     name: "read_thread",
     label: "read_thread",
-    description: "Read a thread by exact id or unique id prefix.",
+    description: "Read a persisted thread by exact id, unique id prefix, or a locator returned by query_threads.",
     promptSnippet: "",
     parameters: toolParameters(ReadThreadParamsSchema),
   },

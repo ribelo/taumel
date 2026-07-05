@@ -188,13 +188,17 @@ function subjectFromArgs(name: string, args: Record<string, unknown>): string {
       return oneLine(stringFieldOrUndefined(args, "objective") ?? "");
     case "update_goal":
       return stringFieldOrUndefined(args, "status") ?? "";
-    case "find_thread":
+    case "query_threads":
     case "web_search_exa":
     case "get_code_context_exa":
     case "exa_agent_create_run":
       return quotedQuery(args);
-    case "read_thread":
-      return stringFieldOrUndefined(args, "threadID") ?? "";
+    case "read_thread": {
+      const locator = recordFieldOrUndefined(args, "locator");
+      const threadID = stringFieldOrUndefined(args, "threadID") ?? (locator !== undefined ? stringFieldOrUndefined(locator, "threadID") : undefined) ?? "";
+      const mode = stringFieldOrUndefined(args, "mode") ?? "overview";
+      return `${threadID} (${mode})`;
+    }
     case "ralph_continue":
     case "ralph_finish":
       return stringFieldOrUndefined(args, "task_id") ?? "";
@@ -578,20 +582,61 @@ function buildCollection(name: string, details: Record<string, unknown>, options
   return { header, body: { mode: "rail", entries } };
 }
 
-function buildFindThread(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
+function hitCount(threads: Record<string, unknown>[]): number {
+  return threads.reduce((total, thread) => total + recordArrayFieldOrEmpty(thread, "hits").length, 0);
+}
+
+function buildQueryThreads(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
+  const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
-  return buildCollection(name, details, options, theme, subjectFromArgs(name, args), recordArrayFieldOrEmpty(details, "threads"));
+  const threads = recordArrayFieldOrEmpty(details, "threads");
+  const hits = hitCount(threads);
+  const header = headerSpec(name, subjectFromArgs(name, args), dotFromDetails(details), theme, themeFg(theme, "dim", `(${threads.length} thread${threads.length === 1 ? "" : "s"}, ${hits} hit${hits === 1 ? "" : "s"})`));
+  if (threads.length === 0) {
+    return { header, body: { mode: "rail", entries: [{ text: themeFg(theme, "dim", "(none)"), exempt: true }] } };
+  }
+  const sep = ` ${themeFg(theme, "dim", "·")} `;
+  const limit = expanded ? 30 : 3;
+  const entries: Entry[] = [];
+  threads.slice(0, limit).forEach((thread, index) => {
+    const title = stringFieldOrUndefined(thread, "title") ?? stringFieldOrUndefined(thread, "id") ?? `thread ${index + 1}`;
+    const id = stringFieldOrUndefined(thread, "id") ?? "";
+    const workspace = stringFieldOrUndefined(thread, "workspace");
+    const threadHits = recordArrayFieldOrEmpty(thread, "hits");
+    const meta = [
+      id,
+      workspace,
+      `${threadHits.length} hit${threadHits.length === 1 ? "" : "s"}`,
+    ].filter((part): part is string => part !== undefined && part !== "");
+    entries.push({
+      text: `${themeFg(theme, "accent", String(index + 1))}${sep}${themeFg(theme, "toolOutput", title)}${sep}${themeFg(theme, "dim", meta.join(" · "))}`,
+    });
+    if (expanded) {
+      for (const hit of threadHits) {
+        const kind = stringFieldOrUndefined(hit, "kind") ?? "";
+        const role = stringFieldOrUndefined(hit, "role");
+        const tool = stringFieldOrUndefined(hit, "toolName");
+        const snippet = stringFieldOrUndefined(hit, "snippet") ?? "";
+        const label = [kind, role, tool].filter((part): part is string => part !== undefined && part !== "").join("/");
+        entries.push({ text: themeFg(theme, "dim", `${label}: ${oneLine(snippet)}`) });
+      }
+    }
+  });
+  if (threads.length > limit) entries.push({ text: moreLine(threads.length - limit, theme, "more"), exempt: true });
+  return { header, body: { mode: "rail", entries } };
 }
 
 function buildReadThread(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
   const thread = recordFieldOrUndefined(details, "thread");
+  const mode = stringFieldOrUndefined(details, "mode") ?? stringFieldOrUndefined(args, "mode") ?? "overview";
   const header = headerSpec(name, subjectFromArgs(name, args), dotFromDetails(details), theme);
   const entries: Entry[] = [];
   if (thread !== undefined) {
     const facts = [
       stringFieldOrUndefined(thread, "title"),
+      mode,
       (numberFieldOrUndefined(thread, "messageCount") ?? numberFieldOrUndefined(thread, "message_count")) !== undefined
         ? `${numberFieldOrUndefined(thread, "messageCount") ?? numberFieldOrUndefined(thread, "message_count")} msgs`
         : undefined,
@@ -599,6 +644,15 @@ function buildReadThread(name: string, result: unknown, options: unknown, theme:
     if (facts.length > 0) entries.push({ text: themeFg(theme, "dim", facts.join(" · ")), exempt: true });
   }
   if (expanded) entries.push(...fullTextEntries(textContent(result), theme));
+  if (!expanded) {
+    const diagnostics = recordArrayFieldOrEmpty(details, "diagnostics");
+    const cursor = stringFieldOrUndefined(details, "cursor");
+    const facts = [
+      diagnostics.length > 0 ? `${diagnostics.length} diagnostic${diagnostics.length === 1 ? "" : "s"}` : undefined,
+      cursor !== undefined ? "more available" : undefined,
+    ].filter((part): part is string => part !== undefined);
+    if (facts.length > 0) entries.push({ text: themeFg(theme, "dim", facts.join(" · ")), exempt: true });
+  }
   return { header, body: entries.length === 0 ? undefined : { mode: "rail", entries } };
 }
 
@@ -796,17 +850,12 @@ function buildGeneric(name: string, result: unknown, options: unknown, theme: un
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// taumel.notification message renderer (subagent + exec completions)
+// notification message renderer (subagent + exec completion availability)
 // ─────────────────────────────────────────────────────────────────────────────
 
 function attrValue(content: string, pattern: RegExp): string | undefined {
   const match = pattern.exec(content);
   return match ? match[1] : undefined;
-}
-
-function blockBetween(content: string, tag: string): string {
-  const match = new RegExp(`<${tag}>\\n?([\\s\\S]*?)\\n?\\s*</${tag}>`).exec(content);
-  return match ? match[1] : "";
 }
 
 function parseSkillAttrs(rawAttrs: string): { name: string; location: string } | undefined {
@@ -865,36 +914,17 @@ function buildNotificationBlock(message: unknown, options: unknown, theme: unkno
   const content = isRecord(message) ? stringFieldOrUndefined(message, "content") ?? "" : "";
   if (content === "") return undefined;
   const expanded = expandedFromOptions(options);
-  const kind = attrValue(content, /kind="([^"]*)"/) ?? "notification";
-
-  if (kind === "exec_completion") {
-    const sessionId = attrValue(content, /<session id="([^"]*)"/);
-    const exitCode = attrValue(content, /exit_code="(-?\d+)"/);
-    const code = exitCode === undefined ? undefined : Number(exitCode);
-    const dotColor = code === undefined ? "success" : code === 0 ? "success" : "error";
-    const subject = sessionId === undefined ? "" : `session ${sessionId}`;
-    return {
-      header: headerSpec("exec_completion", subject, dotColor, theme),
-      body: { mode: "rail", entries: tailEntries(blockBetween(content, "output"), expanded, theme, 5, 100000) },
-    };
-  }
-
-  if (kind === "agent_completion") {
-    const agentId = attrValue(content, /<agent id="([^"]*)"/);
-    const profile = attrValue(content, /profile="([^"]*)"/);
-    const runStatus = attrValue(content, /<run id="[^"]*" status="([^"]*)"/) ?? "completed";
-    const dotColor = runStatus === "completed" || runStatus === "succeeded" ? "success" : "error";
-    const subject = [agentId, profile !== undefined ? `(${profile})` : undefined].filter(Boolean).join(" ");
-    const finalOutput = blockBetween(content, "final_output");
-    const text = finalOutput !== "" ? finalOutput : blockBetween(content, "error");
-    return {
-      header: headerSpec("agent_completion", subject, dotColor, theme),
-      body: { mode: "rail", entries: tailEntries(text, expanded, theme, 5, 100000) },
-    };
-  }
+  const execMatch = /^Command session ([0-9]+) has finished\./.exec(content);
+  const agentMatch = /^Agent run \S+ for (\S+) \(([^)]*)\) has finished\./.exec(content);
+  const name = execMatch !== null ? "exec_completion" : agentMatch !== null ? "agent_completion" : "notification";
+  const subject = execMatch !== null
+    ? `session ${execMatch[1]} ready`
+    : agentMatch !== null
+    ? `${agentMatch[1]} (${agentMatch[2]}) ready`
+    : "ready";
 
   return {
-    header: { lead: "", subject: "", trailing: "" },
+    header: headerSpec(name, subject, "info", theme),
     body: { mode: "rail", entries: tailEntries(content, expanded, theme, 6, 100000) },
   };
 }
@@ -912,7 +942,7 @@ export function notificationMessageRenderer() {
 
 function progressText(name: string): string {
   if (name.startsWith("exa_") || name.endsWith("_exa")) return "waiting for Exa";
-  if (name === "find_thread") return "searching threads";
+  if (name === "query_threads") return "searching threads";
   if (name === "read_thread") return "reading thread";
   if (name === "read") return "reading";
   if (name === "agent_wait") return "waiting";
@@ -926,7 +956,7 @@ function buildResult(name: string, result: unknown, options: unknown, theme: unk
   if (name === "edit") return buildEdit(name, result, options, theme, args);
   if (name === "apply_patch") return buildApplyPatch(name, result, options, theme, args);
   if (name === "get_goal" || name === "create_goal" || name === "update_goal") return buildGoal(name, result, options, theme, args);
-  if (name === "find_thread") return buildFindThread(name, result, options, theme, args);
+  if (name === "query_threads") return buildQueryThreads(name, result, options, theme, args);
   if (name === "read_thread") return buildReadThread(name, result, options, theme, args);
   if (name.startsWith("agent_")) return buildAgent(name, result, options, theme, args);
   if (name === "ralph_continue" || name === "ralph_finish") return buildRalph(name, result, options, theme, args);

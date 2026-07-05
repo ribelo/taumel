@@ -2,9 +2,10 @@ open Jsoo_bridge
 open App_state
 
 let prepare name params ctx =
-  Session_sync.sync_session_from_host ~scope:"tool prepare"
-    ~reset_missing:(name <> "ralph_continue" && name <> "ralph_finish")
-    ctx;
+  if name <> "agent_wait" then
+    Session_sync.sync_session_from_host ~scope:"tool prepare"
+      ~reset_missing:(name <> "ralph_continue" && name <> "ralph_finish")
+      ctx;
   match name with
   | "exec_command" -> Mutation_tools.prepare_exec_command params
   | "write_stdin" -> Mutation_tools.prepare_write_stdin params
@@ -15,7 +16,7 @@ let prepare name params ctx =
   | "get_goal" -> Goal_tools.prepare_get ()
   | "create_goal" -> Goal_tools.prepare_create params ctx
   | "update_goal" -> Goal_tools.prepare_update params ctx
-  | "find_thread" -> Thread_bridge.prepare_find params
+  | "query_threads" -> Thread_bridge.prepare_query params
   | "read_thread" -> Thread_bridge.prepare_read params
   | "agent_spawn" | "agent_send" | "agent_wait" | "agent_list" | "agent_close"
   | "agent_profiles" ->

@@ -127,8 +127,13 @@ let core_call name_js args_js =
           Visibility_commands.toggle_row category (string_arg args 1) (arg 2))
   | "visibilityWarnings" -> Visibility_commands.warnings (arg 0)
   | "reloadSessionState" ->
+      Session_sync.clear_retained_agent_outputs_for_session
+        (Session_store.session_id_from_ctx (arg 0));
       Session_sync.load_session_state (arg 0);
       App_state.loaded_session_id := Some (Session_store.session_id_from_ctx (arg 0));
+      ok_obj []
+  | "clearRetainedAgentOutputsForSession" ->
+      Session_sync.clear_retained_agent_outputs_for_session (string_arg args 0);
       ok_obj []
   | "planAgentsPrompt" -> Agent_tools.plan_agents_prompt (arg 0) (arg 1)
   | "finishAgentsPrompt" -> Agent_tools.finish_agents_prompt (arg 0) (arg 1) (arg 2)

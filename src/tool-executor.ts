@@ -688,7 +688,7 @@ export async function executeTool(
       }
       return preparedToolResult(core, prepared);
     }
-    case "find_thread":
+    case "query_threads":
     case "read_thread": {
       const result = await runThreadTool(core, name, prepared, ctx);
       return result;
@@ -790,12 +790,19 @@ export function registerGatewayTools(
     return { registerAgentTools: () => undefined };
   }
   if (typeof pi.registerMessageRenderer === "function") {
-    pi.registerMessageRenderer("taumel.notification", notificationMessageRenderer());
+    pi.registerMessageRenderer("notification", notificationMessageRenderer());
   }
   pi.on("session_shutdown", (_event, ctx) => {
     const ownerId = sessionInfoFromContext(ctx).sessionId;
     if (ownerId !== undefined) core.call("shutdownExecOwner", [ownerId]);
   });
+  const clearRetainedAgentOutputs = (_event: unknown, ctx: unknown) => {
+    const ownerId = sessionInfoFromContext(ctx).sessionId;
+    if (ownerId !== undefined) core.call("clearRetainedAgentOutputsForSession", [ownerId]);
+  };
+  pi.on("session_start", clearRetainedAgentOutputs);
+  pi.on("session_resume", clearRetainedAgentOutputs);
+  pi.on("session_switch", clearRetainedAgentOutputs);
   assertToolCatalogMatchesCore(core);
   const allowedToolNames = coreCallStringArray(core, "allowedToolNames", [], "allowed tool names");
   const allowed = new Set(allowedToolNames);

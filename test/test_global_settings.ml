@@ -18,7 +18,7 @@ let expect_error label = function
   | Error _ -> ()
 
 let builtin_override (settings : Settings.t) name =
-  List.assoc_opt name settings.taumel.agents.builtins
+  List.assoc_opt name settings.taumel.agents
 
 let expect_builtin_override label settings name =
   match builtin_override settings name with
@@ -26,9 +26,9 @@ let expect_builtin_override label settings name =
   | None -> fail label ("missing built-in override: " ^ name)
 
 let test_composer_defaults () =
-  assert_bool "composer default enabled" Settings.default.composer.enabled;
+  assert_bool "composer default enabled" Settings.default.taumel.composer.enabled;
   assert_bool "agent built-in overrides default count"
-    (List.length Settings.default.taumel.agents.builtins = 8);
+    (List.length Settings.default.taumel.agents = 8);
   let finder =
     expect_builtin_override "finder default override" Settings.default "finder"
   in
@@ -47,10 +47,10 @@ let test_composer_command_plans () =
      }
       : Settings.agent_builtin_override)
   in
-  let settings =
+  let settings : Settings.t =
     {
-      Settings.default with
-      taumel = { agents = { builtins = [ ("finder", custom_finder) ] } };
+      Settings.taumel =
+        { Settings.default.taumel with agents = [ ("finder", custom_finder) ] };
     }
   in
   let off =
@@ -59,7 +59,7 @@ let test_composer_command_plans () =
          ~path:"/tmp/settings.json" "off")
   in
   assert_bool "composer off writes" off.write_settings;
-  assert_bool "composer off disables" (not off.settings.composer.enabled);
+  assert_bool "composer off disables" (not off.settings.taumel.composer.enabled);
   let preserved =
     expect_builtin_override "composer preserves finder override" off.settings
       "finder"
@@ -75,14 +75,14 @@ let test_composer_command_plans () =
          ~path:"/tmp/settings.json" "show")
   in
   assert_bool "composer show does not write" (not show.write_settings);
-  assert_bool "composer show keeps state" (not show.settings.composer.enabled);
+  assert_bool "composer show keeps state" (not show.settings.taumel.composer.enabled);
   let toggled =
     expect_ok "composer toggle"
       (Settings.plan_composer_command ~settings:off.settings
          ~path:"/tmp/settings.json" "toggle")
   in
   assert_bool "composer toggle writes" toggled.write_settings;
-  assert_bool "composer toggle enables" toggled.settings.composer.enabled
+  assert_bool "composer toggle enables" toggled.settings.taumel.composer.enabled
 
 let test_composer_parse_aliases () =
   (match Settings.parse_composer_command "enabled" with

@@ -640,7 +640,19 @@ let wait_item_of_run run =
     wait_error = run.run_reason;
     wait_output_available =
       ((not (terminal_run run)) || run.run_output_available);
-    wait_consumed = run.run_consumed || terminal_run run;
+    wait_consumed = run.run_consumed;
+    wait_background_notified = run.run_background_notified;
+  }
+
+let already_consumed_wait_item run =
+  {
+    wait_agent_id = run.run_agent_id;
+    wait_run_id = Some run.run_id;
+    wait_status = "already_consumed";
+    wait_final_output = None;
+    wait_error = None;
+    wait_output_available = false;
+    wait_consumed = true;
     wait_background_notified = run.run_background_notified;
   }
 
@@ -663,9 +675,9 @@ let unknown_run_wait_item run_id =
   {
     wait_agent_id = "";
     wait_run_id = Some run_id;
-    wait_status = "unknown_run";
+    wait_status = "not_found";
     wait_final_output = None;
-    wait_error = Some ("unknown run: " ^ run_id);
+    wait_error = Some ("run not found: " ^ run_id);
     wait_output_available = false;
     wait_consumed = false;
     wait_background_notified = false;
@@ -735,9 +747,7 @@ let wait_for_selector state ~parent_session_id selector =
      |> List.filter (fun run ->
             owned_open_run run
             && (active_work_run_status run.run_status
-               || ((not run.run_consumed)
-                  && (not run.run_background_notified)
-                  && terminal_run run)))
+               || ((not run.run_consumed) && terminal_run run)))
   in
   match selector with
   | Wait_all_active ->
@@ -770,9 +780,7 @@ let wait_for_selector state ~parent_session_id selector =
                     match
                       runs_for_agent !state_ref agent_id
                       |> List.find_opt (fun run ->
-                             terminal_run run
-                             && (not run.run_consumed)
-                             && not run.run_background_notified)
+                             terminal_run run && not run.run_consumed)
                     with
                     | None -> no_deliverable_wait_item agent_id
                     | Some run ->
@@ -810,12 +818,9 @@ let wait_for_selector state ~parent_session_id selector =
                 match find_identity !state_ref run.run_agent_id with
                 | Some identity
                   when identity.identity_parent_session_id = parent_session_id ->
-                    let delivered =
-                      terminal_run run
-                      && (run.run_consumed || run.run_background_notified)
-                    in
+                    let already_consumed = terminal_run run && run.run_consumed in
                     let readback =
-                      if delivered then run else consume_run_if_terminal run
+                      if already_consumed then run else consume_run_if_terminal run
                     in
                     if readback != run then
                       state_ref :=
@@ -823,7 +828,8 @@ let wait_for_selector state ~parent_session_id selector =
                           !state_ref with
                           runs = replace_run readback (!state_ref).runs;
                         };
-                    wait_item_of_run readback
+                    if already_consumed then already_consumed_wait_item run
+                    else wait_item_of_run readback
                 | Some _ | None -> not_owned_run_wait_item run_id))
           run_ids
       in

@@ -438,7 +438,6 @@ export async function discoverCatalogFiles(scan: Record<string, unknown>): Promi
 
 export function threadCatalogFacts(ctx: unknown): Record<string, unknown> {
   return {
-    override: process.env.TAUMEL_THREAD_CATALOG_DIR ?? "",
     cwd: isRecord(ctx) && typeof ctx["cwd"] === "string" ? ctx["cwd"] : "",
     home: homedir(),
   };
@@ -456,10 +455,14 @@ export async function fileThreadSources(core: CoreBridge, ctx: unknown): Promise
         sources.push({
           kind: "sessionFile",
           path: file,
-          data: JSON.parse(await readFile(file, "utf8")) as unknown,
+          text: await readFile(file, "utf8"),
         });
-      } catch {
-        // Best-effort catalog discovery: ignore unreadable or unrelated JSON.
+      } catch (error) {
+        sources.push({
+          kind: "diagnostic",
+          path: file,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
   }
@@ -467,7 +470,7 @@ export async function fileThreadSources(core: CoreBridge, ctx: unknown): Promise
 }
 
 export async function threadSources(core: CoreBridge, ctx: unknown): Promise<Record<string, unknown>[]> {
-  return [currentThreadSource(core, ctx), ...(await fileThreadSources(core, ctx))];
+  return await fileThreadSources(core, ctx);
 }
 
 async function syncDirectory(path: string): Promise<void> {

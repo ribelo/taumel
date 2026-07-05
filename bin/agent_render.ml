@@ -493,6 +493,52 @@ let parse_wait_selector params =
   | None, Some agent_ids -> Ok (Taumel.Agent_runs.Wait_agent_ids agent_ids)
   | None, None -> Ok Taumel.Agent_runs.Wait_all_active
 
+let restore_retained_agent_outputs owner_id =
+  let state = !agent_state in
+  let output_for run_id =
+    List.find_map
+      (fun retained ->
+        if
+          retained.retained_owner_id = owner_id
+          && retained.retained_run_id = run_id
+        then Some retained.retained_final_output
+        else None)
+      !retained_agent_outputs
+  in
+  let changed = ref false in
+  let runs =
+    List.map
+      (fun (run : Taumel.Agent_runs.agent_run) ->
+        if
+          Option.is_none run.run_final_output
+          && Taumel.Agent_runs.run_owned_by_parent state
+               ~parent_session_id:owner_id run
+        then
+          match output_for run.run_id with
+          | None -> run
+          | Some output ->
+              changed := true;
+              {
+                run with
+                Taumel.Agent_runs.run_final_output = Some output;
+                run_output_available = true;
+              }
+        else run)
+      state.runs
+  in
+  if !changed then agent_state := { state with runs }
+
+let clear_retained_agent_outputs owner_id run_ids =
+  match run_ids with
+  | [] -> ()
+  | run_ids ->
+      retained_agent_outputs :=
+        List.filter
+          (fun retained ->
+            retained.retained_owner_id <> owner_id
+            || not (List.mem retained.retained_run_id run_ids))
+          !retained_agent_outputs
+
 let wait_item_xml (item : Taumel.Agent_runs.wait_item) =
   let run_id =
     match item.wait_run_id with
@@ -534,10 +580,20 @@ let render_agent_wait params owner_id ctx =
   match parse_wait_selector params with
   | Error message -> error_obj message
   | Ok selector ->
+      restore_retained_agent_outputs owner_id;
       let result =
         Taumel.Agent_runs.wait_for_selector !agent_state ~parent_session_id:owner_id
           selector
       in
+      let consumed_outputs =
+        List.filter_map
+          (fun (item : Taumel.Agent_runs.wait_item) ->
+            match (item.wait_run_id, item.wait_final_output) with
+            | Some run_id, Some _ when item.wait_consumed -> Some run_id
+            | _ -> None)
+          result.wait_items
+      in
+      clear_retained_agent_outputs owner_id consumed_outputs;
       if result.wait_state <> !agent_state then (
         agent_state := result.wait_state;
         Session_sync.save_agent_state ctx);
@@ -793,4 +849,3 @@ let render_agent_close params (owner : Taumel.Subagents.owner) ctx now =
               Session_sync.save_agent_state ctx;
               close_live_workers owner.id ids;
               close_tool_result ids))
-

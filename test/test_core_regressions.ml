@@ -595,7 +595,7 @@ let test_gateway_wraps_legacy_mutation_tools () =
   (* Active-tools rewrite must replace raw bash and route mutation tools by provider. *)
   let sync =
     Tool_catalog.plan_active_tools_sync ~provider:"openai-codex"
-      [ "bash"; "edit"; "write"; "find_thread" ]
+      [ "bash"; "edit"; "write"; "query_threads" ]
   in
   assert_bool "rewrite removes bash" (not (List.mem "bash" sync.tools));
   assert_bool "rewrite removes edit" (not (List.mem "edit" sync.tools));
@@ -603,7 +603,7 @@ let test_gateway_wraps_legacy_mutation_tools () =
   assert_bool "rewrite adds exec_command" (List.mem "exec_command" sync.tools);
   assert_bool "rewrite adds write_stdin" (List.mem "write_stdin" sync.tools);
   assert_bool "rewrite adds apply_patch" (List.mem "apply_patch" sync.tools);
-  assert_bool "rewrite preserves find_thread" (List.mem "find_thread" sync.tools);
+  assert_bool "rewrite preserves query_threads" (List.mem "query_threads" sync.tools);
   assert_bool "rewrite changed" sync.changed
 
 let test_goal_turn_accounting () =
