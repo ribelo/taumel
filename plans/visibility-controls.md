@@ -88,9 +88,9 @@ or a command-form `save` action.
 
 - **vis-ui01** (event-driven): In TUI mode, `/agents`, `/tools`, and `/skills` with no arguments shall open cron-style full-screen managers rather than one-shot picker prompts.
 - **vis-ui02** (ubiquitous): Each manager shall show the current session-effective state only: `enabled` or `disabled`, plus the item name and a short description or path where useful.
-- **vis-ui03** (event-driven): Pressing `e` or enter on a selected row shall toggle that row and apply the change immediately.
+- **vis-ui03** (event-driven): Pressing enter on a selected row shall toggle that row and apply the change immediately.
 - **vis-ui04** (event-driven): Pressing `Ctrl+S` shall save the current session-effective disabled list to trusted project config.
-- **vis-ui05** (ubiquitous): Manager help text shall include `e toggle • ctrl+s save to project • esc close` or equivalent concise wording.
+- **vis-ui05** (ubiquitous): Manager help text shall include `enter toggle • ctrl+s save to project • esc close` or equivalent concise wording.
 - **vis-ui06** (ubiquitous): Managers shall show unavailable disabled names as explicit rows, marked `unavailable`, so the user can see stale config instead of it being hidden.
 - **vis-ui07** (event-driven): Toggling an unavailable disabled row to enabled shall explicitly remove that name from the session disabled set because the user selected that cleanup action.
 

@@ -1394,7 +1394,7 @@ try {
   if (
     agentsManager.action !== "command_result" ||
     !renderedVisibilityManagerLines.some((line) => line.includes("Taumel agent profiles")) ||
-    !renderedVisibilityManagerLines.some((line) => line.includes("e toggle") && line.includes("ctrl+s save to project")) ||
+    !renderedVisibilityManagerLines.some((line) => line.includes("enter toggle") && line.includes("ctrl+s save to project")) ||
     !renderedVisibilityManagerLines.some((line) => line.includes("scout") && line.includes("enabled"))
   ) {
     throw new Error(`agents manager did not render cron-style visibility rows: ${JSON.stringify({ agentsManager, renderedVisibilityManagerLines })}`);
@@ -1413,7 +1413,12 @@ try {
       () => undefined,
     );
     renderedToolsManagerLines = component.render(120);
-    component.handleInput("write_stdin");
+    component.handleInput("e");
+    const renderedAfterE = component.render(120);
+    if (!renderedAfterE.some((line) => line.startsWith("  > e"))) {
+      throw new Error(`tools manager did not route printable e to search input: ${JSON.stringify(renderedAfterE)}`);
+    }
+    component.handleInput("xec_command");
     renderedToolsSearchLines = component.render(120);
     return { kind: "exit" };
   };
@@ -1424,8 +1429,8 @@ try {
     !renderedToolsManagerLines.some((line) => line.includes("Taumel tools")) ||
     !renderedToolsManagerLines.some((line) => line.startsWith("  > ")) ||
     !renderedToolsManagerLines.some((line) => line.includes("(1/")) ||
-    !renderedToolsSearchLines.some((line) => line.includes("write_stdin")) ||
-    renderedToolsSearchLines.some((line) => line.includes("exec_command"))
+    !renderedToolsSearchLines.some((line) => line.includes("exec_command")) ||
+    renderedToolsSearchLines.some((line) => line.includes("write_stdin"))
   ) {
     throw new Error(`tools manager did not render searchable scrolling visibility rows: ${JSON.stringify({ toolsManager, renderedToolsManagerLines, renderedToolsSearchLines })}`);
   }

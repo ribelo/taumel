@@ -259,7 +259,7 @@ class VisibilityManagerComponent implements Focusable {
     }
     this.addStatus(lines, width);
     lines.push("");
-    lines.push(this.line(this.dim("  type search • ↑↓ select • e toggle • enter toggle • ctrl+s save to project • esc close"), width));
+    lines.push(this.line(this.dim("  type search • ↑↓ select • enter toggle • ctrl+s save to project • esc close"), width));
     lines.push(this.border(width));
     return lines;
   }
@@ -282,7 +282,7 @@ class VisibilityManagerComponent implements Focusable {
       this.runSave();
       return;
     }
-    if (data === "e" || this.isConfirm(data)) {
+    if (this.isConfirm(data)) {
       const row = this.filteredRows()[this.selected];
       if (row) this.runToggle(row.name);
       return;
