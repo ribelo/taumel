@@ -303,10 +303,50 @@ let overview_text (thread : thread) entries =
     @ [ "Recent visible entries:" ]
     @ (if entries = [] then [ "(none)" ] else List.map entry_line entries))
 
-let cursor_prefix = "thread-v1:"
+let cursor_prefix = "thread-v2:"
+
+let hex_digit value =
+  if value < 10 then Char.chr (Char.code '0' + value)
+  else Char.chr (Char.code 'a' + value - 10)
+
+let hex_encode value =
+  let buffer = Buffer.create (String.length value * 2) in
+  String.iter
+    (fun c ->
+      let code = Char.code c in
+      Buffer.add_char buffer (hex_digit (code lsr 4));
+      Buffer.add_char buffer (hex_digit (code land 0x0f)))
+    value;
+  Buffer.contents buffer
+
+let hex_value = function
+  | '0' .. '9' as c -> Some (Char.code c - Char.code '0')
+  | 'a' .. 'f' as c -> Some (Char.code c - Char.code 'a' + 10)
+  | 'A' .. 'F' as c -> Some (Char.code c - Char.code 'A' + 10)
+  | _ -> None
+
+let hex_decode value =
+  let len = String.length value in
+  if len mod 2 <> 0 then None
+  else
+    let buffer = Buffer.create (len / 2) in
+    let rec loop index =
+      if index >= len then Some (Buffer.contents buffer)
+      else
+        match (hex_value value.[index], hex_value value.[index + 1]) with
+        | Some hi, Some lo ->
+            Buffer.add_char buffer (Char.chr ((hi lsl 4) lor lo));
+            loop (index + 2)
+        | _ -> None
+    in
+    loop 0
+
+let cursor_payload thread_id index = thread_id ^ "\000" ^ string_of_int index
 
 let encode_cursor thread_id index =
-  cursor_prefix ^ thread_id ^ ":" ^ string_of_int index
+  let payload = cursor_payload thread_id index in
+  let checksum = Digest.string payload |> Digest.to_hex in
+  cursor_prefix ^ hex_encode (payload ^ "\000" ^ checksum)
 
 let decode_cursor cursor =
   if not (starts_with cursor cursor_prefix) then None
@@ -315,12 +355,31 @@ let decode_cursor cursor =
       String.sub cursor (String.length cursor_prefix)
         (String.length cursor - String.length cursor_prefix)
     in
-    match List.rev (String.split_on_char ':' rest) with
-    | index :: id_parts -> (
-        match int_of_string_opt index with
-        | Some index -> Some (String.concat ":" (List.rev id_parts), index)
-        | None -> None)
-    | _ -> None
+    match hex_decode rest with
+    | None -> None
+    | Some payload -> (
+        match String.split_on_char '\000' payload with
+        | [ thread_id; index; checksum ] -> (
+            let expected = Digest.string (thread_id ^ "\000" ^ index) |> Digest.to_hex in
+            if checksum <> expected then None
+            else
+              match int_of_string_opt index with
+              | Some index -> Some (thread_id, index)
+              | None -> None)
+        | _ -> None)
+
+let cursor_start (thread : thread) cursor =
+  match decode_cursor cursor with
+  | Some (thread_id, index) when thread_id <> thread.id ->
+      Error
+        ("read_thread cursor belongs to thread \"" ^ thread_id ^ "\", not \""
+       ^ thread.id ^ "\".")
+  | Some (_thread_id, index) when index < 0 ->
+      Error "read_thread cursor is invalid."
+  | Some (_thread_id, index) when index >= List.length thread.entries ->
+      Error "read_thread cursor is out of range."
+  | Some (_thread_id, index) -> Ok index
+  | None -> Error "read_thread cursor is invalid."
 
 let find_entry_index request (thread : thread) =
   let locator = request.locator in
@@ -437,20 +496,13 @@ let plan_read ~id (request : read_request) (catalog : catalog) =
                 truncation = [];
               })
       | Full ->
-          let cursor_error =
+          let start =
             match request.cursor with
-            | None -> None
-            | Some cursor -> (
-                match decode_cursor cursor with
-                | Some (thread_id, _index) when thread_id = thread.id -> None
-                | Some (thread_id, _index) ->
-                    Some
-                      ("read_thread cursor belongs to thread \"" ^ thread_id
-                     ^ "\", not \"" ^ thread.id ^ "\".")
-                | None -> Some "read_thread cursor is invalid.")
+            | None -> Ok 0
+            | Some cursor -> cursor_start thread cursor
           in
-          (match cursor_error with
-          | Some message ->
+          (match start with
+          | Error message ->
               {
                 text = message;
                 ok = false;
@@ -463,15 +515,7 @@ let plan_read ~id (request : read_request) (catalog : catalog) =
                 cursor = None;
                 truncation = [];
               }
-          | None ->
-              let start =
-                match request.cursor with
-                | Some cursor -> (
-                    match decode_cursor cursor with
-                    | Some (_thread_id, index) -> max 0 index
-                    | None -> 0)
-                | None -> 0
-              in
+          | Ok start ->
               let max_entries = 80 in
               let entries =
                 thread.entries

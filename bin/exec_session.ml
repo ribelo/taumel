@@ -7,6 +7,7 @@ type session = {
   tty : bool;
   mutable child : Unsafe.any option;
   pending : Buffer.t;
+  mutable pending_start_line : int;
   mutable chunk_bytes : int;
   mutable chunk_lines : int;
   mutable chunk_ends_with_newline : bool;
@@ -227,9 +228,12 @@ let add_output (session : session) text =
     Buffer.add_string session.pending text;
     if Buffer.length session.pending > pending_cap then begin
       let s = Buffer.contents session.pending in
-      let keep = String.sub s (String.length s - pending_cap) pending_cap in
+      let drop_bytes = String.length s - pending_cap in
+      let dropped = String.sub s 0 drop_bytes in
+      let keep = String.sub s drop_bytes pending_cap in
       Buffer.clear session.pending;
       Buffer.add_string session.pending keep;
+      session.pending_start_line <- session.pending_start_line + count_newlines dropped;
       session.chunk_trimmed <- true
     end
   end
@@ -370,9 +374,8 @@ let truncation_footer ?(last_line_partial = false) ~start_line ~end_line
         start_line end_line total_lines reason max_display_lines max_display_bytes
         path
 
-(* Compute the display output (last 2000 complete lines / 50KB, with an
-   explicit partial-line fallback for one overlarge tail line), WITHOUT mutating
-   the session. Shared by the inline drain (make_result) and notifications. *)
+(* Compute the display output without mutating the session. Shared by the inline
+   drain (make_result) and notifications. *)
 let display_output (session : session) =
   let raw = Buffer.contents session.pending in
   let total_lines =
@@ -399,7 +402,7 @@ let display_output (session : session) =
     let reason = truncation_reason ~by_lines ~by_bytes in
     let indexed =
       raw |> split_display_lines
-      |> List.mapi (fun index line -> (index + 1, line))
+      |> List.mapi (fun index line -> (session.pending_start_line + index, line))
     in
     let rec take_tail selected selected_bytes selected_count = function
       | [] -> (`Lines selected, selected_bytes, selected_count)
@@ -416,9 +419,7 @@ let display_output (session : session) =
               (`Partial_line (line_no, line), selected_bytes, selected_count)
             else (`Lines selected, selected_bytes, selected_count)
     in
-    let selection, selected_bytes, selected_count =
-      take_tail [] 0 0 (List.rev indexed)
-    in
+    let selection, selected_bytes, selected_count = take_tail [] 0 0 (List.rev indexed) in
     match selection with
     | `Partial_line (line_no, line) ->
         let shown = safe_suffix max_display_bytes line in
@@ -472,12 +473,12 @@ let display_output (session : session) =
         in
         (output, truncation)
 
-(* Drain the unread chunk for display: the last 2000 lines / 50KB, with a Pi
-   footer when the chunk was truncated (the full output stays in the temp file).
-   Resets the per-chunk accounting so the next call returns only new output. *)
+(* Drain the unread chunk for display and reset accounting so the next call
+   returns only new output. *)
 let make_result (session : session) =
   let output, truncation = display_output session in
   Buffer.clear session.pending;
+  session.pending_start_line <- 1;
   session.chunk_bytes <- 0;
   session.chunk_lines <- 0;
   session.chunk_ends_with_newline <- false;
@@ -703,6 +704,7 @@ let new_session owner_id tty =
     tty;
     child = None;
     pending = Buffer.create 256;
+    pending_start_line = 1;
     chunk_bytes = 0;
     chunk_lines = 0;
     chunk_ends_with_newline = false;

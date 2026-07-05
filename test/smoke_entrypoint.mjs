@@ -960,6 +960,18 @@ try {
   ) {
     throw new Error(`exec byte truncation did not preserve complete first visible line: ${JSON.stringify({ firstVisibleExecLine, byteTruncatedExec })}`);
   }
+  const trimmedExec = await tools
+    .get("exec_command")
+    .execute(
+      "exec-trimmed-line-range",
+      { cmd: "awk 'BEGIN{for(i=1;i<=40000;i++) printf \"line-%05d abcdefghijklmnopqrstuvwxyz\\n\", i}'", workdir: cwd },
+      undefined,
+      undefined,
+      ctx,
+    );
+  if (!trimmedExec.details?.output?.includes("Showing lines 38654-40000 of 40000")) {
+    throw new Error(`exec trimmed buffer footer reported wrong line range: ${JSON.stringify(trimmedExec)}`);
+  }
 
   const legacyWriteTarget = join(cwd, "legacy-write.txt");
   const legacyWriteResult = await tools.get("write").execute(

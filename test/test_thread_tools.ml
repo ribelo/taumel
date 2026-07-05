@@ -189,6 +189,13 @@ let test_read_modes () =
   let full = Threads.plan_read ~id:full_request.thread_id full_request catalog in
   assert_bool "full ok" full.ok;
   assert_bool "full paginates" (Option.is_some full.cursor);
+  let cursor = Option.get full.cursor in
+  assert_bool "cursor is opaque" (not (contains cursor "thread-1"));
+  assert_bool "cursor hides index" (not (contains cursor ":80"));
+  let next_request = read_request ~mode:"full" ~cursor "thread-1" in
+  let next = Threads.plan_read ~id:next_request.thread_id next_request catalog in
+  assert_bool "cursor page ok" next.ok;
+  assert_bool "cursor page reaches tail" (contains next.text "visible transcript line 84");
   assert_bool "full text not raw json" (not (contains full.text "\"message\""))
 
 let test_request_preparation () =
@@ -246,7 +253,22 @@ let test_cursor_validation () =
   in
   let wrong = Threads.plan_read ~id:wrong_request.thread_id wrong_request catalog in
   assert_bool "wrong-thread cursor fails" (not wrong.ok);
-  assert_bool "wrong-thread cursor explains failure" (contains wrong.text "other-thread")
+  assert_bool "wrong-thread cursor explains failure" (contains wrong.text "other-thread");
+  let negative_request =
+    read_request ~mode:"full" ~cursor:(Threads.encode_cursor "thread-1" (-1)) "thread-1"
+  in
+  let negative = Threads.plan_read ~id:negative_request.thread_id negative_request catalog in
+  assert_bool "negative cursor fails" (not negative.ok);
+  assert_bool "negative cursor invalid" (contains negative.text "cursor is invalid");
+  let out_of_range_request =
+    read_request ~mode:"full" ~cursor:(Threads.encode_cursor "thread-1" 9999) "thread-1"
+  in
+  let out_of_range =
+    Threads.plan_read ~id:out_of_range_request.thread_id out_of_range_request catalog
+  in
+  assert_bool "out-of-range cursor fails" (not out_of_range.ok);
+  assert_bool "out-of-range cursor explains failure"
+    (contains out_of_range.text "out of range")
 
 let () =
   test_query_jsonl_tool_hits ();
