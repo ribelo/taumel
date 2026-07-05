@@ -1,6 +1,6 @@
 import { toolNames } from "../src/tool-contracts.ts";
 import { notificationMessageRenderer, renderersForTool, skillMessageRenderer } from "../src/tool-renderer.ts";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { Box, visibleWidth } from "@earendil-works/pi-tui";
 
 const assert = (condition, message) => {
   if (!condition) throw new Error(message);
@@ -14,6 +14,11 @@ const theme = {
 };
 
 const renderText = (value) => value.render(120).join("\n");
+const renderInDefaultToolShell = (component, width) => {
+  const shell = new Box(1, 1, (value) => value);
+  shell.addChild(component);
+  return shell.render(width);
+};
 const longLines = Array.from({ length: 24 }, (_, index) => `line-${index + 1}`).join("\n");
 const exaResults = Array.from({ length: 12 }, (_, index) => ({
   title: `Result ${index + 1}`,
@@ -247,6 +252,57 @@ const failedPatchCompact = renderText(renderersForTool("apply_patch").renderResu
 const failedPatchExpanded = renderText(renderersForTool("apply_patch").renderResult(failedPatchResult, { expanded: true, isPartial: false }, theme, { args: argsFor("apply_patch") }));
 assert(failedPatchCompact.includes("Patch failed: expected context not found"), `failed apply_patch compact should show error reason: ${failedPatchCompact}`);
 assert(failedPatchExpanded.includes("at line 3"), `failed apply_patch expanded should show full error text: ${failedPatchExpanded}`);
+
+// Mutation renderers must fit inside Pi's default tool shell. If an extension
+// renderer returns a line wider than the child width Pi gave it, the terminal
+// physically wraps and footer/status rows can paint inside the tool output.
+{
+  const mutationPath = "/home/ribelo/projects/shareablee/csai/airflow/src/core/airflow-client.ts";
+  const mutationBefore = [
+    "        // authenticated dispatch so anonymous probes track v2<->v3 deploy flips",
+    "        // without a sqlite read per call.",
+    "        const cachedAnonymousApiVersions = yield* Ref.make<",
+    "            ReadonlyMap<string, AirflowSession[\"apiVersion\"]>",
+    "        >(new Map());",
+    "        const detectedAnonymousApiVersions = yield* Ref.make<ReadonlySet<string>>(new Set());",
+  ].join("\n");
+  const mutationAfter = mutationBefore.replace(
+    "        >(new Map());",
+    "        >(new Map([[\"very-long-airflow-host-name-that-forces-the-line-to-hit-the-terminal-edge.example.com\", \"v3\"]]));",
+  );
+  const mutationCases = [
+    {
+      name: "edit",
+      result: { content: [{ type: "text", text: "edited" }], details: { ok: true, displayPath: mutationPath, before: mutationBefore, after: mutationAfter } },
+      args: { path: mutationPath },
+    },
+    {
+      name: "write",
+      result: { content: [{ type: "text", text: "wrote" }], details: { ok: true, displayPath: mutationPath, contents: mutationAfter } },
+      args: { path: mutationPath },
+    },
+    {
+      name: "apply_patch",
+      result: { content: [{ type: "text", text: "patched" }], details: { ok: true, writes: [{ path: mutationPath, before: mutationBefore, contents: mutationAfter }] } },
+      args: { input: "*** Begin Patch\n*** Update File: src/core/airflow-client.ts\n*** End Patch" },
+    },
+  ];
+  for (const { name, result, args } of mutationCases) {
+    for (const expanded of [false, true]) {
+      for (const width of [32, 40, 60, 80, 120]) {
+        const component = renderersForTool(name).renderResult(result, { expanded, isPartial: false }, theme, { args });
+        const lines = renderInDefaultToolShell(component, width);
+        const overflow = lines
+          .map((line, index) => ({ index, width: visibleWidth(line), line }))
+          .filter((line) => line.width > width);
+        assert(
+          overflow.length === 0,
+          `${name} renderer overflowed Pi default shell at width ${width}, expanded=${expanded}: ${JSON.stringify(overflow[0])}`,
+        );
+      }
+    }
+  }
+}
 
 // read — collapsed is a single header line; expanded shows the body head-oriented.
 const readResult = {

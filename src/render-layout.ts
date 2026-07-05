@@ -9,9 +9,9 @@ export type HeaderSpec = { readonly lead: string; readonly subject: string; read
 //   rail  — first physical line prefixed `  └ `, continuation `    ` (4 spaces).
 //            normal entries: collapsed clips each line to (width-4), expanded
 //            wraps to (width-4) with continuation at column 4.
-//            exempt entries (the `… N more` / expand hints): rendered as-is,
-//            never clipped — never clip a line whose job is to advertise hidden
-//            content.
+//            exempt entries (the `… N more` / expand hints): rendered as-is
+//            during body layout; the final component boundary still clamps
+//            every physical line to the requested width.
 //   flush — self-guttered lines (diffs, apply_patch expanded). no └ rail. each
 //            line clipped to width when clip is set (diffs always clip in both
 //            modes; they are a structured grid, not a document).
@@ -40,15 +40,17 @@ function layoutHeader(header: HeaderSpec, expanded: boolean, width: number): str
   const subjectStart = visibleWidth(header.lead);
   const avail = Math.max(1, width - subjectStart);
   const indent = " ".repeat(subjectStart);
-  const wrapped = wrapTextWithAnsi(header.subject, avail);
+  const tail = header.subject === "" ? header.trailing : header.subject + (header.trailing === "" ? "" : " " + header.trailing);
+  const wrapped = wrapTextWithAnsi(tail, avail);
   const lines = [header.lead + wrapped[0]];
   for (let index = 1; index < wrapped.length; index += 1) {
     lines.push(indent + wrapped[index]);
   }
-  if (header.trailing !== "") {
-    lines[lines.length - 1] = lines[lines.length - 1] + " " + header.trailing;
-  }
   return lines;
+}
+
+function clampLine(line: string, width: number): string {
+  return visibleWidth(line) > width ? truncateToWidth(line, width, ELLIPSIS) : line;
 }
 
 function railEntryPhysical(entry: Entry, expanded: boolean, contentWidth: number): string[] {
@@ -75,16 +77,18 @@ export function renderBlock(block: Block, expanded: boolean): { render(width: nu
   return {
     render(width: number): string[] {
       if (cache !== undefined && cache.width === width) return cache.lines;
-      const lines = layoutHeader(block.header, expanded, width);
+      const targetWidth = Math.max(1, width);
+      const lines = layoutHeader(block.header, expanded, targetWidth);
       if (block.body !== undefined) {
         if (block.body.mode === "rail") {
-          lines.push(...layoutRail(block.body.entries, expanded, width));
+          lines.push(...layoutRail(block.body.entries, expanded, targetWidth));
         } else {
-          lines.push(...layoutFlush(block.body.entries, block.body.clip, width));
+          lines.push(...layoutFlush(block.body.entries, block.body.clip, targetWidth));
         }
       }
-      cache = { width, lines };
-      return lines;
+      const clamped = lines.map((line) => clampLine(line, targetWidth));
+      cache = { width, lines: clamped };
+      return clamped;
     },
     invalidate() {
       cache = undefined;
@@ -104,7 +108,8 @@ export function emptyComponent(): { render(_width: number): string[]; invalidate
 export function withLeftGutter(component: { render(width: number): string[]; invalidate(): void }): { render(width: number): string[]; invalidate(): void } {
   return {
     render(width: number): string[] {
-      return component.render(Math.max(1, width - 1)).map((line) => ` ${line}`);
+      const targetWidth = Math.max(1, width);
+      return component.render(Math.max(1, targetWidth - 1)).map((line) => clampLine(` ${line}`, targetWidth));
     },
     invalidate() {
       component.invalidate();
