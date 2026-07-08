@@ -39,8 +39,8 @@ let plan_command args ctx =
               ("current", js_string (model_string current));
             ])
 
-let plan_session_before_compact _event ctx =
-  let settings = settings_from_js ctx in
+let plan_session_before_compact settings_js _ctx =
+  let settings = settings_from_js settings_js in
   match Taumel.Compaction_model.plan_session_before_compact settings with
   | Use_default -> ok_obj [ ("action", js_string "default") ]
   | Use_model value ->

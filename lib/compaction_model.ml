@@ -35,12 +35,15 @@ let is_valid_model_id value =
     match String.index_opt value '/' with
     | None -> false
     | Some index ->
-        index > 0
-        && index < String.length value - 1
-        && String.index_from_opt value (index + 1) '/' = None
+        index > 0 && index < String.length value - 1
+
+let normalize_setting value = Option.bind value Shared.trim_non_empty
 
 let resolve_configured settings =
-  match (settings.session, settings.project, settings.global) with
+  let session = normalize_setting settings.session in
+  let project = normalize_setting settings.project in
+  let global = normalize_setting settings.global in
+  match (session, project, global) with
   | Some value, _, _ -> (Model value, "session")
   | None, Some value, _ -> (Model value, "project")
   | None, None, Some value -> (Model value, "global")

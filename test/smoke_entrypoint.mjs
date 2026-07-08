@@ -838,12 +838,19 @@ try {
   );
   const directTimedOutApproval = globalThis.taumel.call("finishExecApproval", [{ outcome: "timed_out" }]);
   const directUnavailableApproval = globalThis.taumel.call("finishExecApproval", [{ outcome: "unavailable" }]);
+  const directCompactionPlan = globalThis.taumel.call("planSessionBeforeCompact", [{
+    session: "",
+    global: "openrouter/deepseek/deepseek-v4-pro",
+    project: "",
+  }]);
   assert(
     directTimedOutApproval?.result?.content?.[0]?.text === "Sandbox: command blocked (approval timed out)" &&
     directTimedOutApproval?.result?.details?.approvalOutcome === "timed_out" &&
     directUnavailableApproval?.result?.content?.[0]?.text === "Sandbox: command blocked (approval unavailable)" &&
-    directUnavailableApproval?.result?.details?.approvalOutcome === "unavailable",
-    `approval outcome bridge did not preserve timeout/unavailable: ${JSON.stringify({ directTimedOutApproval, directUnavailableApproval })}`,
+    directUnavailableApproval?.result?.details?.approvalOutcome === "unavailable" &&
+    directCompactionPlan?.action === "compact" &&
+    directCompactionPlan?.model === "openrouter/deepseek/deepseek-v4-pro",
+    `direct bridge plans did not preserve expected values: ${JSON.stringify({ directTimedOutApproval, directUnavailableApproval, directCompactionPlan })}`,
   );
   confirmBehavior = async () => false;
   const deniedExecCallCount = execCalls.length;

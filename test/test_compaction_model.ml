@@ -12,13 +12,13 @@ let expect_ok label = function
 let test_validation () =
   assert_bool "openai/gpt-4o is valid" (Compaction_model.is_valid_model_id "openai/gpt-4o");
   assert_bool "provider with dash and slash model is valid"
-    (Compaction_model.is_valid_model_id "openai-codex/gpt-4o/reasoning" = false);
+    (Compaction_model.is_valid_model_id "openai-codex/gpt-4o/reasoning");
   assert_bool "empty is invalid" (not (Compaction_model.is_valid_model_id ""));
   assert_bool "missing provider is invalid" (not (Compaction_model.is_valid_model_id "/gpt-4o"));
   assert_bool "missing model is invalid" (not (Compaction_model.is_valid_model_id "openai/"));
   assert_bool "no separator is invalid" (not (Compaction_model.is_valid_model_id "gpt-4o"));
-  assert_bool "multiple separators are invalid"
-    (not (Compaction_model.is_valid_model_id "openai/gpt-4o/reasoning"))
+  assert_bool "openrouter nested model id is valid"
+    (Compaction_model.is_valid_model_id "openrouter/deepseek/deepseek-v4-pro")
 
 let test_parse_command () =
   let open_ok = expect_ok "picker" (Compaction_model.parse_command "") in
@@ -27,9 +27,31 @@ let test_parse_command () =
   assert_bool "clear parses to Clear" (clear_ok = Compaction_model.Clear);
   let set_ok = expect_ok "set" (Compaction_model.parse_command "openai/gpt-4o") in
   assert_bool "provider/model parses to Set" (set_ok = Compaction_model.Set "openai/gpt-4o");
+  let nested_set_ok =
+    expect_ok "set nested model" (Compaction_model.parse_command "openrouter/deepseek/deepseek-v4-pro")
+  in
+  assert_bool "provider/nested-model parses to Set"
+    (nested_set_ok = Compaction_model.Set "openrouter/deepseek/deepseek-v4-pro");
   assert_bool "invalid model is rejected" (Result.is_error (Compaction_model.parse_command "gpt-4o"));
   assert_bool "whitespace around model is trimmed"
     (expect_ok "trim" (Compaction_model.parse_command "  openai/gpt-4o  ") = Compaction_model.Set "openai/gpt-4o")
+
+let test_resolve_empty_settings () =
+  let empty_session_settings =
+    {
+      Compaction_model.session = Some "";
+      project = Some " ";
+      global = Some "openrouter/deepseek/deepseek-v4-pro";
+    }
+  in
+  assert_bool "empty higher-precedence scopes do not shadow global"
+    (Compaction_model.plan_session_before_compact empty_session_settings
+    = Compaction_model.Use_model "openrouter/deepseek/deepseek-v4-pro");
+  let empty_settings =
+    { Compaction_model.session = Some ""; project = Some " "; global = None }
+  in
+  assert_bool "all empty settings use default"
+    (Compaction_model.plan_session_before_compact empty_settings = Compaction_model.Use_default)
 
 let test_plan_command () =
   let settings = { Compaction_model.session = None; global = Some "openai/gpt-4o"; project = None } in
@@ -80,6 +102,7 @@ let test_plan_session_before_compact () =
 let () =
   test_validation ();
   test_parse_command ();
+  test_resolve_empty_settings ();
   test_plan_command ();
   test_plan_session_before_compact ();
   print_endline "test_compaction_model: ok"

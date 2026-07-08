@@ -16,10 +16,11 @@
     "smoke:exa-contracts": "bun test/smoke_exa_contracts.mjs",
     "smoke:cron-loop": "bun test/smoke_cron_loop.mjs",
     "smoke:cron-persistence": "bun test/smoke_cron_persistence.mjs",
+    "smoke:compaction-model": "bun test/smoke_compaction_model.mjs",
     "smoke:tool-renderers": "bun test/smoke_tool_renderers.mjs",
     "smoke:util": "bun test/smoke_util.mjs",
     "smoke:entrypoint": "bun test/smoke_entrypoint.mjs",
-    "gate": "npm run build:ocaml && npm run test:ocaml && npm run smoke:artifact && npm run smoke:tool-contracts && npm run smoke:exa-contracts && npm run smoke:cron-loop && npm run smoke:cron-persistence && npm run smoke:tool-renderers && npm run smoke:util && npm run smoke:entrypoint"
+    "gate": "npm run build:ocaml && npm run test:ocaml && npm run smoke:artifact && npm run smoke:tool-contracts && npm run smoke:exa-contracts && npm run smoke:cron-loop && npm run smoke:cron-persistence && npm run smoke:compaction-model && npm run smoke:tool-renderers && npm run smoke:util && npm run smoke:entrypoint"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.79.9",
