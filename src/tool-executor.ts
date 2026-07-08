@@ -879,8 +879,8 @@ export function registerGatewayTools(
         promptSnippet: spec.promptSnippet,
         promptGuidelines: spec.promptGuidelines ?? [],
         parameters: spec.parameters,
-        renderShell: "default",
         ...renderersForTool(name),
+        renderShell: "self",
         execute: async (...args) => {
           const { params, signal, ctx } = readInvocation(args);
           return executeTool(pi, core, childSessions, pendingAgentWaits, name, params, ctx, signal);

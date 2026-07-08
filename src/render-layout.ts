@@ -26,6 +26,11 @@ const ELLIPSIS = "…";
 
 export type Block = { readonly header: HeaderSpec; readonly body: Body | undefined };
 
+function terminalSafeWidth(width: number): number {
+  const targetWidth = Math.max(1, width);
+  return targetWidth > 1 ? targetWidth - 1 : targetWidth;
+}
+
 function layoutHeader(header: HeaderSpec, expanded: boolean, width: number): string[] {
   const full =
     header.subject === ""
@@ -78,15 +83,16 @@ export function renderBlock(block: Block, expanded: boolean): { render(width: nu
     render(width: number): string[] {
       if (cache !== undefined && cache.width === width) return cache.lines;
       const targetWidth = Math.max(1, width);
-      const lines = layoutHeader(block.header, expanded, targetWidth);
+      const contentWidth = terminalSafeWidth(targetWidth);
+      const lines = layoutHeader(block.header, expanded, contentWidth);
       if (block.body !== undefined) {
         if (block.body.mode === "rail") {
-          lines.push(...layoutRail(block.body.entries, expanded, targetWidth));
+          lines.push(...layoutRail(block.body.entries, expanded, contentWidth));
         } else {
-          lines.push(...layoutFlush(block.body.entries, block.body.clip, targetWidth));
+          lines.push(...layoutFlush(block.body.entries, block.body.clip, contentWidth));
         }
       }
-      const clamped = lines.map((line) => clampLine(line, targetWidth));
+      const clamped = lines.map((line) => clampLine(line, contentWidth));
       cache = { width, lines: clamped };
       return clamped;
     },

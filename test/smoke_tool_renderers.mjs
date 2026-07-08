@@ -210,6 +210,27 @@ assert(/• exec_command · ls many-files \(session 4\)/.test(runningSession) &&
   }
 }
 
+// Tool renderers must not write into the terminal's last column. A rendered line
+// with visible width exactly equal to the terminal width can still trigger
+// terminal auto-wrap; when that happens, ANSI/background state may smear after
+// the wrapped continuation fragment.
+{
+  const edgeOutput = [
+    "165:      constructor(",
+    "399:  private get settingsManager() {",
+    "403:  constructor(runtimeHost: AgentSessionRuntime, options: InteractiveModeOptions) {",
+  ].join("\n");
+  const edgeResult = { content: [{ type: "text", text: edgeOutput }], details: { ok: true, output: edgeOutput, exitCode: 0 } };
+  const edgeArgs = { cmd: 'rg -n "private .*settingsManager|constructor\\(" packages/coding-agent/src/modes/interactive' };
+  for (const width of [40, 80]) {
+    const lines = renderersForTool("exec_command").renderResult(edgeResult, { expanded: false, isPartial: false }, theme, { args: edgeArgs }).render(width);
+    const terminalEdgeLines = lines
+      .map((line, index) => ({ index, width: visibleWidth(line), line }))
+      .filter((line) => line.width >= width);
+    assert(terminalEdgeLines.length === 0, `exec renderer wrote to the terminal edge at width ${width}: ${JSON.stringify(terminalEdgeLines[0])}`);
+  }
+}
+
 // write — content head + `(N lines)`.
 const writeCompact = renderText(renderersForTool("write").renderResult(resultFor("write"), { expanded: false, isPartial: false }, theme, { args: argsFor("write") }));
 assert(/• write · src\/example\.txt \(24 lines\)/.test(writeCompact), `write subject should be path (N lines): ${writeCompact}`);

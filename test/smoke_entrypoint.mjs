@@ -541,6 +541,9 @@ try {
   for (const name of ["exec_command", "write_stdin"]) {
     assert(typeof tools.get(name).renderCall === "function" && typeof tools.get(name).renderResult === "function", `${name} did not register compact shell renderers`);
   }
+  for (const name of tools.keys()) {
+    assert(tools.get(name).renderShell === "self", `${name} must use self render shell so Pi does not background-paint multiline tool bodies`);
+  }
   const plainTheme = { fg: (_color, value) => value, bold: (value) => value };
   const longShellOutput = Array.from({ length: 20 }, (_, index) => `file-${index + 1}`).join("\n");
   const shellResult = { content: [{ type: "text", text: longShellOutput }], details: { ok: true, output: longShellOutput, exitCode: 0 } };
