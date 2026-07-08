@@ -137,6 +137,7 @@ function subjectFromArgs(name: string, args: Record<string, unknown>): string {
     case "write":
     case "edit":
     case "read":
+    case "view_media":
       return stringFieldOrUndefined(args, "path") ?? "";
     case "apply_patch":
       return oneLine(stringFieldOrUndefined(args, "input") ?? stringFieldOrUndefined(args, "patch") ?? "patch");
@@ -346,6 +347,26 @@ function buildRead(name: string, result: unknown, options: unknown, theme: unkno
   }
   if (entries.length === 0) return { header, body: undefined };
   return { header, body: { mode: "rail", entries } };
+}
+
+function buildViewMedia(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
+  const expanded = expandedFromOptions(options);
+  const details = detailsRecord(result);
+  const path = stringFieldOrUndefined(details, "path") ?? stringFieldOrUndefined(args, "path") ?? "";
+  const width = numberFieldOrUndefined(details, "width");
+  const height = numberFieldOrUndefined(details, "height");
+  const originalWidth = numberFieldOrUndefined(details, "originalWidth");
+  const originalHeight = numberFieldOrUndefined(details, "originalHeight");
+  const wasResized = boolFieldOrUndefined(details, "wasResized") === true;
+  const dimensions =
+    width === undefined || height === undefined
+      ? ""
+      : wasResized && originalWidth !== undefined && originalHeight !== undefined
+        ? ` (${originalWidth}x${originalHeight} -> ${width}x${height})`
+        : ` (${width}x${height})`;
+  const header = headerSpec(name, `${path}${dimensions}`, dotFromDetails(details), theme);
+  if (!expanded) return { header, body: undefined };
+  return { header, body: { mode: "rail", entries: fullTextEntries(textContent(result), theme) } };
 }
 
 function buildWrite(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
@@ -912,6 +933,7 @@ function progressText(name: string): string {
   if (name === "query_threads") return "searching threads";
   if (name === "read_thread") return "reading thread";
   if (name === "read") return "reading";
+  if (name === "view_media") return "viewing image";
   if (name === "agent_wait") return "waiting";
   return "running";
 }
@@ -919,6 +941,7 @@ function progressText(name: string): string {
 function buildResult(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
   if (name === "exec_command" || name === "write_stdin") return buildShell(name, result, options, theme, args);
   if (name === "read") return buildRead(name, result, options, theme, args);
+  if (name === "view_media") return buildViewMedia(name, result, options, theme, args);
   if (name === "write") return buildWrite(name, result, options, theme, args);
   if (name === "edit") return buildEdit(name, result, options, theme, args);
   if (name === "apply_patch") return buildApplyPatch(name, result, options, theme, args);

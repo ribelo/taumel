@@ -6,4 +6,5 @@ let canonical_tool_specs =
     { Tool_gateway.name = "write"; effect_kind = Tool_gateway.Mutate };
     { Tool_gateway.name = "edit"; effect_kind = Tool_gateway.Mutate };
     { Tool_gateway.name = "read"; effect_kind = Tool_gateway.Pure };
+    { Tool_gateway.name = "view_media"; effect_kind = Tool_gateway.Pure };
   ]

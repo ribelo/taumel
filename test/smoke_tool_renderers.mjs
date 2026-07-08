@@ -141,7 +141,7 @@ for (const name of toolNames) {
   const call = renderText(renderers.renderCall(args, theme, { isPartial: true }));
   assert(call.startsWith("•"), `${name} call header should start with the • dot: ${call}`);
   assert(call.includes(name), `${name} call header should name the tool: ${call}`);
-  assert(/\(running\)|\(searching threads\)|\(reading thread\)|\(reading\)|\(waiting\)|\(waiting for Exa\)/.test(call), `${name} call header should carry a dim progress suffix: ${call}`);
+  assert(/\(running\)|\(searching threads\)|\(reading thread\)|\(reading\)|\(viewing image\)|\(waiting\)|\(waiting for Exa\)/.test(call), `${name} call header should carry a dim progress suffix: ${call}`);
 
   const result = resultFor(name);
   const compact = renderText(renderers.renderResult(result, { expanded: false, isPartial: false }, theme, { args }));

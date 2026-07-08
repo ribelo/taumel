@@ -1,10 +1,25 @@
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import * as photon from "@silvia-odwyer/photon-node";
 
 import taumel from "../src/index.ts";
 import { renderComposerInput, SkillAutocompleteProvider } from "../src/composer.ts";
 import { applyChildSessionUpdate } from "../src/tool-executor.ts";
+
+function solidPngBytes(width, height) {
+  const rgba = new Uint8Array(width * height * 4);
+  for (let index = 0; index < rgba.length; index += 4) {
+    rgba[index] = 255;
+    rgba[index + 3] = 255;
+  }
+  const image = new photon.PhotonImage(rgba, width, height);
+  try {
+    return Buffer.from(image.get_bytes());
+  } finally {
+    image.free();
+  }
+}
 
 const cwd = await mkdtemp(join(tmpdir(), "taumel-entrypoint-"));
 const originalFetch = globalThis.fetch;
@@ -384,7 +399,7 @@ try {
         return selectBehavior(title, labels);
       },
     },
-    model: { provider: "openai-codex", id: "gpt-test" },
+    model: { provider: "openai-codex", id: "gpt-test", input: ["text", "image"] },
     getContextUsage: () => ({ percent: 1, contextWindow: 1000 }),
     hasPendingMessages: () => pendingMessages,
     modelRegistry: {
@@ -1407,6 +1422,47 @@ try {
     const readMissing = await tools.get("read").execute("read-missing", { path: join(cwd, "nope.txt") }, undefined, undefined, ctx);
     if (readMissing.details?.ok !== false || !readMissing.content?.[0]?.text?.includes("does not exist")) {
       throw new Error(`read of a missing file should error: ${JSON.stringify(readMissing)}`);
+    }
+
+    // view_media: fail early for text-only models, then resize an oversized image through OCaml/Photon.
+    const noVisionResult = await tools.get("view_media").execute(
+      "view-no-vision",
+      { path: "missing.png" },
+      undefined,
+      undefined,
+      { ...ctx, model: { provider: "openai-codex", id: "text-only", input: ["text"] } },
+    );
+    if (
+      noVisionResult.details?.ok !== false ||
+      noVisionResult.content?.[0]?.text !== "Current model does not support image input"
+    ) {
+      throw new Error(`view_media did not reject a text-only model before reading files: ${JSON.stringify(noVisionResult)}`);
+    }
+    const oversizedImagePath = join(cwd, "oversized.png");
+    await writeFile(oversizedImagePath, solidPngBytes(4096, 1024));
+    const viewMediaResult = await tools.get("view_media").execute(
+      "view-oversized",
+      { path: "oversized.png" },
+      undefined,
+      undefined,
+      ctx,
+    );
+    const imageContent = viewMediaResult.content?.find((item) => item?.type === "image");
+    if (
+      viewMediaResult.details?.ok !== true ||
+      viewMediaResult.details?.wasResized !== true ||
+      typeof imageContent?.data !== "string" ||
+      typeof imageContent?.mimeType !== "string"
+    ) {
+      throw new Error(`view_media did not return a resized image content block: ${JSON.stringify(viewMediaResult)}`);
+    }
+    const resizedImage = photon.PhotonImage.new_from_byteslice(Buffer.from(imageContent.data, "base64"));
+    try {
+      if (resizedImage.get_width() > 2048 || resizedImage.get_height() > 768) {
+        throw new Error(`view_media resized dimensions exceeded limit: ${resizedImage.get_width()}x${resizedImage.get_height()}`);
+      }
+    } finally {
+      resizedImage.free();
     }
 
     // write append mode.
@@ -3684,7 +3740,7 @@ try {
     ui: {
       notify: (message, type) => invalidNotifications.push({ message, type }),
     },
-    model: { provider: "openai-codex", id: "gpt-test" },
+    model: { provider: "openai-codex", id: "gpt-test", input: ["text", "image"] },
     getContextUsage: () => ({ percent: 1, contextWindow: 1000 }),
     sessionManager: {
       getSessionId: () => "invalid-first-start",

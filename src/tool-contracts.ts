@@ -139,6 +139,13 @@ const ReadParamsSchema = Type.Object(
   { $id: "ReadParams", additionalProperties: false },
 );
 
+const ViewMediaParamsSchema = Type.Object(
+  {
+    path: Type.String({ description: "Path to the image file to view (relative or absolute)" }),
+  },
+  { $id: "ViewMediaParams", additionalProperties: false },
+);
+
 const EditParamsSchema = Type.Object(
   {
     path: Type.String({ description: "Path to the file to edit (relative or absolute)" }),
@@ -365,6 +372,7 @@ export const dtsSchemas = [
   ["ApplyPatchParams", ApplyPatchParamsSchema],
   ["WriteParams", WriteParamsSchema],
   ["ReadParams", ReadParamsSchema],
+  ["ViewMediaParams", ViewMediaParamsSchema],
   ["EditParams", EditParamsSchema],
   ["CreateGoalParams", CreateGoalParamsSchema],
   ["UpdateGoalParams", UpdateGoalParamsSchema],
@@ -391,6 +399,7 @@ export const toolParamSchemas = [
   { name: "apply_patch", interfaceName: "ApplyPatchParams", schema: ApplyPatchParamsSchema },
   { name: "write", interfaceName: "WriteParams", schema: WriteParamsSchema },
   { name: "read", interfaceName: "ReadParams", schema: ReadParamsSchema },
+  { name: "view_media", interfaceName: "ViewMediaParams", schema: ViewMediaParamsSchema },
   { name: "edit", interfaceName: "EditParams", schema: EditParamsSchema },
   { name: "agent_spawn", interfaceName: "AgentSpawnParams", schema: AgentSpawnParamsSchema },
   { name: "agent_send", interfaceName: "AgentSendParams", schema: AgentSendParamsSchema },
@@ -584,6 +593,18 @@ export const toolContracts: readonly ToolContract[] = [
       "Use offset/limit to page large files; a negative offset (e.g. -50) reads the last N lines.",
     ],
     parameters: toolParameters(ReadParamsSchema),
+  },
+  {
+    name: "view_media",
+    label: "view_media",
+    description:
+      "Read an image file, resize it if needed, and present it to the model visually.",
+    promptSnippet: "Read images (PNG, JPEG, GIF, or WebP) and present them to the model visually.",
+    promptGuidelines: [
+      "Use view_media to inspect image files instead of read.",
+      "Supports PNG, JPEG, GIF, and WebP images. Other binary files are not supported.",
+    ],
+    parameters: toolParameters(ViewMediaParamsSchema),
   },
   {
     name: "write",

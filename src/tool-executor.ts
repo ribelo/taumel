@@ -292,14 +292,36 @@ async function runPreparedExec(
   return result;
 }
 
+function defaultCwdFromContext(ctx: unknown): string {
+  return isRecord(ctx) && typeof ctx["cwd"] === "string" && ctx["cwd"] !== "" ? ctx["cwd"] : process.cwd();
+}
+
 async function runPreparedRead(
   core: CoreBridge,
   prepared: Record<string, unknown>,
+  ctx: unknown,
 ) {
   return await coreCallRecord(core, "readFile", [
     prepared,
-    { defaultCwd: process.cwd() },
+    { defaultCwd: defaultCwdFromContext(ctx) },
   ], "read result");
+}
+
+async function runPreparedViewMedia(
+  core: CoreBridge,
+  prepared: Record<string, unknown>,
+  ctx: unknown,
+) {
+  return await coreCallRecord(core, "viewMedia", [
+    prepared,
+    { defaultCwd: defaultCwdFromContext(ctx) },
+  ], "view_media result");
+}
+
+function contextModelSupportsImages(ctx: unknown): boolean {
+  if (!isRecord(ctx) || !isRecord(ctx["model"])) return false;
+  const input = ctx["model"]["input"];
+  return Array.isArray(input) && input.includes("image");
 }
 
 async function writePreparedStdin(
@@ -593,6 +615,10 @@ export async function executeTool(
   if (!parsed.ok) {
     return errorToolResult(core, parsed.error, { ok: false, error: parsed.error });
   }
+  if (name === "view_media" && !contextModelSupportsImages(ctx)) {
+    const error = "Current model does not support image input";
+    return errorToolResult(core, error, { ok: false, error, modelSupportsImages: false });
+  }
   const prepared = preparedAction(core, name, parsed.params, ctx);
   if (prepared["ok"] !== true) {
     return errorToolResult(core, requiredError(prepared, "tool preparation"), prepared);
@@ -743,7 +769,9 @@ export async function executeTool(
     case "write":
       return executeLegacyWrite(core, prepared);
     case "read":
-      return runPreparedRead(core, prepared);
+      return runPreparedRead(core, prepared, ctx);
+    case "view_media":
+      return runPreparedViewMedia(core, prepared, ctx);
     case "edit":
       return executeLegacyEdit(core, prepared);
     case "apply_patch":
