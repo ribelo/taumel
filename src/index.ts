@@ -16,6 +16,7 @@ import { builtinAgentProfileNames, taumelGlobalSettingsPath, type TaumelConfigDi
 import { installCronLoop } from "./cron.ts";
 import { toolNames } from "./tool-contracts.ts";
 import { installSkillResolver } from "./skills.ts";
+import { installThinkingFooterRefresh, registerThinkingShortcuts } from "./thinking-shortcuts.ts";
 import { skillMessageRenderer } from "./tool-renderer.ts";
 import { installVisibilityLifecycle } from "./visibility.ts";
 
@@ -353,6 +354,8 @@ export default async function taumel(pi: PiLike) {
   const core = requireCoreBridge(coreGlobal.taumel);
 
   core.init(makeHost(pi));
+  installThinkingFooterRefresh(pi, core);
+  registerThinkingShortcuts(pi);
   installVisibilityLifecycle(pi, core);
   const childSessions = new Map<string, ChildSessionBridge>();
   const composer = await createComposerController(pi);

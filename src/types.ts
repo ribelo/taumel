@@ -62,6 +62,11 @@ export type CommandDefinition = {
   readonly handler: (args: string, ctx: unknown) => unknown | Promise<unknown>;
 };
 
+export type ShortcutDefinition = {
+  readonly description: string;
+  readonly handler: (ctx: unknown) => unknown | Promise<unknown>;
+};
+
 export type PiLike = {
   readonly on: (event: string, handler: EventHandler) => void;
   readonly subscribe?: (handler: EventHandler) => Unsubscribe;
@@ -75,6 +80,7 @@ export type PiLike = {
     options: HostExecOptions,
   ) => Promise<HostExecResult>;
   readonly getThinkingLevel?: () => string | null | undefined;
+  readonly setThinkingLevel?: (level: string) => void;
   readonly getFlag?: (name: string) => unknown;
   readonly getAllTools?: () => readonly unknown[];
   readonly getActiveTools?: () => readonly string[];
@@ -85,6 +91,7 @@ export type PiLike = {
     renderer: (message: unknown, options: unknown, theme: unknown) => unknown,
   ) => void;
   readonly registerCommand?: (name: string, command: CommandDefinition) => void;
+  readonly registerShortcut?: (shortcut: string, shortcutDefinition: ShortcutDefinition) => void;
   readonly writeStdin?: (
     sessionId: number,
     chars: string,

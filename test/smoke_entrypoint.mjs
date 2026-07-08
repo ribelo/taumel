@@ -69,6 +69,8 @@ const fetchCalls = [];
 const sentMessages = [];
 const sentUserMessages = [];
 const messageRenderers = new Map();
+const shortcuts = new Map();
+const footerFactories = [];
 const childSendResponses = [];
 const childDispatchCalls = [];
 const childLifecycleCalls = [];
@@ -93,6 +95,7 @@ let pendingMessages = false;
 // being mid-turn (e.g. about to call agent_wait), so the completion stays pending
 // and an agent_wait can claim it before any turn_end flush.
 let parentIdle = true;
+let thinkingLevel = "medium";
 let renderRequests = 0;
 let confirmBehavior = async () => true;
 let selectBehavior = async (_title, labels) => labels[0];
@@ -175,7 +178,11 @@ const pi = {
   },
   getThinkingLevel: () => {
     runtimeActionGuard();
-    return "medium";
+    return thinkingLevel;
+  },
+  setThinkingLevel: (level) => {
+    runtimeActionGuard();
+    thinkingLevel = level;
   },
   getActiveTools: () => {
     runtimeActionGuard();
@@ -191,6 +198,9 @@ const pi = {
   },
   registerCommand: (name, command) => {
     commands.set(name, command);
+  },
+  registerShortcut: (shortcut, definition) => {
+    shortcuts.set(shortcut, definition);
   },
   registerMessageRenderer: (customType, renderer) => {
     messageRenderers.set(customType, renderer);
@@ -338,6 +348,12 @@ try {
   if (!messageRenderers.has("skill") || messageRenderers.has(oldSkillCustomType)) {
     throw new Error(`skill renderer registered under wrong custom type: ${JSON.stringify([...messageRenderers.keys()])}`);
   }
+  for (const shortcut of ["alt+,", "shift+down", "alt+.", "shift+up"]) {
+    if (!shortcuts.has(shortcut)) throw new Error(`thinking shortcut was not registered: ${shortcut}`);
+  }
+  if (!handlers.has("thinking_level_select")) {
+    throw new Error("thinking footer refresh handler was not registered");
+  }
 
   const parentEntries = [];
   const parentBranch = [
@@ -348,7 +364,7 @@ try {
     cwd,
     hasUI: true,
     ui: {
-      setFooter: () => undefined,
+      setFooter: (factory) => footerFactories.push(factory),
       notify: (message, type) => notifications.push({ message, type }),
       requestRender: () => {
         renderRequests += 1;
@@ -395,6 +411,31 @@ try {
       getBranch: () => parentBranch,
     },
   };
+
+  notifications.length = 0;
+  footerFactories.length = 0;
+  thinkingLevel = "medium";
+  shortcuts.get("alt+,").handler(ctx);
+  if (thinkingLevel !== "low" || notifications.at(-1)?.message !== "Thinking level: low") {
+    throw new Error(`alt+, did not lower thinking like Pi thinking status: ${JSON.stringify({ thinkingLevel, notifications })}`);
+  }
+  shortcuts.get("shift+up").handler(ctx);
+  if (thinkingLevel !== "medium" || notifications.at(-1)?.message !== "Thinking level: medium") {
+    throw new Error(`shift+up did not raise thinking like Pi thinking status: ${JSON.stringify({ thinkingLevel, notifications })}`);
+  }
+  for (const handler of handlers.get("thinking_level_select") ?? []) {
+    handler({ type: "thinking_level_select", level: thinkingLevel }, ctx);
+  }
+  thinkingLevel = "off";
+  shortcuts.get("shift+down").handler(ctx);
+  if (thinkingLevel !== "off" || notifications.at(-1)?.message !== "Thinking level: off") {
+    throw new Error(`shift+down did not clamp thinking at off: ${JSON.stringify({ thinkingLevel, notifications })}`);
+  }
+  thinkingLevel = "high";
+  shortcuts.get("alt+.").handler(ctx);
+  if (thinkingLevel !== "xhigh" || notifications.at(-1)?.message !== "Thinking level: xhigh") {
+    throw new Error(`alt+. did not raise thinking: ${JSON.stringify({ thinkingLevel, notifications })}`);
+  }
 
   for (const handler of handlers.get("session_start") ?? []) {
     handler({ type: "session_start" }, ctx);

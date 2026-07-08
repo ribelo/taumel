@@ -76,6 +76,7 @@ let core_call name_js args_js =
   | "cronGoalFacts" -> Cron_tools.goal_facts (arg 0)
   | "cronStartup" -> Cron_tools.startup (arg 0) (arg 1)
   | "cronUpdateTask" -> Cron_tools.update_task (arg 0) (arg 1)
+  | "refreshFooterState" -> Footer_runtime.refresh_state (arg 0)
   | "planChildGoalContinuation" ->
       Goal_tools.plan_child_goal_continuation (arg 0)
   | "startGoalTurn" ->

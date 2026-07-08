@@ -117,3 +117,9 @@ let register_handlers host =
 let init host =
   active_host := Some host;
   register_handlers host
+
+let refresh_state ctx =
+  let host = active_host_or_empty () in
+  Session_sync.update_session_state host ctx;
+  emit_changed host;
+  ok_obj [ ("action", js_string "refresh_footer_state") ]
