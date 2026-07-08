@@ -19,6 +19,8 @@ type session = {
   mutable session_id_exposed : bool;
   mutable terminal_consumed : bool;
   mutable notification_sent : bool;
+  mutable notification_delivery_claimed : bool;
+  mutable active_write_stdin_waiters : int;
   mutable waiters : (int * (unit -> unit)) list;
   mutable next_waiter_id : int;
 }
@@ -716,6 +718,8 @@ let new_session owner_id tty =
     session_id_exposed = false;
     terminal_consumed = false;
     notification_sent = false;
+    notification_delivery_claimed = false;
+    active_write_stdin_waiters = 0;
     waiters = [];
     next_waiter_id = 1;
   }
@@ -769,36 +773,52 @@ let resolved_promise value =
              ignore (Unsafe.fun_call resolve [| inject value |])));
     |]
 
-let promise_of_session session yield_ms ?timeout_ms signal extra =
+let promise_of_session session yield_ms ?timeout_ms
+    ?(abort_disposition = `Kill_session) ?(write_stdin_waiter = false) signal
+    extra =
   Unsafe.new_obj (Unsafe.get Unsafe.global "Promise")
     [|
       inject
         (Js.wrap_callback (fun resolve reject ->
              let settled = ref false in
              let timeout_ref = ref None in
+             if write_stdin_waiter then
+               session.active_write_stdin_waiters <-
+                 session.active_write_stdin_waiters + 1;
              let cleanup () = Option.iter timer_clear !timeout_ref in
+             let clear_write_stdin_waiter () =
+               if write_stdin_waiter then
+                 session.active_write_stdin_waiters <-
+                   max 0 (session.active_write_stdin_waiters - 1)
+             in
              let resolve_once () =
                if not !settled then (
                  settled := true;
                  cleanup ();
+                 clear_write_stdin_waiter ();
                  finish_session session extra resolve)
              in
-             let reject_once message =
+             let reject_once ?(kill = false) message =
                if not !settled then (
                  settled := true;
                  cleanup ();
-                 kill_session session;
-                 close_temp session;
-                 Hashtbl.remove sessions session.id;
+                 clear_write_stdin_waiter ();
+                 if kill then (
+                   kill_session session;
+                   close_temp session;
+                   Hashtbl.remove sessions session.id);
                  reject_error reject message)
              in
              let on_abort () =
-               let body = (make_result session).output in
-               let message =
-                 if body = "" then "Command aborted"
-                 else body ^ "\n\nCommand aborted"
-               in
-               reject_once message
+               match abort_disposition with
+               | `Kill_session ->
+                   let body = (make_result session).output in
+                   let message =
+                     if body = "" then "Command aborted"
+                     else body ^ "\n\nCommand aborted"
+                   in
+                   reject_once ~kill:true message
+               | `Keep_session -> reject_once "Operation aborted"
              in
              if signal_aborted signal then on_abort ()
              else (
@@ -837,7 +857,7 @@ let run_exec_command prepared host runtime owner_id signal force_unsandboxed =
         (normalize_exec_yield_ms call.yield_time_ms)
         ?timeout_ms:call.timeout_ms signal extra
 
-let write_stdin prepared owner_id =
+let write_stdin prepared owner_id signal =
   match int_field prepared "sessionId" with
   | None -> rejected_promise "write_stdin requires sessionId"
   | Some session_id -> (
@@ -884,7 +904,8 @@ let write_stdin prepared owner_id =
   | Some session ->
       let chars = get_string prepared "chars" in
       let stdin_error =
-        if chars <> "" && session.exited then
+        if signal_aborted signal then Some "Operation aborted"
+        else if chars <> "" && session.exited then
           Some
             (Printf.sprintf "session %d already completed; cannot write stdin"
                session_id)
@@ -901,13 +922,13 @@ let write_stdin prepared owner_id =
       (match stdin_error with
       | Some message -> rejected_promise message
       | None ->
-        let extra = Unsafe.obj [| ("kind", js_string "write_stdin") |] in
-        promise_of_session session
-          (normalize_write_yield_ms
-             (optional_positive_float prepared "yieldTimeMs")
-             (chars = ""))
-          (Unsafe.inject Js.undefined)
-          extra)
+          let extra = Unsafe.obj [| ("kind", js_string "write_stdin") |] in
+          promise_of_session session
+            (normalize_write_yield_ms
+               (optional_positive_float prepared "yieldTimeMs")
+               (chars = ""))
+            ~abort_disposition:`Keep_session ~write_stdin_waiter:true signal
+            extra)
   )
 
 let shutdown_owner owner_id =
@@ -939,36 +960,57 @@ let exec_notification_content (session : session) =
     "Command session %d has finished. To read and consume the result, call write_stdin with session_id=%d, chars=\"\", yield_time_ms=5000."
     session.id session.id
 
+let exec_notification_deliverable owner_id session =
+  session.owner_id = owner_id && session.exited
+  && (not session.terminal_consumed)
+  && session.active_write_stdin_waiters = 0
+  && (not session.notification_sent)
+  && not session.notification_delivery_claimed
+
+let exec_notification_obj session =
+  Unsafe.obj
+    [|
+      ("session_id", js_number (float_of_int session.id));
+      ("customType", js_string "notification");
+      ("content", js_string (exec_notification_content session));
+      ("display", js_bool true);
+    |]
+
 (* Pending deliverable background completions for [owner_id]: terminal sessions
-   that have not yet been consumed and whose completion notification has not
-   been sent. Read-only; successful delivery updates only notification state. *)
+   that have not yet been consumed, are not currently claimed by write_stdin,
+   and whose completion notification has not been sent. Read-only; successful
+   delivery updates only notification state. *)
 let pending_exec_notifications owner_id =
   let pending =
     Hashtbl.fold
       (fun _ session acc ->
-        if
-          session.owner_id = owner_id && session.exited
-          && (not session.terminal_consumed)
-          && not session.notification_sent
-        then session :: acc
+        if exec_notification_deliverable owner_id session then session :: acc
         else acc)
       sessions []
   in
   let pending = List.sort (fun a b -> compare a.id b.id) pending in
-  let notification (session : session) =
-    Unsafe.obj
-      [|
-        ("session_id", js_number (float_of_int session.id));
-        ("customType", js_string "notification");
-        ("content", js_string (exec_notification_content session));
-        ("display", js_bool true);
-      |]
-  in
-  ok_obj [ ("notifications", js_array (List.map notification pending)) ]
+  ok_obj [ ("notifications", js_array (List.map exec_notification_obj pending)) ]
+
+let claim_exec_notification_delivery owner_id session_id =
+  match Hashtbl.find_opt sessions session_id with
+  | Some session when exec_notification_deliverable owner_id session ->
+      session.notification_delivery_claimed <- true;
+      let notification = exec_notification_obj session in
+      Unsafe.set notification "claimed" (js_bool true);
+      notification
+  | _ -> ok_obj [ ("claimed", js_bool false) ]
+
+let release_exec_notification_delivery session_id =
+  (match Hashtbl.find_opt sessions session_id with
+  | Some session when not session.notification_sent ->
+      session.notification_delivery_claimed <- false
+  | _ -> ());
+  ok_obj [ ("action", js_string "release_exec_notification_delivery") ]
 
 let mark_exec_notification_delivered session_id =
   (match Hashtbl.find_opt sessions session_id with
   | Some session ->
+      session.notification_delivery_claimed <- false;
       session.notification_sent <- true
   | None -> ());
   ok_obj [ ("action", js_string "mark_exec_notification_delivered") ]

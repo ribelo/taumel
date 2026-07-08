@@ -49,12 +49,13 @@ the one intentional difference.
 - **exec-rt02** (ubiquitous): The system shall stream all output to a temp file, keep only a bounded rolling tail in memory (last 2000 lines / 50KB), merge stdout and stderr into one ordered stream, and drain incremental deltas per call.
 - **exec-rt03** (event-driven): When the first `exec_command` call runs, the system shall wait up to `yield_time_ms` (default 10000, minimum 250, maximum 30000); if the process exits first it shall return an exit code and no `sessionId`, otherwise it shall return a `sessionId` and no exit code.
 - **exec-rt04** (event-driven): When `write_stdin` runs, the system shall write to stdin for non-empty `chars` on a TTY-backed running session, or poll for empty `chars` (default 250 ms write; empty poll 5000–300000 ms), and remove a live session only after its terminal result has been consumed by an explicit tool response or after owner shutdown.
-- **exec-rt05** (event-driven): When a wait is aborted, the system shall kill the process and reject with "Shell command aborted"; owner shutdown shall kill every live session for that owner; the system shall provide no wall-clock auto-kill timeout.
+- **exec-rt05** (event-driven): When the initial `exec_command` wait is aborted before a `sessionId` is returned, the system shall kill the process and reject with "Shell command aborted"; owner shutdown shall kill every live session for that owner; the system shall provide no wall-clock auto-kill timeout.
 - **exec-rt06** (event-driven): When a live session is removed after terminal output has been consumed, the system shall retain a bounded per-owner terminal session record containing the session id and terminal metadata until at least the next owner turn, and may expire retained records after that bounded window.
 - **exec-rt07** (ubiquitous): The system shall represent terminal-result consumption state as a closed enum with exactly `pending` and `consumed_by_tool`; status-only polls, non-terminal output, and completion notifications shall not change this state.
 - **exec-rt08** (unwanted): If a command's terminal-result consumption state is `consumed_by_tool`, then the system shall reject or make impossible any later transition that would return the terminal result content again.
 - **exec-rt09** (ubiquitous): The system shall represent completion-notification state separately from terminal-result consumption state, so sending an `exec_completion` notification cannot consume, discard, or otherwise satisfy the terminal result.
 - **exec-rt10** (ubiquitous): The system shall represent completion-notification state as a closed enum with exactly `pending` and `sent`; failed notification sends leave the state `pending`, and successful sends transition it to `sent`.
+- **exec-rt11** (event-driven): When the user interrupts a pending `write_stdin` wait, the system shall interrupt only the wait, leave the shell session running or terminal result retained, not mark the terminal result consumed, and not suppress later completion-availability notification or explicit `write_stdin` reads.
 
 ### Result
 
@@ -83,6 +84,9 @@ the one intentional difference.
 - **exec-bg10** (ubiquitous): While the owner session remains live, every completed async command whose terminal result is unconsumed shall remain readable through `write_stdin` until it is consumed or the owner shuts down.
 - **exec-bg11** (ubiquitous): The read instruction in an `exec_completion` notification shall name a poll read and shall not rely on the default empty-poll wait; it shall use the shortest valid empty-poll cap, currently `yield_time_ms = 5000`.
 - **exec-bg12** (ubiquitous): The read instruction shall appear in the visible `notification` content itself; structured details may mirror it for rendering and tests, but hidden details shall not be the only source of the read instruction.
+- **exec-bg13** (event-driven): While a `write_stdin` call is actively waiting on or claiming a session, the background notification queue shall treat that session as unavailable for `exec_completion` delivery; if the `write_stdin` call returns a terminal result it consumes the session, and if it returns only non-terminal status or is aborted the session may become notification-eligible again later.
+- **exec-bg14** (unwanted): A completion notification shall not be sent after a `write_stdin` call for the same session has returned a terminal result, even when process exit wakes both the `write_stdin` waiter and the detached completion waiter in the same event-loop turn.
+- **exec-bg15** (event-driven): Immediately before sending an `exec_completion` custom message, the system shall revalidate and transiently claim the session against the same deliverability rules; if the claim fails the stale pending notification shall be skipped, if send fails the claim shall be released, and only a successful send shall mark notification state `sent`.
 
 ### Rendering and security
 

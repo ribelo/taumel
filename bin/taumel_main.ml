@@ -58,12 +58,18 @@ let core_call name_js args_js =
   | "runExecCommand" ->
       Exec_session.run_exec_command (arg 0) (arg 1) (arg 2)
         (string_arg args 3) (arg 4) (arg 5)
-  | "writeExecStdin" -> Exec_session.write_stdin (arg 0) (string_arg args 1)
+  | "writeExecStdin" ->
+      Exec_session.write_stdin (arg 0) (string_arg args 1) (arg 2)
   | "readFile" -> Read_tool.read_file (arg 0) (arg 1)
   | "viewMedia" -> View_media_tool.view_media (arg 0) (arg 1)
   | "shutdownExecOwner" -> Exec_session.shutdown_owner (string_arg args 0)
   | "pendingExecNotifications" ->
       Exec_session.pending_exec_notifications (string_arg args 0)
+  | "claimExecNotificationDelivery" ->
+      Exec_session.claim_exec_notification_delivery (string_arg args 0)
+        (int_arg args 1)
+  | "releaseExecNotificationDelivery" ->
+      Exec_session.release_exec_notification_delivery (int_arg args 0)
   | "markExecNotificationDelivered" ->
       Exec_session.mark_exec_notification_delivered (int_arg args 0)
   | "awaitExecCompletion" ->

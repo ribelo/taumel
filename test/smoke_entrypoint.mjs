@@ -1352,6 +1352,52 @@ try {
       throw new Error(`write_stdin did not poll session output: ${JSON.stringify({ stdinCalls, stdinResult })}`);
     }
 
+    const abortableExec = await tools.get("exec_command").execute(
+      "exec-abortable-stdin",
+      { cmd: "sleep 0.6; echo abort-survived", workdir: cwd, yield_time_ms: 25 },
+      undefined,
+      undefined,
+      ctx,
+    );
+    const abortableSessionId = abortableExec.details?.sessionId;
+    if (typeof abortableSessionId !== "number") {
+      throw new Error(`abortable exec did not yield a running session: ${JSON.stringify(abortableExec)}`);
+    }
+    const abortStdinController = new AbortController();
+    const abortedStdinPoll = tools.get("write_stdin").execute(
+      "stdin-aborted-poll",
+      { session_id: abortableSessionId, chars: "", yield_time_ms: 5000 },
+      abortStdinController.signal,
+      undefined,
+      ctx,
+    );
+    setTimeout(() => abortStdinController.abort(), 20);
+    let abortedStdinError;
+    try {
+      await Promise.race([
+        abortedStdinPoll,
+        new Promise((_, reject) => setTimeout(() => reject(new Error("write_stdin abort did not return")), 1000)),
+      ]);
+    } catch (error) {
+      abortedStdinError = error;
+    }
+    if (!(abortedStdinError instanceof Error) || !abortedStdinError.message.includes("Operation aborted")) {
+      throw new Error(`write_stdin aborted poll did not reject promptly: ${JSON.stringify({ abortedStdinError })}`);
+    }
+    const afterAbortRead = await tools.get("write_stdin").execute(
+      "stdin-after-aborted-poll",
+      { session_id: abortableSessionId, chars: "", yield_time_ms: 5000 },
+      undefined,
+      undefined,
+      ctx,
+    );
+    if (
+      afterAbortRead.details?.exitCode !== 0 ||
+      !afterAbortRead.content?.[0]?.text.includes("abort-survived")
+    ) {
+      throw new Error(`write_stdin abort consumed or killed the session: ${JSON.stringify(afterAbortRead)}`);
+    }
+
     // Background completion notification: an async command that exits while
     // unpolled is delivered through the same notification queue as subagents
     // (idle parent -> triggerTurn). No write_stdin poll consumes it.
@@ -1400,6 +1446,33 @@ try {
       bgReadAgain.details?.alreadyCompleted !== true
     ) {
       throw new Error(`second background exec read should be status-only retained metadata: ${JSON.stringify(bgReadAgain)}`);
+    }
+
+    const consumedExecNotifyCount = sentMessages.length;
+    const consumedExec = await tools.get("exec_command").execute(
+      "exec-consumed-no-notify",
+      { cmd: "sleep 0.5; echo consumed-complete", workdir: cwd, yield_time_ms: 25 },
+      undefined,
+      undefined,
+      ctx,
+    );
+    const consumedSessionId = consumedExec.details?.sessionId;
+    if (typeof consumedSessionId !== "number") {
+      throw new Error(`consumed exec did not yield a running session: ${JSON.stringify(consumedExec)}`);
+    }
+    const consumedRead = await tools
+      .get("write_stdin")
+      .execute("stdin-consumed-no-notify", { session_id: consumedSessionId, chars: "", yield_time_ms: 5000 }, undefined, undefined, ctx);
+    if (!consumedRead.content?.[0]?.text?.includes("consumed-complete") || consumedRead.details?.exitCode !== 0) {
+      throw new Error(`write_stdin did not consume terminal exec result: ${JSON.stringify(consumedRead)}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const consumedNotifications = sentMessages.slice(consumedExecNotifyCount).filter((entry) =>
+      entry?.message?.customType === "notification" &&
+      entry?.message?.content?.includes(`Command session ${consumedSessionId} has finished`)
+    );
+    if (consumedNotifications.length !== 0) {
+      throw new Error(`consumed terminal exec result produced notification: ${JSON.stringify(consumedNotifications)}`);
     }
 
     // read tool: line-numbered output, negative-offset tail, and missing-file error.

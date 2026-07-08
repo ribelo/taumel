@@ -232,15 +232,25 @@ export async function flushPendingExecNotifications(
   for (const notification of notifications) {
     if (!isRecord(notification)) continue;
     const sessionId = optionalNumberField(notification, "session_id");
-    const sent = await deliverNotificationMessage(
-      pi,
-      stringField(notification, "content"),
-      stringField(notification, "customType"),
-      notification["display"] === true,
-      mode,
-    );
-    if (sent && sessionId !== undefined) {
-      core.call("markExecNotificationDelivered", [sessionId]);
+    if (sessionId === undefined) continue;
+    const claim = coreCallRecord(core, "claimExecNotificationDelivery", [ownerId, sessionId], "exec notification claim");
+    if (claim["claimed"] !== true) continue;
+    try {
+      const sent = await deliverNotificationMessage(
+        pi,
+        stringField(claim, "content"),
+        stringField(claim, "customType"),
+        claim["display"] === true,
+        mode,
+      );
+      if (sent) {
+        core.call("markExecNotificationDelivered", [sessionId]);
+      } else {
+        core.call("releaseExecNotificationDelivery", [sessionId]);
+      }
+    } catch (error) {
+      core.call("releaseExecNotificationDelivery", [sessionId]);
+      throw error;
     }
   }
 }

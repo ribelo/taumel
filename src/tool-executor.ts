@@ -328,10 +328,12 @@ async function writePreparedStdin(
   core: CoreBridge,
   prepared: Record<string, unknown>,
   ctx: unknown,
+  signal?: AbortSignal,
 ) {
   return await coreCallRecord(core, "writeExecStdin", [
     prepared,
     sessionInfoFromContext(ctx).sessionId ?? "current",
+    signal ?? null,
   ], "write_stdin result");
 }
 
@@ -738,7 +740,7 @@ export async function executeTool(
       return runPreparedExec(pi, core, prepared, ctx, signal, approvalPlan["forceUnsandboxed"] === true);
     }
     case "write_stdin":
-      return writePreparedStdin(core, prepared, ctx);
+      return writePreparedStdin(core, prepared, ctx, signal);
     case "write_approval":
       return withMutationApproval(core, "write", prepared, ctx, signal, () =>
         executeLegacyWrite(core, {
