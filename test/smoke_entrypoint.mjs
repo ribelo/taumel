@@ -103,6 +103,7 @@ const agentToolNames = [
 let activeTools = ["bash", "write", "usage", "bash"];
 let sandboxMode = undefined;
 let extensionLoading = true;
+let runtimeStale = false;
 let childCounter = 0;
 let pendingMessages = false;
 // Models pi.isIdle(): when true, a child completion flushes immediately via a
@@ -123,6 +124,9 @@ const pushHandler = (map, event, handler) => {
 };
 
 const runtimeActionGuard = () => {
+  if (runtimeStale) {
+    throw new Error("This extension ctx is stale after session replacement or reload.");
+  }
   if (extensionLoading) {
     throw new Error("Extension runtime not initialized. Action methods cannot be called during extension loading.");
   }
@@ -663,6 +667,122 @@ try {
   }
   if (sentMessages.length !== 0) {
     throw new Error(`goal agent_end queued from stale ctx: ${JSON.stringify(sentMessages)}`);
+  }
+
+  const coreBridge = globalThis.taumel;
+  const originalWarnForCore = console.warn;
+  const staleCoreWarnings = [];
+  console.warn = (...args) => staleCoreWarnings.push(args.map(String).join(" "));
+  try {
+    const continuation = coreBridge.call("planGoalContinuation", [false, {
+      hostIdle: true,
+      hasPendingMessages: false,
+      retrying: false,
+      compacting: false,
+    }, { type: "agent_end", messages: [assistantMessage()] }, staleAgentEndCtx]);
+    if (continuation?.action !== "none") {
+      throw new Error(`stale goal continuation core call did not decline: ${JSON.stringify(continuation)}`);
+    }
+    const facts = coreBridge.call("cronGoalFacts", [staleAgentEndCtx]);
+    if (facts?.goalSlotFree !== false || facts?.goalDriving !== true) {
+      throw new Error(`stale cron goal facts were not conservative: ${JSON.stringify(facts)}`);
+    }
+    const poll = coreBridge.call("cronPoll", [{
+      now: Date.now(),
+      hostIdle: true,
+      goalDriving: false,
+      goalSlotFree: true,
+    }, staleAgentEndCtx]);
+	    if (poll?.action !== "none") {
+	      throw new Error(`stale cron poll did not decline: ${JSON.stringify(poll)}`);
+	    }
+    for (const handler of handlers.get("before_agent_start") ?? []) {
+      const promptPatch = handler({ type: "before_agent_start", systemPrompt: "base" }, staleAgentEndCtx);
+      if (promptPatch !== undefined) {
+        throw new Error(`stale goal system prompt returned a prompt patch: ${JSON.stringify(promptPatch)}`);
+      }
+    }
+	    const liveCronBefore = coreBridge.call("prepareTool", ["cron_list", {}, ctx]);
+    if (liveCronBefore?.ok !== true || liveCronBefore?.details?.tasks?.length !== 0) {
+      throw new Error(`cron stale regression setup expected no live tasks: ${JSON.stringify(liveCronBefore)}`);
+    }
+    const staleCronCreate = coreBridge.call("prepareTool", ["cron_create", {
+      cron: "* * * * *",
+      prompt: "must not persist",
+    }, staleAgentEndCtx]);
+    if (staleCronCreate?.ok !== false) {
+      throw new Error(`stale cron create did not fail closed: ${JSON.stringify(staleCronCreate)}`);
+    }
+    const staleCronCommand = coreBridge.call("handleCommand", ["cron", "enable", staleAgentEndCtx]);
+    if (staleCronCommand?.ok !== false) {
+      throw new Error(`stale cron command did not fail closed: ${JSON.stringify(staleCronCommand)}`);
+    }
+    const liveCronAfter = coreBridge.call("prepareTool", ["cron_list", {}, ctx]);
+    if (liveCronAfter?.details?.tasks?.length !== 0) {
+      throw new Error(`stale cron operation polluted live cron state: ${JSON.stringify(liveCronAfter)}`);
+    }
+    const staleCostCtx = {
+      ...ctx,
+      cwd: join(cwd, "stale-cwd"),
+      model: { provider: "anthropic", id: "stale-model" },
+      sessionManager: {
+        getSessionId: () => "stale-session",
+        getSessionFile: () => join(cwd, "stale-session.json"),
+        getEntries: () => [],
+        getBranch: () => {
+          throw new Error("This extension ctx is stale after session replacement or reload.");
+        },
+      },
+    };
+    const staleCostContinuation = coreBridge.call("planGoalContinuation", [false, {
+      hostIdle: true,
+      hasPendingMessages: false,
+      retrying: false,
+      compacting: false,
+    }, { type: "agent_end", messages: [assistantMessage()] }, staleCostCtx]);
+    if (staleCostContinuation?.action !== "none") {
+      throw new Error(`partially stale goal continuation core call did not decline: ${JSON.stringify(staleCostContinuation)}`);
+    }
+    const footerFactory = footerFactories.at(-1);
+    const footerLine = footerFactory({}, plainTheme, {
+      getGitBranch: () => "main",
+      onBranchChange: () => () => undefined,
+    }).render(200).join("\n");
+    if (footerLine.includes("stale-model") || footerLine.includes("anthropic") || footerLine.includes("stale-cwd")) {
+      throw new Error(`stale ctx partially polluted footer state: ${footerLine}`);
+    }
+  } finally {
+    console.warn = originalWarnForCore;
+  }
+  const staleCoreSyncWarnings = staleCoreWarnings.filter((message) =>
+    message.includes("Taumel session sync failed"),
+  );
+  if (staleCoreSyncWarnings.length !== 0) {
+    throw new Error(`stale core calls emitted session sync warnings: ${JSON.stringify(staleCoreSyncWarnings)}`);
+  }
+
+  const originalWarn = console.warn;
+  const staleRuntimeWarnings = [];
+  console.warn = (...args) => staleRuntimeWarnings.push(args.map(String).join(" "));
+  runtimeStale = true;
+  sentMessages.length = 0;
+  try {
+    for (const handler of handlers.get("agent_end") ?? []) {
+      await handler({ type: "agent_end", messages: [assistantMessage()] }, ctx);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  } finally {
+    runtimeStale = false;
+    console.warn = originalWarn;
+  }
+  const staleRuntimeSyncWarnings = staleRuntimeWarnings.filter((message) =>
+    message.includes("Taumel session sync failed"),
+  );
+  if (staleRuntimeSyncWarnings.length !== 0) {
+    throw new Error(`stale runtime emitted session sync warnings: ${JSON.stringify(staleRuntimeSyncWarnings)}`);
+  }
+  if (sentMessages.length !== 0) {
+    throw new Error(`goal agent_end queued from stale runtime: ${JSON.stringify(sentMessages)}`);
   }
 
   sentMessages.length = 0;

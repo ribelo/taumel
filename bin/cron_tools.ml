@@ -20,11 +20,14 @@ let load_state ctx =
       | Error _ -> cron_state := Taumel.Cron.empty)
 
 let sync ctx =
-  Session_sync.sync_session_from_host ~scope:"cron sync" ctx;
-  let session_id = Session_store.session_id_from_ctx ctx in
-  if !cron_loaded_session_id <> Some session_id then (
-    load_state ctx;
-    cron_loaded_session_id := Some session_id)
+  if not (Session_sync.try_sync_session_from_host ~scope:"cron sync" ctx) then
+    false
+  else
+    let session_id = Session_store.session_id_from_ctx ctx in
+    if !cron_loaded_session_id <> Some session_id then (
+      load_state ctx;
+      cron_loaded_session_id := Some session_id);
+    true
 
 let random_id () =
   let math = Unsafe.get Unsafe.global "Math" in
@@ -70,59 +73,64 @@ let tool_result text details =
       ("details", details);
     |]
 
+let stale_session_message = "Cron unavailable while session context is stale."
+
 let prepare_create params ctx =
-  sync ctx;
-  let cron = get_string params "cron" in
-  let prompt = get_string params "prompt" in
-  let recurring = if has_property params "recurring" then get_bool params "recurring" else true in
-  let goal = if has_property params "goal" then get_bool params "goal" else false in
-  let mode = if goal then Taumel.Cron.Goal else Taumel.Cron.Message in
-  let request : Taumel.Cron.create_request = { cron; prompt; recurring; mode } in
-  match Taumel.Cron.create ~now:(App_state.now_seconds ()) ~id:(random_id ()) request !cron_state with
-  | Error message -> error_obj message
-  | Ok (state, task) ->
-      cron_state := state;
-      save_state ctx;
-      tool_result
-        (Printf.sprintf
-           "Created cron task %s (%s). Tell the user this id and that they can manage crons with /cron."
-           task.id (Taumel.Cron.mode_to_string task.mode))
-        (Unsafe.obj
-           [|
-             ("task", inject (task_summary task));
-             ("id", js_string task.id);
-             ("schedule", js_string task.cron);
-	             ("recurring", js_bool task.recurring);
-	             ("mode", js_string (Taumel.Cron.mode_to_string task.mode));
-	             ("enabled", js_bool task.enabled);
-	             ("nextDue", js_number (float_of_int task.next_due));
-	             ("nextDueText", js_string (human_time task.next_due));
-	           |])
+  if not (sync ctx) then error_obj stale_session_message
+  else
+    let cron = get_string params "cron" in
+    let prompt = get_string params "prompt" in
+    let recurring = if has_property params "recurring" then get_bool params "recurring" else true in
+    let goal = if has_property params "goal" then get_bool params "goal" else false in
+    let mode = if goal then Taumel.Cron.Goal else Taumel.Cron.Message in
+    let request : Taumel.Cron.create_request = { cron; prompt; recurring; mode } in
+    match Taumel.Cron.create ~now:(App_state.now_seconds ()) ~id:(random_id ()) request !cron_state with
+    | Error message -> error_obj message
+    | Ok (state, task) ->
+        cron_state := state;
+        save_state ctx;
+        tool_result
+          (Printf.sprintf
+             "Created cron task %s (%s). Tell the user this id and that they can manage crons with /cron."
+             task.id (Taumel.Cron.mode_to_string task.mode))
+          (Unsafe.obj
+             [|
+               ("task", inject (task_summary task));
+               ("id", js_string task.id);
+               ("schedule", js_string task.cron);
+	               ("recurring", js_bool task.recurring);
+	               ("mode", js_string (Taumel.Cron.mode_to_string task.mode));
+	               ("enabled", js_bool task.enabled);
+	               ("nextDue", js_number (float_of_int task.next_due));
+	               ("nextDueText", js_string (human_time task.next_due));
+	             |])
 
 let prepare_list _params ctx =
-  sync ctx;
-  let message =
-    if (not !cron_state.enabled) && !cron_state.tasks <> [] then
-      "Cron tasks listed. Cron is disabled; run /cron enable to arm stored tasks."
-    else "Cron tasks listed."
-  in
-  tool_result message
-    (Unsafe.obj
-       [|
-         ("enabled", js_bool !cron_state.enabled);
-         ("tasks", tasks_array !cron_state.tasks);
-       |])
+  if not (sync ctx) then error_obj stale_session_message
+  else
+    let message =
+      if (not !cron_state.enabled) && !cron_state.tasks <> [] then
+        "Cron tasks listed. Cron is disabled; run /cron enable to arm stored tasks."
+      else "Cron tasks listed."
+    in
+    tool_result message
+      (Unsafe.obj
+         [|
+           ("enabled", js_bool !cron_state.enabled);
+           ("tasks", tasks_array !cron_state.tasks);
+         |])
 
 let prepare_delete params ctx =
-  sync ctx;
-  let id = get_string params "id" in
-  let before = List.length !cron_state.tasks in
-  cron_state := Taumel.Cron.delete id !cron_state;
-  save_state ctx;
-  let deleted = List.length !cron_state.tasks < before in
-  tool_result
-    (if deleted then "Deleted cron task " ^ id ^ "." else "No cron task matched " ^ id ^ ".")
-    (Unsafe.obj [| ("id", js_string id); ("deleted", js_bool deleted) |])
+  if not (sync ctx) then error_obj stale_session_message
+  else
+    let id = get_string params "id" in
+    let before = List.length !cron_state.tasks in
+    cron_state := Taumel.Cron.delete id !cron_state;
+    save_state ctx;
+    let deleted = List.length !cron_state.tasks < before in
+    tool_result
+      (if deleted then "Deleted cron task " ^ id ^ "." else "No cron task matched " ^ id ^ ".")
+      (Unsafe.obj [| ("id", js_string id); ("deleted", js_bool deleted) |])
 
 let prepare name params ctx =
   match name with
@@ -174,36 +182,37 @@ let updated_task_details id =
     |]
 
 let update_task params ctx =
-  sync ctx;
-  let id = String.trim (get_string params "id") in
-  let now = App_state.now_seconds () in
-  let apply_if present update result =
-    if present then Result.bind result update else result
-  in
-  let result =
-    Ok !cron_state
-    |> apply_if (has_property params "prompt")
-         (Taumel.Cron.update_task_prompt id (get_string params "prompt"))
-    |> apply_if (has_property params "cron")
-         (Taumel.Cron.update_task_cron ~now id (get_string params "cron"))
-    |> apply_if (has_property params "recurring")
-         (Taumel.Cron.update_task_recurring id (get_bool params "recurring"))
-    |> apply_if (has_property params "mode") (fun state ->
-           match Taumel.Cron.mode_of_string (get_string params "mode") with
-           | None -> Error "cron task mode must be message or goal"
-           | Some mode -> Taumel.Cron.update_task_mode id mode state)
-  in
-  match result with
-  | Error message -> command_result ~ok:false message (updated_task_details id)
-  | Ok state ->
-      let previous = !cron_state in
-      cron_state := state;
-      save_state_if_changed ctx previous;
-      command_result ("Updated cron task " ^ id ^ ".") (updated_task_details id)
+  if not (sync ctx) then command_result ~ok:false stale_session_message (Unsafe.obj [||])
+  else
+    let id = String.trim (get_string params "id") in
+    let now = App_state.now_seconds () in
+    let apply_if present update result =
+      if present then Result.bind result update else result
+    in
+    let result =
+      Ok !cron_state
+      |> apply_if (has_property params "prompt")
+           (Taumel.Cron.update_task_prompt id (get_string params "prompt"))
+      |> apply_if (has_property params "cron")
+           (Taumel.Cron.update_task_cron ~now id (get_string params "cron"))
+      |> apply_if (has_property params "recurring")
+           (Taumel.Cron.update_task_recurring id (get_bool params "recurring"))
+      |> apply_if (has_property params "mode") (fun state ->
+             match Taumel.Cron.mode_of_string (get_string params "mode") with
+             | None -> Error "cron task mode must be message or goal"
+             | Some mode -> Taumel.Cron.update_task_mode id mode state)
+    in
+    match result with
+    | Error message -> command_result ~ok:false message (updated_task_details id)
+    | Ok state ->
+        let previous = !cron_state in
+        cron_state := state;
+        save_state_if_changed ctx previous;
+        command_result ("Updated cron task " ^ id ^ ".") (updated_task_details id)
 
 let handle_command args ctx =
-  sync ctx;
-  match String.trim args with
+  if not (sync ctx) then command_result ~ok:false stale_session_message (Unsafe.obj [||])
+  else match String.trim args with
   | command when String.length command > 7 && String.sub command 0 7 = "cancel " ->
       let id = String.trim (String.sub command 7 (String.length command - 7)) in
       let before = List.length !cron_state.tasks in
@@ -273,8 +282,8 @@ let plan_prompt prompt _facts =
       |]
 
 let finish_prompt _prompt selection ctx =
-  sync ctx;
-  match get_string selection "status" with
+  if not (sync ctx) then command_result ~ok:false stale_session_message (Unsafe.obj [||])
+  else match get_string selection "status" with
   | "cancelled" -> command_result "Cron selection cancelled." (Unsafe.obj [||])
   | "selected" ->
       let selected = get_string selection "selected" in
@@ -311,60 +320,64 @@ let facts_from_js facts =
   }
 
 let poll params ctx =
-  sync ctx;
-  let now = int_of_float (float_field_default params "now" (float_of_int (App_state.now_seconds ())) /. 1000.) in
-  let previous = !cron_state in
-  cron_state := Taumel.Cron.tick ~now !cron_state;
-  save_state_if_changed ctx previous;
-  match Taumel.Cron.pending_delivery ~now (facts_from_js params) !cron_state with
-  | None -> Unsafe.obj [| ("action", js_string "none") |]
-  | Some delivery ->
-      Unsafe.obj
-        [|
-          ("action", js_string "deliver");
-          ("id", js_string delivery.task.id);
-          ("mode", js_string (Taumel.Cron.mode_to_string delivery.task.mode));
-          ("content", js_string delivery.content);
-          ("coalesced", js_number (float_of_int delivery.coalesced));
-        |]
+  if not (sync ctx) then Unsafe.obj [| ("action", js_string "none") |]
+  else
+    let now = int_of_float (float_field_default params "now" (float_of_int (App_state.now_seconds ())) /. 1000.) in
+    let previous = !cron_state in
+    cron_state := Taumel.Cron.tick ~now !cron_state;
+    save_state_if_changed ctx previous;
+    match Taumel.Cron.pending_delivery ~now (facts_from_js params) !cron_state with
+    | None -> Unsafe.obj [| ("action", js_string "none") |]
+    | Some delivery ->
+        Unsafe.obj
+          [|
+            ("action", js_string "deliver");
+            ("id", js_string delivery.task.id);
+            ("mode", js_string (Taumel.Cron.mode_to_string delivery.task.mode));
+            ("content", js_string delivery.content);
+            ("coalesced", js_number (float_of_int delivery.coalesced));
+          |]
 
 let delivered params ctx =
-  sync ctx;
-  let id = get_string params "id" in
-  let now = int_of_float (float_field_default params "now" (float_of_int (App_state.now_seconds ())) /. 1000.) in
-  match List.find_opt (fun (task : Taumel.Cron.task) -> task.id = id) !cron_state.tasks with
-  | None -> Unsafe.obj [| ("ok", js_bool false) |]
-  | Some task ->
-      let pending_since = Option.value task.pending_since ~default:task.next_due in
-      let delivery : Taumel.Cron.delivery =
-        {
-          task;
-          coalesced = Taumel.Cron.count_occurrences task.cron ~from_time:pending_since ~until_time:now;
-          content = task.prompt;
-        }
-      in
-      cron_state := Taumel.Cron.complete_delivery ~now delivery !cron_state;
-      save_state ctx;
-      Unsafe.obj [| ("ok", js_bool true) |]
+  if not (sync ctx) then Unsafe.obj [| ("ok", js_bool false) |]
+  else
+    let id = get_string params "id" in
+    let now = int_of_float (float_field_default params "now" (float_of_int (App_state.now_seconds ())) /. 1000.) in
+    match List.find_opt (fun (task : Taumel.Cron.task) -> task.id = id) !cron_state.tasks with
+    | None -> Unsafe.obj [| ("ok", js_bool false) |]
+    | Some task ->
+        let pending_since = Option.value task.pending_since ~default:task.next_due in
+        let delivery : Taumel.Cron.delivery =
+          {
+            task;
+            coalesced = Taumel.Cron.count_occurrences task.cron ~from_time:pending_since ~until_time:now;
+            content = task.prompt;
+          }
+        in
+        cron_state := Taumel.Cron.complete_delivery ~now delivery !cron_state;
+        save_state ctx;
+        Unsafe.obj [| ("ok", js_bool true) |]
 
 let goal_facts ctx =
-  Session_sync.sync_session_from_host ~scope:"cron goal facts" ctx;
-  let goal_slot_free, goal_driving =
-    match !App_state.current_goal with
-    | None -> (true, false)
-    | Some goal ->
-        let slot_free = match goal.Taumel.Goal.status with Taumel.Goal.Complete -> true | _ -> false in
-        let driving =
-          goal.Taumel.Goal.status = Taumel.Goal.Active
-          && !App_state.goal_automation = Taumel.Goal.Automation_enabled
-        in
-        (slot_free, driving)
-  in
-  Unsafe.obj
-    [|
-      ("goalSlotFree", js_bool goal_slot_free);
-      ("goalDriving", js_bool goal_driving);
-    |]
+  if not (Session_sync.try_sync_session_from_host ~scope:"cron goal facts" ctx) then
+    Unsafe.obj [| ("goalSlotFree", js_bool false); ("goalDriving", js_bool true) |]
+  else
+    let goal_slot_free, goal_driving =
+      match !App_state.current_goal with
+      | None -> (true, false)
+      | Some goal ->
+          let slot_free = match goal.Taumel.Goal.status with Taumel.Goal.Complete -> true | _ -> false in
+          let driving =
+            goal.Taumel.Goal.status = Taumel.Goal.Active
+            && !App_state.goal_automation = Taumel.Goal.Automation_enabled
+          in
+          (slot_free, driving)
+    in
+    Unsafe.obj
+      [|
+        ("goalSlotFree", js_bool goal_slot_free);
+        ("goalDriving", js_bool goal_driving);
+      |]
 
 let startup_reason = function
   | "new" -> Taumel.Cron.New
@@ -375,13 +388,14 @@ let startup_reason = function
   | _ -> Taumel.Cron.Other
 
 let startup event ctx =
-  sync ctx;
-  let plan = Taumel.Cron.apply_startup (startup_reason (get_string event "reason")) !cron_state in
-  let previous = !cron_state in
-  cron_state := plan.state;
-  save_state_if_changed ctx previous;
-  Unsafe.obj
-    [|
-      ("notify", js_bool plan.notify);
-      ("message", js_string plan.message);
-    |]
+  if not (sync ctx) then Unsafe.obj [| ("notify", js_bool false); ("message", js_string "") |]
+  else
+    let plan = Taumel.Cron.apply_startup (startup_reason (get_string event "reason")) !cron_state in
+    let previous = !cron_state in
+    cron_state := plan.state;
+    save_state_if_changed ctx previous;
+    Unsafe.obj
+      [|
+        ("notify", js_bool plan.notify);
+        ("message", js_string plan.message);
+      |]

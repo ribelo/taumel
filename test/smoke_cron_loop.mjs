@@ -10,6 +10,10 @@ const intervals = [];
 const cleared = [];
 const calls = [];
 const notifications = [];
+let runtimeStale = false;
+let cronPollResult = { action: "none" };
+let prepareToolResult = { ok: true };
+let goalContinuationResult = { action: "none" };
 
 const on = (event, handler) => {
   const list = handlers.get(event) ?? [];
@@ -47,15 +51,21 @@ try {
     events: { on: () => () => undefined, emit: () => undefined },
     exec: async () => ({ code: 0, stdout: "", stderr: "" }),
     sendMessage: async () => undefined,
+    getFlag: () => {
+      if (runtimeStale) throw new Error("This extension ctx is stale after session replacement or reload.");
+      return undefined;
+    },
     isIdle: () => true,
   };
   const core = {
     init: () => undefined,
-	    call: (name, args) => {
-	      calls.push({ name, args });
-	      if (name === "cronStartup") return { notify: true, message: "2 stored cron tasks exist in this session. Cron is disabled on startup; run /cron enable to arm them." };
+    call: (name, args) => {
+      calls.push({ name, args });
+      if (name === "cronStartup") return { notify: true, message: "2 stored cron tasks exist in this session. Cron is disabled on startup; run /cron enable to arm them." };
       if (name === "cronGoalFacts") return { goalSlotFree: true, goalDriving: false };
-      if (name === "cronPoll") return { action: "none" };
+      if (name === "cronPoll") return cronPollResult;
+      if (name === "prepareTool") return prepareToolResult;
+      if (name === "planGoalContinuation") return goalContinuationResult;
       if (name === "cronDelivered") return { ok: true };
       throw new Error(`unexpected core call: ${name}`);
     },
@@ -66,14 +76,14 @@ try {
   assert.equal(intervals[0].ms, 30_000, "cron loop interval should be 30s");
   assert.equal(intervals[0].unrefCalled, true, "cron interval should be unref'd");
 
-	  emit("session_start", { type: "session_start", reason: "startup" }, {
-	    sessionManager: {},
-	    ui: { notify: (message, type) => notifications.push({ message, type }) },
-	  });
-	  assert.deepEqual(notifications, [{
-	    message: "2 stored cron tasks exist in this session. Cron is disabled on startup; run /cron enable to arm them.",
-	    type: "warning",
-	  }], "cron startup should notify the user about stored disabled crons");
+  emit("session_start", { type: "session_start", reason: "startup" }, {
+    sessionManager: {},
+    ui: { notify: (message, type) => notifications.push({ message, type }) },
+  });
+  assert.deepEqual(notifications, [{
+    message: "2 stored cron tasks exist in this session. Cron is disabled on startup; run /cron enable to arm them.",
+    type: "warning",
+  }], "cron startup should notify the user about stored disabled crons");
   calls.length = 0;
   intervals[0].fn();
   await tick();
@@ -102,6 +112,27 @@ try {
   intervals[0].fn();
   await tick();
   assert.deepEqual(calls, [], "cron interval should skip a ctx whose session manager is stale before calling core");
+
+  emit("turn_start", { type: "turn_start" }, { sessionManager: {} });
+  runtimeStale = true;
+  calls.length = 0;
+  intervals[0].fn();
+  await tick();
+  runtimeStale = false;
+  assert.deepEqual(calls, [], "cron interval should skip a stale captured pi runtime before calling core");
+
+  cronPollResult = { action: "deliver", id: "deadbeef", mode: "goal", content: "goal fire", coalesced: 1 };
+  goalContinuationResult = { action: "none" };
+  emit("turn_start", { type: "turn_start" }, { sessionManager: {} });
+  calls.length = 0;
+  intervals[0].fn();
+  await tick();
+  assert.deepEqual(
+    calls.map((call) => call.name),
+    ["cronGoalFacts", "cronPoll", "prepareTool", "planGoalContinuation"],
+    "cron loop should not mark a skipped goal delivery as delivered",
+  );
+  cronPollResult = { action: "none" };
 
   emit("session_shutdown", { type: "session_shutdown", reason: "reload" }, { sessionManager: {} });
   assert.deepEqual(cleared, [intervals[0]], "cron loop should clear its interval on session shutdown");

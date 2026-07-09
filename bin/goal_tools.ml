@@ -89,22 +89,24 @@ let continuation_facts facts event ctx =
   }
 
 let plan_continuation initial facts event ctx =
-  Session_sync.sync_session_from_host ~scope:"goal continuation" ctx;
-  match
-    Taumel.Goal.plan_continuation ~initial
-      (continuation_facts facts event ctx)
-  with
-  | Taumel.Goal.Send_continuation plan ->
-      ok_obj
-        [
-          ("action", js_string "send_goal_continuation");
-          ("customType", js_string plan.custom_type);
-          ("content", js_string plan.content);
-          ("display", js_bool plan.display);
-          ("triggerTurn", js_bool plan.trigger_turn);
-          ("deliverAs", js_string plan.deliver_as);
-        ]
-  | Taumel.Goal.No_continuation -> ok_obj [ ("action", js_string "none") ]
+  if not (Session_sync.try_sync_session_from_host ~scope:"goal continuation" ctx) then
+    ok_obj [ ("action", js_string "none") ]
+  else
+    match
+      Taumel.Goal.plan_continuation ~initial
+        (continuation_facts facts event ctx)
+    with
+    | Taumel.Goal.Send_continuation plan ->
+        ok_obj
+          [
+            ("action", js_string "send_goal_continuation");
+            ("customType", js_string plan.custom_type);
+            ("content", js_string plan.content);
+            ("display", js_bool plan.display);
+            ("triggerTurn", js_bool plan.trigger_turn);
+            ("deliverAs", js_string plan.deliver_as);
+          ]
+    | Taumel.Goal.No_continuation -> ok_obj [ ("action", js_string "none") ]
 
 let goal_store_of_js value =
   match json_from_js value with
@@ -236,14 +238,18 @@ let handle_command args ctx =
       command_result ~followup:plan.followup plan.goal plan.message
 
 let goal_system_prompt event ctx =
-  Session_sync.sync_session_from_host ~scope:"goal system prompt" ctx;
-  match (!current_goal, !goal_automation) with
-  | Some goal, Taumel.Goal.Automation_enabled when goal.status = Taumel.Goal.Active
-    ->
-      let base = get_string event "systemPrompt" in
-      let goal_prompt = Taumel.Goal.continuation_prompt goal in
-      Unsafe.obj [| ("systemPrompt", js_string (base ^ "\n\n" ^ goal_prompt)) |]
-  | Some _, Taumel.Goal.Automation_interrupted ->
-      Session_sync.clear_interrupted_goal_automation ctx;
-      Unsafe.inject Js.undefined
-  | _ -> Unsafe.inject Js.undefined
+  if not (Session_sync.try_sync_session_from_host ~scope:"goal system prompt" ctx) then
+    Unsafe.inject Js.undefined
+  else
+    match (!current_goal, !goal_automation) with
+    | Some goal, Taumel.Goal.Automation_enabled when goal.status = Taumel.Goal.Active
+      ->
+        let base = get_string event "systemPrompt" in
+        let goal_prompt = Taumel.Goal.continuation_prompt goal in
+        Unsafe.obj [| ("systemPrompt", js_string (base ^ "\n\n" ^ goal_prompt)) |]
+    | Some _, Taumel.Goal.Automation_interrupted ->
+        (try Session_sync.clear_interrupted_goal_automation ctx
+         with error ->
+           Session_sync.report_session_sync_error "goal automation clear" error);
+        Unsafe.inject Js.undefined
+    | _ -> Unsafe.inject Js.undefined

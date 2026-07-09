@@ -24,6 +24,7 @@ import {
   contextWithOverrides,
   coreCallRecord,
   coreCallRecordArray,
+  extensionRuntimeIsLive,
   isRecord,
   isStaleContextError,
   stringArrayFromUnknown,
@@ -130,7 +131,7 @@ async function sendGoalContinuation(
   facts: Record<string, unknown>,
   event: unknown,
 ): Promise<void> {
-  if (!contextIsLive(ctx)) return;
+  if (!extensionRuntimeIsLive(pi) || !contextIsLive(ctx)) return;
   const plan = coreCallRecord(core, "planGoalContinuation", [initial, facts, event, ctx], "goal continuation plan");
   const action = stringField(plan, "action");
   if (action === "none") return;
@@ -138,6 +139,7 @@ async function sendGoalContinuation(
     throw new Error("Invalid Taumel goal continuation plan");
   }
   try {
+    if (!extensionRuntimeIsLive(pi) || !contextIsLive(ctx)) return;
     await sendGoalMessage(
       pi,
       stringField(plan, "customType"),
@@ -455,7 +457,7 @@ export function installGoalContinuationLoop(pi: PiLike, core: CoreBridge): void 
   pi.on("agent_end", async (event, ctx) => {
     try {
       observeSessionEvent(event);
-      if (!contextIsLive(ctx)) return;
+      if (!extensionRuntimeIsLive(pi) || !contextIsLive(ctx)) return;
       const stopReason = latestAssistantStopReason(event);
       if (stopReason === "aborted") {
         core.call("interruptGoalAutomation", [ctx]);

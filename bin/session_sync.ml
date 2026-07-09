@@ -2,16 +2,36 @@ open Jsoo_bridge
 open App_state
 open Runtime_access
 
+let string_contains_substring value needle =
+  let value_length = String.length value in
+  let needle_length = String.length needle in
+  if needle_length = 0 then true
+  else if needle_length > value_length then false
+  else
+    let rec loop index =
+      if index + needle_length > value_length then false
+      else if String.sub value index needle_length = needle then true
+      else loop (index + 1)
+    in
+    loop 0
+
+let is_stale_context_error error =
+  let message = Printexc.to_string error in
+  string_contains_substring message "ctx is stale"
+  || string_contains_substring message
+       "This extension ctx is stale after session replacement or reload"
+
 let report_session_sync_error scope error =
-  let console = Unsafe.get Unsafe.global "console" in
-  if Option.is_some (function_field console "warn") then
-    ignore
-      (Unsafe.fun_call (Unsafe.get console "warn")
-         [|
-           js_string
-             ("Taumel session sync failed (" ^ scope ^ "): "
-            ^ Printexc.to_string error);
-         |])
+  if not (is_stale_context_error error) then
+    let console = Unsafe.get Unsafe.global "console" in
+    if Option.is_some (function_field console "warn") then
+      ignore
+        (Unsafe.fun_call (Unsafe.get console "warn")
+           [|
+             js_string
+               ("Taumel session sync failed (" ^ scope ^ "): "
+              ^ Printexc.to_string error);
+           |])
 
 let message_cost entry =
   let message =
@@ -143,8 +163,7 @@ let bool_of_flag_string value =
   | "0" | "false" | "no" | "off" | "disabled" -> Some false
   | _ -> None
 
-let session_is_subagent ctx =
-  match Session_store.custom_entry_data ctx "taumel.childSession" with
+let session_is_subagent_data = function
   | None -> false
   | Some data ->
       get_bool data "subagent"
@@ -153,36 +172,96 @@ let session_is_subagent ctx =
       | "agent" | "ralph" -> true
       | _ -> false
 
+let session_is_subagent ctx =
+  session_is_subagent_data (Session_store.custom_entry_data ctx "taumel.childSession")
+
 let update_session_state host ctx =
   let snapshot = call1 host "sessionSnapshot" (inject ctx) in
-  host_sandbox_preset :=
-    Taumel.Capability_profile.sandbox_of_string (get_string snapshot "sandboxMode");
-  host_network_mode :=
-    Taumel.Permissions.network_of_string (get_string snapshot "networkMode");
-  host_no_sandbox :=
+  let next_host_sandbox_preset =
+    Taumel.Capability_profile.sandbox_of_string (get_string snapshot "sandboxMode")
+  in
+  let next_host_network_mode =
+    Taumel.Permissions.network_of_string (get_string snapshot "networkMode")
+  in
+  let next_host_no_sandbox =
     if has_property snapshot "noSandbox" then Some (get_bool snapshot "noSandbox")
-    else bool_of_flag_string (get_string snapshot "noSandboxFlag");
-  if not (session_is_subagent ctx) then (
-    let previous_cwd = state.cwd in
-    state.cwd <- get_string snapshot "cwd";
-    state.provider <- get_string snapshot "provider";
-    state.model <- get_string snapshot "model";
-    state.thinking <- get_string snapshot "thinking";
-    state.total_cost <-
-      (match total_cost_from_ctx ctx with
-      | Some cost -> cost
-      | None -> float_field_default snapshot "totalCost" 0.0);
-    state.context_percent <- float_field_default snapshot "contextPercent" 0.0;
-    state.context_window <- float_field_default snapshot "contextWindow" 0.0;
-    if previous_cwd <> "" && previous_cwd <> state.cwd then
-      state.git_delta <- Model.empty_git_delta)
+    else bool_of_flag_string (get_string snapshot "noSandboxFlag")
+  in
+  let next_session_state =
+    if session_is_subagent ctx then None
+    else
+      Some
+        (
+          get_string snapshot "cwd",
+          get_string snapshot "provider",
+          get_string snapshot "model",
+          get_string snapshot "thinking",
+          (match total_cost_from_ctx ctx with
+          | Some cost -> cost
+          | None -> float_field_default snapshot "totalCost" 0.0),
+          float_field_default snapshot "contextPercent" 0.0,
+          float_field_default snapshot "contextWindow" 0.0 )
+  in
+  host_sandbox_preset := next_host_sandbox_preset;
+  host_network_mode := next_host_network_mode;
+  host_no_sandbox := next_host_no_sandbox;
+  match next_session_state with
+  | None -> ()
+  | Some
+      ( next_cwd,
+        next_provider,
+        next_model,
+        next_thinking,
+        next_total_cost,
+        next_context_percent,
+        next_context_window ) ->
+      let previous_cwd = state.cwd in
+      state.cwd <- next_cwd;
+      state.provider <- next_provider;
+      state.model <- next_model;
+      state.thinking <- next_thinking;
+      state.total_cost <- next_total_cost;
+      state.context_percent <- next_context_percent;
+      state.context_window <- next_context_window;
+      if previous_cwd <> "" && previous_cwd <> state.cwd then
+        state.git_delta <- Model.empty_git_delta
+
+let try_refresh_session_state_from_host ?(scope = "session state refresh") ctx =
+  try
+    update_session_state (active_host_or_empty ()) ctx;
+    true
+  with error ->
+    report_session_sync_error scope error;
+    false
 
 let refresh_session_state_from_host ?(scope = "session state refresh") ctx =
-  try update_session_state (active_host_or_empty ()) ctx
-  with error -> report_session_sync_error scope error
+  ignore (try_refresh_session_state_from_host ~scope ctx)
 
-let load_goal_state ctx =
-  match Session_store.custom_entry_data ctx "taumel.goal" with
+type persisted_session_snapshot = {
+  session_id : string;
+  child_session : Unsafe.any option;
+  goal : Unsafe.any option;
+  goal_automation_entry : Unsafe.any option;
+  permissions : Unsafe.any option;
+  ralph : Unsafe.any option;
+  agents : Unsafe.any option;
+  visibility : Unsafe.any option;
+}
+
+let persisted_session_snapshot ctx =
+  {
+    session_id = Session_store.session_id_from_ctx ctx;
+    child_session = Session_store.custom_entry_data ctx "taumel.childSession";
+    goal = Session_store.custom_entry_data ctx "taumel.goal";
+    goal_automation_entry =
+      Session_store.custom_entry_data ctx "taumel.goal_automation";
+    permissions = Session_store.custom_entry_data ctx "taumel.permissions";
+    ralph = Session_store.custom_entry_data ctx "taumel.ralph";
+    agents = Session_store.custom_entry_data ctx "taumel.agents";
+    visibility = Session_store.custom_entry_data ctx "taumel.visibility";
+  }
+
+let load_goal_state_data = function
   | None -> current_goal := None
   | Some data -> (
       match Result.bind (json_from_js data) Taumel.Goal.codec.decode with
@@ -192,8 +271,10 @@ let load_goal_state ctx =
             (Failure ("Ignoring incompatible saved Taumel goal entry: " ^ message));
           current_goal := None)
 
-let load_goal_automation_state ctx =
-  match Session_store.custom_entry_data ctx "taumel.goal_automation" with
+let load_goal_state ctx =
+  load_goal_state_data (Session_store.custom_entry_data ctx "taumel.goal")
+
+let load_goal_automation_state_data = function
   | None -> goal_automation := Taumel.Goal.Automation_enabled
   | Some data -> (
       match Result.bind (json_from_js data) Taumel.Goal.automation_codec.decode with
@@ -203,6 +284,10 @@ let load_goal_automation_state ctx =
             (Failure ("Ignoring incompatible saved Taumel goal automation entry: " ^ message));
           goal_automation := Taumel.Goal.Automation_enabled)
 
+let load_goal_automation_state ctx =
+  load_goal_automation_state_data
+    (Session_store.custom_entry_data ctx "taumel.goal_automation")
+
 let apply_active_permissions (resolved : Taumel.Permissions.active) =
   active_profile_state := resolved.profile;
   active_network_mode := resolved.network_mode;
@@ -210,10 +295,10 @@ let apply_active_permissions (resolved : Taumel.Permissions.active) =
   active_subagent := resolved.subagent;
   state.filesystem_mode <- resolved.filesystem_mode
 
-let load_permissions_state ctx =
-  let session_subagent = session_is_subagent ctx in
+let load_permissions_state_data ~child_session permissions =
+  let session_subagent = session_is_subagent_data child_session in
   let persisted =
-    match Session_store.custom_entry_data ctx "taumel.permissions" with
+    match permissions with
     | None -> Taumel.Permissions.Missing
     | Some data -> (
         match Result.bind (json_from_js data) Taumel.Permissions.codec.decode with
@@ -226,16 +311,22 @@ let load_permissions_state ctx =
     ~session_subagent persisted
   |> apply_active_permissions
 
-let load_ralph_state ctx =
-  match Session_store.custom_entry_data ctx "taumel.ralph" with
+let load_permissions_state ctx =
+  load_permissions_state_data
+    ~child_session:(Session_store.custom_entry_data ctx "taumel.childSession")
+    (Session_store.custom_entry_data ctx "taumel.permissions")
+
+let load_ralph_state_data = function
   | None -> ralph_tasks := []
   | Some data -> (
       match Result.bind (json_from_js data) Taumel.Ralph_loop.codec.decode with
       | Ok tasks -> ralph_tasks := tasks
       | Error _ -> ralph_tasks := [])
 
-let live_agent_ids_for_ctx ctx =
-  let parent_id = Session_store.session_id_from_ctx ctx in
+let load_ralph_state ctx =
+  load_ralph_state_data (Session_store.custom_entry_data ctx "taumel.ralph")
+
+let live_agent_ids_for_session_id parent_id =
   !workers
   |> List.filter_map (fun (worker : Taumel.Subagents.worker) ->
          if worker.parent_id <> Some parent_id then None
@@ -244,23 +335,29 @@ let live_agent_ids_for_ctx ctx =
            | Taumel.Subagents.Closed -> None
            | _ -> Some worker.id)
 
-let load_agent_state ctx =
-  match Session_store.custom_entry_data ctx "taumel.agents" with
+let live_agent_ids_for_ctx ctx =
+  live_agent_ids_for_session_id (Session_store.session_id_from_ctx ctx)
+
+let load_agent_state_data ~session_id = function
   | None -> agent_state := Taumel.Agent_runs.empty_session_state
   | Some data -> (
       match Result.bind (json_from_js data) Taumel.Agent_runs_codec.session_state_codec.decode with
       | Ok state ->
           agent_state :=
             Taumel.Agent_runs.mark_active_runs_lost
-              ~live_agent_ids:(live_agent_ids_for_ctx ctx) state
+              ~live_agent_ids:(live_agent_ids_for_session_id session_id) state
       | Error message ->
           report_session_sync_error "agent state load"
             (Failure ("Ignoring incompatible saved Taumel agents entry: " ^ message));
           agent_state := Taumel.Agent_runs.empty_session_state)
 
-let load_visibility_state ctx =
+let load_agent_state ctx =
+  load_agent_state_data ~session_id:(Session_store.session_id_from_ctx ctx)
+    (Session_store.custom_entry_data ctx "taumel.agents")
+
+let load_visibility_state_data visibility =
   visibility_warning_flags := Taumel.Visibility.empty_warning_flags;
-  match Session_store.custom_entry_data ctx "taumel.visibility" with
+  match visibility with
   | None ->
       visibility_state :=
         Taumel.Visibility.of_legacy_agents_state !agent_state
@@ -274,26 +371,32 @@ let load_visibility_state ctx =
           visibility_state :=
             Taumel.Visibility.of_legacy_agents_state !agent_state)
 
+let load_visibility_state ctx =
+  load_visibility_state_data
+    (Session_store.custom_entry_data ctx "taumel.visibility")
+
 let load_session_state ctx =
-  load_goal_state ctx;
-  load_goal_automation_state ctx;
-  load_permissions_state ctx;
-  load_ralph_state ctx;
-  load_agent_state ctx;
-  load_visibility_state ctx;
+  let snapshot = persisted_session_snapshot ctx in
+  load_goal_state_data snapshot.goal;
+  load_goal_automation_state_data snapshot.goal_automation_entry;
+  load_permissions_state_data ~child_session:snapshot.child_session
+    snapshot.permissions;
+  load_ralph_state_data snapshot.ralph;
+  load_agent_state_data ~session_id:snapshot.session_id snapshot.agents;
+  load_visibility_state_data snapshot.visibility;
   last_goal_accounting_key := None;
   goal_turn_clock := Taumel.Goal.empty_clock;
   pending_goal_terminal_status := None;
   goal_retrying := false;
   goal_compacting := false
 
-let has_persisted_component_entry ctx =
-  Session_store.custom_entry_data ctx "taumel.goal" <> None
-  || Session_store.custom_entry_data ctx "taumel.goal_automation" <> None
-  || Session_store.custom_entry_data ctx "taumel.permissions" <> None
-  || Session_store.custom_entry_data ctx "taumel.ralph" <> None
-  || Session_store.custom_entry_data ctx "taumel.agents" <> None
-  || Session_store.custom_entry_data ctx "taumel.visibility" <> None
+let has_persisted_component_entry snapshot =
+  snapshot.goal <> None
+  || snapshot.goal_automation_entry <> None
+  || snapshot.permissions <> None
+  || snapshot.ralph <> None
+  || snapshot.agents <> None
+  || snapshot.visibility <> None
 
 let clear_retained_agent_outputs_for_session session_id =
   retained_agent_outputs :=
@@ -301,23 +404,55 @@ let clear_retained_agent_outputs_for_session session_id =
       (fun retained -> retained.retained_owner_id = session_id)
       !retained_agent_outputs
 
-let sync_persisted_session ?(reset_missing = true)
-    ?(clear_retained_outputs = false) ctx =
-  let session_id = Session_store.session_id_from_ctx ctx in
+let sync_persisted_session_snapshot ?(reset_missing = true)
+    ?(clear_retained_outputs = false) snapshot =
+  let session_id = snapshot.session_id in
   if
     !loaded_session_id <> Some session_id
-    && (reset_missing || has_persisted_component_entry ctx)
+    && (reset_missing || has_persisted_component_entry snapshot)
   then (
     if clear_retained_outputs then
       clear_retained_agent_outputs_for_session session_id;
-    load_session_state ctx;
+    load_goal_state_data snapshot.goal;
+    load_goal_automation_state_data snapshot.goal_automation_entry;
+    load_permissions_state_data ~child_session:snapshot.child_session
+      snapshot.permissions;
+    load_ralph_state_data snapshot.ralph;
+    load_agent_state_data ~session_id:snapshot.session_id snapshot.agents;
+    load_visibility_state_data snapshot.visibility;
+    last_goal_accounting_key := None;
+    goal_turn_clock := Taumel.Goal.empty_clock;
+    pending_goal_terminal_status := None;
+    goal_retrying := false;
+    goal_compacting := false;
     loaded_session_id := Some session_id)
 
-let sync_session_from_host ?(scope = "session sync") ?(reset_missing = true) ctx =
+let sync_persisted_session ?(reset_missing = true)
+    ?(clear_retained_outputs = false) ctx =
+  sync_persisted_session_snapshot ~reset_missing ~clear_retained_outputs
+    (persisted_session_snapshot ctx)
+
+let persisted_session_snapshot_is_subagent snapshot =
+  session_is_subagent_data snapshot.child_session
+
+let try_sync_session_from_host_with ?(scope = "session sync")
+    ?(reset_missing = true) ?(clear_retained_outputs = false) host ctx =
   try
-    update_session_state (active_host_or_empty ()) ctx;
-    sync_persisted_session ~reset_missing ctx
-  with error -> report_session_sync_error scope error
+    let snapshot = persisted_session_snapshot ctx in
+    update_session_state host ctx;
+    sync_persisted_session_snapshot ~reset_missing ~clear_retained_outputs
+      snapshot;
+    Some snapshot
+  with error ->
+    report_session_sync_error scope error;
+    None
+
+let try_sync_session_from_host ?(scope = "session sync") ?(reset_missing = true) ctx =
+  Option.is_some
+    (try_sync_session_from_host_with ~scope ~reset_missing (active_host_or_empty ()) ctx)
+
+let sync_session_from_host ?(scope = "session sync") ?(reset_missing = true) ctx =
+  ignore (try_sync_session_from_host ~scope ~reset_missing ctx)
 
 let save_goal_state ctx =
   Session_store.append_custom_entry ctx "taumel.goal"
@@ -377,6 +512,14 @@ let account_goal_turn_end ctx =
     current_goal := result.goal;
     last_goal_accounting_key := result.accounting_key;
     save_goal_state ctx)
+
+let try_account_goal_turn_end ?(scope = "goal turn accounting") ctx =
+  try
+    account_goal_turn_end ctx;
+    true
+  with error ->
+    report_session_sync_error scope error;
+    false
 
 let start_goal_turn () =
   goal_turn_clock :=

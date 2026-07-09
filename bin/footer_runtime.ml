@@ -59,15 +59,25 @@ let start_refresh_loop host =
 let ensure_refresh_loop host =
   match !runtime with Some _ -> () | None -> start_refresh_loop host
 
+let ignore_stale scope run =
+  try run () with error -> Session_sync.report_session_sync_error scope error
+
 let register_handlers host =
   let update_handler install_footer =
     Js.wrap_callback (fun _event ctx ->
-        let subagent = Session_sync.session_is_subagent ctx in
-        Session_sync.update_session_state host ctx;
-        Session_sync.sync_persisted_session ~clear_retained_outputs:true ctx;
-        if install_footer && not subagent then install host ctx;
-        ensure_refresh_loop host;
-        emit_changed host)
+        ignore_stale "footer session lifecycle" (fun () ->
+            match
+              Session_sync.try_sync_session_from_host_with
+                ~scope:"footer session sync" ~clear_retained_outputs:true host ctx
+            with
+            | None -> ()
+            | Some snapshot ->
+                let subagent =
+                  Session_sync.persisted_session_snapshot_is_subagent snapshot
+                in
+                if install_footer && not subagent then install host ctx;
+                ensure_refresh_loop host;
+                emit_changed host))
   in
   ignore (call2 host "on" (js_string "session_start") (inject (update_handler true)));
   ignore (call2 host "on" (js_string "session_resume") (inject (update_handler false)));
@@ -82,13 +92,20 @@ let register_handlers host =
                emit_changed host))));
   ignore
     (call2 host "on" (js_string "turn_end")
-       (inject
-          (Js.wrap_callback (fun _event ctx ->
-               Session_sync.update_session_state host ctx;
-               Session_sync.sync_persisted_session ctx;
-               Session_sync.account_goal_turn_end ctx;
-               ensure_refresh_loop host;
-               emit_changed host))));
+	       (inject
+	          (Js.wrap_callback (fun _event ctx ->
+	               ignore_stale "footer turn_end" (fun () ->
+	                   match
+	                     Session_sync.try_sync_session_from_host_with
+	                       ~scope:"footer turn_end sync" host ctx
+	                   with
+	                   | None -> ()
+	                   | Some _ ->
+	                       ignore
+	                         (Session_sync.try_account_goal_turn_end
+	                            ~scope:"footer goal accounting" ctx);
+	                       ensure_refresh_loop host;
+	                       emit_changed host)))));
   ignore
     (call2 host "on" (js_string "before_agent_start")
        (inject
@@ -120,6 +137,6 @@ let init host =
 
 let refresh_state ctx =
   let host = active_host_or_empty () in
-  Session_sync.update_session_state host ctx;
+  ignore (Session_sync.try_refresh_session_state_from_host ~scope:"footer refresh" ctx);
   emit_changed host;
   ok_obj [ ("action", js_string "refresh_footer_state") ]

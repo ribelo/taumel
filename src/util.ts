@@ -196,6 +196,26 @@ export function contextIsLive(ctx: unknown): boolean {
   }
 }
 
+export function extensionRuntimeIsLive(pi: PiLike): boolean {
+  try {
+    if (typeof pi.getFlag === "function") {
+      pi.getFlag("__taumel_liveness_probe__");
+      return true;
+    }
+    if (typeof pi.getThinkingLevel === "function") {
+      pi.getThinkingLevel();
+      return true;
+    }
+    if (typeof pi.getActiveTools === "function") {
+      pi.getActiveTools();
+    }
+    return true;
+  } catch (error) {
+    if (isStaleContextError(error)) return false;
+    throw error;
+  }
+}
+
 export function stringFromMethod(receiver: unknown, name: string): string | undefined {
   if (!isRecord(receiver)) return undefined;
   const method = receiver[name];
