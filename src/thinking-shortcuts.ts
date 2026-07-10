@@ -1,8 +1,8 @@
 import type { CoreBridge, PiLike } from "./types.ts";
 
-type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
-const thinkingLevels: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
+const thinkingLevels: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 function isThinkingLevel(value: unknown): value is ThinkingLevel {
   return typeof value === "string" && (thinkingLevels as readonly string[]).includes(value);
