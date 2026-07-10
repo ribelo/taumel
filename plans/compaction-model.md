@@ -36,6 +36,7 @@ validation and persistence policy live in the OCaml core.
 - **compaction-in01** (state-driven): While no compaction model is configured, the system shall defer to Pi's default compaction and summarize with the session model.
 - **compaction-lc01** (ubiquitous): The system shall not change the active session model to implement compaction-model selection.
 - **compaction-lc02** (ubiquitous): The system shall not promise to bypass Pi's pre-hook compaction checks, including active-session-model auth resolution performed before `session_before_compact`.
+- **compaction-lc03** (out-of-scope): Taumel shall not add a compaction-summary command, shortcut, transcript renderer, expansion state, or alternate summary browser; Pi owns presentation and navigation of its compaction entries.
 - **compaction-cf01** (ubiquitous): The system shall read `taumel.compaction.model` as a `provider/model` string from trusted project `<cwd>/.pi/settings.json` and global `~/.pi/agent/settings.json`, following the shared Taumel config precedence.
 - **compaction-cf02** (ubiquitous): The system shall not read project compaction-model config while the project is untrusted.
 - **compaction-cf03** (ubiquitous): The system shall treat the first `/` as the provider/model separator so provider-qualified model IDs may contain additional `/` characters in the model segment.

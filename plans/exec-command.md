@@ -22,12 +22,14 @@ the one intentional difference.
 
 - **exec-tc01** (ubiquitous): The system shall expose `exec_command` requiring a non-empty `cmd`, with optional `workdir`, `yield_time_ms`, `tty`, `sandbox_permissions` (`require_escalated`), `justification`, and `prefix_rule`, and no `shell` or `login` parameter.
 - **exec-tc02** (unwanted): If `cmd` is empty or whitespace, or a parameter is unknown, then the system shall reject the call through the TypeBox schema.
-- **exec-tc03** (ubiquitous): The system shall expose `write_stdin` requiring a numeric `session_id`, with optional `chars` (empty meaning poll) and `yield_time_ms`.
+- **exec-tc03** (ubiquitous): The system shall expose `write_stdin` requiring a numeric `session_id`, with optional `chars` (empty meaning poll), `yield_time_ms`, and `output_mode` restricted to `delta` or `status` and defaulting to `delta`.
 - **exec-tc04** (unwanted): If `session_id` is negative, missing, unknown with no retained terminal state, or owned by another parent session, or non-empty stdin targets a non-TTY, stdin-closed, or completed session, then the system shall reject the call.
+- **exec-tc05** (unwanted): If `output_mode` is `status` while `chars` is non-empty, then the system shall reject the call; status-only operation is an empty-input wait or poll, not an interactive write.
 
 ### Shell selection
 
 - **exec-sh01** (ubiquitous): The system shall run commands with bash as `bash -c <cmd>` non-login, resolving `/bin/bash`, then `PATH` bash, then `sh`, never reading `$SHELL`, and shall not expose shell choice as a model parameter.
+- **exec-sh02** (ubiquitous): The system shall inherit `PATH` from Pi's ambient process environment and shall not invoke a login shell, source shell profiles, or synthesize a replacement `PATH` before command execution.
 
 ### Authorization and sandbox
 
@@ -56,6 +58,12 @@ the one intentional difference.
 - **exec-rt09** (ubiquitous): The system shall represent completion-notification state separately from terminal-result consumption state, so sending an `exec_completion` notification cannot consume, discard, or otherwise satisfy the terminal result.
 - **exec-rt10** (ubiquitous): The system shall represent completion-notification state as a closed enum with exactly `pending` and `sent`; failed notification sends leave the state `pending`, and successful sends transition it to `sent`.
 - **exec-rt11** (event-driven): When the user interrupts a pending `write_stdin` wait, the system shall interrupt only the wait, leave the shell session running or terminal result retained, not mark the terminal result consumed, and not suppress later completion-availability notification or explicit `write_stdin` reads.
+- **exec-rt12** (ubiquitous): The system shall enforce a fixed 16 MiB total combined stdout-and-stderr byte ceiling for every command, whether the command completes during the initial `exec_command` wait or continues as an asynchronous session.
+- **exec-rt13** (event-driven): When a command crosses the total output ceiling, the system shall terminate the command process tree, stop accepting further output, and settle it with a distinct output-limit terminal outcome.
+- **exec-rt14** (unwanted): If a command crosses the total output ceiling, then the system shall not let it continue while silently discarding subsequent output.
+- **exec-rt15** (ubiquitous): The 16 MiB total output ceiling shall not be configurable through tool parameters, settings, environment variables, profiles, or session state.
+- **exec-rt16** (event-driven): When empty `write_stdin` uses `output_mode = status`, the system shall wait under the same yield and interruption rules as a delta poll, atomically drain all output produced since the previous response, preserve that output in the command's full-output record, and omit the drained stdout/stderr from model-facing result text.
+- **exec-rt17** (ubiquitous): Output drained by a status-only response, including bytes omitted from the in-memory buffer, shall be considered consumed for incremental-read purposes and shall never be returned by a later delta poll.
 
 ### Result
 
@@ -69,6 +77,12 @@ the one intentional difference.
 - **exec-rs08** (event-driven): When truncated exec output can fit at least one complete line, the system shall render only complete output lines and shall not begin the visible output in the middle of a line.
 - **exec-rs09** (event-driven): When the tail-oriented output consists of a single line larger than the 50KB byte cap and no complete line can fit, the system may render a UTF-8-boundary-safe suffix of that line within the byte cap, shall set `lastLinePartial`, and shall include a footer equivalent to Pi `bash`: "Showing last X of line N (line is Y). Full output: PATH".
 - **exec-rs10** (ubiquitous): The `truncation` detail shall preserve structured metadata needed to render and reason about truncation: `truncated`, `truncatedBy`, `totalLines`, `totalBytes`, `outputLines`, `outputBytes`, `maxLines`, `maxBytes`, `lastLinePartial`, `firstLineExceedsLimit`, and `fullOutputPath` when available.
+- **exec-rs11** (event-driven): When a command is terminated by the total output ceiling, the result shall be an error that states the configured ceiling was exceeded, preserves the bounded final output preview and truncation metadata, and advises redirecting intentionally large output to a file for selective inspection.
+- **exec-rs12** (ubiquitous): The output-limit terminal outcome shall remain distinct from timeout, user abort, sandbox denial, spawn failure, and an ordinary command exit code.
+- **exec-rs13** (event-driven): A non-terminal status-only `write_stdin` response shall return a concise running state, session id, suppressed line and byte counts for that drained interval, and `fullOutputPath` when available, with no process stdout or stderr in its model-visible text.
+- **exec-rs14** (event-driven): A terminal status-only `write_stdin` response shall return the terminal state, exit metadata, suppressed line and byte counts, and `fullOutputPath` when available; it shall consume the terminal result exactly as a terminal delta response does.
+- **exec-rs15** (ubiquitous): Status-only suppression shall be represented separately from truncation with structured `outputMode`, `suppressedLines`, and `suppressedBytes` details; it shall not claim that the suppressed output was absent or lost.
+- **exec-rs16** (ubiquitous): When an async command is still running, the model-visible result and tool description shall explain that intermediate output is optional: use a long status-only poll when the next action depends on completion, or, outside automation that will immediately continue, end the turn and rely on `exec_completion`; repeated delta polling is for progress inspection or interaction rather than passive waiting.
 
 ### Background completion
 
@@ -93,3 +107,4 @@ the one intentional difference.
 - **exec-rn01** (ubiquitous): The system shall render `exec_command` and `write_stdin` per `tool-rendering` (`render-ex01`), matching Pi `bash` static layout without the live-ticking timer.
 - **exec-sec01** (ubiquitous): The system shall let no command bypass the tool gateway, never delegate shell execution to a built-in host tool, own command sessions by their parent session, block `write_stdin` from reaching another parent's session, and require an approved action for escalated execution.
 - **exec-om01** (ubiquitous): The system shall omit a terminal-emulator UI, cross-session command control, automatic retries, persistent command history, and persistence of live sessions across process restart.
+- **exec-om02** (out-of-scope): Taumel shall not rewrite, remove, summarize, or replace prior exec tool results in Pi history to control cumulative context; Pi owns history retention and compaction.

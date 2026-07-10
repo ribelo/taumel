@@ -34,6 +34,29 @@ Do not create component plans or implementation work for omitted Tau systems.
 The omitted systems are intentionally excluded from the rewrite even if Tau code
 currently has shared utilities, schemas, services, or UI paths for them.
 
+Provider-request tracing, provider payload reconstruction, retry tracing, and
+top-level model tool-schema snapshots are Pi host observability and are not
+Taumel features. Taumel diagnostics may describe Taumel-owned decisions and
+failures but shall not introduce a parallel provider wire log.
+
+Operating-system notifications, terminal notification transport, and their user
+preferences are Pi host or UI-integration behavior, not Taumel features. Taumel
+shall emit semantically distinct transcript events for Taumel-owned activity and
+shall not send a second external notification through an OS or terminal channel.
+
+Model-driven progressive tool disclosure is omitted. Taumel exposes the complete
+tool surface assigned by user visibility and agent-profile policy; it does not
+add `select_tools`, model-specific schema-loading capabilities, or a second
+model-owned tool-visibility state.
+
+Cross-call repetition detection, escalating model reminders, and force-stopping
+an agent turn are Pi agent-loop behavior. Taumel tools remain safe when repeated
+but do not implement a partial loop guard covering only Taumel-owned calls.
+
+Compaction-entry presentation is omitted. Taumel may select the model used by
+Pi's compaction hooks, but Pi owns compaction summaries, transcript entries,
+navigation, expansion state, and shortcuts for viewing them.
+
 ## Discipline
 
 - Design the shared contracts up front.
@@ -43,6 +66,11 @@ currently has shared utilities, schemas, services, or UI paths for them.
 - Use capability profiles as authorization data.
 - Keep Pi and JavaScript interop at adapter boundaries.
 - Keep Eta_jsoo as the OCaml effect/runtime target.
+- Specify only features that Taumel owns through Pi's extension boundaries.
+- Rely on Pi for host behavior such as the agent loop, provider interaction,
+  retry, compaction, user-message queue ordering, session lifecycle, and process
+  exit semantics; do not add Taumel compatibility requirements that police or
+  duplicate those behaviors.
 
 ## Task Order
 

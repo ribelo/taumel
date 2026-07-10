@@ -24,6 +24,8 @@ readable, and separate from that markup.
 - **sub-ts01** (ubiquitous): The system shall provide the model tools `agent_spawn`, `agent_send`, `agent_wait`, `agent_list`, `agent_close`, and `agent_profiles`, and shall not provide a legacy `agent` multiplexer.
 - **sub-ts02** (ubiquitous): The system shall keep subagent tool and system-prompt surfaces stable for the child session lifetime, attaching or detaching no tools per run, so provider prompt caching holds.
 - **sub-ts03** (ubiquitous): The system shall give every subagent session `update_goal` and never `create_goal`.
+- **sub-ts04** (ubiquitous): The system shall provide the six subagent tools in Pi print and JSON modes as well as TUI and RPC modes.
+- **sub-ts05** (unwanted): If Pi runs without an interactive UI, then the system shall not disable subagent tools merely because `ctx.hasUI` is false.
 
 ### agent_spawn
 
@@ -43,6 +45,9 @@ readable, and separate from that markup.
 - **sub-sd06** (event-driven): When the agent is open with no active run, the system shall start a new non-goal message run with a new `run_id` regardless of the prior terminal state.
 - **sub-sd07** (event-driven): When the agent has a suspended run, an `agent_send` message shall resume that run through the existing child session and goal component rather than create a new run.
 - **sub-sd08** (ubiquitous): The system shall output `agent_id`, `run_id`, `submission_id`, a delivery kind (`steered`, `interrupted`, `suspended`, `resumed`, or `started`), and a run/status summary.
+- **sub-sd09** (event-driven): When a priority steer supersedes child execution, the system shall keep the same logical run and shall let only the execution made current by that steer subsequently transition the run or publish its terminal result; late completion, error, cancellation, and output from superseded execution shall have no model-facing effect.
+- **sub-sd10** (event-driven): When `agent_send` accepts a message for an active or suspended run, the system shall report acceptance of that submission and the logical run's current status without implying that the run has completed.
+- **sub-sd11** (event-driven): If a replacement message cannot be accepted after the prior execution has been superseded, then the system shall fail the logical run with reason `replacement_dispatch_failed` and shall not restore the superseded execution.
 
 ### agent_wait
 
@@ -60,11 +65,13 @@ readable, and separate from that markup.
 - **sub-wt12** (event-driven): When `agent_wait` returns a terminal run response to the parent, including final output, final error, cancellation, timeout, lost state, or `output_available = false`, the system shall mark that run consumed and suppress future completion-availability notifications for that run.
 - **sub-wt13** (unwanted): If `agent_wait` returns only a bounded-wait timeout, no-active/no-waitable status, running status, or another status-only response without terminal output or terminal failure information, then the system shall not mark the selected run consumed and shall not suppress a later completion-availability notification.
 - **sub-wt14** (unwanted): If a selected run is terminal and its final output, final error, or `output_available = false` terminal record is available to the completion-read path, then `agent_wait` shall not return `no_waitable_run` for that run.
+- **sub-wt15** (ubiquitous): The system shall return `final_output` only for a completed run; for a failed, cancelled, or timed-out run it shall return the terminal error or reason separately from any available incomplete child text, marking that text as partial rather than final.
+- **sub-wt16** (unwanted): `agent_wait` shall not return partial output, abort errors, or terminal status from execution superseded within the same logical run.
 
 ### agent_list and agent_close
 
 - **sub-ls01** (event-driven): When `agent_list` runs, the system shall list agents owned by the session with their latest run state, showing open identities by default and closed ones when `include_closed = true`.
-- **sub-ls02** (ubiquitous): The system shall output `agent_id`, profile, lifecycle, active/latest `run_id`, run state, elapsed time, and bounded status/reason codes, never child output or full error text.
+- **sub-ls02** (ubiquitous): The system shall output `agent_id`, profile, workspace binding, lifecycle, active/latest `run_id`, run state, elapsed time, and bounded status/reason codes, never the resolved system prompt, child output, or full error text.
 - **sub-cl01** (event-driven): When `agent_close` runs with ids or `all`, the system shall cancel each active run with reason `closed_by_parent`, close the identity permanently, and keep historical run output inspectable.
 - **sub-cl02** (ubiquitous): The system shall treat `agent_close` as the only model-facing permanent close primitive and interrupt-only `agent_send` as the non-closing pause.
 
@@ -86,8 +93,8 @@ readable, and separate from that markup.
 
 ### Data model
 
-- **sub-dm01** (ubiquitous): The system shall keep an agent identity durable until closed, with `agent_id`, parent session, profile, attached live child session, and created/closed timestamps, reusing one Pi child session across runs.
-- **sub-dm02** (ubiquitous): The system shall snapshot provider, model, thinking, tools, sandbox, and prompt at spawn time, so later config changes affect only future spawns.
+- **sub-dm01** (ubiquitous): The system shall keep an agent identity durable until closed, with `agent_id`, parent session, profile, workspace binding, attached live child session, and created/closed timestamps, reusing one Pi child session across runs.
+- **sub-dm02** (ubiquitous): The system shall create an immutable execution snapshot at spawn time containing the fully resolved system prompt, provider, model, thinking, tool surface, spawn-time permission ceiling, and workspace binding, so later profile, routing config, or parent-working-directory changes affect only future identities.
 - **sub-dm03** (ubiquitous): The system shall generate `agent_id` as `<profile>-<shortid>` (4–6 lowercase unambiguous characters, retrying on collision), never reuse it within a session, never accept it from the model, and allow multiple open agents per profile.
 - **sub-dm04** (ubiquitous): The system shall give a run `run_id`, `agent_id`, initial submission kind, submission ids and kinds, status, reason code, parent terminal-consumption state, completion-notification state, and timestamps, with statuses `queued`, `running`, `suspended`, `completed`, `failed`, `cancelled`, `timed_out`, and `lost`.
 - **sub-dm07** (ubiquitous): The system shall represent parent terminal-consumption state as a closed enum with exactly `pending` and `consumed_by_agent_wait`; status-only waits, bounded wait timeouts, non-terminal run updates, and completion notifications shall not change this state.
@@ -95,6 +102,11 @@ readable, and separate from that markup.
 - **sub-dm09** (ubiquitous): The system shall represent completion-notification state as a closed enum with exactly `pending` and `sent`; failed notification sends leave the state `pending`, and successful sends transition it to `sent`.
 - **sub-dm05** (ubiquitous): The system shall create a `submission_id` per spawn and send, attaching an active-run send to that run by steering and starting a new non-goal run for an idle send.
 - **sub-dm06** (event-driven): When a Pi child session is lost after exit or resume, the system shall not auto-recreate it during `/resume`; a later `agent_send` shall create a new child runtime behind the same `agent_id` as a new run.
+- **sub-dm13** (ubiquitous): The system shall keep an agent identity's workspace binding immutable for that identity's lifetime; changing the parent's current working directory shall not rebind an existing identity.
+- **sub-dm14** (event-driven): When a later `agent_send` recreates a lost child runtime, the system shall recreate it in the identity's original workspace binding rather than the parent's current working directory.
+- **sub-dm15** (ubiquitous): The system shall recreate every child runtime from the identity's persisted execution snapshot and shall not re-resolve the identity from the current profile catalog or current parent configuration.
+- **sub-dm10** (ubiquitous): The system shall distinguish intentional parent termination from unexpected execution failure: parent termination without replacement shall produce run status `cancelled`, while unexpected provider, dispatch, protocol, or execution errors shall produce `failed`; `suspended` shall remain non-terminal and resumable.
+- **sub-dm11** (ubiquitous): For every child dispatch that can contribute to one logical run, only the currently authoritative execution shall be allowed to transition that run or supply its model-facing output.
 
 ### Profiles
 
@@ -112,24 +124,35 @@ readable, and separate from that markup.
 
 ### Tool visibility and validation
 
-- **sub-tv01** (ubiquitous): The system shall treat profile `tools` as authoritative, inheriting parent active tools minus agent tools for `inherit`, exposing exactly the listed names for an explicit list, and never intersecting with the parent active tool list.
+- **sub-tv01** (ubiquitous): The system shall treat profile `tools` as authoritative, inheriting parent active tools minus agent tools for `inherit`, exposing exactly the listed names for an explicit list, and never intersecting an explicit list with the parent tool surface; permission-envelope inheritance, not tool-surface intersection, prevents privilege escalation.
 - **sub-tv02** (ubiquitous): The system shall never expose an agent tool to a child, even with an explicit tool list.
 - **sub-tv03** (ubiquitous): The system shall always add `update_goal` to the child tool surface and never add `create_goal`.
 - **sub-tv04** (event-driven): When validating profiles, the system shall check every tool name against the live Pi tool registry and require canonical names.
+- **sub-tv05** (ubiquitous): The system shall preserve every valid profile-assigned child tool when clamping the child's permission envelope; a denied operation shall return the sandbox denial to the child rather than causing the tool to be hidden.
 
 ### Session toggles and persistence
 
 - **sub-tg01** (ubiquitous): The system shall treat profile toggles as session-effective visibility state in `taumel.agents`, initialized from trusted project defaults only when no session state exists.
 - **sub-tg02** (event-driven): When a profile is disabled for the session, the user-facing `/agents` manager shall show it as disabled, while model-facing profile discovery shall avoid presenting it as an available choice.
 - **sub-tg03** (ubiquitous): The system shall start a new session with all startup-valid profiles enabled unless trusted project defaults disable them, and shall restore session toggles on `/resume`.
-- **sub-ps01** (ubiquitous): The system shall store profile toggles, durable identities, run metadata, and delivery flags in `taumel.agents`, storing metadata only and no raw text.
+- **sub-ps01** (ubiquitous): The system shall store profile toggles, durable identities including their complete execution snapshots, run metadata, and delivery flags in `taumel.agents`; the resolved system prompt is the only raw agent text stored there.
 - **sub-ps02** (event-driven): When a session resumes, the system shall restore identities and run state and mark runs persisted as `queued`, `running`, or `suspended` without a live worker as `lost` with reason `process_resumed_without_live_worker`, without auto-restarting them.
-- **sub-ps03** (ubiquitous): The system shall keep final output, transcripts, prompts, and tool logs Pi/worker-owned rather than in `taumel.agents`, and show final output as the default displayed output for completed runs.
+- **sub-ps03** (ubiquitous): The system shall keep run submission messages, final output, transcripts, hidden reasoning, and tool logs Pi/worker-owned rather than in `taumel.agents`; persisting the resolved identity system prompt shall not permit persisting those run contents.
+- **sub-ps04** (unwanted): If a persisted identity lacks any execution-snapshot field required to recreate it faithfully, then the system shall keep the identity inspectable and closeable but shall not reconstruct missing values from current configuration or profile files.
+- **sub-ps05** (ubiquitous): The resolved system prompt in an execution snapshot shall be available only to child-runtime recreation and persistence codecs; model-facing agent tools, managers, renderers, notifications, and summaries shall not return it.
+- **sub-ps04** (event-driven): When restoring compatible subagent state written by an earlier Taumel version, the system shall preserve all readable identities, runs, statuses, and terminal results without requiring an eager session migration.
 
 ### Child session creation
 
 - **sub-cs01** (ubiquitous): The system shall create child sessions as Tau-style worker `AgentSession` instances through the Pi SDK `createAgentSession` with their own in-memory manager, not `newSession()`, and shall not navigate the user's main session.
 - **sub-cs02** (ubiquitous): The system shall let TypeScript own Pi SDK create, steer, abort, and dispose calls and OCaml own the typed state machine, profile resolution, run/submission metadata, and next-action decisions.
+- **sub-cs03** (event-driven): When an agent's workspace binding no longer names an available directory and a send would start or recreate a child runtime, the system shall fail the attempted run with reason `working_directory_unavailable`, keep the identity open, and return a clear model-visible error.
+- **sub-cs04** (unwanted): If an agent's workspace binding is unavailable, then the system shall not silently substitute the parent's current working directory, another workspace root, the process working directory, or a temporary directory.
+- **sub-cs05** (event-driven): When a send would recreate a child runtime for an identity with an incomplete persisted execution snapshot, the system shall fail the attempted run with reason `identity_snapshot_incomplete`, keep the identity open, and return a clear model-visible error.
+- **sub-cs06** (event-driven): When an identity's snapshotted model is absent from Pi's model registry or lacks usable authentication and a send would start or recreate a child runtime, the system shall fail the attempted run with reason `model_unavailable`, keep the identity open, and return a clear model-visible error.
+- **sub-cs07** (unwanted): If an identity's snapshotted model is unavailable, then the system shall not substitute the parent's current model, another model from the same provider, a model alias's new target, or any default model.
+- **sub-cs08** (event-driven): When any tool in an identity's snapshotted tool surface is absent from Pi's live tool registry and a send would start or recreate a child runtime, the system shall fail the attempted run with reason `tool_surface_unavailable`, keep the identity open, and identify the missing canonical tool names in the model-visible error.
+- **sub-cs09** (unwanted): If an identity's snapshotted tool surface is unavailable, then the system shall not recreate the child with a reduced surface, substitute similar tools, or re-resolve tools from the current profile definition.
 
 ### Markup and rendering
 
@@ -153,6 +176,11 @@ readable, and separate from that markup.
 
 - **sub-sa01** (ubiquitous): The system shall never allow `no_sandbox` for subagents, clamp a child sandbox preset to at most the parent's and a child approval policy to at least the parent's strictness, reject `danger-full-access` declarations, and clamp an inherited `danger-full-access` to `workspace-write`.
 - **sub-sa02** (event-driven): When a child tool needs escalation, the system shall show the approval prompt to the user identifying the requesting agent or profile and run child tools under the child session sandbox.
+- **sub-sa03** (event-driven): When the parent permission envelope changes after spawn, the system shall apply the stricter combination of that current envelope and the child's spawn-time ceiling to the child's next side-effect authorization, including calls made by an already-running child turn.
+- **sub-sa04** (ubiquitous): Relaxing parent permissions may restore an existing child's effective authority only up to its spawn-time ceiling; it shall not mutate the child's execution snapshot or tool surface.
+- **sub-sa05** (state-driven): While a child remains live after Pi loads another main session, the child shall continue under its resource-local owner permission state and spawn-time ceiling without consulting the newly loaded session.
+- **sub-sa06** (event-driven): When the parent session is loaded again, the system shall refresh each live owned child's owner permission state before allowing `agent_send`, `agent_wait`, `agent_close`, completion delivery, or a subsequent child side effect through that parent.
+- **sub-sa07** (unwanted): If a live child requests approval while its parent session is not loaded, then the system shall return a model-visible `approval_unavailable` denial for that tool call, shall not display the approval in another session, and shall not suspend the child waiting for its parent to be loaded.
 
 ### Completion availability
 
@@ -168,6 +196,17 @@ readable, and separate from that markup.
 - **sub-cd10** (unwanted): An `agent_completion` notification shall never instruct the model to use `agent_ids`, because completion availability is scoped to one `run_id` and `agent_ids` may resolve to a later active or terminal run.
 - **sub-cd11** (ubiquitous): The read instruction in an `agent_completion` notification shall be a poll-once read with `timeout_seconds = 0`; it shall not omit `timeout_seconds` or use a positive timeout.
 - **sub-cd12** (ubiquitous): The read instruction shall appear in the visible `notification` content itself; structured details may mirror it for rendering and tests, but hidden details shall not be the only source of the read instruction.
+
+### Noninteractive draining
+
+- **sub-ni01** (event-driven): When the main agent would end a turn in Pi print or JSON mode while an owned child run remains active, the system shall hold that main turn open until each active child run reaches a terminal or suspended state.
+- **sub-ni02** (event-driven): When a child run becomes terminal during a noninteractive drain, the system shall deliver the existing opaque `agent_completion` notification to the main agent and allow the main agent to react before the Pi run exits; the notification shall instruct the main agent to consume the result through `agent_wait` and shall not include the child output or error body.
+- **sub-ni06** (ubiquitous): A noninteractive drain notification shall change only completion-notification state and shall leave parent terminal-consumption state pending until `agent_wait` returns the terminal response, exactly as in interactive mode.
+- **sub-ni03** (ubiquitous): The system shall re-enumerate active child runs after every drained batch and every resulting main-agent continuation, so child runs started while handling earlier completions are also drained.
+- **sub-ni04** (ubiquitous): Noninteractive draining shall apply only to child-agent runs; it shall not wait for asynchronous `exec_command` sessions, cron tasks, or Exa Agent runs.
+- **sub-ni05** (unwanted): If an owned child run is still active, then a print or JSON run shall not complete successfully merely because the main agent emitted a stop response.
+- **sub-ni07** (ubiquitous): Noninteractive draining shall have no separate batch, session-wide, or wall-clock deadline; it shall wait until each selected child reaches a terminal or suspended state or until Pi cancels or shuts down the overall run.
+- **sub-ni08** (unwanted): If a child remains active beyond an arbitrary drain duration, then the system shall not abandon it, suppress its completion, or report the noninteractive run complete solely because that duration elapsed.
 
 ### Startup validation
 

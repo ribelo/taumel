@@ -63,6 +63,10 @@ patch parsing stay separate from each other and from execution.
 - **sandbox-ex03** (unwanted): If a command requests escalation while the approval policy is not `on-request`, then the system shall deny the command and report that escalation cannot be requested under the current policy.
 - **sandbox-ex04** (event-driven): When the approval policy is `never`, the system shall deny a sandbox-boundary decision that would otherwise require approval — a read-only write, or a write or delete outside the workspace roots — while letting exec-policy `prompt` classifications run without asking.
 - **sandbox-ex05** (event-driven): When the approval policy is `on-request`, `on-failure`, or `untrusted`, the system shall surface a decision that requires approval as an approval request.
+- **sandbox-ex06** (unwanted): If a child owned by an unloaded parent session reaches a decision that requires approval, then the system shall deny that decision with reason `approval_unavailable` without opening an approval prompt in the currently loaded session.
+- **sandbox-ex07** (ubiquitous): An approval-unavailable denial shall be terminal for that tool call and model-visible, and shall not suspend the child pending a later parent-session reload.
+- **sandbox-ex08** (ubiquitous): An approval prompt shall show the concrete effect being authorized: command and working directory for execution, or affected paths and a bounded diff for mutation, together with the sandbox boundary being crossed and the requesting agent identity when applicable.
+- **sandbox-ex09** (ubiquitous): The system shall label model-supplied justification as untrusted explanatory text rather than authorization evidence; truncating a preview shall preserve affected paths and report omitted-content counts.
 
 ### bubblewrap execution
 
@@ -98,8 +102,13 @@ patch parsing stay separate from each other and from execution.
 
 - **sandbox-cp01** (event-driven): When deriving a child profile, the system shall set its sandbox preset to the stricter of the parent preset and the requested preset, and its approval policy to the stricter of the parent and requested policy.
 - **sandbox-cp02** (unwanted): If a subagent profile requests `danger-full-access`, then the system shall reject it; an inherited `danger-full-access` parent preset shall downgrade to `workspace-write` for the child.
-- **sandbox-cp03** (event-driven): When deriving a child profile, the system shall intersect the parent and child tool and agent allowlists and set the child's `noSandboxAllowed` to false.
+- **sandbox-cp03** (event-driven): When deriving a child profile, the system shall allow the child tool surface to differ from and exceed the parent's tool surface, intersect the parent and child agent allowlists, and set the child's `noSandboxAllowed` to false; the child's side effects shall remain bounded by its inherited permission envelope.
 - **sandbox-cp04** (unwanted): If a requested agent is disabled or outside the parent's agent allowlist, then the system shall reject the child profile.
+- **sandbox-cp05** (event-driven): When authorizing any side effect for an existing child, the system shall use the stricter combination of the child's spawn-time permission ceiling and the parent's current sandbox, approval, network, and no-sandbox constraints.
+- **sandbox-cp06** (event-driven): When the user tightens or relaxes the parent's permissions, the new current envelope shall affect subsequent child tool authorizations immediately, while relaxation shall restore no authority beyond the child's spawn-time ceiling.
+- **sandbox-cp07** (state-driven): While a child remains live and its parent session is not loaded, the system shall authorize child side effects against the stricter combination of the child's spawn-time ceiling and the owner permission state captured by that child resource.
+- **sandbox-cp08** (unwanted): An unloaded parent's child shall never inherit permissions from the currently loaded main session, even when that session has the same working directory or a broader envelope.
+- **sandbox-cp09** (unwanted): An unloaded parent's child shall never borrow the currently loaded session's approval channel or user approval.
 
 ### Permissions and network commands
 

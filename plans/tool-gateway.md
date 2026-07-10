@@ -27,6 +27,9 @@ exposure is a hint, never the enforcement boundary.
 - **gateway-au05** (ubiquitous): The system shall authorize a tool call through the gateway before any tool planner runs.
 - **gateway-ex01** (ubiquitous): The system shall expose only the tools the active profile allows, treating exposure as a hint rather than enforcement.
 - **gateway-ex02** (event-driven): When a tool is exposed by Pi but disallowed by the profile, the system shall still deny the call at execution time.
+- **gateway-ex03** (ubiquitous): The system shall keep a profile-assigned tool exposed even when the active sandbox policy will deny its effect; the attempted call shall reach gateway authorization and return the sandbox's model-visible denial instead of disappearing from the tool surface.
+- **gateway-ex04** (ubiquitous): The system shall expose an agent's complete assigned tool surface without requiring the model to load, select, or rediscover tool schemas on demand.
+- **gateway-ex05** (out-of-scope): Taumel shall not provide a `select_tools` tool, model-capability negotiation for progressive tool disclosure, or post-compaction restoration of a model-selected tool subset.
 - **gateway-sa01** (event-driven): When deriving a child session, the system shall authorize that session's tool calls against the child capability profile.
 - **gateway-dr01** (event-driven): When the TypeScript and OCaml tool-name sets drift, the system shall fail fast at startup.
 
@@ -39,6 +42,9 @@ exposure is a hint, never the enforcement boundary.
 - **gateway-rs07** (ubiquitous): Schema validation failures before Taumel `execute` runs are Pi-owned. Taumel may improve the registered parameter schemas and compatibility argument preparation, but shall not fork Pi's validation/result-delivery loop inside Taumel.
 - **gateway-rs06** (event-driven): Renderer failures occur after tool-result delivery and shall not alter, replace, duplicate, or suppress the model-visible tool result. The UI shall degrade gracefully and report/log the renderer error separately.
 - **gateway-rs03** (unwanted): Taumel shall not introduce paths that leave a Pi-accepted tool call without a matching terminal tool result, or that cause multiple terminal tool results for one tool-call id.
+- **gateway-rs08** (ubiquitous): Taumel shall not introduce a generic model-only tool-result note channel or embed harness guidance in `<system>` or `<system-reminder>` blocks solely for a renderer to suppress from the user.
+- **gateway-rs09** (ubiquitous): When a tool uses an explicit model-facing protocol envelope, its load-bearing outcome facts shall remain available to the user through structured details and an explicit renderer; the envelope shall not act as a hidden note side channel.
+- **gateway-rs10** (out-of-scope): A future need for genuinely model-only tool-result metadata requires a public Pi projection API and a separate requirements decision; Taumel shall not emulate that API inside the extension.
 
 ### Validation quality
 
@@ -46,3 +52,8 @@ exposure is a hint, never the enforcement boundary.
 - **gateway-vq02** (ubiquitous): Taumel tool schemas shall intentionally reject unknown parameters with `additionalProperties: false`; unknown parameters indicate model/tool-contract drift and shall not be silently ignored.
 - **gateway-vq03** (out-of-scope): Taumel shall not patch or fork Pi's generic validation formatter. Improvements to messages such as "root: must not have additional properties" belong upstream in Pi, not in Taumel.
 - **gateway-vq04** (ubiquitous): Taumel shall avoid `prepareArguments` compatibility shims by default. Shims may be used only for a deliberate same-release API migration, and shall not preserve deprecated or legacy tool shapes.
+
+### Agent-loop ownership
+
+- **gateway-lp01** (out-of-scope): Taumel shall not track repeated tool calls across an agent turn, inject escalating repetition reminders, suppress an otherwise valid repeated call, or force-stop the turn because calls repeat.
+- **gateway-lp02** (ubiquitous): Taumel tools shall remain safe and return clear current-state results when repeated, including polling tools for which identical calls may be meaningful; generic repetition policy remains Pi host behavior.

@@ -65,6 +65,10 @@ holds.
 - **cron-dl03** (state-driven): While a goal-automation loop is driving, the system shall hold every pending fire and deliver none, letting the goal continuation proceed until the goal stops driving.
 - **cron-dl04** (event-driven): When the predicate holds at an idle poll, the system shall deliver by waking a turn (`triggerTurn`); when it holds at `agent_end` after the goal continuation declines, the system shall deliver by steering.
 - **cron-dl05** (ubiquitous): The system shall never drop a pending fire for being busy; a fire that comes due during a turn or goal is delivered once the host next becomes deliverable, however late.
+- **cron-dl06** (ubiquitous): The system shall persist and display every delivered cron fire as a distinct system-originated transcript message rather than presenting it as a user-authored message or hiding it from the transcript.
+- **cron-dl07** (event-driven): When a live or replayed transcript contains a cron fire, the system shall preserve its cron provenance and render it through the same cron-fire message type.
+- **cron-dl08** (ubiquitous): A delivered cron-fire message shall carry structured task id, raw cron expression, human-readable schedule, coalesced occurrence count, and full scheduled prompt metadata sufficient for rendering and replay.
+- **cron-dl09** (ubiquitous): The model-visible cron-fire content shall include the scheduled prompt and shall state the coalesced occurrence count when it is greater than one; rendering metadata shall not be the model's only source of those facts.
 
 ### Coalescing
 
