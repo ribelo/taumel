@@ -3,7 +3,7 @@ import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works
 // A header is `• <name> · <subject>[ <trailing>]`. `lead` is the fully-colored
 // `• name · ` prefix; `subject` and `trailing` are separately colored. The
 // subject-start column is visibleWidth(lead).
-export type HeaderSpec = { readonly lead: string; readonly subject: string; readonly trailing: string };
+export type HeaderSpec = { readonly lead: string; readonly subject: string; readonly trailing: string; readonly subjectClip?: "end" | "middle" };
 
 // A body is either a └-railed block or a flush (self-guttered) block.
 //   rail  — first physical line prefixed `  └ `, continuation `    ` (4 spaces).
@@ -22,13 +22,56 @@ export type Body =
 
 const RAIL_FIRST = "  └ ";
 const RAIL_CONT = "    ";
+const LEFT_GUTTER = " ";
 const ELLIPSIS = "…";
 
 export type Block = { readonly header: HeaderSpec; readonly body: Body | undefined };
 
+function normalizeTabs(value: string): string {
+  // Pi measures tabs as three cells, but terminals expand literal tabs to the
+  // next tab stop. Emit the measured spaces so clipping matches physical width.
+  return value.replace(/\t/g, "   ");
+}
+
+function normalizeBlockTabs(block: Block): Block {
+  const header = {
+    ...block.header,
+    lead: normalizeTabs(block.header.lead),
+    subject: normalizeTabs(block.header.subject),
+    trailing: normalizeTabs(block.header.trailing),
+  };
+  if (block.body === undefined) return { header, body: undefined };
+  const entries = block.body.entries.map((entry) => ({ ...entry, text: normalizeTabs(entry.text) }));
+  const body = block.body.mode === "rail"
+    ? { mode: "rail" as const, entries }
+    : { mode: "flush" as const, entries, clip: block.body.clip };
+  return { header, body };
+}
+
 function terminalSafeWidth(width: number): number {
   const targetWidth = Math.max(1, width);
   return targetWidth > 1 ? targetWidth - 1 : targetWidth;
+}
+
+function truncateMiddlePlain(value: string, width: number): string {
+  if (visibleWidth(value) <= width) return value;
+  if (width <= 1) return truncateToWidth(value, width, ELLIPSIS);
+  const chars = [...value];
+  const keep = Math.max(0, width - visibleWidth(ELLIPSIS));
+  const left = Math.ceil(keep / 2);
+  const right = Math.floor(keep / 2);
+  return `${chars.slice(0, left).join("")}${ELLIPSIS}${right === 0 ? "" : chars.slice(-right).join("")}`;
+}
+
+function layoutCollapsedHeader(header: HeaderSpec, width: number): string {
+  const trailing = header.trailing === "" ? "" : ` ${header.trailing}`;
+  const full = header.subject === "" ? header.lead + header.trailing : header.lead + header.subject + trailing;
+  if (visibleWidth(full) <= width || header.subject === "" || trailing === "") return truncateToWidth(full, width, ELLIPSIS);
+  const subjectWidth = Math.max(1, width - visibleWidth(header.lead) - visibleWidth(trailing));
+  const subject = header.subjectClip === "middle"
+    ? truncateMiddlePlain(header.subject, subjectWidth)
+    : truncateToWidth(header.subject, subjectWidth, ELLIPSIS);
+  return truncateToWidth(header.lead + subject + trailing, width, ELLIPSIS);
 }
 
 function layoutHeader(header: HeaderSpec, expanded: boolean, width: number): string[] {
@@ -39,7 +82,10 @@ function layoutHeader(header: HeaderSpec, expanded: boolean, width: number): str
   // Collapsed: always exactly one line, clipped to width.
   // Expanded: one line if it fits, else wrap the subject under a hanging indent
   // aligned to the subject-start column.
-  if (!expanded || visibleWidth(full) <= width) {
+  if (!expanded) {
+    return [layoutCollapsedHeader(header, width)];
+  }
+  if (visibleWidth(full) <= width) {
     return [truncateToWidth(full, width, ELLIPSIS)];
   }
   const subjectStart = visibleWidth(header.lead);
@@ -78,21 +124,23 @@ function layoutFlush(entries: readonly Entry[], clip: boolean, width: number): s
 }
 
 export function renderBlock(block: Block, expanded: boolean): { render(width: number): string[]; invalidate(): void } {
+  const normalizedBlock = normalizeBlockTabs(block);
   let cache: { width: number; lines: string[] } | undefined;
   return {
     render(width: number): string[] {
       if (cache !== undefined && cache.width === width) return cache.lines;
       const targetWidth = Math.max(1, width);
-      const contentWidth = terminalSafeWidth(targetWidth);
-      const lines = layoutHeader(block.header, expanded, contentWidth);
-      if (block.body !== undefined) {
-        if (block.body.mode === "rail") {
-          lines.push(...layoutRail(block.body.entries, expanded, contentWidth));
+      const safeWidth = terminalSafeWidth(targetWidth);
+      const contentWidth = Math.max(1, safeWidth - visibleWidth(LEFT_GUTTER));
+      const lines = layoutHeader(normalizedBlock.header, expanded, contentWidth);
+      if (normalizedBlock.body !== undefined) {
+        if (normalizedBlock.body.mode === "rail") {
+          lines.push(...layoutRail(normalizedBlock.body.entries, expanded, contentWidth));
         } else {
-          lines.push(...layoutFlush(block.body.entries, block.body.clip, contentWidth));
+          lines.push(...layoutFlush(normalizedBlock.body.entries, normalizedBlock.body.clip, contentWidth));
         }
       }
-      const clamped = lines.map((line) => clampLine(line, contentWidth));
+      const clamped = lines.map((line) => clampLine(`${LEFT_GUTTER}${line}`, safeWidth));
       cache = { width, lines: clamped };
       return clamped;
     },
@@ -115,7 +163,10 @@ export function withLeftGutter(component: { render(width: number): string[]; inv
   return {
     render(width: number): string[] {
       const targetWidth = Math.max(1, width);
-      return component.render(Math.max(1, targetWidth - 1)).map((line) => clampLine(` ${line}`, targetWidth));
+      const safeWidth = terminalSafeWidth(targetWidth);
+      return component
+        .render(Math.max(1, safeWidth - visibleWidth(LEFT_GUTTER)))
+        .map((line) => clampLine(`${LEFT_GUTTER}${line}`, safeWidth));
     },
     invalidate() {
       component.invalidate();

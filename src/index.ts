@@ -17,7 +17,7 @@ import { installCronLoop } from "./cron.ts";
 import { toolNames } from "./tool-contracts.ts";
 import { installSkillResolver } from "./skills.ts";
 import { installThinkingFooterRefresh, registerThinkingShortcuts } from "./thinking-shortcuts.ts";
-import { skillMessageRenderer } from "./tool-renderer.ts";
+import { cronFireMessageRenderer, skillMessageRenderer } from "./tool-renderer.ts";
 import { installVisibilityLifecycle } from "./visibility.ts";
 
 function requireCoreBridge(core: CoreBridge | undefined): CoreBridge {
@@ -363,6 +363,7 @@ export default async function taumel(pi: PiLike) {
   const gatewayTools = registerGatewayTools(pi, core, childSessions);
   if (typeof pi.registerMessageRenderer === "function") {
     pi.registerMessageRenderer("skill", skillMessageRenderer());
+    pi.registerMessageRenderer("taumel.cron.fire", cronFireMessageRenderer());
   }
   registerGatewayCommands(pi, core, childSessions, composer);
   installGoalContinuationLoop(pi, core);

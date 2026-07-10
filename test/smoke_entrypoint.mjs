@@ -106,7 +106,7 @@ let extensionLoading = true;
 let runtimeStale = false;
 let childCounter = 0;
 let pendingMessages = false;
-// Models pi.isIdle(): when true, a child completion flushes immediately via a
+// Models ctx.isIdle(): when true, a child completion flushes immediately via a
 // triggerTurn notification (background-while-idle). Set false to model the parent
 // being mid-turn (e.g. about to call agent_wait), so the completion stays pending
 // and an agent_wait can claim it before any turn_end flush.
@@ -232,7 +232,6 @@ const pi = {
     runtimeActionGuard();
     sentUserMessages.push({ content, options });
   },
-  isIdle: () => parentIdle,
   createAgentSession: async (options = {}) => {
     agentSessionCalls.push(options);
     if (nextAgentSessionResult !== undefined) {
@@ -382,6 +381,7 @@ try {
   const ctx = {
     cwd,
     hasUI: true,
+    isIdle: () => parentIdle,
     ui: {
       setFooter: (factory) => footerFactories.push(factory),
       notify: (message, type) => notifications.push({ message, type }),
@@ -454,6 +454,14 @@ try {
   shortcuts.get("alt+.").handler(ctx);
   if (thinkingLevel !== "xhigh" || notifications.at(-1)?.message !== "Thinking level: xhigh") {
     throw new Error(`alt+. did not raise thinking: ${JSON.stringify({ thinkingLevel, notifications })}`);
+  }
+  shortcuts.get("alt+.").handler(ctx);
+  if (thinkingLevel !== "max" || notifications.at(-1)?.message !== "Thinking level: max") {
+    throw new Error(`alt+. did not raise thinking to max: ${JSON.stringify({ thinkingLevel, notifications })}`);
+  }
+  shortcuts.get("alt+.").handler(ctx);
+  if (thinkingLevel !== "max" || notifications.at(-1)?.message !== "Thinking level: max") {
+    throw new Error(`alt+. did not clamp thinking at max: ${JSON.stringify({ thinkingLevel, notifications })}`);
   }
 
   for (const handler of handlers.get("session_start") ?? []) {
@@ -557,7 +565,9 @@ try {
   const compactShellLines = compactShell.split("\n").map((line) => line.trim());
   const expandedShellLines = expandedShell.split("\n").map((line) => line.trim());
   assert(
-    compactShell.startsWith("• exec_command · ls many-files") &&
+    compactShell.startsWith(" • exec_command · ls many-files") &&
+    compactShell.split("\n").every((line) => line.startsWith(" ")) &&
+    expandedShell.split("\n").every((line) => line.startsWith(" ")) &&
     compactShell.includes("  └ ") &&
     compactShell.includes("more lines") &&
     !compactShellLines.includes("file-2") &&
@@ -616,13 +626,29 @@ try {
   ) {
     throw new Error(`composer off did not persist and rerender: ${JSON.stringify({ composerOff, composerFile, renderRequests })}`);
   }
-
   const noGoalResult = await commands.get("goal").handler("", ctx);
   if (
     noGoalResult.action !== "command_result" ||
     noGoalResult.message !== "No active goal."
   ) {
     throw new Error(`goal command did not report empty state: ${JSON.stringify(noGoalResult)}`);
+  }
+
+  const originalSendUserMessageForGoal = pi.sendUserMessage;
+  pi.sendUserMessage = () => {
+    throw new Error("goal submission failed");
+  };
+  try {
+    await commands.get("goal").handler("failed objective", ctx);
+    throw new Error("goal command unexpectedly succeeded after initial prompt submission failed");
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== "goal submission failed") throw error;
+  } finally {
+    pi.sendUserMessage = originalSendUserMessageForGoal;
+  }
+  const goalAfterFailedSubmission = await commands.get("goal").handler("status", ctx);
+  if (goalAfterFailedSubmission.details?.goal != null) {
+    throw new Error(`goal command did not roll back failed prompt submission: ${JSON.stringify(goalAfterFailedSubmission)}`);
   }
 
   const setGoalResult = await commands.get("goal").handler("ship slash command", ctx);
@@ -633,15 +659,13 @@ try {
   ) {
     throw new Error(`goal command did not set goal: ${JSON.stringify(setGoalResult)}`);
   }
-  const initialGoalMessage = sentMessages.at(-1);
+  const initialGoalMessage = sentUserMessages.at(-1);
   if (
-    initialGoalMessage?.message?.customType !== "taumel.goal.continue" ||
-    initialGoalMessage?.message?.display !== false ||
-    !initialGoalMessage.message.content.includes("ship slash command") ||
-    initialGoalMessage?.options?.triggerTurn !== true ||
-    initialGoalMessage?.options?.deliverAs !== "followUp"
+    initialGoalMessage?.content !== "ship slash command" ||
+    initialGoalMessage?.options !== undefined ||
+    sentMessages.some((message) => message?.message?.customType === "taumel.goal.continue")
   ) {
-    throw new Error(`goal command did not queue initial continuation: ${JSON.stringify(sentMessages)}`);
+    throw new Error(`goal command did not submit a visible user objective: ${JSON.stringify({ sentMessages, sentUserMessages })}`);
   }
 
   sentMessages.length = 0;
@@ -793,7 +817,7 @@ try {
   if (
     nextGoalMessage?.message?.customType !== "taumel.goal.continue" ||
     nextGoalMessage?.message?.display !== false ||
-    !nextGoalMessage.message.content.includes("Continue the active goal") ||
+    !nextGoalMessage.message.content.includes("Continue working toward the active goal") ||
     nextGoalMessage?.options?.triggerTurn !== true ||
     nextGoalMessage?.options?.deliverAs !== "followUp"
   ) {
@@ -910,7 +934,6 @@ try {
   ) {
     throw new Error(`turn_end did not finalize pending update_goal accounting: ${JSON.stringify(accountedGoalResult)}`);
   }
-
   if (activeToolUpdates.length === 0) {
     throw new Error(`active tool sync did not run after session_start: ${JSON.stringify(activeToolUpdates)}`);
   }
@@ -924,7 +947,6 @@ try {
   ) {
     throw new Error(`openai active tool sync did not select apply_patch: ${JSON.stringify(activeToolUpdates)}`);
   }
-
   const defaultPermission = await commands.get("permissions").handler("show", ctx);
   if (
 	    defaultPermission.action !== "command_result" ||
@@ -1120,7 +1142,6 @@ try {
   ) {
     throw new Error(`model_select to openai did not switch to apply_patch: ${JSON.stringify(activeToolUpdates)}`);
   }
-
   const execResult = await tools
     .get("exec_command")
     .execute("exec-call", { cmd: "printf exec-ready", workdir: cwd }, undefined, undefined, ctx);
@@ -1472,6 +1493,45 @@ try {
       throw new Error(`write_stdin did not poll session output: ${JSON.stringify({ stdinCalls, stdinResult })}`);
     }
 
+    const statusExec = await tools.get("exec_command").execute(
+      "exec-status-wait",
+      { cmd: "printf 'discard-me\\n'; sleep 0.3; printf 'final-garbage\\n'", workdir: cwd, yield_time_ms: 25 },
+      undefined,
+      undefined,
+      ctx,
+    );
+    const statusSessionId = statusExec.details?.sessionId;
+    if (typeof statusSessionId !== "number") {
+      throw new Error(`status exec did not yield a running session: ${JSON.stringify(statusExec)}`);
+    }
+    const statusWait = await tools.get("write_stdin").execute(
+      "stdin-status-wait",
+      { session_id: statusSessionId, chars: "", yield_time_ms: 5000, output_mode: "status" },
+      undefined,
+      undefined,
+      ctx,
+    );
+    if (
+      statusWait.details?.exitCode !== 0 ||
+      statusWait.details?.outputMode !== "status" ||
+      !(statusWait.details?.suppressedBytes > 0) ||
+      typeof statusWait.details?.fullOutputPath !== "string" ||
+      statusWait.content?.[0]?.text.includes("discard-me") ||
+      statusWait.content?.[0]?.text.includes("final-garbage")
+    ) {
+      throw new Error(`write_stdin status mode leaked or lost output metadata: ${JSON.stringify(statusWait)}`);
+    }
+    const statusReadAgain = await tools.get("write_stdin").execute(
+      "stdin-status-consumed",
+      { session_id: statusSessionId, chars: "", yield_time_ms: 5000 },
+      undefined,
+      undefined,
+      ctx,
+    );
+    if (statusReadAgain.content?.[0]?.text.includes("discard-me") || statusReadAgain.content?.[0]?.text.includes("final-garbage")) {
+      throw new Error(`status-suppressed output was returned again: ${JSON.stringify(statusReadAgain)}`);
+    }
+
     const abortableExec = await tools.get("exec_command").execute(
       "exec-abortable-stdin",
       { cmd: "sleep 0.6; echo abort-survived", workdir: cwd, yield_time_ms: 25 },
@@ -1568,10 +1628,14 @@ try {
       throw new Error(`second background exec read should be status-only retained metadata: ${JSON.stringify(bgReadAgain)}`);
     }
 
+    // The real Extension API exposes isIdle on ctx, not pi. Let the command
+    // finish while the parent remains mid-turn, then consume it explicitly.
+    // A detached completion waiter must not emit a stale notification first.
+    parentIdle = false;
     const consumedExecNotifyCount = sentMessages.length;
     const consumedExec = await tools.get("exec_command").execute(
       "exec-consumed-no-notify",
-      { cmd: "sleep 0.5; echo consumed-complete", workdir: cwd, yield_time_ms: 25 },
+      { cmd: "sleep 0.3; echo consumed-complete", workdir: cwd, yield_time_ms: 25 },
       undefined,
       undefined,
       ctx,
@@ -1580,6 +1644,7 @@ try {
     if (typeof consumedSessionId !== "number") {
       throw new Error(`consumed exec did not yield a running session: ${JSON.stringify(consumedExec)}`);
     }
+    await new Promise((resolve) => setTimeout(resolve, 400));
     const consumedRead = await tools
       .get("write_stdin")
       .execute("stdin-consumed-no-notify", { session_id: consumedSessionId, chars: "", yield_time_ms: 5000 }, undefined, undefined, ctx);
@@ -1594,6 +1659,7 @@ try {
     if (consumedNotifications.length !== 0) {
       throw new Error(`consumed terminal exec result produced notification: ${JSON.stringify(consumedNotifications)}`);
     }
+    parentIdle = true;
 
     // read tool: line-numbered output, negative-offset tail, and missing-file error.
     const readPath = join(cwd, "read-sample.txt");
@@ -1660,6 +1726,46 @@ try {
     } finally {
       resizedImage.free();
     }
+    const animatedGif = (width = 1) => Buffer.from([
+      0x47, 0x49, 0x46, 0x38, 0x39, 0x61,
+      width & 0xff, (width >> 8) & 0xff, 0x01, 0x00,
+      0x80, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0xff, 0xff, 0xff,
+      0x2c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00,
+      0x02, 0x02, 0x44, 0x01, 0x00,
+      0x2c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00,
+      0x02, 0x02, 0x44, 0x01, 0x00,
+      0x3b,
+    ]);
+    await writeFile(join(cwd, "animated.gif"), animatedGif());
+    const animatedResult = await tools.get("view_media").execute(
+      "view-animated",
+      { path: "animated.gif" },
+      undefined,
+      undefined,
+      ctx,
+    );
+    if (
+      animatedResult.details?.ok !== true ||
+      animatedResult.details?.animationPassThrough !== true ||
+      animatedResult.content?.find((item) => item?.type === "image")?.mimeType !== "image/gif"
+    ) {
+      throw new Error(`view_media did not pass through a safe animation: ${JSON.stringify(animatedResult)}`);
+    }
+    await writeFile(join(cwd, "oversized-animated.gif"), animatedGif(4096));
+    const oversizedAnimatedResult = await tools.get("view_media").execute(
+      "view-oversized-animated",
+      { path: "oversized-animated.gif" },
+      undefined,
+      undefined,
+      ctx,
+    );
+    if (
+      oversizedAnimatedResult.details?.ok !== false ||
+      !oversizedAnimatedResult.content?.[0]?.text?.includes("would require resizing or re-encoding")
+    ) {
+      throw new Error(`view_media flattened an unsafe animation: ${JSON.stringify(oversizedAnimatedResult)}`);
+    }
 
     // write append mode.
     const appendPath = join(cwd, "append-sample.txt");
@@ -1688,7 +1794,6 @@ try {
     await commands.get("permissions").handler("sandbox workspace-write", ctx);
     await rm(outsideDir, { recursive: true, force: true });
   }
-
   const usageResult = await commands.get("usage").handler("", ctx);
   if (
     usageResult.ok !== true ||
@@ -2879,7 +2984,7 @@ try {
   if (
     inheritedProfileOptions?.model?.provider !== "openai-codex" ||
     inheritedProfileOptions?.model?.id !== "gpt-test" ||
-    inheritedProfileResult.details?.childSession?.modelId !== null ||
+    inheritedProfileResult.details?.childSession?.modelId !== "openai-codex/gpt-test" ||
     inheritedProfileResult.details?.childSession?.modelApplied !== true ||
     !inheritedProfileSetupEntries.some((entry) => entry?.type === "custom" && entry?.customType === "taumel.childSession")
   ) {
@@ -2928,6 +3033,20 @@ try {
   ) {
     throw new Error(`agent child did not persist profile prompt and initial goal metadata: ${JSON.stringify(agentChildEntries)}`);
   }
+  await commands.get("permissions").handler("sandbox read-only", ctx);
+  const tightenedChildPermissions = customEntries
+    .filter((entry) => entry.sessionId === agentChildSessionId && entry.type === "taumel.permissions")
+    .at(-1)?.value;
+  if (tightenedChildPermissions?.profile?.sandboxPreset !== "read-only") {
+    throw new Error(`live child permissions did not tighten with owner: ${JSON.stringify(tightenedChildPermissions)}`);
+  }
+  await commands.get("permissions").handler("sandbox workspace-write", ctx);
+  const relaxedChildPermissions = customEntries
+    .filter((entry) => entry.sessionId === agentChildSessionId && entry.type === "taumel.permissions")
+    .at(-1)?.value;
+  if (relaxedChildPermissions?.profile?.sandboxPreset !== "workspace-write") {
+    throw new Error(`live child permissions did not restore to spawn ceiling: ${JSON.stringify(relaxedChildPermissions)}`);
+  }
   if (
     agentResult.details?.worker?.parentId !== "parent-session" ||
     agentResult.details?.worker?.depth !== 1 ||
@@ -2938,6 +3057,9 @@ try {
   ) {
     throw new Error(`agent spawn did not record root ownership: ${JSON.stringify(agentResult)}`);
   }
+  if (Object.hasOwn(agentResult.details?.worker ?? {}, "agentSystemPrompt")) {
+    throw new Error(`agent spawn leaked its resolved system prompt: ${JSON.stringify(agentResult.details?.worker)}`);
+  }
   const spawnedAgentsState = parentEntries.filter((entry) => entry.customType === "taumel.agents").at(-1);
   const persistedSmokeAgent = spawnedAgentsState?.data?.agents?.find((agent) => agent.agent_id === smokeAgentId);
   const persistedSmokeRun = spawnedAgentsState?.data?.runs?.find((run) => run.run_id === smokeRun1);
@@ -2947,7 +3069,8 @@ try {
     persistedSmokeAgent?.profile_snapshot?.modelId !== "openai-codex/gpt-override" ||
     persistedSmokeAgent?.profile_snapshot?.thinkingLevel !== "high" ||
     persistedSmokeAgent?.sandbox_snapshot?.filesystemMode !== "workspace-write" ||
-    Object.hasOwn(persistedSmokeAgent ?? {}, "system_prompt") ||
+    typeof persistedSmokeAgent?.system_prompt !== "string" ||
+    persistedSmokeAgent.system_prompt.length === 0 ||
     !persistedSmokeAgent?.active_tools?.includes("exec_command") ||
     persistedSmokeRun?.status !== "running" ||
     persistedSmokeRun?.initial_submission_kind !== "objective" ||
@@ -2971,6 +3094,7 @@ try {
           child_session_id: null,
           profile_snapshot: persistedSmokeAgent.profile_snapshot,
           sandbox_snapshot: persistedSmokeAgent.sandbox_snapshot,
+          system_prompt: persistedSmokeAgent.system_prompt,
           active_tools: persistedSmokeAgent.active_tools,
           created_at: 1,
           closed_at: null,

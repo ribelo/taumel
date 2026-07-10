@@ -1,5 +1,5 @@
 import { toolNames } from "../src/tool-contracts.ts";
-import { notificationMessageRenderer, renderersForTool, skillMessageRenderer } from "../src/tool-renderer.ts";
+import { cronFireMessageRenderer, notificationMessageRenderer, renderersForTool, skillMessageRenderer } from "../src/tool-renderer.ts";
 import { Box, visibleWidth } from "@earendil-works/pi-tui";
 
 const assert = (condition, message) => {
@@ -14,6 +14,11 @@ const theme = {
 };
 
 const renderText = (value) => value.render(120).join("\n");
+const assertLeftGutter = (value, label) => {
+  const lines = value.split("\n");
+  assert(lines.every((line) => line.startsWith(" ")), `${label} should indent every rendered line by one cell: ${value}`);
+  assert(lines[0].startsWith(" •"), `${label} header dot should start at column 1: ${value}`);
+};
 const renderInDefaultToolShell = (component, width) => {
   const shell = new Box(1, 1, (value) => value);
   shell.addChild(component);
@@ -70,6 +75,12 @@ function argsFor(name) {
       return { agent_ids: ["worker-1"] };
     case "agent_profiles":
       return {};
+    case "cron_create":
+      return { cron: "*/5 * * * *", prompt: "check status", recurring: true };
+    case "cron_list":
+      return {};
+    case "cron_delete":
+      return { id: "cron-a" };
     case "ralph_continue":
     case "ralph_finish":
       return { task_id: "task-1" };
@@ -103,6 +114,9 @@ function resultFor(name) {
   if (name === "apply_patch") {
     return { content: [{ type: "text", text: "Patch applied." }], details: { ok: true, affectedPaths: ["a.txt"], writes: [{ path: "a.txt", before: "alpha\nbeta", contents: "alpha\nBETA\ngamma" }], deletes: [] } };
   }
+  if (name === "view_media") {
+    return { content: [{ type: "text", text: "Image loaded." }], details: { ok: true, path: "/tmp/pi-clipboard-6e6a501780841a8c.png", mimeType: "image/png", originalWidth: 4096, originalHeight: 1536, width: 2048, height: 768, wasResized: true, payloadBytes: 12345 } };
+  }
   if (name === "get_goal" || name === "create_goal" || name === "update_goal") {
     return { content: [{ type: "text", text: "Goal updated." }], details: { ok: true, goal: { objective: "ship renderer coverage", status: "active", tokensUsed: 10, timeUsedSeconds: 2 } } };
   }
@@ -112,8 +126,29 @@ function resultFor(name) {
   if (name === "read_thread") {
     return { content: [{ type: "text", text: longLines }], details: { ok: true, thread: { id: "thread-1", title: "Thread 1" } } };
   }
-  if (name.startsWith("agent_")) {
-    return { content: [{ type: "text", text: "Spawned worker" }], details: { ok: true, worker: { id: "worker-1", lifecycle: "running", sandbox: "workspace-write" } } };
+  if (name === "agent_spawn") {
+    return { content: [{ type: "text", text: "<taumel_agent_spawn>raw xml</taumel_agent_spawn>" }], details: { ok: true, profile: "finder", agent_id: "finder-1", run_id: "finder-1-run-1", status: "running" } };
+  }
+  if (name === "agent_send") {
+    return { content: [{ type: "text", text: "<taumel_agent_send>raw xml</taumel_agent_send>" }], details: { ok: true, agent_id: "worker-1", profile: "finder", deliveryKind: "steered", run_id: "worker-1-run-1", submission_id: "worker-1-sub-2" } };
+  }
+  if (name === "agent_wait") {
+    return { content: [{ type: "text", text: "<taumel_agent_wait>raw xml</taumel_agent_wait>" }], details: { ok: true, runs: [{ agent_id: "worker-1", run_id: "worker-1-run-1", status: "completed", finalOutput: "done", outputAvailable: true }], hasActiveRuns: false } };
+  }
+  if (name === "agent_list") {
+    return { content: [{ type: "text", text: "<taumel_agent_list>raw xml</taumel_agent_list>" }], details: { ok: true, agents: [{ agent_id: "worker-1", profile: "finder", lifecycle: "open", child_session_id: "child-1", latestRun: { run_id: "worker-1-run-1", status: "running", elapsedSeconds: 4 } }] } };
+  }
+  if (name === "agent_close") {
+    return { content: [{ type: "text", text: "<taumel_agent_close>raw xml</taumel_agent_close>" }], details: { ok: true, agent_ids: ["worker-1"], closedCount: 1 } };
+  }
+  if (name === "agent_profiles") {
+    return { content: [{ type: "text", text: "<taumel_agent_profiles>raw xml</taumel_agent_profiles>" }], details: { ok: true, profiles: [{ name: "finder", enabled: true, sandbox: "read-only", tools: "inherit", description: "Find files" }, { name: "review", enabled: false, disabledReason: "disabled for this session", sandbox: "workspace-write", tools: "read, edit", description: "Review changes" }] } };
+  }
+  if (name.startsWith("cron_")) {
+    const task = { id: "cron-a", schedule: "every 5 minutes", cron: "*/5 * * * *", prompt: "check status", recurring: true, mode: "message", enabled: true, nextDueText: "soon" };
+    if (name === "cron_create") return { content: [{ type: "text", text: "Created cron task cron-a." }], details: { ok: true, task, id: "cron-a", schedule: "*/5 * * * *", recurring: true, mode: "message", enabled: true, nextDueText: "soon" } };
+    if (name === "cron_list") return { content: [{ type: "text", text: "Cron tasks listed." }], details: { ok: true, enabled: false, tasks: [task] } };
+    return { content: [{ type: "text", text: "Deleted cron task cron-a." }], details: { ok: true, id: "cron-a", deleted: true } };
   }
   if (name === "ralph_continue" || name === "ralph_finish") {
     return { content: [{ type: "text", text: `${name} accepted` }], details: { ok: true, taskId: "task-1", iteration: 2, status: "running", reflection: false } };
@@ -139,14 +174,17 @@ for (const name of toolNames) {
 
   const args = argsFor(name);
   const call = renderText(renderers.renderCall(args, theme, { isPartial: true }));
-  assert(call.startsWith("•"), `${name} call header should start with the • dot: ${call}`);
+  assertLeftGutter(call, `${name} call`);
+  assert(call.startsWith(" •"), `${name} call header should start with the • dot at column 1: ${call}`);
   assert(call.includes(name), `${name} call header should name the tool: ${call}`);
   assert(/\(running\)|\(searching threads\)|\(reading thread\)|\(reading\)|\(viewing image\)|\(waiting\)|\(waiting for Exa\)/.test(call), `${name} call header should carry a dim progress suffix: ${call}`);
 
   const result = resultFor(name);
   const compact = renderText(renderers.renderResult(result, { expanded: false, isPartial: false }, theme, { args }));
   const expanded = renderText(renderers.renderResult(result, { expanded: true, isPartial: false }, theme, { args }));
-  assert(compact.startsWith("•"), `${name} compact header should start with the • dot: ${compact}`);
+  assertLeftGutter(compact, `${name} compact result`);
+  assertLeftGutter(expanded, `${name} expanded result`);
+  assert(compact.startsWith(" •"), `${name} compact header should start with the • dot at column 1: ${compact}`);
   assert(compact.includes(name), `${name} compact header should name the tool: ${compact}`);
   assert(expanded.length >= compact.length, `${name} expanded renderer should be at least as informative`);
 }
@@ -173,7 +211,7 @@ const shell = renderersForTool("exec_command");
 const shellArgs = argsFor("exec_command");
 const compactShell = renderText(shell.renderResult(resultFor("exec_command"), { expanded: false, isPartial: false }, theme, { args: shellArgs }));
 const expandedShell = renderText(shell.renderResult(resultFor("exec_command"), { expanded: true, isPartial: false }, theme, { args: shellArgs }));
-assert(compactShell.startsWith("• exec_command · ls many-files"), `exec compact header wrong: ${compactShell}`);
+assert(compactShell.startsWith(" • exec_command · ls many-files"), `exec compact header wrong: ${compactShell}`);
 assert(compactShell.includes("  └ "), `exec compact body should use the └ connector: ${compactShell}`);
 assert(compactShell.includes("… 19 more lines"), `exec tail body should show … N more lines at the top: ${compactShell}`);
 assert(!/(^|\n)\s*line-1\s*(\n|$)/.test(compactShell), `exec tail body should clip the head: ${compactShell}`);
@@ -182,12 +220,45 @@ assert(/(^|\n).*line-24\b/.test(expandedShell), `exec expanded body should inclu
 
 // Failed exec → red dot, no exit code repeated in the subject.
 const failedShell = renderText(shell.renderResult({ content: [], details: { ok: false, output: "boom", exitCode: 2 } }, { expanded: false, isPartial: false }, theme, { args: shellArgs }));
-assert(failedShell.startsWith("• exec_command · ls many-files"), `failed exec header should keep the command subject: ${failedShell}`);
+assert(failedShell.startsWith(" • exec_command · ls many-files"), `failed exec header should keep the command subject: ${failedShell}`);
 assert(!/exit 2/.test(failedShell), `failed exec should not repeat the exit code in the subject (red dot signals it): ${failedShell}`);
 
 // Running async session → yellow dot + `(session N)` in the subject, no body.
 const runningSession = renderText(shell.renderResult({ content: [], details: { ok: true, sessionId: 4 } }, { expanded: false, isPartial: false }, theme, { args: shellArgs }));
 assert(/• exec_command · ls many-files \(session 4\)/.test(runningSession) && !runningSession.includes("\n"), `running session should be a yellow-dot header with (session N) and no body: ${runningSession}`);
+
+const statusWaitCompact = renderText(renderersForTool("write_stdin").renderResult(
+  { content: [{ type: "text", text: "Session 7 still running; suppressed 42 lines / 8192 bytes" }], details: { ok: true, sessionId: 7, outputMode: "status", suppressedLines: 42, suppressedBytes: 8192 } },
+  { expanded: false, isPartial: false },
+  theme,
+  { args: { session_id: 7, chars: "", output_mode: "status" } },
+));
+assert(/• write_stdin · wait session 7 \(running; suppressed 42 lines \/ 8192 bytes\)/.test(statusWaitCompact) && !statusWaitCompact.includes("\n"), `status-only wait should be one line without process output: ${statusWaitCompact}`);
+
+// Load-bearing trailing state survives clipping of a long command subject.
+const longRunningCommand = "npm --prefix packages/agent run build && npm --prefix packages/coding-agent run build && npm --prefix packages/orchestrator run build";
+const narrowRunningSession = renderersForTool("exec_command").renderResult(
+  { content: [], details: { ok: true, sessionId: 10 } },
+  { expanded: false, isPartial: false },
+  theme,
+  { args: { cmd: longRunningCommand } },
+).render(80)[0];
+assert(narrowRunningSession.includes("…") && narrowRunningSession.includes("(session 10)"), `long running command must retain its session state when clipped: ${narrowRunningSession}`);
+
+// Control input remains meaningful, and Pi's isError context drives the state
+// dot even when a rejected tool result has no structured details.
+const errorDotTheme = {
+  ...theme,
+  fg: (color, value) => color === "error" ? `<error>${value}</error>` : value,
+};
+const failedCtrlC = renderText(renderersForTool("write_stdin").renderResult(
+  { content: [{ type: "text", text: "session 3 already completed; cannot write stdin" }], details: {} },
+  { expanded: false, isPartial: false },
+  errorDotTheme,
+  { args: { session_id: 3, chars: "\u0003" }, isError: true },
+));
+assert(failedCtrlC.includes("write_stdin · ^C"), `write_stdin should render Ctrl-C as ^C: ${failedCtrlC}`);
+assert(failedCtrlC.startsWith(" <error>•</error>"), `failed write_stdin should render a red dot from context.isError: ${failedCtrlC}`);
 
 // Width-aware layout: a long command must clip to ONE physical header line when
 // collapsed (the original wrapping nitpick), and wrap under the subject-start
@@ -199,14 +270,14 @@ assert(/• exec_command · ls many-files \(session 4\)/.test(runningSession) &&
   for (const width of [64, 80, 120]) {
     const collapsed = renderersForTool("exec_command").renderResult(longRes, { expanded: false, isPartial: false }, theme, { args: { cmd: longCmd } }).render(width);
     assert(collapsed.length > 1 && visibleWidth(collapsed[0]) <= width && collapsed[0].includes("…"), `collapsed exec header must be one line clipped to width ${width}: ${JSON.stringify(collapsed[0])}`);
-    assert(collapsed[1].startsWith("  └ "), `collapsed exec body must start with the └ rail: ${JSON.stringify(collapsed[1])}`);
+    assert(collapsed[1].startsWith("   └ "), `collapsed exec body must start behind the left gutter with the └ rail: ${JSON.stringify(collapsed[1])}`);
     const expanded = renderersForTool("exec_command").renderResult(longRes, { expanded: true, isPartial: false }, theme, { args: { cmd: longCmd } }).render(width);
     // Expanded header wraps the full command across several lines, continuation
     // indented to the subject-start column, before the body rail.
-    const subjectStart = visibleWidth(`• exec_command · `);
+    const subjectStart = visibleWidth(` • exec_command · `);
     const contIndent = expanded[1].match(/^ +/)?.[0].length ?? -1;
     assert(expanded.length > 3 && contIndent === subjectStart, `expanded exec header must wrap under the subject-start indent (${subjectStart}), got ${contIndent}: ${JSON.stringify(expanded.slice(0, 2))}`);
-    assert(expanded[expanded.length - 1].startsWith("    "), `expanded exec body continuation must use the 4-space rail indent`);
+    assert(expanded[expanded.length - 1].startsWith("     "), `expanded exec body continuation must use the outer gutter plus 4-space rail indent`);
   }
 }
 
@@ -231,6 +302,34 @@ assert(/• exec_command · ls many-files \(session 4\)/.test(runningSession) &&
   }
 }
 
+// Literal tabs expand to terminal tab stops, not Pi TUI's fixed logical width.
+// Keep the tab-indented source matches from `rg` below the physical terminal
+// edge too, or their wrapped fragments repaint stale background rows.
+{
+  const physicalTerminalWidth = (line, tabStop = 8) => {
+    const plain = line.replace(/\x1b\[[0-9;]*m/g, "");
+    let width = 0;
+    for (const char of plain) {
+      width += char === "\t" ? tabStop - (width % tabStop) : visibleWidth(char);
+    }
+    return width;
+  };
+  const tabbedOutput = [
+    "packages/coding-agent/src/core/messages.ts:11:export const COMPACTION_SUMMARY_PREFIX = `...",
+    'packages/coding-agent/src/core/agent-session.ts:1757:\t\t\t\t\tthrow new Error("Already compacted");',
+    "packages/coding-agent/src/core/agent-session.ts:3020:\t\t\t* history that was compacted away",
+  ].join("\n");
+  const tabbedResult = { content: [], details: { ok: true, output: tabbedOutput, exitCode: 0 } };
+  const tabbedArgs = { cmd: 'rg -n -i "compact(ed)? view|compacted" packages/coding-agent' };
+  for (const width of [80, 120]) {
+    const lines = renderersForTool("exec_command").renderResult(tabbedResult, { expanded: false, isPartial: false }, theme, { args: tabbedArgs }).render(width);
+    const overflow = lines
+      .map((line, index) => ({ index, width: physicalTerminalWidth(line), line }))
+      .filter((line) => line.width >= width);
+    assert(overflow.length === 0, `tabbed exec output reached the physical terminal edge at width ${width}: ${JSON.stringify(overflow[0])}`);
+  }
+}
+
 // write — content head + `(N lines)`.
 const writeCompact = renderText(renderersForTool("write").renderResult(resultFor("write"), { expanded: false, isPartial: false }, theme, { args: argsFor("write") }));
 assert(/• write · src\/example\.txt \(24 lines\)/.test(writeCompact), `write subject should be path (N lines): ${writeCompact}`);
@@ -244,6 +343,9 @@ assert(editCompact.includes("- line two"), `edit diff should show a removed (-) 
 assert(editCompact.includes("+ line TWO"), `edit diff should show an added (+) line: ${editCompact}`);
 assert(editExpanded.length >= editCompact.length, `edit expanded should be at least as informative`);
 assert(!editCompact.includes("  └ "), `edit body should use the line-number gutter, not the └ connector`);
+const diffTheme = { fg: (color, value) => color === "toolDiffAdded" ? `<add>${value}</add>` : color === "toolDiffRemoved" ? `<del>${value}</del>` : value };
+const coloredEdit = renderText(renderersForTool("edit").renderResult(resultFor("edit"), { expanded: false, isPartial: false }, diffTheme, { args: argsFor("edit") }));
+assert(coloredEdit.includes("<add>line TWO</add>") && coloredEdit.includes("<del>line two</del>"), `edit diff should color the whole changed content line: ${coloredEdit}`);
 
 // Pure addition → 5 diff-body rows (2 context + 1 added + 2 context), excluding the header row.
 const addEditResult = {
@@ -343,25 +445,31 @@ const compactRead = renderText(readRenderer.renderResult(readResult, { expanded:
 const expandedRead = renderText(readRenderer.renderResult(readResult, { expanded: true, isPartial: false }, theme, { args: { path: "src/x.ts" } }));
 assert(/• read · src\/x\.ts \(3 lines\)/.test(compactRead) && !compactRead.includes("\n"), `read collapsed should be a single header line: ${compactRead}`);
 assert(expandedRead.includes("alpha") && expandedRead.includes("gamma") && expandedRead.length > compactRead.length, `read expanded should show the body: ${expandedRead}`);
-// Truncated read → `… N more lines` at the bottom.
+// Truncated read → compact shows shown/total, expanded preserves the returned text exactly.
 const truncatedRead = renderText(readRenderer.renderResult(
-  { content: [{ type: "text", text: "1\talpha\n2\tbeta" }], details: { ok: true, path: "big.ts", totalLines: 10, shownLines: 2 } },
+  { content: [{ type: "text", text: "1\talpha\n2\tbeta\n\n[8 more lines in file. Use offset=3 to continue.]" }], details: { ok: true, path: "big.ts", totalLines: 10, shownLines: 2 } },
   { expanded: true, isPartial: false }, theme, { args: { path: "big.ts" } },
 ));
-assert(truncatedRead.includes("… 8 more lines"), `truncated read should append … N more lines at the bottom: ${truncatedRead}`);
+assert(truncatedRead.includes("[8 more lines in file. Use offset=3 to continue.]"), `truncated read should preserve the returned footer exactly: ${truncatedRead}`);
 
-// Thread query — collapsed top 3 + `… N more`, expanded hit snippets.
+const mediaCompact = renderText(renderersForTool("view_media").renderResult(resultFor("view_media"), { expanded: false, isPartial: false }, theme, { args: { path: "/tmp/pi-clipboard-6e6a501780841a8c.png" } }));
+const mediaExpanded = renderText(renderersForTool("view_media").renderResult(resultFor("view_media"), { expanded: true, isPartial: false }, theme, { args: { path: "/tmp/pi-clipboard-6e6a501780841a8c.png" } }));
+assert(/• view_media · \/tmp\/pi-clipboard-6e6a501780841a8c\.png \(4096x1536 -> 2048x768\)/.test(mediaCompact), `view_media compact should show path and resize dimensions: ${mediaCompact}`);
+assert(mediaExpanded.includes("Type: image/png") && mediaExpanded.includes("Payload: 12345 bytes") && !mediaExpanded.includes("base64"), `view_media expanded should show metadata but no base64: ${mediaExpanded}`);
+const narrowMedia = renderersForTool("view_media").renderResult(resultFor("view_media"), { expanded: false, isPartial: false }, theme, { args: { path: "/tmp/pi-clipboard-6e6a501780841a8c.png" } }).render(60)[0];
+assert(narrowMedia.includes("/tmp/") && narrowMedia.includes(".png") && narrowMedia.includes("…"), `compact long media paths should middle-truncate and preserve suffix: ${narrowMedia}`);
+
+// Thread query — compact one-line count; expanded hit snippets.
 const queryCompact = renderText(renderersForTool("query_threads").renderResult(resultFor("query_threads"), { expanded: false, isPartial: false }, theme, { args: argsFor("query_threads") }));
 const queryExpanded = renderText(renderersForTool("query_threads").renderResult(resultFor("query_threads"), { expanded: true, isPartial: false }, theme, { args: argsFor("query_threads") }));
 assert(/• query_threads · "renderer" \(12 threads, 12 hits\)/.test(queryCompact), `query_threads subject should be "query" (N threads, M hits): ${queryCompact}`);
-assert(queryCompact.includes("  └ 1 · Thread 1 · thread-1 · 1 hit"), `query_threads collapsed first item should be idx · title · id · hits: ${queryCompact}`);
-assert(!queryCompact.includes("Thread 4") && queryCompact.includes("… 9 more"), `query_threads collapsed should clip to top 3 with … N more: ${queryCompact}`);
+assert(!queryCompact.includes("\n") && !queryCompact.includes("Thread 1"), `query_threads compact should be one line with no item rows: ${queryCompact}`);
 assert(queryExpanded.includes("Thread 4") && queryExpanded.includes("message/assistant: renderer hit 1"), `query_threads expanded should include more threads and hit snippets: ${queryExpanded}`);
 
 // Single-entity — header + dim facts line.
 const goalCompact = renderText(renderersForTool("create_goal").renderResult(resultFor("create_goal"), { expanded: false, isPartial: false }, theme, { args: argsFor("create_goal") }));
 assert(/• create_goal · ship renderer coverage/.test(goalCompact), `create_goal subject should be the objective: ${goalCompact}`);
-assert(goalCompact.includes("  └ active · 10 tokens · 2s"), `create_goal facts line should be dim ·-joined: ${goalCompact}`);
+assert(!goalCompact.includes("\n"), `create_goal compact should be a single line: ${goalCompact}`);
 const pendingGoalCompact = renderText(renderersForTool("update_goal").renderResult({
   content: [{ type: "text", text: "Goal updated." }],
   details: {
@@ -375,11 +483,20 @@ const pendingGoalCompact = renderText(renderersForTool("update_goal").renderResu
     },
   },
 }, { expanded: false, isPartial: false }, theme, { args: argsFor("update_goal") }));
-assert(pendingGoalCompact.includes("  └ complete · final accounting pending"), `update_goal should not render zero counters while final accounting is pending: ${pendingGoalCompact}`);
+assert(pendingGoalCompact.includes("(complete)") && !pendingGoalCompact.includes("\n"), `update_goal compact should carry status in one line: ${pendingGoalCompact}`);
 assert(!pendingGoalCompact.includes("0 tokens · 0s"), `update_goal pending accounting should suppress zero counters: ${pendingGoalCompact}`);
 
+const cronCreateCompact = renderText(renderersForTool("cron_create").renderResult(resultFor("cron_create"), { expanded: false, isPartial: false }, theme, { args: argsFor("cron_create") }));
+const cronListCompact = renderText(renderersForTool("cron_list").renderResult(resultFor("cron_list"), { expanded: false, isPartial: false }, theme, { args: argsFor("cron_list") }));
+const cronListExpanded = renderText(renderersForTool("cron_list").renderResult(resultFor("cron_list"), { expanded: true, isPartial: false }, theme, { args: argsFor("cron_list") }));
+const cronDeleteCompact = renderText(renderersForTool("cron_delete").renderResult(resultFor("cron_delete"), { expanded: false, isPartial: false }, theme, { args: argsFor("cron_delete") }));
+assert(/• cron_create · cron-a · every 5 minutes · enabled/.test(cronCreateCompact), `cron_create compact should show id, schedule, enabled state: ${cronCreateCompact}`);
+assert(/• cron_list · 1 task \(disabled\)/.test(cronListCompact) && !cronListCompact.includes("check status"), `cron_list compact should be one-line count and master state: ${cronListCompact}`);
+assert(cronListExpanded.includes("Master switch: disabled") && cronListExpanded.includes("Prompt: check status"), `cron_list expanded should show task details: ${cronListExpanded}`);
+assert(/• cron_delete · cron-a \(deleted\)/.test(cronDeleteCompact), `cron_delete compact should show deletion outcome: ${cronDeleteCompact}`);
+
 const spawnCompact = renderText(renderersForTool("agent_spawn").renderResult(resultFor("agent_spawn"), { expanded: false, isPartial: false }, theme, { args: argsFor("agent_spawn") }));
-assert(/• agent_spawn · finder/.test(spawnCompact) && spawnCompact.includes("  └ run worker-1 · running"), `agent_spawn facts should be run <id> · <lifecycle>: ${spawnCompact}`);
+assert(/• agent_spawn · finder-1/.test(spawnCompact) && !spawnCompact.includes("\n") && !spawnCompact.includes("running"), `agent_spawn compact should be only the spawned agent id: ${spawnCompact}`);
 const spawnExpanded = renderText(renderersForTool("agent_spawn").renderResult(
   { content: [{ type: "text", text: "<taumel_agent_spawn>raw xml</taumel_agent_spawn>" }], details: { ok: true, profile: "finder", agent_id: "finder-1", run_id: "finder-1-run-1", status: "running" } },
   { expanded: true, isPartial: false },
@@ -387,6 +504,20 @@ const spawnExpanded = renderText(renderersForTool("agent_spawn").renderResult(
   { args: { profile: "finder", message: "inspect every file", create_goal: true } },
 ));
 assert(spawnExpanded.includes("Objective sent:") && spawnExpanded.includes("inspect every file") && !spawnExpanded.includes("<taumel_agent_spawn>"), `agent_spawn expanded should render fields and sent objective, not XML: ${spawnExpanded}`);
+const profilesCompact = renderText(renderersForTool("agent_profiles").renderResult(resultFor("agent_profiles"), { expanded: false, isPartial: false }, theme, { args: argsFor("agent_profiles") }));
+const profilesExpanded = renderText(renderersForTool("agent_profiles").renderResult(resultFor("agent_profiles"), { expanded: true, isPartial: false }, theme, { args: argsFor("agent_profiles") }));
+assert(/• agent_profiles · 2 profiles \(1 enabled, 1 disabled\)/.test(profilesCompact) && !profilesCompact.includes("item"), `agent_profiles compact should summarize catalog without generic item rows: ${profilesCompact}`);
+assert(profilesExpanded.includes("finder") && profilesExpanded.includes("Find files") && profilesExpanded.includes("disabled for this session") && !profilesExpanded.includes("<taumel_agent_profiles>"), `agent_profiles expanded should use profile fields without XML: ${profilesExpanded}`);
+const listCompact = renderText(renderersForTool("agent_list").renderResult(resultFor("agent_list"), { expanded: false, isPartial: false }, theme, { args: argsFor("agent_list") }));
+const listExpanded = renderText(renderersForTool("agent_list").renderResult(resultFor("agent_list"), { expanded: true, isPartial: false }, theme, { args: argsFor("agent_list") }));
+assert(/• agent_list · open agents \(1\)/.test(listCompact) && !listCompact.includes("worker-1"), `agent_list compact should be a one-line summary: ${listCompact}`);
+assert(listExpanded.includes("worker-1") && listExpanded.includes("Latest run:") && !listExpanded.includes("<taumel_agent_list>"), `agent_list expanded should render actual agents shape: ${listExpanded}`);
+const sendCompact = renderText(renderersForTool("agent_send").renderResult(resultFor("agent_send"), { expanded: false, isPartial: false }, theme, { args: argsFor("agent_send") }));
+const sendExpanded = renderText(renderersForTool("agent_send").renderResult(resultFor("agent_send"), { expanded: true, isPartial: false }, theme, { args: argsFor("agent_send") }));
+assert(/• agent_send · worker-1 \(steered\)/.test(sendCompact), `agent_send compact should center on id and delivery outcome: ${sendCompact}`);
+assert(sendExpanded.includes("Message sent:") && sendExpanded.includes("continue") && !sendExpanded.includes("<taumel_agent_send>"), `agent_send expanded should render outcome and sent body: ${sendExpanded}`);
+const closeCompact = renderText(renderersForTool("agent_close").renderResult({ content: [], details: { ok: true, agent_ids: ["a", "b", "c", "d"], closedCount: 4 } }, { expanded: false, isPartial: false }, theme, { args: { agent_ids: ["a", "b", "c", "d"] } }));
+assert(/• agent_close · 4 agents/.test(closeCompact), `agent_close compact should summarize >3 ids: ${closeCompact}`);
 const waitPoll = renderText(renderersForTool("agent_wait").renderCall({ timeout_seconds: 0 }, theme, { isPartial: true }));
 const waitBounded = renderText(renderersForTool("agent_wait").renderCall({ agent_ids: ["finder-1"], timeout_seconds: 5 }, theme, { isPartial: true }));
 const waitForever = renderText(renderersForTool("agent_wait").renderCall({}, theme, { isPartial: true }));
@@ -401,43 +532,71 @@ const waitExpanded = renderText(renderersForTool("agent_wait").renderResult(
   { args: { run_ids: ["finder-1-run-1", "review-2-run-1"] } },
 ));
 assert(waitExpanded.includes("finder-1 · finder-1-run-1 · completed") && waitExpanded.includes("first child done") && waitExpanded.includes("review failed") && !waitExpanded.includes("<taumel_agent_wait>"), `agent_wait expanded should group child responses without XML: ${waitExpanded}`);
+const waitCompact = renderText(renderersForTool("agent_wait").renderResult(
+  { content: [], details: { ok: true, runs: [
+    { agent_id: "finder-1", run_id: "finder-1-run-1", status: "completed", finalOutput: "first child done", outputAvailable: true },
+    { agent_id: "review-2", run_id: "review-2-run-1", status: "failed", error: "review failed", outputAvailable: true },
+  ] } },
+  { expanded: false, isPartial: false },
+  theme,
+  { args: { run_ids: ["finder-1-run-1", "review-2-run-1"] } },
+));
+assert(/• agent_wait · 2 runs \(1 completed, 1 failed\)/.test(waitCompact), `agent_wait compact should summarize outcomes in one line: ${waitCompact}`);
 
-// Exa search — collapsed top 3 `idx · title · domain` (domain, not full URL).
+// Exa search — compact count only; expanded rows with domain/full URL.
 const exa = renderersForTool("web_search_exa");
 const compactExa = renderText(exa.renderResult(resultFor("web_search_exa"), { expanded: false, isPartial: false }, theme, { args: argsFor("web_search_exa") }));
 const expandedExa = renderText(exa.renderResult(resultFor("web_search_exa"), { expanded: true, isPartial: false }, theme, { args: argsFor("web_search_exa") }));
 assert(/• web_search_exa · "renderer test" \(12 results\)/.test(compactExa), `web_search_exa subject wrong: ${compactExa}`);
-assert(compactExa.includes("  └ 1 · Result 1 · example.com"), `web_search_exa collapsed item should use the URL domain: ${compactExa}`);
-assert(!compactExa.includes("Result 4") && compactExa.includes("… 9 more"), `web_search_exa collapsed should clip to top 3: ${compactExa}`);
+assert(!compactExa.includes("\n") && !compactExa.includes("Result 1"), `web_search_exa compact should not include item rows: ${compactExa}`);
 assert(expandedExa.includes("Result 4") && expandedExa.includes("https://example.com/1"), `web_search_exa expanded should show more results with full url: ${expandedExa}`);
 
-// get_code_context_exa — body tool (head-oriented), not a collection.
+// get_code_context_exa — compact query summary; expanded full response.
 const codeCompact = renderText(renderersForTool("get_code_context_exa").renderResult(resultFor("get_code_context_exa"), { expanded: false, isPartial: false }, theme, { args: argsFor("get_code_context_exa") }));
+const codeExpanded = renderText(renderersForTool("get_code_context_exa").renderResult(resultFor("get_code_context_exa"), { expanded: true, isPartial: false }, theme, { args: argsFor("get_code_context_exa") }));
 assert(/• get_code_context_exa · "renderer test"/.test(codeCompact), `get_code_context_exa subject should be the quoted query: ${codeCompact}`);
-assert(codeCompact.includes("  └ "), `get_code_context_exa should render a body block: ${codeCompact}`);
+assert(!codeCompact.includes("\n") && codeExpanded.includes("line-24"), `get_code_context_exa compact should be one line and expanded should show response: ${JSON.stringify({ codeCompact, codeExpanded })}`);
 
 // exa_agent_get_run — single entity `<id> · <status>`; output.text full when expanded.
 const runCompact = renderText(renderersForTool("exa_agent_get_run").renderResult(resultFor("exa_agent_get_run"), { expanded: false, isPartial: false }, theme, { args: argsFor("exa_agent_get_run") }));
 const runExpanded = renderText(renderersForTool("exa_agent_get_run").renderResult(resultFor("exa_agent_get_run"), { expanded: true, isPartial: false }, theme, { args: argsFor("exa_agent_get_run") }));
 assert(/• exa_agent_get_run · run_1 · completed/.test(runCompact), `exa_agent_get_run subject should be id · status: ${runCompact}`);
 assert(!runCompact.includes("line-1") && runExpanded.includes("line-1"), `exa_agent_get_run should only show output.text when expanded: ${runExpanded}`);
+const listRunsCompact = renderText(renderersForTool("exa_agent_list_runs").renderResult(resultFor("exa_agent_list_runs"), { expanded: false, isPartial: false }, theme, { args: argsFor("exa_agent_list_runs") }));
+assert(/• exa_agent_list_runs · recent runs \(12\)/.test(listRunsCompact) && !listRunsCompact.includes("Result 1"), `exa_agent_list_runs compact should be one-line count: ${listRunsCompact}`);
 
 // notification — opaque exec_completion + agent_completion ready signals.
 const renderNotification = notificationMessageRenderer();
 const execNote = 'Command session 3 has finished. To read and consume the result, call write_stdin with session_id=3, chars="", yield_time_ms=5000.';
 const compactExecNote = renderText(renderNotification({ customType: "notification", content: execNote }, { expanded: false }, theme));
 const expandedExecNote = renderText(renderNotification({ customType: "notification", content: execNote }, { expanded: true }, theme));
+assertLeftGutter(compactExecNote, "compact exec notification");
+assertLeftGutter(expandedExecNote, "expanded exec notification");
 assert(compactExecNote.startsWith(" • exec_completion"), `exec notification should include custom-message left gutter: ${compactExecNote}`);
 assert(/• exec_completion · session 3 ready/.test(compactExecNote), `exec notification header wrong: ${compactExecNote}`);
 assert(!/exit|code|line-1/.test(compactExecNote), `exec notification should not include terminal status or output: ${compactExecNote}`);
-assert(compactExecNote.includes("write_stdin"), `exec notification instruction missing from collapsed body: ${compactExecNote}`);
+assert(!compactExecNote.includes("\n") && !compactExecNote.includes("write_stdin"), `exec compact notification should be one-line ready signal only: ${compactExecNote}`);
 assert(expandedExecNote.includes("Command session 3 has finished") && expandedExecNote.includes("yield_time_ms=5000"), `expanded exec notification should preserve visible body: ${expandedExecNote}`);
+const strictTheme = {
+  ...theme,
+  fg: (color, value) => {
+    if (color === "info") throw new Error("Unknown theme color: info");
+    return value;
+  },
+};
+assert(
+  /• exec_completion · session 3 ready/.test(renderText(renderNotification({ customType: "notification", content: execNote }, { expanded: false }, strictTheme))),
+  "notification renderer should use only real Pi theme tokens",
+);
 
 const agentNote = "Agent run finder-7-run-1 for finder-7 (finder) has finished. To read and consume the result, call agent_wait with run_ids=[finder-7-run-1], timeout_seconds=0.";
 const compactAgentNote = renderText(renderNotification({ customType: "notification", content: agentNote }, { expanded: false }, theme));
-assert(/• agent_completion · finder-7 \(finder\) ready/.test(compactAgentNote), `agent notification header wrong: ${compactAgentNote}`);
+const expandedAgentNote = renderText(renderNotification({ customType: "notification", content: agentNote }, { expanded: true }, theme));
+assertLeftGutter(compactAgentNote, "compact agent notification");
+assertLeftGutter(expandedAgentNote, "expanded agent notification");
+assert(/• agent_completion · finder-7 ready/.test(compactAgentNote), `agent notification header wrong: ${compactAgentNote}`);
 assert(!compactAgentNote.includes("all done here"), `agent notification must not include final output: ${compactAgentNote}`);
-assert(compactAgentNote.includes("agent_wait"), `agent notification instruction missing from collapsed body: ${compactAgentNote}`);
+assert(!compactAgentNote.includes("agent_wait") && expandedAgentNote.includes("agent_wait"), `agent notification read instruction should be expanded-only: ${JSON.stringify({ compactAgentNote, expandedAgentNote })}`);
 
 assert(
   renderNotification({ customType: "notification", content: "" }, { expanded: false }, theme) === undefined,
@@ -455,6 +614,8 @@ const skillBlock = [
 const skillMessage = { customType: "skill", content: skillBlock, details: { trigger: "$foo" } };
 const compactSkill = renderText(renderSkill(skillMessage, { expanded: false }, theme));
 const expandedSkill = renderText(renderSkill(skillMessage, { expanded: true }, theme));
+assertLeftGutter(compactSkill, "compact skill message");
+assertLeftGutter(expandedSkill, "expanded skill message");
 assert(/• skill: foo/.test(compactSkill), `skill renderer header wrong: ${compactSkill}`);
 assert(compactSkill.includes("auto from $foo") && compactSkill.includes("(expand)") && !compactSkill.includes("line-1"), `skill renderer should default collapsed: ${compactSkill}`);
 assert(expandedSkill.includes("because the user mentioned $foo"), `expanded skill renderer should show provenance: ${expandedSkill}`);
@@ -502,6 +663,67 @@ assert(!expandedChildTagSkill.includes("<name>") && !expandedChildTagSkill.inclu
 assert(
   renderSkill({ customType: "skill", content: "<skill>bad</skill>" }, { expanded: false }, theme) === undefined,
   "invalid skill markup should render nothing",
+);
+
+// cron fire — compact one-line task summary, expanded metadata + prompt.
+const renderCronFire = cronFireMessageRenderer();
+const cronFireMessage = {
+  customType: "taumel.cron.fire",
+  content: "check disk usage\nrun df -h",
+  details: {
+    id: "deadbeef",
+    cron: "*/5 * * * *",
+    schedule: "every 5 minutes",
+    coalesced: 1,
+    prompt: "check disk usage\nrun df -h",
+  },
+};
+const cronFireCompact = renderText(renderCronFire(cronFireMessage, { expanded: false }, theme));
+const cronFireExpanded = renderText(renderCronFire(cronFireMessage, { expanded: true }, theme));
+assertLeftGutter(cronFireCompact, "compact cron fire");
+assertLeftGutter(cronFireExpanded, "expanded cron fire");
+assert(
+  cronFireCompact.includes("cron.fire") &&
+  cronFireCompact.includes("deadbeef") &&
+  cronFireCompact.includes("every 5 minutes"),
+  `cron fire compact should show tool name, task id, schedule: ${cronFireCompact}`,
+);
+assert(!cronFireCompact.includes("\n"), `cron fire compact should be one line: ${cronFireCompact}`);
+assert(
+  cronFireExpanded.includes("Schedule: */5 * * * *") &&
+  cronFireExpanded.includes("Human: every 5 minutes") &&
+  cronFireExpanded.includes("check disk usage") &&
+  !cronFireExpanded.includes("[cron]"),
+  `cron fire expanded should show schedule, human, and prompt, not prefix: ${cronFireExpanded}`,
+);
+
+// Coalesced cron fire shows coalesced count.
+const coalescedCronFire = renderText(renderCronFire({
+  customType: "taumel.cron.fire",
+  content: "[cron: 3 coalesced fires]\ncheck status",
+  details: {
+    id: "feedface",
+    cron: "0 * * * *",
+    schedule: "every hour",
+    coalesced: 3,
+    prompt: "check status",
+  },
+}, { expanded: false }, theme));
+assert(
+  coalescedCronFire.includes("3 coalesced") &&
+  coalescedCronFire.includes("feedface") &&
+  coalescedCronFire.includes("every hour"),
+  `coalesced cron fire compact should show task id, schedule, coalesced count: ${coalescedCronFire}`,
+);
+
+// Empty details (replayed message without structured details) degrades gracefully.
+const legacyFallback = renderText(renderCronFire({
+  customType: "taumel.cron.fire",
+  content: "[cron]\nsimple prompt",
+}, { expanded: true }, theme));
+assert(
+  legacyFallback.includes("simple prompt"),
+  `cron fire without structured details should still show content: ${legacyFallback}`,
 );
 
 console.log("tool renderer smoke: all assertions passed");

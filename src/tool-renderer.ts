@@ -1,4 +1,5 @@
 import { structuredPatch } from "diff";
+import { parseSkillBlock, SkillInvocationMessageComponent } from "@earendil-works/pi-coding-agent";
 import {
   emptyComponent,
   renderBlock,
@@ -7,6 +8,7 @@ import {
   type Entry,
   type HeaderSpec,
 } from "./render-layout.ts";
+import { buildDomainResult } from "./tool-renderer-domains.ts";
 import {
   boolFieldOrUndefined,
   isRecord,
@@ -35,6 +37,17 @@ function themeFg(theme: unknown, color: string, value: string): string {
 
 function oneLine(value: string): string {
   return value.replace(/\s+/g, " ").trim();
+}
+
+function sentCharsSubject(value: string): string {
+  let escaped = "";
+  for (const char of value) {
+    const code = char.charCodeAt(0);
+    if (code < 32) escaped += `^${String.fromCharCode(code + 64)}`;
+    else if (code === 127) escaped += "^?";
+    else escaped += char;
+  }
+  return oneLine(escaped) || JSON.stringify(value);
 }
 
 function domainOf(url: string): string {
@@ -101,6 +114,10 @@ function headerSpec(name: string, subject: string, dotColor: string, theme: unkn
   return { lead, subject, trailing };
 }
 
+function pathHeaderSpec(name: string, subject: string, dotColor: string, theme: unknown, trailing = ""): HeaderSpec {
+  return { ...headerSpec(name, subject, dotColor, theme, trailing), subjectClip: "middle" };
+}
+
 function moreLine(count: number, theme: unknown, unit: "more" | "more lines"): string {
   return themeFg(theme, "dim", `… ${count} ${unit}`);
 }
@@ -130,9 +147,10 @@ function subjectFromArgs(name: string, args: Record<string, unknown>): string {
       return oneLine(stringFieldOrUndefined(args, "cmd") ?? "exec_command");
     case "write_stdin": {
       const chars = stringFieldOrUndefined(args, "chars") ?? "";
-      if (chars.trim() !== "") return oneLine(chars);
+      if (chars !== "") return sentCharsSubject(chars);
       const sid = numberFieldOrUndefined(args, "session_id");
-      return sid === undefined ? "poll" : `poll session ${sid}`;
+      const verb = stringFieldOrUndefined(args, "output_mode") === "status" ? "wait" : "poll";
+      return sid === undefined ? verb : `${verb} session ${sid}`;
     }
     case "write":
     case "edit":
@@ -231,8 +249,10 @@ function renderDiff(before: string, after: string, expanded: boolean, theme: unk
     maxLine = Math.max(maxLine, hunk.newStart + hunk.newLines, hunk.oldStart + hunk.oldLines);
   }
   const width = Math.max(2, String(maxLine).length);
-  const codeAt = (_marker: string, _oldLine: number, _newLine: number, raw: string): string => {
+  const codeAt = (marker: string, _oldLine: number, _newLine: number, raw: string): string => {
     const plain = raw.slice(1);
+    if (marker === "+") return themeFg(theme, "toolDiffAdded", plain);
+    if (marker === "-") return themeFg(theme, "toolDiffRemoved", plain);
     return themeFg(theme, "toolOutput", plain);
   };
   const lines: string[] = [];
@@ -292,7 +312,7 @@ function headEntries(text: string, expanded: boolean, theme: unknown, cap: numbe
   return [...all.slice(0, limit).map((line) => ({ text: themeFg(theme, "toolOutput", line) })), { text: moreLine(all.length - limit, theme, "more lines"), exempt: true }];
 }
 
-function fullTextEntries(text: string, theme: unknown): Entry[] {
+export function fullTextEntries(text: string, theme: unknown): Entry[] {
   const cleaned = (text ?? "").trimEnd();
   if (cleaned === "") return [];
   return cleaned.split(/\r?\n/).map((line) => ({ text: themeFg(theme, "toolOutput", line) }));
@@ -304,6 +324,22 @@ function buildShell(name: string, result: unknown, options: unknown, theme: unkn
   const subject = subjectFromArgs(name, args);
   const sid = numberFieldOrUndefined(details, "sessionId") ?? numberFieldOrUndefined(details, "session_id");
   const code = numberFieldOrUndefined(details, "exitCode") ?? numberFieldOrUndefined(details, "code");
+  const outputMode = stringFieldOrUndefined(details, "outputMode") ?? stringFieldOrUndefined(args, "output_mode") ?? "delta";
+
+  if (name === "write_stdin" && outputMode === "status") {
+    const suppressedLines = numberFieldOrUndefined(details, "suppressedLines") ?? 0;
+    const suppressedBytes = numberFieldOrUndefined(details, "suppressedBytes") ?? 0;
+    const state = sid !== undefined ? "running" : code !== undefined ? `exit ${code}` : "completed";
+    const trailing = themeFg(
+      theme,
+      "dim",
+      `(${state}; suppressed ${suppressedLines} line${suppressedLines === 1 ? "" : "s"} / ${suppressedBytes} bytes)`,
+    );
+    return {
+      header: headerSpec(name, subjectFromArgs(name, args), sid !== undefined ? "warning" : dotFromDetails(details), theme, trailing),
+      body: undefined,
+    };
+  }
 
   // Async session still running: yellow dot, `(session N)` in the subject, no body yet.
   if (name === "exec_command" && sid !== undefined && code === undefined) {
@@ -321,7 +357,7 @@ function buildShell(name: string, result: unknown, options: unknown, theme: unkn
     }
   }
 
-  return { header, body: { mode: "rail", entries: tailEntries(output, expanded, theme, 5, 200) } };
+  return { header, body: { mode: "rail", entries: tailEntries(output, expanded, theme, 5, 100000) } };
 }
 
 function buildRead(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
@@ -330,21 +366,18 @@ function buildRead(name: string, result: unknown, options: unknown, theme: unkno
   const path = stringFieldOrUndefined(details, "path") ?? stringFieldOrUndefined(args, "path") ?? "";
   const total = numberFieldOrUndefined(details, "totalLines");
   const shown = numberFieldOrUndefined(details, "shownLines");
-  const subject =
+  const lineFact =
     total === undefined
-      ? path
+      ? ""
       : shown !== undefined && shown < total
-        ? `${path} (${shown}/${total} lines)`
-        : `${path} (${total} line${total === 1 ? "" : "s"})`;
-  const header = headerSpec("read", subject, dotFromDetails(details), theme);
+        ? `(${shown}/${total} lines)`
+        : `(${total} line${total === 1 ? "" : "s"})`;
+  const header = pathHeaderSpec("read", path, dotFromDetails(details), theme, lineFact === "" ? "" : themeFg(theme, "dim", lineFact));
   if (!expanded) return { header, body: undefined };
 
   const rawText = textContent(result);
   const physical = rawText.trimEnd().split(/\r?\n/);
   const entries: Entry[] = physical.map((line) => ({ text: themeFg(theme, "toolOutput", line) }));
-  if (shown !== undefined && total !== undefined && shown < total) {
-    entries.push({ text: moreLine(total - shown, theme, "more lines"), exempt: true });
-  }
   if (entries.length === 0) return { header, body: undefined };
   return { header, body: { mode: "rail", entries } };
 }
@@ -362,11 +395,25 @@ function buildViewMedia(name: string, result: unknown, options: unknown, theme: 
     width === undefined || height === undefined
       ? ""
       : wasResized && originalWidth !== undefined && originalHeight !== undefined
-        ? ` (${originalWidth}x${originalHeight} -> ${width}x${height})`
-        : ` (${width}x${height})`;
-  const header = headerSpec(name, `${path}${dimensions}`, dotFromDetails(details), theme);
+        ? `(${originalWidth}x${originalHeight} -> ${width}x${height})`
+        : `(${width}x${height})`;
+  const header = pathHeaderSpec(name, path, dotFromDetails(details), theme, dimensions === "" ? "" : themeFg(theme, "dim", dimensions));
   if (!expanded) return { header, body: undefined };
-  return { header, body: { mode: "rail", entries: fullTextEntries(textContent(result), theme) } };
+  const mime = stringFieldOrUndefined(details, "mime") ?? stringFieldOrUndefined(details, "mimeType") ?? stringFieldOrUndefined(details, "type");
+  const payloadBytes =
+    numberFieldOrUndefined(details, "payloadBytes") ??
+    numberFieldOrUndefined(details, "base64Bytes") ??
+    numberFieldOrUndefined(details, "encodedBytes");
+  const entries: Entry[] = [
+    { text: `${themeFg(theme, "dim", "Path:")} ${themeFg(theme, "toolOutput", path)}` },
+    ...(mime === undefined ? [] : [{ text: `${themeFg(theme, "dim", "Type:")} ${themeFg(theme, "toolOutput", mime)}` }]),
+    ...(originalWidth !== undefined && originalHeight !== undefined ? [{ text: `${themeFg(theme, "dim", "Original:")} ${themeFg(theme, "toolOutput", `${originalWidth}x${originalHeight}`)}` }] : []),
+    ...(width !== undefined && height !== undefined ? [{ text: `${themeFg(theme, "dim", "Processed:")} ${themeFg(theme, "toolOutput", `${width}x${height}`)}` }] : []),
+    { text: `${themeFg(theme, "dim", "Resized:")} ${themeFg(theme, "toolOutput", wasResized ? "yes" : "no")}` },
+    ...(payloadBytes === undefined ? [] : [{ text: `${themeFg(theme, "dim", "Payload:")} ${themeFg(theme, "toolOutput", `${payloadBytes} bytes`)}` }]),
+    ...fullTextEntries(textContent(result), theme),
+  ];
+  return { header, body: { mode: "rail", entries } };
 }
 
 function buildWrite(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
@@ -377,10 +424,10 @@ function buildWrite(name: string, result: unknown, options: unknown, theme: unkn
   const contents = stringFieldOrUndefined(details, "contents") ?? "";
   const lineCount = contents === "" ? 0 : contents.trimEnd().split(/\r?\n/).length;
   const trailing = themeFg(theme, "dim", mode === "append" ? `(append +${lineCount})` : `(${lineCount} line${lineCount === 1 ? "" : "s"})`);
-  const header = headerSpec("write", path, dotFromDetails(details), theme, trailing);
+  const header = pathHeaderSpec("write", path, dotFromDetails(details), theme, trailing);
   if (contents.trim() === "") return { header, body: undefined };
   const all = contents.trimEnd().split(/\r?\n/).map((line) => themeFg(theme, "toolOutput", line));
-  const limit = expanded ? 120 : 3;
+  const limit = expanded ? all.length : 3;
   const entries: Entry[] = all.slice(0, limit).map((text) => ({ text }));
   if (all.length > limit) entries.push({ text: moreLine(all.length - limit, theme, "more lines"), exempt: true });
   return { header, body: { mode: "rail", entries } };
@@ -396,12 +443,12 @@ function buildEdit(name: string, result: unknown, options: unknown, theme: unkno
     const editCount = numberFieldOrUndefined(details, "editCount");
     const summary = editCount !== undefined ? `${editCount} replacement${editCount === 1 ? "" : "s"}` : "";
     return {
-      header: headerSpec("edit", path, dotFromDetails(details), theme),
+      header: pathHeaderSpec("edit", path, dotFromDetails(details), theme),
       body: summary === "" ? undefined : { mode: "rail", entries: [{ text: themeFg(theme, "dim", summary), exempt: true }] },
     };
   }
   const diff = renderDiff(before, after, expanded, theme);
-  const header = headerSpec("edit", path, dotFromDetails(details), theme, themeFg(theme, "dim", `(+${diff.added} -${diff.removed})`));
+  const header = pathHeaderSpec("edit", path, dotFromDetails(details), theme, themeFg(theme, "dim", `(+${diff.added} -${diff.removed})`));
   const entries: Entry[] = diff.lines.map((text) => ({ text }));
   // Collapsed: cap to ~6 changed lines; advertise the rest with an exempt hint.
   if (!expanded && diff.lines.length > 6) {
@@ -456,7 +503,7 @@ function buildApplyPatch(name: string, result: unknown, options: unknown, theme:
     if (writes.length === 1 && deletes.length === 0) {
       const file = perFile[0];
       const diff = renderDiff(file.before, file.after, false, theme);
-      const singleHeader = headerSpec(name, file.path, dotColor, theme, themeFg(theme, "dim", `(+${diff.added} -${diff.removed})`));
+      const singleHeader = pathHeaderSpec(name, file.path, dotColor, theme, themeFg(theme, "dim", `(+${diff.added} -${diff.removed})`));
       const entries: Entry[] = diff.lines.map((text) => ({ text }));
       if (diff.lines.length > 6) {
         return {
@@ -471,11 +518,12 @@ function buildApplyPatch(name: string, result: unknown, options: unknown, theme:
       return { header: singleHeader, body: { mode: "flush", clip: true, entries } };
     }
 
-    const entries: Entry[] = [
+    const rows = [
       ...perFile.map((file) => ({ text: `${themeFg(theme, "toolTitle", file.path)} ${themeFg(theme, "dim", `(+${file.added} -${file.removed})`)}` })),
       ...deletes.map((path) => ({ text: `${themeFg(theme, "toolTitle", path)} ${themeFg(theme, "dim", "(deleted)")}` })),
-      { text: themeFg(theme, "dim", "… expand for full diff"), exempt: true },
     ];
+    const entries: Entry[] = rows.slice(0, 3);
+    if (rows.length > 3) entries.push({ text: moreLine(rows.length - 3, theme, "more"), exempt: true });
     return { header, body: { mode: "rail", entries } };
   }
 
@@ -489,343 +537,6 @@ function buildApplyPatch(name: string, result: unknown, options: unknown, theme:
     entries.push({ text: `${themeFg(theme, "toolTitle", path)} ${themeFg(theme, "dim", "(deleted)")}` });
   }
   return { header, body: { mode: "flush", clip: true, entries } };
-}
-
-function buildGoal(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
-  const expanded = expandedFromOptions(options);
-  const details = detailsRecord(result);
-  const goal = recordFieldOrUndefined(details, "goal");
-  const accountingPending = details["accountingPending"] === true;
-  const subject = goal !== undefined ? stringFieldOrUndefined(goal, "objective") ?? subjectFromArgs(name, args) : subjectFromArgs(name, args);
-  const header = headerSpec(name, oneLine(subject), dotFromDetails(details), theme);
-  const entries: Entry[] = [];
-  if (goal !== undefined) {
-    const facts = [
-      stringFieldOrUndefined(goal, "status"),
-      accountingPending ? "final accounting pending" : undefined,
-      !accountingPending && numberFieldOrUndefined(goal, "tokensUsed") !== undefined ? `${numberFieldOrUndefined(goal, "tokensUsed")} tokens` : undefined,
-      !accountingPending && numberFieldOrUndefined(goal, "timeUsedSeconds") !== undefined ? `${numberFieldOrUndefined(goal, "timeUsedSeconds")}s` : undefined,
-    ].filter((part): part is string => part !== undefined && part !== "");
-    if (facts.length > 0) entries.push({ text: themeFg(theme, "dim", facts.join(" · ")), exempt: true });
-  }
-  if (expanded) entries.push(...fullTextEntries(textContent(result), theme));
-  return { header, body: entries.length === 0 ? undefined : { mode: "rail", entries } };
-}
-
-function listItemTitle(item: Record<string, unknown>, fallback: string): string {
-  return stringFieldOrUndefined(item, "title") ?? stringFieldOrUndefined(item, "id") ?? stringFieldOrUndefined(item, "url") ?? fallback;
-}
-
-function resultDescription(item: Record<string, unknown>): string | undefined {
-  const summary = stringFieldOrUndefined(item, "summary") ?? stringFieldOrUndefined(item, "text") ?? stringFieldOrUndefined(item, "content");
-  if (summary !== undefined) return summary;
-  const highlights = item["highlights"];
-  if (Array.isArray(highlights)) return highlights.find((part): part is string => typeof part === "string");
-  return undefined;
-}
-
-function collectionMeta(item: Record<string, unknown>): string {
-  const parts: string[] = [];
-  const url = stringFieldOrUndefined(item, "url");
-  if (url !== undefined) parts.push(domainOf(url));
-  const count = numberFieldOrUndefined(item, "messageCount") ?? numberFieldOrUndefined(item, "message_count");
-  if (count !== undefined) parts.push(`${count} msgs`);
-  const status = stringFieldOrUndefined(item, "status");
-  if (status !== undefined) parts.push(status);
-  const lifecycle = stringFieldOrUndefined(item, "lifecycle");
-  if (lifecycle !== undefined) parts.push(lifecycle);
-  const sandbox = stringFieldOrUndefined(item, "sandbox");
-  if (sandbox !== undefined) parts.push(sandbox);
-  return parts.join(" · ");
-}
-
-function collectionEntries(items: Record<string, unknown>[], expanded: boolean, theme: unknown): Entry[] {
-  const sep = ` ${themeFg(theme, "dim", "·")} `;
-  const entries: Entry[] = [];
-  items.forEach((item, index) => {
-    const title = listItemTitle(item, `item ${index + 1}`);
-    let line = `${themeFg(theme, "accent", String(index + 1))}${sep}${themeFg(theme, "toolOutput", title)}`;
-    const meta = collectionMeta(item);
-    if (meta !== "") line += `${sep}${themeFg(theme, "dim", meta)}`;
-    entries.push({ text: line });
-    if (expanded) {
-      const description = resultDescription(item);
-      if (description !== undefined && description.trim() !== "") {
-        entries.push({ text: themeFg(theme, "dim", oneLine(description)) });
-      }
-    }
-  });
-  return entries;
-}
-
-function buildCollection(name: string, details: Record<string, unknown>, options: unknown, theme: unknown, baseSubject: string, items: Record<string, unknown>[]): Block {
-  const expanded = expandedFromOptions(options);
-  const header = headerSpec(name, baseSubject, dotFromDetails(details), theme, themeFg(theme, "dim", `(${items.length} result${items.length === 1 ? "" : "s"})`));
-  if (items.length === 0) {
-    return { header, body: { mode: "rail", entries: [{ text: themeFg(theme, "dim", "(none)"), exempt: true }] } };
-  }
-  const limit = expanded ? 30 : 3;
-  const entries = collectionEntries(items.slice(0, limit), expanded, theme);
-  if (items.length > limit) entries.push({ text: moreLine(items.length - limit, theme, "more"), exempt: true });
-  return { header, body: { mode: "rail", entries } };
-}
-
-function hitCount(threads: Record<string, unknown>[]): number {
-  return threads.reduce((total, thread) => total + recordArrayFieldOrEmpty(thread, "hits").length, 0);
-}
-
-function buildQueryThreads(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
-  const expanded = expandedFromOptions(options);
-  const details = detailsRecord(result);
-  const threads = recordArrayFieldOrEmpty(details, "threads");
-  const hits = hitCount(threads);
-  const header = headerSpec(name, subjectFromArgs(name, args), dotFromDetails(details), theme, themeFg(theme, "dim", `(${threads.length} thread${threads.length === 1 ? "" : "s"}, ${hits} hit${hits === 1 ? "" : "s"})`));
-  if (threads.length === 0) {
-    return { header, body: { mode: "rail", entries: [{ text: themeFg(theme, "dim", "(none)"), exempt: true }] } };
-  }
-  const sep = ` ${themeFg(theme, "dim", "·")} `;
-  const limit = expanded ? 30 : 3;
-  const entries: Entry[] = [];
-  threads.slice(0, limit).forEach((thread, index) => {
-    const title = stringFieldOrUndefined(thread, "title") ?? stringFieldOrUndefined(thread, "id") ?? `thread ${index + 1}`;
-    const id = stringFieldOrUndefined(thread, "id") ?? "";
-    const workspace = stringFieldOrUndefined(thread, "workspace");
-    const threadHits = recordArrayFieldOrEmpty(thread, "hits");
-    const meta = [
-      id,
-      workspace,
-      `${threadHits.length} hit${threadHits.length === 1 ? "" : "s"}`,
-    ].filter((part): part is string => part !== undefined && part !== "");
-    entries.push({
-      text: `${themeFg(theme, "accent", String(index + 1))}${sep}${themeFg(theme, "toolOutput", title)}${sep}${themeFg(theme, "dim", meta.join(" · "))}`,
-    });
-    if (expanded) {
-      for (const hit of threadHits) {
-        const kind = stringFieldOrUndefined(hit, "kind") ?? "";
-        const role = stringFieldOrUndefined(hit, "role");
-        const tool = stringFieldOrUndefined(hit, "toolName");
-        const snippet = stringFieldOrUndefined(hit, "snippet") ?? "";
-        const label = [kind, role, tool].filter((part): part is string => part !== undefined && part !== "").join("/");
-        entries.push({ text: themeFg(theme, "dim", `${label}: ${oneLine(snippet)}`) });
-      }
-    }
-  });
-  if (threads.length > limit) entries.push({ text: moreLine(threads.length - limit, theme, "more"), exempt: true });
-  return { header, body: { mode: "rail", entries } };
-}
-
-function buildReadThread(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
-  const expanded = expandedFromOptions(options);
-  const details = detailsRecord(result);
-  const thread = recordFieldOrUndefined(details, "thread");
-  const mode = stringFieldOrUndefined(details, "mode") ?? stringFieldOrUndefined(args, "mode") ?? "overview";
-  const header = headerSpec(name, subjectFromArgs(name, args), dotFromDetails(details), theme);
-  const entries: Entry[] = [];
-  if (thread !== undefined) {
-    const facts = [
-      stringFieldOrUndefined(thread, "title"),
-      mode,
-      (numberFieldOrUndefined(thread, "messageCount") ?? numberFieldOrUndefined(thread, "message_count")) !== undefined
-        ? `${numberFieldOrUndefined(thread, "messageCount") ?? numberFieldOrUndefined(thread, "message_count")} msgs`
-        : undefined,
-    ].filter((part): part is string => part !== undefined && part !== "");
-    if (facts.length > 0) entries.push({ text: themeFg(theme, "dim", facts.join(" · ")), exempt: true });
-  }
-  if (expanded) entries.push(...fullTextEntries(textContent(result), theme));
-  if (!expanded) {
-    const diagnostics = recordArrayFieldOrEmpty(details, "diagnostics");
-    const cursor = stringFieldOrUndefined(details, "cursor");
-    const facts = [
-      diagnostics.length > 0 ? `${diagnostics.length} diagnostic${diagnostics.length === 1 ? "" : "s"}` : undefined,
-      cursor !== undefined ? "more available" : undefined,
-    ].filter((part): part is string => part !== undefined);
-    if (facts.length > 0) entries.push({ text: themeFg(theme, "dim", facts.join(" · ")), exempt: true });
-  }
-  return { header, body: entries.length === 0 ? undefined : { mode: "rail", entries } };
-}
-
-function buildAgent(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
-  const expanded = expandedFromOptions(options);
-  const details = detailsRecord(result);
-  if (name === "agent_spawn") return buildAgentSpawn(name, result, expanded, theme, args);
-  if (name === "agent_wait") return buildAgentWait(name, result, expanded, theme, args);
-  const workers = recordArrayFieldOrEmpty(details, "workers");
-  const profiles = recordArrayFieldOrEmpty(details, "profiles");
-  if (workers.length > 0) return buildCollection(name, details, options, theme, subjectFromArgs(name, args), workers);
-  if (profiles.length > 0) return buildCollection(name, details, options, theme, subjectFromArgs(name, args), profiles);
-
-  const worker = recordFieldOrUndefined(details, "worker");
-  const header = headerSpec(name, subjectFromArgs(name, args), dotFromDetails(details), theme);
-  const entries: Entry[] = [];
-  if (worker !== undefined) {
-    const id = stringFieldOrUndefined(worker, "id");
-    const lifecycle = stringFieldOrUndefined(worker, "lifecycle");
-    const facts = [id !== undefined ? `run ${id}` : undefined, lifecycle].filter((part): part is string => part !== undefined && part !== "");
-    if (facts.length > 0) entries.push({ text: themeFg(theme, "dim", facts.join(" · ")), exempt: true });
-  }
-  if (expanded) entries.push(...fullTextEntries(textContent(result), theme));
-  return { header, body: entries.length === 0 ? undefined : { mode: "rail", entries } };
-}
-
-function buildAgentSpawn(
-  name: string,
-  result: unknown,
-  expanded: boolean,
-  theme: unknown,
-  args: Record<string, unknown>,
-): Block {
-  const details = detailsRecord(result);
-  const worker = recordFieldOrUndefined(details, "worker");
-  const profile = stringFieldOrUndefined(details, "profile") ?? stringFieldOrUndefined(args, "profile") ?? "";
-  const agentId = stringFieldOrUndefined(details, "agent_id") ?? stringFieldOrUndefined(details, "workerId") ?? stringFieldOrUndefined(worker ?? {}, "id") ?? "";
-  const runId = stringFieldOrUndefined(details, "run_id") ?? "";
-  const status = stringFieldOrUndefined(details, "status") ?? stringFieldOrUndefined(worker ?? {}, "lifecycle") ?? "";
-  const header = headerSpec(name, subjectFromArgs(name, args), dotFromDetails(details), theme);
-  const facts = [agentId !== "" ? `run ${agentId}` : undefined, status].filter((part): part is string => part !== undefined && part !== "");
-  const entries: Entry[] = [];
-  if (facts.length > 0) entries.push({ text: themeFg(theme, "dim", facts.join(" · ")), exempt: true });
-  if (expanded) {
-    const message = stringFieldOrUndefined(args, "message") ?? stringFieldOrUndefined(args, "objective") ?? stringFieldOrUndefined(result as Record<string, unknown>, "prompt") ?? "";
-    const messageLabel = args["create_goal"] === true ? "Objective sent" : "Message sent";
-    for (const line of [
-      `Profile: ${profile}`,
-      `Agent id: ${agentId}`,
-      `Run id: ${runId}`,
-      `Status: ${status}`,
-      "",
-      `${messageLabel}:`,
-      message,
-    ]) {
-      entries.push({ text: themeFg(theme, line.endsWith(":") ? "dim" : "toolOutput", line) });
-    }
-  }
-  return { header, body: entries.length === 0 ? undefined : { mode: "rail", entries } };
-}
-
-function waitRunHeader(run: Record<string, unknown>, single: boolean): string {
-  const agentId = stringFieldOrUndefined(run, "agent_id") ?? "";
-  const runId = stringFieldOrUndefined(run, "run_id") ?? "";
-  const status = stringFieldOrUndefined(run, "status") ?? "";
-  if (single) return `${agentId}${agentId === "" ? "" : " "}${status}`.trim();
-  return [agentId, runId, status].filter((part) => part !== "").join(" · ");
-}
-
-function buildAgentWait(
-  name: string,
-  result: unknown,
-  expanded: boolean,
-  theme: unknown,
-  args: Record<string, unknown>,
-): Block {
-  const details = detailsRecord(result);
-  const header = headerSpec(name, subjectFromArgs(name, args), dotFromDetails(details), theme);
-  const runs = recordArrayFieldOrEmpty(details, "runs");
-  if (!expanded) return { header, body: undefined };
-  if (runs.length === 0) {
-    return {
-      header,
-      body: { mode: "rail", entries: [{ text: themeFg(theme, "dim", "(none)"), exempt: true }] },
-    };
-  }
-  const entries: Entry[] = [];
-  runs.forEach((run, index) => {
-    if (index > 0) entries.push({ text: "" });
-    entries.push({ text: themeFg(theme, "dim", waitRunHeader(run, runs.length === 1)), exempt: true });
-    const finalOutput = stringFieldOrUndefined(run, "finalOutput");
-    const error = stringFieldOrUndefined(run, "error");
-    const outputAvailable = boolFieldOrUndefined(run, "outputAvailable") !== false;
-    const body =
-      finalOutput !== undefined && finalOutput.trim() !== "" ? finalOutput :
-      error !== undefined && error.trim() !== "" ? error :
-      outputAvailable ? "" : "(output unavailable)";
-    if (body === "") return;
-    for (const line of body.split(/\r?\n/)) {
-      entries.push({ text: themeFg(theme, "toolOutput", line) });
-    }
-  });
-  return { header, body: { mode: "rail", entries } };
-}
-
-function buildRalph(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
-  const expanded = expandedFromOptions(options);
-  const details = detailsRecord(result);
-  const taskId = stringFieldOrUndefined(details, "taskId") ?? subjectFromArgs(name, args);
-  const header = headerSpec(name, taskId, dotFromDetails(details), theme);
-  const facts = [
-    numberFieldOrUndefined(details, "iteration") !== undefined ? `iteration ${numberFieldOrUndefined(details, "iteration")}` : undefined,
-    stringFieldOrUndefined(details, "status"),
-    boolFieldOrUndefined(details, "reflection") === true ? "reflection" : undefined,
-  ].filter((part): part is string => part !== undefined && part !== "");
-  const entries: Entry[] = [];
-  if (facts.length > 0) entries.push({ text: themeFg(theme, "dim", facts.join(" · ")), exempt: true });
-  if (expanded) entries.push(...fullTextEntries(textContent(result), theme));
-  return { header, body: entries.length === 0 ? undefined : { mode: "rail", entries } };
-}
-
-function buildExaSearch(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
-  const expanded = expandedFromOptions(options);
-  const details = detailsRecord(result);
-  const response = recordFieldOrUndefined(details, "response") ?? {};
-  const results = recordArrayFieldOrEmpty(response, "results");
-  const header = headerSpec(name, subjectFromArgs(name, args), dotFromDetails(details), theme, themeFg(theme, "dim", `(${results.length} result${results.length === 1 ? "" : "s"})`));
-  if (results.length === 0) {
-    return { header, body: { mode: "rail", entries: [{ text: themeFg(theme, "dim", "(none)"), exempt: true }] } };
-  }
-  const limit = expanded ? 10 : 3;
-  const sep = ` ${themeFg(theme, "dim", "·")} `;
-  const entries: Entry[] = [];
-  results.slice(0, limit).forEach((item, index) => {
-    const title = listItemTitle(item, `result ${index + 1}`);
-    const url = stringFieldOrUndefined(item, "url") ?? "";
-    const domain = domainOf(url);
-    let line = `${themeFg(theme, "accent", String(index + 1))}${sep}${themeFg(theme, "toolOutput", title)}`;
-    if (domain !== "") line += `${sep}${themeFg(theme, "dim", domain)}`;
-    entries.push({ text: line });
-    if (expanded) {
-      if (url !== "") entries.push({ text: themeFg(theme, "dim", url) });
-      const published = stringFieldOrUndefined(item, "publishedDate");
-      if (published !== undefined) entries.push({ text: themeFg(theme, "dim", published) });
-      const description = resultDescription(item);
-      if (description !== undefined && description.trim() !== "") {
-        entries.push({ text: themeFg(theme, "dim", oneLine(description)) });
-      }
-    }
-  });
-  if (results.length > limit) entries.push({ text: moreLine(results.length - limit, theme, "more"), exempt: true });
-  return { header, body: { mode: "rail", entries } };
-}
-
-function buildCodeContext(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
-  const expanded = expandedFromOptions(options);
-  const details = detailsRecord(result);
-  const response = recordFieldOrUndefined(details, "response") ?? {};
-  const text = stringFieldOrUndefined(response, "response") ?? textContent(result);
-  const header = headerSpec(name, subjectFromArgs(name, args), dotFromDetails(details), theme);
-  return { header, body: { mode: "rail", entries: headEntries(text, expanded, theme, 5, 100000) } };
-}
-
-function buildExaAgent(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
-  const expanded = expandedFromOptions(options);
-  const details = detailsRecord(result);
-  const response = recordFieldOrUndefined(details, "response") ?? {};
-
-  if (name === "exa_agent_list_runs" || name === "exa_agent_list_events") {
-    const data = recordArrayFieldOrEmpty(response, "data");
-    const items = data.length > 0 ? data : recordArrayFieldOrEmpty(response, "results");
-    return buildCollection(name, details, options, theme, subjectFromArgs(name, args), items);
-  }
-  if (name === "exa_agent_cancel_run") {
-    return { header: headerSpec(name, subjectFromArgs(name, args), dotFromDetails(details), theme), body: undefined };
-  }
-  // create_run / get_run: single entity `<id> · <status>`, output.text full when expanded.
-  const id = stringFieldOrUndefined(response, "id") ?? subjectFromArgs(name, args);
-  const status = stringFieldOrUndefined(response, "status");
-  const subject = status !== undefined ? `${id} · ${status}` : id;
-  const header = headerSpec(name, subject, dotFromDetails(details), theme);
-  const output = recordFieldOrUndefined(response, "output");
-  const text = output !== undefined ? stringFieldOrUndefined(output, "text") ?? "" : stringFieldOrUndefined(response, "response") ?? "";
-  const entries = expanded ? fullTextEntries(text, theme) : [];
-  return { header, body: entries.length === 0 ? undefined : { mode: "rail", entries } };
 }
 
 function buildGeneric(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
@@ -873,6 +584,17 @@ function parseSkillBlocks(content: string): { name: string; location: string; bo
 export function skillMessageRenderer() {
   return (message: unknown, options: unknown, theme: unknown) => {
     const content = isRecord(message) ? stringFieldOrUndefined(message, "content") ?? "" : "";
+    const parsed = parseSkillBlock(content);
+    if (parsed !== null) {
+      try {
+        const component = new SkillInvocationMessageComponent(parsed);
+        if (typeof component.setExpanded === "function") component.setExpanded(expandedFromOptions(options));
+        return withLeftGutter(component);
+      } catch {
+        // Some non-TUI test contexts do not initialize Pi's global theme. Fall
+        // through to the parity fallback below rather than leaking the XML block.
+      }
+    }
     const skills = parseSkillBlocks(content);
     if (skills.length === 0) return undefined;
     const expanded = expandedFromOptions(options);
@@ -880,20 +602,18 @@ export function skillMessageRenderer() {
     const details = detailsRecord(message);
     const trigger = stringFieldOrUndefined(details, "trigger") ?? `$${skill.name}`;
     const provenance = `Skill "${skill.name}" was injected automatically by the harness because the user mentioned ${trigger}.`;
-    return withLeftGutter(
-      renderBlock(
-        {
-          header: {
-            lead: themeFg(theme, "info", "• skill: "),
-            subject: skill.name,
-            trailing: themeFg(theme, "dim", expanded ? skill.location : `auto from ${trigger} (expand)`),
-          },
-          body: expanded
-            ? { mode: "rail", entries: tailEntries(`${provenance}\n\n${skill.body}`, true, theme, 5, 100000) }
-            : undefined,
+    return renderBlock(
+      {
+        header: {
+          lead: themeFg(theme, "info", "• skill: "),
+          subject: skill.name,
+          trailing: themeFg(theme, "dim", expanded ? skill.location : `auto from ${trigger} (expand)`),
         },
-        expanded,
-      ),
+        body: expanded
+          ? { mode: "rail", entries: tailEntries(`${provenance}\n\n${skill.body}`, true, theme, 5, 100000) }
+          : undefined,
+      },
+      expanded,
     );
   };
 }
@@ -903,24 +623,70 @@ function buildNotificationBlock(message: unknown, options: unknown, theme: unkno
   if (content === "") return undefined;
   const expanded = expandedFromOptions(options);
   const execMatch = /^Command session ([0-9]+) has finished\./.exec(content);
-  const agentMatch = /^Agent run \S+ for (\S+) \(([^)]*)\) has finished\./.exec(content);
+  const agentMatch = /^Agent run \S+ for (\S+)(?: \(([^)]*)\))? has finished\./.exec(content);
   const name = execMatch !== null ? "exec_completion" : agentMatch !== null ? "agent_completion" : "notification";
   const subject = execMatch !== null
     ? `session ${execMatch[1]} ready`
     : agentMatch !== null
-    ? `${agentMatch[1]} (${agentMatch[2]}) ready`
+    ? `${agentMatch[1]} ready`
     : "ready";
 
   return {
-    header: headerSpec(name, subject, "info", theme),
-    body: { mode: "rail", entries: tailEntries(content, expanded, theme, 6, 100000) },
+    header: headerSpec(name, subject, "muted", theme),
+    body: expanded ? { mode: "rail", entries: tailEntries(content, true, theme, 6, 100000) } : undefined,
   };
 }
 
 export function notificationMessageRenderer() {
   return (message: unknown, options: unknown, theme: unknown) => {
     const block = buildNotificationBlock(message, options, theme);
-    return block === undefined ? undefined : withLeftGutter(renderBlock(block, expandedFromOptions(options)));
+    return block === undefined ? undefined : renderBlock(block, expandedFromOptions(options));
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// taumel.cron.fire message renderer (live and replayed cron fires)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function buildCronFireBlock(message: unknown, options: unknown, theme: unknown): Block | undefined {
+  const expanded = expandedFromOptions(options);
+  const details = isRecord(message) ? detailsRecord(message) : {};
+  const id = stringFieldOrUndefined(details, "id") ?? "";
+  const schedule = stringFieldOrUndefined(details, "schedule") ?? "";
+  const coalesced = numberFieldOrUndefined(details, "coalesced") ?? 1;
+  const prompt =
+    stringFieldOrUndefined(details, "prompt") ??
+    (isRecord(message) ? stringFieldOrUndefined(message, "content") : undefined) ??
+    "";
+  if (id === "" && prompt === "") return undefined;
+
+  const trailingParts = [schedule].filter((part) => part !== "");
+  if (coalesced > 1) trailingParts.push(`${coalesced} coalesced`);
+  const trailing = trailingParts.length > 0 ? themeFg(theme, "dim", trailingParts.join(" · ")) : "";
+  const subject = trailing === "" ? id : `${id} · ${trailing}`;
+  const header = headerSpec("cron.fire", subject, "muted", theme);
+
+  if (!expanded) return { header, body: undefined };
+
+  const cronExpr = stringFieldOrUndefined(details, "cron");
+  const entries: Entry[] = [
+    ...(id !== "" ? [{ text: `${themeFg(theme, "dim", "Task:")} ${themeFg(theme, "toolOutput", id)}` }] : []),
+    ...(cronExpr !== undefined ? [{ text: `${themeFg(theme, "dim", "Schedule:")} ${themeFg(theme, "toolOutput", cronExpr)}` }] : []),
+    ...(schedule !== "" ? [{ text: `${themeFg(theme, "dim", "Human:")} ${themeFg(theme, "toolOutput", schedule)}` }] : []),
+    ...(coalesced > 1 ? [{ text: `${themeFg(theme, "dim", "Coalesced:")} ${themeFg(theme, "toolOutput", String(coalesced))}` }] : []),
+  ];
+  if (prompt !== "") {
+    entries.push({ text: "" });
+    entries.push({ text: themeFg(theme, "dim", "Prompt:"), exempt: true });
+    entries.push(...fullTextEntries(prompt, theme));
+  }
+  return { header, body: { mode: "rail", entries } };
+}
+
+export function cronFireMessageRenderer() {
+  return (message: unknown, options: unknown, theme: unknown) => {
+    const block = buildCronFireBlock(message, options, theme);
+    return block === undefined ? undefined : renderBlock(block, expandedFromOptions(options));
   };
 }
 
@@ -945,14 +711,8 @@ function buildResult(name: string, result: unknown, options: unknown, theme: unk
   if (name === "write") return buildWrite(name, result, options, theme, args);
   if (name === "edit") return buildEdit(name, result, options, theme, args);
   if (name === "apply_patch") return buildApplyPatch(name, result, options, theme, args);
-  if (name === "get_goal" || name === "create_goal" || name === "update_goal") return buildGoal(name, result, options, theme, args);
-  if (name === "query_threads") return buildQueryThreads(name, result, options, theme, args);
-  if (name === "read_thread") return buildReadThread(name, result, options, theme, args);
-  if (name.startsWith("agent_")) return buildAgent(name, result, options, theme, args);
-  if (name === "ralph_continue" || name === "ralph_finish") return buildRalph(name, result, options, theme, args);
-  if (name === "get_code_context_exa") return buildCodeContext(name, result, options, theme, args);
-  if (name === "web_search_exa" || name === "crawling_exa") return buildExaSearch(name, result, options, theme, args);
-  if (name.startsWith("exa_agent_")) return buildExaAgent(name, result, options, theme, args);
+  const domain = buildDomainResult(name, result, options, theme, args);
+  if (domain !== undefined) return domain;
   return buildGeneric(name, result, options, theme, args);
 }
 
@@ -973,7 +733,10 @@ export function renderersForTool(name: string) {
         return renderBlock({ header, body: undefined }, false);
       }
       const args = argsFromContext(context);
-      return renderBlock(buildResult(name, result, options, theme, args), expanded);
+      const renderedResult = isRecord(context) && context["isError"] === true && isRecord(result)
+        ? { ...result, details: { ...detailsRecord(result), ok: false } }
+        : result;
+      return renderBlock(buildResult(name, renderedResult, options, theme, args), expanded);
     },
   };
 }
