@@ -46,6 +46,7 @@ import {
   childSessionCacheKey,
   childSessionCacheKeyScopeFromContext,
   createChildSession,
+  refreshOwnedChildPermissions,
   sendToChildSession,
 } from "./child-sessions.ts";
 import {
@@ -55,6 +56,7 @@ import {
   flushPendingAgentNotifications,
   flushPendingExecNotifications,
   isSpawnedObjectiveCompletion,
+  noninteractiveTurnDrain,
   recordAgentDispatchCompletionInBackground,
   startChildGoalContinuationLoop,
   startExecCompletionWaiter,
@@ -71,6 +73,7 @@ export {
   applyChildSessionUpdate,
   childSessionCacheKeyScopeFromContext,
   createChildSession,
+  refreshOwnedChildPermissions,
   sendToChildSession,
 };
 
@@ -170,6 +173,57 @@ function approvalRequesterLabel(ctx: unknown): string | undefined {
   if (workerId === "") return `agent profile ${profile}`;
   if (profile === "") return `agent ${workerId}`;
   return `agent ${workerId} (${profile})`;
+}
+
+let loadedMainSessionId: string | undefined;
+
+function childApprovalOwnerIsLoaded(ctx: unknown): boolean {
+  const metadata = childSessionMetadataFromContext(ctx);
+  if (metadata === undefined || metadata["kind"] !== "agent") return true;
+  const parentSessionId =
+    typeof metadata["parentSessionId"] === "string" ? metadata["parentSessionId"].trim() : "";
+  return parentSessionId !== "" && parentSessionId === loadedMainSessionId;
+}
+
+function boundedApprovalEvidence(prepared: Record<string, unknown>): string {
+  const limit = 4_000;
+  const action = typeof prepared["action"] === "string" ? prepared["action"] : "";
+  const lines: string[] = [];
+  if (action === "exec_command") {
+    lines.push(`Command: ${stringField(prepared, "cmd")}`);
+    lines.push(`Working directory: ${stringField(prepared, "workdir")}`);
+  } else {
+    const paths = stringArrayFromUnknown(prepared["affectedPaths"]);
+    if (paths !== undefined) lines.push(`Paths: ${paths.join(", ")}`);
+    else {
+      const path = typeof prepared["path"] === "string" ? prepared["path"] : "";
+      if (path !== "") lines.push(`Path: ${path}`);
+    }
+    const patch = typeof prepared["patch"] === "string" ? prepared["patch"] : undefined;
+    const contents = typeof prepared["contents"] === "string" ? prepared["contents"] : undefined;
+    const edits = Array.isArray(prepared["edits"]) ? prepared["edits"] : [];
+    const effect =
+      patch ??
+      (contents === undefined ? undefined : contents.split(/\r?\n/).map((line) => `+${line}`).join("\n")) ??
+      edits
+        .filter(isRecord)
+        .map((edit) => `-${String(edit["oldText"] ?? "")}\n+${String(edit["newText"] ?? "")}`)
+        .join("\n");
+    if (effect !== undefined && effect !== "") lines.push(`Bounded effect diff:\n${effect}`);
+  }
+  const sandbox = isRecord(prepared["sandbox"]) ? prepared["sandbox"] : undefined;
+  if (sandbox !== undefined) {
+    const mode =
+      typeof sandbox["filesystemMode"] === "string" ? sandbox["filesystemMode"] :
+      typeof sandbox["filesystem_mode"] === "string" ? sandbox["filesystem_mode"] : "";
+    const roots = stringArrayFromUnknown(sandbox["workspaceRoots"] ?? sandbox["workspace_roots"]);
+    lines.push(`Sandbox boundary: ${mode || "active sandbox"}${roots === undefined ? "" : `; roots: ${roots.join(", ")}`}`);
+  } else {
+    const roots = stringArrayFromUnknown(prepared["workspaceRoots"]);
+    if (roots !== undefined) lines.push(`Sandbox boundary: workspace roots: ${roots.join(", ")}`);
+  }
+  const evidence = lines.join("\n\n");
+  return evidence.length <= limit ? evidence : `${evidence.slice(0, limit)}\n… effect diff truncated`;
 }
 
 function openAiUsageHostAuth(core: CoreBridge): Record<string, unknown> {
@@ -343,6 +397,7 @@ async function confirmExecApproval(
   ctx: unknown,
   signal?: AbortSignal,
 ): Promise<ApprovalOutcome> {
+  if (!childApprovalOwnerIsLoaded(ctx)) return "unavailable";
   const ui = isRecord(ctx) && isRecord(ctx["ui"]) ? ctx["ui"] : {};
   const confirm = ui["confirm"];
   const plan = coreCallRecord(core, "planExecApprovalPrompt", [prepared, {
@@ -397,8 +452,8 @@ async function confirmExecApproval(
         : `${stringField(plan, "title")} - ${requester}`;
     const prompt =
       requester === undefined
-        ? stringField(plan, "prompt")
-        : `Requesting ${requester}\n\n${stringField(plan, "prompt")}`;
+        ? `${stringField(plan, "prompt")}\n\n${boundedApprovalEvidence(prepared)}`
+        : `Requesting ${requester}\n\n${stringField(plan, "prompt")}\n\n${boundedApprovalEvidence(prepared)}`;
     if (allowAlwaysTokens !== undefined && allowAlwaysTokens.length > 0 && typeof select === "function") {
       const selected = await withGoalClockPaused(core, async () =>
         await select.call(ui, title, ["Deny", "Allow once", "Allow always"])
@@ -629,7 +684,8 @@ export async function executeTool(
     return executeAgentWait(core, parsed.params, ctx, signal, prepared, pendingAgentWaits);
   }
 
-  const action = stringField(prepared, "action");
+  const action = typeof prepared["action"] === "string" ? prepared["action"] : "";
+  if (action === "") throw new Error(`Invalid Taumel ${name} preparation: missing action`);
   switch (action) {
     case "tool_result":
       return preparedToolResult(core, prepared);
@@ -819,16 +875,22 @@ export function registerGatewayTools(
   if (typeof pi.registerTool !== "function") {
     return { registerAgentTools: () => undefined };
   }
+  const registerTool = pi.registerTool;
   if (typeof pi.registerMessageRenderer === "function") {
     pi.registerMessageRenderer("notification", notificationMessageRenderer());
   }
   pi.on("session_shutdown", (_event, ctx) => {
     const ownerId = sessionInfoFromContext(ctx).sessionId;
     if (ownerId !== undefined) core.call("shutdownExecOwner", [ownerId]);
+    if (ownerId !== undefined && ownerId === loadedMainSessionId) loadedMainSessionId = undefined;
   });
   const clearRetainedAgentOutputs = (_event: unknown, ctx: unknown) => {
     const ownerId = sessionInfoFromContext(ctx).sessionId;
     if (ownerId !== undefined) core.call("clearRetainedAgentOutputsForSession", [ownerId]);
+    if (ownerId !== undefined && childSessionMetadataFromContext(ctx) === undefined) {
+      loadedMainSessionId = ownerId;
+      refreshOwnedChildPermissions(childSessions, ctx);
+    }
   };
   pi.on("session_start", clearRetainedAgentOutputs);
   pi.on("session_resume", clearRetainedAgentOutputs);
@@ -869,12 +931,20 @@ export function registerGatewayTools(
       });
     }, 0);
   });
+  pi.on("agent_settled", async (_event, ctx) => {
+    try {
+      await noninteractiveTurnDrain(pi, core, ctx, pendingAgentWaits);
+    } catch (error) {
+      if (isStaleContextError(error)) return;
+      console.warn("Taumel noninteractive drain failed:", error);
+    }
+  });
   const registerMatching = (agentTools: boolean) => {
     for (const spec of toolContracts) {
       const name = spec.name;
       if (!allowed.has(name) || registered.has(name)) continue;
       if (agentGatewayToolNameSet.has(name) !== agentTools) continue;
-      pi.registerTool({
+      registerTool({
         name,
         label: spec.label,
         description: spec.description,

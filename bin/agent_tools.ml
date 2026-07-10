@@ -51,6 +51,9 @@ let worker_spawn_input worker active_tools =
                   profile;
                   system_prompt = get_string worker "agentSystemPrompt";
                   active_tools;
+                  workspace_directory =
+                    Option.bind (optional_string_field worker "workspaceDirectory")
+                      Taumel.Shared.trim_non_empty;
                 }))
           )
 
@@ -175,6 +178,14 @@ let pending_agent_notifications ctx =
       |]
   in
   ok_obj [ ("notifications", js_array (List.map notification pending)) ]
+
+let count_active_child_runs ctx =
+  let owner = current_owner ctx in
+  let count =
+    Taumel.Agent_runs.count_active_child_runs !agent_state
+      ~parent_session_id:owner.id
+  in
+  ok_obj [ ("count", js_number (float_of_int count)) ]
 
 let request_from_params (owner : Taumel.Subagents.owner) name params =
   let workspace_roots = if state.cwd = "" then [] else [ state.cwd ] in

@@ -336,6 +336,8 @@ let poll params ctx =
             ("mode", js_string (Taumel.Cron.mode_to_string delivery.task.mode));
             ("content", js_string delivery.content);
             ("coalesced", js_number (float_of_int delivery.coalesced));
+            ("cron", js_string delivery.task.cron);
+            ("schedule", js_string (Taumel.Cron_expr.describe delivery.task.cron));
           |]
 
 let delivered params ctx =

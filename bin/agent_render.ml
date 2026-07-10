@@ -26,6 +26,10 @@ let js_worker (worker : Taumel.Subagents.worker) =
           (Taumel.Sandbox.filesystem_mode_to_string worker.sandbox.filesystem_mode) );
       ("noSandbox", js_bool worker.sandbox.no_sandbox);
       ("subagent", js_bool worker.sandbox.subagent);
+      ( "workspaceDirectory",
+        match worker.sandbox.workspace_roots with
+        | root :: _ -> js_string root
+        | [] -> Unsafe.inject Js.null );
       ("allowedTools", allowed_tools);
       ( "activeToolsSnapshot",
         match worker.active_tools_snapshot with
@@ -48,14 +52,19 @@ let xml_attr value =
     value;
   Buffer.contents buffer
 
-let xml_agent_line ?(lifecycle = "open") ?sandbox agent_id profile =
+let xml_agent_line ?(lifecycle = "open") ?sandbox ?workspace agent_id profile =
   let sandbox =
     match sandbox with
     | None -> ""
     | Some value -> Printf.sprintf " sandbox=\"%s\"" (xml_attr value)
   in
-  Printf.sprintf "  <agent id=\"%s\" profile=\"%s\" lifecycle=\"%s\"%s />"
-    (xml_attr agent_id) (xml_attr profile) (xml_attr lifecycle) sandbox
+  let workspace =
+    match workspace with
+    | None -> ""
+    | Some value -> Printf.sprintf " workspace=\"%s\"" (xml_attr value)
+  in
+  Printf.sprintf "  <agent id=\"%s\" profile=\"%s\" lifecycle=\"%s\"%s%s />"
+    (xml_attr agent_id) (xml_attr profile) (xml_attr lifecycle) sandbox workspace
 
 let xml_run_line ?elapsed ?reason run_id status =
   let elapsed =
@@ -335,6 +344,18 @@ let js_run ~now (run : Taumel.Agent_runs.agent_run) =
       ("elapsedSeconds", js_number (float_of_int (run_elapsed_seconds ~now run)));
     |]
 
+let bounded_run_reason = function
+  | None -> None
+  | Some
+      ( "interrupted_by_parent" | "closed_by_parent" | "stopped_by_parent"
+      | "goal_blocked" | "goal_continuation_limit"
+      | "replacement_dispatch_failed" | "working_directory_unavailable"
+      | "model_unavailable" | "tool_surface_unavailable"
+      | "identity_snapshot_incomplete" | "process_resumed_without_live_worker"
+      | "timed_out" ) as reason ->
+      reason
+  | Some _ -> Some "execution_failed"
+
 let js_list_run ~now (run : Taumel.Agent_runs.agent_run) =
   Unsafe.obj
     [|
@@ -342,6 +363,7 @@ let js_list_run ~now (run : Taumel.Agent_runs.agent_run) =
       ("agent_id", js_string run.run_agent_id);
       ("initialSubmissionKind", js_string run.run_initial_submission_kind);
       ("status", js_string (Taumel.Agent_runs.run_status_to_string run.run_status));
+      ("reason", js_option_string (bounded_run_reason run.run_reason));
       ("consumed", js_bool run.run_consumed);
       ("backgroundNotified", js_bool run.run_background_notified);
       ("createdAt", js_number (float_of_int run.run_created_at));
@@ -352,6 +374,11 @@ let js_list_run ~now (run : Taumel.Agent_runs.agent_run) =
 
 let js_agent_identity ~now state (identity : Taumel.Agent_runs.agent_identity) =
   let latest = Taumel.Agent_runs.latest_run state identity.identity_agent_id in
+  let workspace =
+    match identity.identity_sandbox_snapshot with
+    | Some { workspace_roots = root :: _; _ } -> Some root
+    | _ -> None
+  in
   Unsafe.obj
     [|
       ("agent_id", js_string identity.identity_agent_id);
@@ -360,6 +387,7 @@ let js_agent_identity ~now state (identity : Taumel.Agent_runs.agent_identity) =
         js_string
           (if Taumel.Agent_runs.identity_open identity then "open" else "closed") );
       ("child_session_id", js_option_string identity.identity_child_session_id);
+      ("workspace_binding", js_option_string workspace);
       ("createdAt", js_number (float_of_int identity.identity_created_at));
       ("closedAt", js_option_int identity.identity_closed_at);
       ( "run_id",
@@ -400,8 +428,13 @@ let agent_identity_summary ~now state identity =
         in
         String.concat " " fields
   in
-  Printf.sprintf "%s [%s] profile=%s latest=%s" identity.identity_agent_id
-    lifecycle identity.identity_profile_name run
+  let workspace =
+    match identity.identity_sandbox_snapshot with
+    | Some { workspace_roots = root :: _; _ } -> root
+    | _ -> "unavailable"
+  in
+  Printf.sprintf "%s [%s] profile=%s workspace=%s latest=%s"
+    identity.identity_agent_id lifecycle identity.identity_profile_name workspace run
 
 let agent_identity_xml ~now state identity =
   let lifecycle =
@@ -414,11 +447,17 @@ let agent_identity_xml ~now state identity =
         [
           xml_run_line
             ~elapsed:(run_elapsed_seconds ~now run)
+            ?reason:(bounded_run_reason run.run_reason)
             run.run_id (Taumel.Agent_runs.run_status_to_string run.run_status);
         ]
   in
+  let workspace =
+    match identity.identity_sandbox_snapshot with
+    | Some { workspace_roots = root :: _; _ } -> Some root
+    | _ -> None
+  in
   String.concat "\n"
-    ([ xml_agent_line ~lifecycle identity.identity_agent_id
+    ([ xml_agent_line ~lifecycle ?workspace identity.identity_agent_id
          identity.identity_profile_name ]
     @ latest)
 

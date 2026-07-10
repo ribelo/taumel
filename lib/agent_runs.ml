@@ -296,12 +296,22 @@ let record_spawn state ~now ~parent_session_id ~agent_id ~profile_name
         delivery_previous_status = None;
       }
 
-let record_active_tools_snapshot state ~agent_id ~active_tools =
+let record_active_tools_snapshot state ~agent_id ~active_tools ?model_id () =
   match find_identity state agent_id with
   | None -> Error ("unknown agent: " ^ agent_id)
   | Some identity ->
+      let profile_snapshot =
+        match (identity.identity_profile_snapshot, model_id) with
+        | Some profile, Some model_id -> Some { profile with model_id }
+        | snapshot, None -> snapshot
+        | None, Some _ -> None
+      in
       let updated =
-        { identity with identity_active_tools = Some active_tools }
+        {
+          identity with
+          identity_profile_snapshot = profile_snapshot;
+          identity_active_tools = Some active_tools;
+        }
       in
       Ok { state with identities = replace_identity updated state.identities }
 
@@ -423,23 +433,27 @@ let worker_of_identity_snapshot ~(owner : Subagents.owner) identity =
     Error ("cannot send to a closed agent: " ^ identity.identity_agent_id)
   else if owner.depth >= 1 then Error "nested agent limit reached"
   else
-    match (identity.identity_profile_snapshot, identity.identity_sandbox_snapshot) with
-    | Some profile, Some sandbox ->
+    match
+      ( identity.identity_profile_snapshot,
+        identity.identity_sandbox_snapshot,
+        identity.identity_active_tools,
+        Shared.trim_non_empty identity.identity_system_prompt )
+    with
+    | Some profile, Some sandbox, Some active_tools, Some system_prompt
+      when sandbox.workspace_roots <> [] ->
         Ok
           {
             Subagents.id = identity.identity_agent_id;
             Subagents.parent_id = Some owner.id;
             Subagents.definition_name = identity.identity_profile_name;
             Subagents.profile = profile;
-            Subagents.system_prompt = identity.identity_system_prompt;
-            Subagents.active_tools_snapshot = identity.identity_active_tools;
+            Subagents.system_prompt;
+            Subagents.active_tools_snapshot = Some active_tools;
             Subagents.sandbox = sandbox;
             Subagents.depth = owner.depth + 1;
             Subagents.lifecycle = Subagents.Running;
           }
-    | _ ->
-        Error
-          ("agent profile snapshot is missing for " ^ identity.identity_agent_id)
+    | _ -> Error "identity_snapshot_incomplete"
 
 let cancel_active_run ~now reason run =
   if active_run_status run.run_status then
@@ -585,6 +599,19 @@ let run_owned_by_parent state ~parent_session_id run =
   match find_identity state run.run_agent_id with
   | Some identity -> identity.identity_parent_session_id = parent_session_id
   | None -> false
+
+(* Count active (queued or running, not suspended) child runs owned by the
+   given parent session. Used for noninteractive drain: when the main agent
+   ends a turn in print/JSON mode, the TS host keeps the turn alive while
+   this count is > 0 (sub-ni01). *)
+let count_active_child_runs state ~parent_session_id =
+  List.fold_left
+    (fun count run ->
+      match find_identity state run.run_agent_id with
+      | Some identity when identity.identity_parent_session_id = parent_session_id ->
+          if active_work_run_status run.run_status then count + 1 else count
+      | _ -> count)
+    0 state.runs
 
 let output_run_for_target state ~parent_session_id target =
   let target = String.trim target in

@@ -12,9 +12,26 @@ let dispatch_failure_reason dispatch =
          ~default:"child dispatch did not start")
   else None
 
+(* When a replacement message supersedes prior execution and then fails to
+   dispatch, fail the run with replacement_dispatch_failed rather than the
+   generic dispatch error, so the parent model sees a clear signal that the
+   superseded execution cannot be restored (sub-sd11). *)
 let record_dispatch_start_failure prepared dispatch ctx =
+  let delivery_kind_is_interrupted =
+    match optional_field prepared "details" with
+    | Some details -> optional_string_field details "deliveryKind" = Some "interrupted"
+    | None -> false
+  in
   match (Taumel.Shared.trim_non_empty (get_string prepared "run_id"), dispatch_failure_reason dispatch) with
-  | Some run_id, Some reason -> (
+  | Some run_id, Some _ -> (
+      let reason =
+        if delivery_kind_is_interrupted then "replacement_dispatch_failed"
+        else
+          Option.value
+            (Option.bind (optional_string_field dispatch "reason")
+               Taumel.Shared.trim_non_empty)
+            ~default:"child dispatch did not start"
+      in
       Session_sync.load_agent_state ctx;
       match
         Taumel.Agent_runs.record_run_completion !agent_state
@@ -64,6 +81,16 @@ let finish_action params ctx =
     | "agent_send" -> dispatch_extra
     | _ -> Unsafe.obj [||]
   in
+  (match optional_field prepared "details" with
+  | Some details -> (
+      match optional_field details "worker" with
+      | Some worker ->
+          ignore
+            (Unsafe.fun_call
+               (Unsafe.js_expr "(function (object, key) { delete object[key]; })")
+               [| worker; js_string "agentSystemPrompt" |])
+      | None -> ())
+  | None -> ());
   prepared_tool_result_with_extra prepared extra
 
 let completion_status completion =
@@ -280,9 +307,12 @@ let record_active_tools_snapshot params ctx =
   let prepared = Unsafe.get params "prepared" in
   let agent_id = get_string prepared "workerId" in
   let active_tools = get_string_array params "activeTools" in
+  let model_id =
+    Option.bind (optional_string_field params "modelId") Taumel.Shared.trim_non_empty
+  in
   match
     Taumel.Agent_runs.record_active_tools_snapshot !agent_state ~agent_id
-      ~active_tools
+      ~active_tools ?model_id ()
   with
   | Error message -> error_obj message
   | Ok state ->

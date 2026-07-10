@@ -24,6 +24,7 @@ import {
   stringArrayFromUnknown,
   stringField,
 } from "./util.ts";
+import { statSync } from "node:fs";
 
 async function callOptionalAsync(receiver: unknown, names: readonly string[], args: readonly unknown[] = []): Promise<string | undefined> {
   if (!isRecord(receiver)) return undefined;
@@ -54,6 +55,13 @@ function currentModelFromContext(ctx: unknown): unknown {
   return ctx["model"];
 }
 
+function modelIdOf(model: unknown): string | undefined {
+  if (!isRecord(model)) return undefined;
+  const provider = typeof model["provider"] === "string" ? model["provider"].trim() : "";
+  const id = typeof model["id"] === "string" ? model["id"].trim() : "";
+  return provider !== "" && id !== "" ? `${provider}/${id}` : undefined;
+}
+
 function splitProviderModelId(modelId: string | undefined): { readonly provider: string; readonly model: string } | undefined {
   if (modelId === undefined) return undefined;
   const separator = modelId.indexOf("/");
@@ -77,6 +85,8 @@ function resolveChildModel(pi: PiLike, ctx: unknown, modelId: string | undefined
     }
   }
   if (modelId !== undefined) {
+    const current = currentModelFromContext(ctx);
+    if (modelIdOf(current) === modelId) return { model: current, applied: true };
     return { applied: false };
   }
   const inherited = currentModelFromContext(ctx);
@@ -97,6 +107,94 @@ function hasCustomEntry(sessionManager: unknown, customType: string): boolean {
     );
   } catch {
     return false;
+  }
+}
+
+function customEntryData(entry: unknown, customType: string): unknown {
+  if (!isRecord(entry)) return undefined;
+  if (entry["customType"] === customType) return entry["data"];
+  if (entry["type"] === customType) return entry["value"];
+  if (entry["type"] === "custom" && entry["customType"] === customType) return entry["data"];
+  return undefined;
+}
+
+function latestCustomEntry(sessionManager: unknown, customType: string): unknown {
+  if (!isRecord(sessionManager) || typeof sessionManager["getEntries"] !== "function") return undefined;
+  const entries = sessionManager["getEntries"].call(sessionManager);
+  if (!Array.isArray(entries)) return undefined;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const data = customEntryData(entries[index], customType);
+    if (data !== undefined) return data;
+  }
+  return undefined;
+}
+
+const sandboxRank: Record<string, number> = {
+  "read-only": 0,
+  "workspace-write": 1,
+  "danger-full-access": 2,
+};
+
+const approvalRank: Record<string, number> = {
+  untrusted: 0,
+  "on-request": 1,
+  "on-failure": 2,
+  never: 3,
+};
+
+function stricterValue(
+  left: unknown,
+  right: unknown,
+  ranks: Record<string, number>,
+): string | undefined {
+  if (typeof left !== "string" || typeof right !== "string") return undefined;
+  const leftRank = ranks[left];
+  const rightRank = ranks[right];
+  if (leftRank === undefined || rightRank === undefined) return undefined;
+  return leftRank <= rightRank ? left : right;
+}
+
+export function refreshOwnedChildPermissions(
+  childSessions: Map<string, ChildSessionBridge>,
+  parentCtx: unknown,
+): void {
+  if (!isRecord(parentCtx)) return;
+  const parentManager = parentCtx["sessionManager"];
+  const parentPermissions = latestCustomEntry(parentManager, "taumel.permissions");
+  if (!isRecord(parentPermissions) || !isRecord(parentPermissions["profile"])) return;
+  const parentProfile = parentPermissions["profile"];
+  const scopePrefix = `${childSessionCacheKeyScopeFromContext(parentCtx)}\0`;
+
+  for (const [key, child] of childSessions) {
+    if (!key.startsWith(scopePrefix)) continue;
+    const manager = child.sessionManager;
+    const childMetadata = latestCustomEntry(manager, "taumel.childSession");
+    if (!isRecord(childMetadata) || !isRecord(childMetadata["capabilityProfile"])) continue;
+    const ceiling = childMetadata["capabilityProfile"];
+    const sandboxPreset = stricterValue(
+      ceiling["sandboxPreset"],
+      parentProfile["sandboxPreset"],
+      sandboxRank,
+    );
+    const approvalPolicy = stricterValue(
+      ceiling["approvalPolicy"],
+      parentProfile["approvalPolicy"],
+      approvalRank,
+    );
+    if (sandboxPreset === undefined || approvalPolicy === undefined) continue;
+    if (!isRecord(manager) || typeof manager["appendCustomEntry"] !== "function") continue;
+    manager["appendCustomEntry"].call(manager, "taumel.permissions", {
+      version: 1,
+      profile: {
+        ...ceiling,
+        sandboxPreset,
+        approvalPolicy,
+        noSandboxAllowed: false,
+      },
+      networkMode: "disabled",
+      noSandbox: false,
+      subagent: true,
+    });
   }
 }
 
@@ -238,9 +336,36 @@ export async function createChildSession(
     throw new Error("Invalid Taumel child session start plan");
   }
   const setupEntries = setupEntriesRaw;
-  const cwd = cwdFromContext(ctx);
+  const workspaceDirectory = optionalStringField(metadata, "workspaceDirectory");
+  const cwd = workspaceDirectory ?? cwdFromContext(ctx);
+  if (workspaceDirectory !== undefined) {
+    try {
+      if (!statSync(workspaceDirectory).isDirectory()) {
+        return { error: "working_directory_unavailable" };
+      }
+    } catch {
+      return { error: "working_directory_unavailable" };
+    }
+  }
   const normalizedModelId = normalizeChildModelId(modelId);
   const model = resolveChildModel(pi, ctx, normalizedModelId);
+  if (!model.applied || model.model === undefined) {
+    return { error: "model_unavailable" };
+  }
+  if (activeTools === undefined) {
+    return { error: "identity_snapshot_incomplete" };
+  }
+  if (typeof pi.getAllTools === "function") {
+    const liveNames = new Set(
+      pi.getAllTools()
+        .map((tool) => typeof tool === "string" ? tool : isRecord(tool) && typeof tool["name"] === "string" ? tool["name"] : undefined)
+        .filter((name): name is string => name !== undefined),
+    );
+    const missing = activeTools.filter((name) => !liveNames.has(name));
+    if (missing.length > 0) {
+      return { error: `tool_surface_unavailable: ${missing.join(", ")}` };
+    }
+  }
   const systemPrompt = agentSystemPromptFromMetadata(metadata);
   const sessionManager = SessionManager.inMemory(cwd);
   appendSetupEntries(sessionManager, setupEntries);
@@ -384,10 +509,11 @@ export async function sendToChildSession(
     return dispatchResultWithHostCompletion(result, hostResult);
   }
   if (isRecord(childCtx) && typeof childCtx["sendUserMessage"] === "function") {
+    const sendUserMessage = childCtx["sendUserMessage"];
     if (!awaitCompletion) {
-      return completeLater(() => childCtx["sendUserMessage"].call(childCtx, dispatchPrompt, sendOptions));
+      return completeLater(() => sendUserMessage.call(childCtx, dispatchPrompt, sendOptions));
     }
-    const hostResult = await childCtx["sendUserMessage"].call(childCtx, dispatchPrompt, sendOptions);
+    const hostResult = await sendUserMessage.call(childCtx, dispatchPrompt, sendOptions);
     return dispatchResultWithHostCompletion(result, hostResult);
   }
   if (typeof pi.sendUserMessage === "function") {

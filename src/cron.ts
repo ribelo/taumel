@@ -2,7 +2,7 @@ import type { CoreBridge, PiLike } from "./types.ts";
 import { contextIsLive, coreCallOptionalRecord, extensionRuntimeIsLive, isRecord, isStaleContextError, stringField } from "./util.ts";
 
 function canSend(pi: PiLike): boolean {
-  return typeof pi.sendMessage === "function" || typeof pi.sendUserMessage === "function";
+  return typeof pi.sendMessage === "function";
 }
 
 async function sendCronMessage(
@@ -10,15 +10,17 @@ async function sendCronMessage(
   content: string,
   deliveryKind: "trigger" | "steer",
   coalesced: number,
+  details: Record<string, unknown> = {},
 ): Promise<boolean> {
   const prefix = coalesced > 1 ? `[cron: ${coalesced} coalesced fires]\n` : "[cron]\n";
   const options = deliveryKind === "trigger" ? { triggerTurn: true } : { deliverAs: "steer" };
   if (typeof pi.sendMessage === "function") {
-    await pi.sendMessage({ customType: "taumel.cron.fire", content: `${prefix}${content}`, display: true }, options);
-    return true;
-  }
-  if (typeof pi.sendUserMessage === "function") {
-    await pi.sendUserMessage(`${prefix}${content}`, options);
+    await pi.sendMessage({
+      customType: "taumel.cron.fire",
+      content: `${prefix}${content}`,
+      display: true,
+      details,
+    }, options);
     return true;
   }
   return false;
@@ -35,38 +37,26 @@ async function deliverCron(
   const mode = stringField(delivery, "mode");
   const content = stringField(delivery, "content");
   const coalesced = typeof delivery["coalesced"] === "number" ? delivery["coalesced"] as number : 1;
+  const cronDetails: Record<string, unknown> = {
+    id: stringField(delivery, "id"),
+    cron: stringField(delivery, "cron"),
+    schedule: typeof delivery["schedule"] === "string" ? delivery["schedule"] : "",
+    coalesced,
+    prompt: content,
+  };
   if (mode !== "goal") {
-    return await sendCronMessage(pi, content, deliveryKind, coalesced);
+    return await sendCronMessage(pi, content, deliveryKind, coalesced, cronDetails);
   }
 
   const objective = coalesced > 1 ? `[cron: ${coalesced} coalesced fires]\n${content}` : content;
   const result = coreCallOptionalRecord(core, "prepareTool", ["create_goal", { objective }, ctx]);
   if (result === undefined || result["ok"] !== true) {
-    return await sendCronMessage(pi, content, deliveryKind, coalesced);
+    return await sendCronMessage(pi, content, deliveryKind, coalesced, cronDetails);
   }
-  const plan = coreCallOptionalRecord(core, "planGoalContinuation", [true, {
-    hostIdle: true,
-    hasPendingMessages: false,
-    retrying: false,
-    compacting: false,
-  }, {}, ctx]);
-  if (plan === undefined || stringField(plan, "action") !== "send_goal_continuation") return false;
-  if (typeof pi.sendMessage === "function") {
-    await pi.sendMessage({
-      customType: stringField(plan, "customType"),
-      content: stringField(plan, "content"),
-      display: plan["display"] === true,
-    }, {
-      triggerTurn: plan["triggerTurn"] === true,
-      deliverAs: stringField(plan, "deliverAs"),
-    });
-    return true;
-  }
-  if (typeof pi.sendUserMessage === "function") {
-    await pi.sendUserMessage(stringField(plan, "content"), { deliverAs: stringField(plan, "deliverAs") });
-    return true;
-  }
-  return false;
+  return await sendCronMessage(pi, content, deliveryKind, coalesced, {
+    ...cronDetails,
+    goalCreated: true,
+  });
 }
 
 function notify(ctx: unknown, message: string): void {

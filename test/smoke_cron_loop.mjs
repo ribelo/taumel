@@ -10,10 +10,10 @@ const intervals = [];
 const cleared = [];
 const calls = [];
 const notifications = [];
+const sentMessages = [];
 let runtimeStale = false;
 let cronPollResult = { action: "none" };
 let prepareToolResult = { ok: true };
-let goalContinuationResult = { action: "none" };
 
 const on = (event, handler) => {
   const list = handlers.get(event) ?? [];
@@ -50,7 +50,7 @@ try {
     on,
     events: { on: () => () => undefined, emit: () => undefined },
     exec: async () => ({ code: 0, stdout: "", stderr: "" }),
-    sendMessage: async () => undefined,
+    sendMessage: async (message, options) => sentMessages.push({ message, options }),
     getFlag: () => {
       if (runtimeStale) throw new Error("This extension ctx is stale after session replacement or reload.");
       return undefined;
@@ -65,7 +65,6 @@ try {
       if (name === "cronGoalFacts") return { goalSlotFree: true, goalDriving: false };
       if (name === "cronPoll") return cronPollResult;
       if (name === "prepareTool") return prepareToolResult;
-      if (name === "planGoalContinuation") return goalContinuationResult;
       if (name === "cronDelivered") return { ok: true };
       throw new Error(`unexpected core call: ${name}`);
     },
@@ -121,17 +120,19 @@ try {
   runtimeStale = false;
   assert.deepEqual(calls, [], "cron interval should skip a stale captured pi runtime before calling core");
 
-  cronPollResult = { action: "deliver", id: "deadbeef", mode: "goal", content: "goal fire", coalesced: 1 };
-  goalContinuationResult = { action: "none" };
+  cronPollResult = { action: "deliver", id: "deadbeef", mode: "goal", content: "goal fire", coalesced: 1, cron: "* * * * *", schedule: "every minute" };
   emit("turn_start", { type: "turn_start" }, { sessionManager: {} });
   calls.length = 0;
   intervals[0].fn();
   await tick();
   assert.deepEqual(
     calls.map((call) => call.name),
-    ["cronGoalFacts", "cronPoll", "prepareTool", "planGoalContinuation"],
-    "cron loop should not mark a skipped goal delivery as delivered",
+    ["cronGoalFacts", "cronPoll", "prepareTool", "cronDelivered"],
+    "cron loop should persist a delivered goal-mode fire",
   );
+  assert.equal(sentMessages.at(-1)?.message?.customType, "taumel.cron.fire");
+  assert.equal(sentMessages.at(-1)?.message?.details?.goalCreated, true);
+  assert.match(sentMessages.at(-1)?.message?.content ?? "", /goal fire/);
   cronPollResult = { action: "none" };
 
   emit("session_shutdown", { type: "session_shutdown", reason: "reload" }, { sessionManager: {} });

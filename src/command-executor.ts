@@ -15,6 +15,7 @@ import {
   childSessionCacheKeyScopeFromContext,
   createChildSession,
   executeOpenAiUsageWithHostAuth,
+  refreshOwnedChildPermissions,
   sendToChildSession,
 } from "./tool-executor.ts";
 
@@ -163,7 +164,23 @@ async function executeGoalCommandSideEffects(
   result: unknown,
   ctx: unknown,
 ): Promise<void> {
-  if (name !== "goal" || !isRecord(result) || stringField(result, "action") !== "command_result") {
+  if (name !== "goal" || !isRecord(result) || result["action"] !== "command_result") {
+    return;
+  }
+  const startObjective =
+    typeof result["goalStartObjective"] === "string" ? result["goalStartObjective"] : "";
+  if (startObjective !== "") {
+    try {
+      if (typeof pi.sendUserMessage !== "function") {
+        throw new Error("Pi sendUserMessage is unavailable");
+      }
+      await pi.sendUserMessage(startObjective);
+    } catch (error) {
+      if (isRecord(result["goalRollback"])) {
+        coreCallRecord(core, "rollbackGoalCommand", [result["goalRollback"], ctx], "goal command rollback");
+      }
+      throw error;
+    }
     return;
   }
   await sendVisibleGoalResult(pi, result);
@@ -309,6 +326,7 @@ export async function executeGatewayCommand(
   args: string,
   ctx: unknown,
 ): Promise<unknown> {
+  refreshOwnedChildPermissions(childSessions, ctx);
   if (name === "taumel") {
     const trimmed = args.trim();
     if (trimmed === "") return taumelStatus();
@@ -344,6 +362,9 @@ export async function executeGatewayCommand(
       name === "agent-runs" ? childSessionCacheKeyScopeFromContext(ctx) : undefined,
     );
     await executeGoalCommandSideEffects(pi, core, name, result, ctx);
+    if (name === "permissions" || name === "sandbox" || name === "approval" || name === "network") {
+      refreshOwnedChildPermissions(childSessions, ctx);
+    }
     return result;
   }
 

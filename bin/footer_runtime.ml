@@ -107,10 +107,6 @@ let register_handlers host =
 	                       ensure_refresh_loop host;
 	                       emit_changed host)))));
   ignore
-    (call2 host "on" (js_string "before_agent_start")
-       (inject
-          (Js.wrap_callback (fun event ctx -> Goal_tools.goal_system_prompt event ctx))));
-  ignore
     (call2 host "on" (js_string "session_tree")
        (inject (Js.wrap_callback (fun _event _ctx -> emit_changed host))));
   ignore

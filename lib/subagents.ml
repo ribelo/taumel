@@ -244,6 +244,7 @@ type child_session_spawn_input = {
   profile : Capability_profile.t;
   system_prompt : string;
   active_tools : string list option;
+  workspace_directory : string option;
 }
 
 type child_session_bridge_update =
@@ -292,6 +293,7 @@ let plan_child_session_spawn_from_input ?initial_goal_objective ~prompt input =
           ( "thinkingLevel",
             string_option_json (Some input.profile.thinking_level) );
           ("activeTools", string_list_option_json input.active_tools);
+          ("workspaceDirectory", string_option_json input.workspace_directory);
         ]
       in
       let metadata_fields =
@@ -322,6 +324,8 @@ let plan_child_session_spawn ~prompt (worker : worker) ~active_tools =
         (match worker.active_tools_snapshot with
         | Some _ as snapshot -> snapshot
         | None -> active_tools);
+      workspace_directory =
+        (match worker.sandbox.workspace_roots with root :: _ -> Some root | [] -> None);
     }
 
 let child_session_created = function

@@ -152,6 +152,7 @@ let identity_to_json identity =
         match identity.identity_sandbox_snapshot with
         | None -> Shared.Null
         | Some sandbox -> sandbox_config_to_json sandbox );
+      ("system_prompt", Shared.String identity.identity_system_prompt);
       ("active_tools", string_list_option_json identity.identity_active_tools);
       ("created_at", int_json identity.identity_created_at);
       ("closed_at", int_option_json identity.identity_closed_at);
@@ -170,7 +171,9 @@ let identity_of_json path json =
   in
   let* identity_profile_snapshot = optional_profile_snapshot path fields in
   let* identity_sandbox_snapshot = optional_sandbox_snapshot path fields in
-  let identity_system_prompt = "" in
+  let* identity_system_prompt =
+    Shared.json_string_default path fields "system_prompt" ""
+  in
   let* identity_active_tools =
     optional_string_list_snapshot path fields "active_tools"
   in
@@ -208,6 +211,9 @@ let run_to_json run =
           | Some
               ( "interrupted_by_parent" | "closed_by_parent"
               | "stopped_by_parent" | "goal_blocked"
+              | "goal_continuation_limit" | "replacement_dispatch_failed"
+              | "working_directory_unavailable" | "model_unavailable"
+              | "tool_surface_unavailable" | "identity_snapshot_incomplete"
               | "process_resumed_without_live_worker" | "timed_out" ) as reason
             ->
               reason

@@ -195,8 +195,9 @@ export async function flushPendingAgentNotifications(
   }
 }
 
-function parentIsIdle(pi: PiLike): boolean {
-  return typeof pi.isIdle === "function" ? pi.isIdle() : true;
+function parentIsIdle(ctx: unknown): boolean {
+  if (!isRecord(ctx) || typeof ctx["isIdle"] !== "function") return false;
+  return ctx["isIdle"].call(ctx) === true;
 }
 
 // Called after a terminal completion is recorded. If the parent is idle there is
@@ -209,7 +210,14 @@ async function deliverCompletionIfParentIdle(
   ctx: unknown,
   pendingAgentWaits: PendingAgentWaits,
 ): Promise<void> {
-  if (!parentIsIdle(pi)) return;
+  if (!parentIsIdle(ctx)) return;
+  if (
+    isRecord(ctx) &&
+    (ctx["mode"] === "print" || ctx["mode"] === "json") &&
+    countActiveChildRuns(core, ctx) > 0
+  ) {
+    return;
+  }
   await flushPendingAgentNotifications(pi, core, ctx, "trigger", pendingAgentWaits);
 }
 
@@ -255,6 +263,38 @@ export async function flushPendingExecNotifications(
   }
 }
 
+// Count active (queued or running, not suspended) child runs owned by the
+// current parent session. Returns 0 on errors (bridge unavailable, no context).
+export function countActiveChildRuns(core: CoreBridge, ctx: unknown): number {
+  const result = coreCallOptionalRecord(core, "countActiveChildRuns", [ctx]);
+  if (result === undefined) return 0;
+  const count = optionalNumberField(result, "count");
+  return count ?? 0;
+}
+
+// Noninteractive drain: when the main agent ends a turn in print/JSON mode
+// (no TUI), keep the session alive while children are still running. Flush any
+// pending completions, re-enumerate, and trigger a new turn when children
+// remain active, so the parent can react to completions (sub-ni01–ni08).
+export async function noninteractiveTurnDrain(
+  pi: PiLike,
+  core: CoreBridge,
+  ctx: unknown,
+  pendingAgentWaits: PendingAgentWaits,
+): Promise<void> {
+  if (
+    !isRecord(ctx) ||
+    (ctx["mode"] !== "print" && ctx["mode"] !== "json") ||
+    typeof pi.sendMessage !== "function"
+  ) {
+    return;
+  }
+  while (countActiveChildRuns(core, ctx) > 0) {
+    await sleep(100);
+  }
+  await flushPendingAgentNotifications(pi, core, ctx, "trigger", pendingAgentWaits);
+}
+
 // Detached per-session waiter: resolves when the async command exits, then
 // delivers its completion if the parent is idle (no turn_end coming). When the
 // parent is mid-turn, the turn_end flush handles it instead.
@@ -269,7 +309,7 @@ export async function startExecCompletionWaiter(
   } catch {
     return;
   }
-  if (parentIsIdle(pi)) {
+  if (parentIsIdle(ctx)) {
     await flushPendingExecNotifications(pi, core, ctx, "trigger");
   }
 }
@@ -328,11 +368,13 @@ function recordAgentActiveToolsSnapshot(
   core: CoreBridge,
   prepared: Record<string, unknown>,
   activeTools: readonly string[],
+  modelId: string | undefined,
   ctx: unknown,
 ): void {
   const result = coreCallRecord(core, "recordAgentActiveToolsSnapshot", [{
     prepared,
     activeTools: [...activeTools],
+    ...(modelId !== undefined ? { modelId } : {}),
   }, ctx], "agent active tools snapshot update");
   if (result["ok"] !== true) {
     throw new Error("Invalid Taumel agent active tools snapshot update");
@@ -463,10 +505,22 @@ export async function createAgentChildSessionForPrepared(
     throw new Error(requiredError(spawnPlan, "agent spawn plan"));
   }
   const workerId = stringField(spawnPlan, "workerId");
-  const metadata = isRecord(spawnPlan["metadata"]) ? spawnPlan["metadata"] : {};
+  const metadata = isRecord(spawnPlan["metadata"]) ? { ...spawnPlan["metadata"] } : {};
+  if (typeof metadata["modelId"] !== "string" || metadata["modelId"].trim() === "") {
+    const model = isRecord(ctx) ? ctx["model"] : undefined;
+    if (isRecord(model) && typeof model["provider"] === "string" && typeof model["id"] === "string") {
+      metadata["modelId"] = `${model["provider"]}/${model["id"]}`;
+    }
+  }
   const activeTools = stringArrayFromUnknown(metadata["activeTools"]);
   if (activeTools !== undefined) {
-    recordAgentActiveToolsSnapshot(core, prepared, activeTools, ctx);
+    recordAgentActiveToolsSnapshot(
+      core,
+      prepared,
+      activeTools,
+      typeof metadata["modelId"] === "string" ? metadata["modelId"] : undefined,
+      ctx,
+    );
   }
   const bridge = await createChildSession(pi, core, ctx, metadata);
   await applyChildSessionUpdate(

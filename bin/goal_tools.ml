@@ -53,14 +53,20 @@ let tool_result ?(accounting_pending = false) goal text =
         inject (details ~accounting_pending goal !goal_automation) );
     ]
 
-let command_result ?(followup = false) goal message =
+let command_result ?(followup = false) ?start_objective ?rollback goal message =
   ok_obj
     ([
        ("action", js_string "command_result");
        ("message", js_string message);
        ("details", inject (details goal !goal_automation));
      ]
-    @ if followup then [ ("goalFollowup", js_bool true) ] else [])
+    @ (if followup then [ ("goalFollowup", js_bool true) ] else [])
+    @ (match start_objective with
+      | None -> []
+      | Some objective -> [ ("goalStartObjective", js_string objective) ])
+    @ (match rollback with
+      | None -> []
+      | Some value -> [ ("goalRollback", inject value) ]))
 
 let thread_id () = if state.cwd = "" then "current" else state.cwd
 
@@ -220,6 +226,8 @@ let handle_command args ctx =
    match String.lowercase_ascii command with
    | "complete" | "blocked" -> Session_sync.account_goal_turn_end ctx
    | _ -> ());
+  let previous_goal = !current_goal in
+  let previous_automation = !goal_automation in
   match
     Taumel.Goal.apply_command ~thread_id:(thread_id ()) ~now:(now_seconds ()) args
       !current_goal
@@ -235,21 +243,38 @@ let handle_command args ctx =
         Session_sync.save_goal_state ctx;
         if Option.is_some plan.automation then
           Session_sync.save_goal_automation_state ctx);
-      command_result ~followup:plan.followup plan.goal plan.message
+      let command, _ = Taumel.Goal.split_command args in
+      let starts_goal =
+        plan.followup && String.lowercase_ascii command <> "resume"
+      in
+      let start_objective =
+        if starts_goal then
+          let (goal : Taumel.Goal.t option) = plan.goal in
+          Option.map (fun (g : Taumel.Goal.t) -> g.objective) goal
+        else None
+      in
+      let rollback =
+        if not starts_goal then None
+        else
+          let goal =
+            match previous_goal with
+            | None -> Unsafe.inject Js.null
+            | Some goal -> inject (js_goal goal)
+          in
+          Some
+            (Unsafe.obj
+               [|
+                 ("goal", goal);
+                 ("automation", inject (js_automation previous_automation));
+               |])
+      in
+      command_result ~followup:(plan.followup && not starts_goal)
+        ?start_objective ?rollback plan.goal plan.message
 
-let goal_system_prompt event ctx =
-  if not (Session_sync.try_sync_session_from_host ~scope:"goal system prompt" ctx) then
-    Unsafe.inject Js.undefined
-  else
-    match (!current_goal, !goal_automation) with
-    | Some goal, Taumel.Goal.Automation_enabled when goal.status = Taumel.Goal.Active
-      ->
-        let base = get_string event "systemPrompt" in
-        let goal_prompt = Taumel.Goal.continuation_prompt goal in
-        Unsafe.obj [| ("systemPrompt", js_string (base ^ "\n\n" ^ goal_prompt)) |]
-    | Some _, Taumel.Goal.Automation_interrupted ->
-        (try Session_sync.clear_interrupted_goal_automation ctx
-         with error ->
-           Session_sync.report_session_sync_error "goal automation clear" error);
-        Unsafe.inject Js.undefined
-    | _ -> Unsafe.inject Js.undefined
+let rollback_goal_command snapshot ctx =
+  current_goal := goal_store_of_js (Unsafe.get snapshot "goal");
+  goal_automation := automation_of_js (Unsafe.get snapshot "automation");
+  pending_goal_terminal_status := None;
+  Session_sync.save_goal_state ctx;
+  Session_sync.save_goal_automation_state ctx;
+  ok_obj [ ("action", js_string "goal_rollback_complete") ]

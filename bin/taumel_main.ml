@@ -78,6 +78,7 @@ let core_call name_js args_js =
       Command_bridge.plan_execution (string_arg args 0) (string_arg args 1) (arg 2)
   | "planGoalContinuation" ->
       Goal_tools.plan_continuation (bool_arg args 0) (arg 1) (arg 2) (arg 3)
+  | "rollbackGoalCommand" -> Goal_tools.rollback_goal_command (arg 0) (arg 1)
   | "cronPoll" -> Cron_tools.poll (arg 0) (arg 1)
   | "cronDelivered" -> Cron_tools.delivered (arg 0) (arg 1)
   | "cronGoalFacts" -> Cron_tools.goal_facts (arg 0)
@@ -112,6 +113,8 @@ let core_call name_js args_js =
       Agent_tools.record_background_notification (arg 0) (arg 1)
   | "pendingAgentNotifications" ->
       Agent_tools.pending_agent_notifications (arg 0)
+  | "countActiveChildRuns" ->
+      Agent_tools.count_active_child_runs (arg 0)
   | "recordAgentChildSessionStart" ->
       Agent_tools.record_child_session_start (arg 0) (arg 1)
   | "recordAgentActiveToolsSnapshot" ->

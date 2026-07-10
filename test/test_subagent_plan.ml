@@ -145,6 +145,7 @@ let test_agent_child_metadata_uses_core_catalog_rules () =
            profile = worker.profile;
            system_prompt = worker.system_prompt;
            active_tools = inherited;
+           workspace_directory = Some "/repo";
          })
   in
   assert_bool "message recreate has no child goal objective"
@@ -600,7 +601,7 @@ let test_agent_identity_snapshot_state () =
     expect_ok "record active tools snapshot"
       (Agent_runs.record_active_tools_snapshot spawned.delivery_state
          ~agent_id:"snapshot-a1"
-         ~active_tools:[ "exec_command"; "write_stdin" ])
+         ~active_tools:[ "exec_command"; "write_stdin" ] ())
   in
   let started =
     expect_ok "record child session start"
@@ -624,8 +625,8 @@ let test_agent_identity_snapshot_state () =
   in
   assert_bool "snapshot child id persisted"
     (identity.identity_child_session_id = Some "child-1");
-  assert_bool "snapshot prompt is not persisted"
-    (identity.identity_system_prompt = "");
+  assert_bool "snapshot prompt persisted"
+    (identity.identity_system_prompt = "Snapshot prompt");
   assert_bool "snapshot active tools persisted"
     (identity.identity_active_tools = Some [ "exec_command"; "write_stdin" ]);
   let live = Agent_runs.mark_active_runs_lost ~live_agent_ids:[ "snapshot-a1" ] decoded in
@@ -647,8 +648,8 @@ let test_agent_identity_snapshot_state () =
   assert_equal "snapshot worker model" profile.model_id worker.profile.model_id;
   assert_bool "snapshot worker active tools"
     (worker.active_tools_snapshot = Some [ "exec_command"; "write_stdin" ]);
-  assert_bool "decoded snapshot worker prompt is empty"
-    (worker.system_prompt = "");
+  assert_bool "decoded snapshot worker prompt retained"
+    (worker.system_prompt = "Snapshot prompt");
   let lost = Agent_runs.mark_active_runs_lost decoded in
   match Agent_runs.find_identity lost "snapshot-a1" with
   | Some identity ->
