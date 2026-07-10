@@ -289,4 +289,114 @@ const event = {
   }]);
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// executeCompactionModelCommand tests
+// ────────────────────────────────────────────────────────────────────────────
+
+import { executeCompactionModelCommand } from "../src/compaction-model.ts";
+
+function makeCommandHarness(plans) {
+  let planIndex = 0;
+  const core = {
+    init: () => undefined,
+    call(name) {
+      assert.equal(name, "planCompactionModelCommand");
+      const plan = plans[planIndex];
+      if (plan === undefined) throw new Error("unexpected plan call");
+      planIndex += 1;
+      return plan;
+    },
+  };
+  const pi = {
+    on: () => undefined,
+    events: { on: () => () => undefined, emit: () => undefined },
+    exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+  };
+  const notifications = [];
+  const ctx = {
+    cwd: process.cwd(),
+    isProjectTrusted: () => true,
+    sessionManager: {
+      getSessionId: () => "compaction-model-test",
+      getSessionFile: () => "/tmp/compaction-model-test.jsonl",
+    },
+    ui: {
+      notify(message, type) {
+        notifications.push({ message, type });
+      },
+    },
+  };
+  return { pi, core, ctx, notifications, planIndex: () => planIndex };
+}
+
+// Show current model (no configured model -> inherit).
+{
+  const { pi, core, ctx } = makeCommandHarness([
+    { action: "show", model: "", source: "inherit" },
+  ]);
+  const result = await executeCompactionModelCommand(pi, core, "", ctx);
+  assert.equal(result.ok, true, "show current should succeed");
+  assert.equal(result.message, "Compaction model: inherit", "show with no model should say inherit");
+}
+
+// Show current model (configured).
+{
+  const { pi, core, ctx } = makeCommandHarness([
+    { action: "show", model: "openai/gpt-4o", source: "global" },
+  ]);
+  const result = await executeCompactionModelCommand(pi, core, "", ctx);
+  assert.equal(result.ok, true, "show configured should succeed");
+  assert.equal(result.message, "Compaction model: openai/gpt-4o (global)", "show should include source");
+}
+
+// Set model (set_project action).
+{
+  const { pi, core, ctx, notifications } = makeCommandHarness([
+    { action: "set_project", model: "anthropic/claude-3-5-sonnet" },
+  ]);
+  const result = await executeCompactionModelCommand(pi, core, "anthropic/claude-3-5-sonnet", ctx);
+  assert.equal(result.ok, true, "set model should succeed");
+  assert.match(result.message, /anthropic\/claude-3-5-sonnet/, "set should echo the model");
+}
+
+// Clear model.
+{
+  const { pi, core, ctx } = makeCommandHarness([
+    { action: "clear_project" },
+  ]);
+  const result = await executeCompactionModelCommand(pi, core, "clear", ctx);
+  assert.equal(result.ok, true, "clear should succeed");
+  assert.match(result.message, /cleared/i, "clear should mention cleared");
+}
+
+// Open picker falls back when no custom function available.
+{
+  const notifications = [];
+  const ctx = {
+    cwd: process.cwd(),
+    isProjectTrusted: () => true,
+    sessionManager: {
+      getSessionId: () => "no-ui-test",
+      getSessionFile: () => "/tmp/no-ui-test.jsonl",
+    },
+    ui: { notify: (m, t) => notifications.push({ message: m, type: t }) },
+  };
+  const pi = {
+    on: () => undefined,
+    events: { on: () => () => undefined, emit: () => undefined },
+    exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+  };
+  const core = {
+    init: () => undefined,
+    call(name) {
+      assert.equal(name, "planCompactionModelCommand");
+      return { action: "open_picker", current: "" };
+    },
+  };
+  const result = await executeCompactionModelCommand(pi, core, "", ctx);
+  // No ui.custom function -> falls back gracefully
+  assert.equal(result.ok, false, "picker unavailable should return ok=false");
+  assert.equal(result.error, "Picker is not available.", "picker should explain not available");
+}
+
 console.log("compaction model smoke: all assertions passed");
