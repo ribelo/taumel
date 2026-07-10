@@ -119,6 +119,28 @@ let test_write_edit_plan () =
       assert_equal "write approval action field" "write" approval.action
   | None -> fail "write approval" "expected approval")
 
+let test_write_stdin_plan () =
+  let status =
+    expect_ok "write_stdin status"
+      (Mutation.plan_write_stdin
+         {
+           session_id = 7;
+           chars = "";
+           yield_time_ms = Some 30_000.;
+           output_mode = "status";
+         })
+  in
+  assert_equal "write_stdin output mode" "status" status.output_mode;
+  expect_error "write_stdin status input"
+    "write_stdin output_mode=status requires empty chars"
+    (Mutation.plan_write_stdin
+       {
+         session_id = 7;
+         chars = "x";
+         yield_time_ms = None;
+         output_mode = "status";
+       })
+
 let test_workspace_validation_policy () =
   assert_bool "workspace-write validates resolved mutation paths"
     (Sandbox.requires_resolved_workspace_mutation_validation sandbox);
@@ -169,5 +191,6 @@ let test_apply_patch_plan () =
 let () =
   test_exec_plan ();
   test_write_edit_plan ();
+  test_write_stdin_plan ();
   test_workspace_validation_policy ();
   test_apply_patch_plan ()

@@ -49,6 +49,10 @@ let write_stdin_request_from_params params =
      chars =
        opt_string_default "" (Tool_contracts.WriteStdinParams.get_chars params);
      yield_time_ms = Tool_contracts.WriteStdinParams.get_yield_time_ms params;
+     output_mode =
+       (match Tool_contracts.WriteStdinParams.get_output_mode params with
+        | Some "status" -> "status"
+        | _ -> "delta");
    }
     : Taumel.Mutation_plan.write_stdin_request)
 
@@ -151,6 +155,7 @@ let prepare_write_stdin params =
               ("sessionId", js_number (float_of_int plan.session_id));
               ("chars", js_string plan.chars);
               ("yieldTimeMs", js_optional_number plan.yield_time_ms);
+              ("outputMode", js_string plan.output_mode);
             ])
 
 let js_edit_replacement (edit : Taumel.Sandbox.edit_replacement) =
@@ -259,6 +264,7 @@ let prepare_apply_patch params =
                    ("validateWorkspacePaths", js_bool plan.validate_workspace_paths);
                    ("action", js_string plan.action);
                    ("affectedPaths", js_array (List.map js_string plan.affected_paths));
+                   ("patch", js_string request.patch);
                  ]
                 @
                 match plan.approval with

@@ -28,12 +28,14 @@ type write_stdin_request = {
   session_id : int;
   chars : string;
   yield_time_ms : float option;
+  output_mode : string;
 }
 
 type write_stdin_plan = {
   session_id : int;
   chars : string;
   yield_time_ms : float option;
+  output_mode : string;
 }
 
 type write_request = {
@@ -122,12 +124,15 @@ let plan_exec ?policy_decision ?policy_message (sandbox : Sandbox.config) (reque
 
 let plan_write_stdin (request : write_stdin_request) =
   if request.session_id < 0 then Error "write_stdin requires session_id"
+  else if request.output_mode = "status" && request.chars <> "" then
+    Error "write_stdin output_mode=status requires empty chars"
   else
     Ok
       {
         session_id = request.session_id;
         chars = request.chars;
         yield_time_ms = request.yield_time_ms;
+        output_mode = request.output_mode;
       }
 
 let resolved_mutation_plan ?contents ?(edits = []) ?approval action path

@@ -99,6 +99,12 @@ const WriteStdinParamsSchema = Type.Object(
     session_id: Type.Integer(),
     chars: Type.Optional(Type.String()),
     yield_time_ms: Type.Optional(Type.Number()),
+    output_mode: Type.Optional(
+      Type.Union([Type.Literal("delta"), Type.Literal("status")], {
+        description:
+          "delta returns new process output; status drains output into the full log and returns only process status and suppression counts.",
+      }),
+    ),
   },
   { $id: "WriteStdinParams", additionalProperties: false },
 );
@@ -570,7 +576,8 @@ export const toolContracts: readonly ToolContract[] = [
   {
     name: "write_stdin",
     label: "write_stdin",
-    description: "Writes characters to an existing unified exec session and returns recent output.",
+    description:
+      "Writes characters to an existing exec session or waits for it. Use output_mode=status for passive waits that should not add process output to model context; use delta only to inspect progress or interact.",
     promptSnippet: "Send input to or poll an active shell session.",
     parameters: toolParameters(WriteStdinParamsSchema),
   },
