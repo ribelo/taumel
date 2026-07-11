@@ -394,7 +394,11 @@ export type ParseToolParamsResult =
   | { readonly ok: false; readonly error: string };
 
 function formatValidationError(toolName: string, validator: Validator, value: unknown): string {
-  const first = [...validator.Errors(value)][0];
+  let first;
+  for (const error of validator.Errors(value)) {
+    first = error;
+    break;
+  }
   if (first === undefined) return `${toolName}: invalid parameters`;
   const path = typeof first.instancePath === "string" && first.instancePath !== ""
     ? first.instancePath.replaceAll("/", ".").replace(/^\./, ".")
