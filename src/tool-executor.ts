@@ -642,12 +642,13 @@ async function executeApplyPatch(
   const writes = application.writes;
   // Attach the pre-patch file contents so the renderer can compute a real
   // unified diff per file (apply_patch details already carry the new contents).
-  const writesWithBefore = writes.map((write) => {
-    const writePath = write.path;
-    return { ...write, before: files[writePath] ?? "" };
-  });
+  const writesWithBefore = [];
+  const writePaths: string[] = [];
+  for (const write of writes) {
+    writePaths.push(write.path);
+    writesWithBefore.push({ ...write, before: files[write.path] ?? "" });
+  }
   const deletedFiles = deletes.map((path) => ({ path, before: files[path] ?? "" }));
-  const writePaths = writes.map((write) => write.path);
   const writeValidationError = await validatePreparedMutationPath(core, prepared, [...deletes, ...writePaths]);
   if (writeValidationError !== undefined) {
     return errorToolResult(core, writeValidationError, { ok: false, error: writeValidationError });
