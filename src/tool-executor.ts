@@ -554,7 +554,6 @@ async function executeLegacyWrite(
   const { path, contents } = prepared;
   const displayPath = prepared.displayPath || path;
   const mode = prepared.mode === "append" ? "append" : "overwrite";
-  if (path === "") throw new Error("Invalid Taumel write plan");
   const validationError = await validatePreparedMutationPath(core, prepared, [path]);
   if (validationError !== undefined) {
     return errorToolResult(core, validationError, { ok: false, error: validationError });
@@ -581,7 +580,6 @@ async function executeLegacyEdit(
 ): Promise<ToolResultEnvelope> {
   const { path } = prepared;
   const displayPath = prepared.displayPath || path;
-  if (path === "") throw new Error("Invalid Taumel edit plan");
   const validationError = await validatePreparedMutationPath(core, prepared, [path]);
   if (validationError !== undefined) {
     return errorToolResult(core, validationError, { ok: false, error: validationError });
