@@ -9,13 +9,12 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import type { CoreBridge, PiLike } from "./types.ts";
-import { cwdFromContext, isProjectTrusted, sessionInfoFromContext, writeFileAtomically } from "./util.ts";
+import { cwdFromContext, isProjectTrusted, modelRegistryFrom, sessionInfoFromContext, writeFileAtomically } from "./util.ts";
 import { decodeCompactionCommandPlan, decodeCompactionSessionPlan } from "./bridge-contracts.ts";
 
 type SettingsObject = { [key: string]: unknown };
 type CompactionContext = {
-  readonly isProjectTrusted?: () => unknown; readonly cwd?: unknown; readonly ui?: unknown;
-  readonly thinkingLevel?: unknown; readonly sessionManager?: unknown; readonly modelRegistry?: unknown;
+  readonly ui?: unknown; readonly thinkingLevel?: unknown; readonly sessionManager?: unknown;
 };
 type CompactionUi = { readonly notify?: (message: string, level: "warning") => unknown; readonly custom?: (...args: unknown[]) => Promise<unknown> };
 type ThinkingSessionManager = { readonly thinkingLevel?: unknown; readonly getThinkingLevel?: () => unknown };
@@ -146,12 +145,6 @@ function currentThinkingLevelFromContext(ctx: unknown): string | undefined {
   return typeof value === "string" && value !== "" ? value : undefined;
 }
 
-function modelRegistryFromContext(pi: PiLike, ctx: unknown): unknown {
-  const registry = compactionContext(ctx)?.modelRegistry;
-  if (registry !== undefined) return registry;
-  return pi.modelRegistry;
-}
-
 function findModelByProviderModelId(registry: unknown, modelId: string): ModelSelectorCurrentModel {
   const requested = splitProviderModelId(modelId);
   if (requested === undefined || typeof registry !== "object" || registry === null) return undefined;
@@ -228,7 +221,7 @@ async function resolveConfiguredModel(
   if (requested === undefined) {
     return { ok: false, result: cancelWithWarning(ctx, `Taumel compaction model is invalid: ${modelId}`) };
   }
-  const registry = modelRegistryFromContext(pi, ctx);
+  const registry = modelRegistryFrom(pi, ctx);
   if (typeof registry !== "object" || registry === null) {
     return { ok: false, result: cancelWithWarning(ctx, "Taumel compaction model cannot resolve the model registry.") };
   }
@@ -353,7 +346,7 @@ async function openCompactionModelPicker(
   if (typeof custom !== "function") {
     return { ok: false, action: "command_result", message: "Picker is not available.", error: "Picker is not available." };
   }
-  const registry = modelRegistryFromContext(pi, ctx);
+  const registry = modelRegistryFrom(pi, ctx);
   const currentModel = currentModelId === "" ? undefined : findModelByProviderModelId(registry, currentModelId);
   const model = await custom.call(
     ui,
