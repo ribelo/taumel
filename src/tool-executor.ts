@@ -280,13 +280,11 @@ async function executeOpenAiUsageInCore(
 async function executeExaInCore(
   core: CoreBridge,
   prepared: PreparedExaAction,
-  ctx: unknown,
 ) {
-  const bodyJson = optionalStringField(prepared, "bodyJson");
-  const lastEventId = optionalStringField(prepared, "lastEventId");
+  const bodyJson = prepared.bodyJson;
+  const lastEventId = prepared.lastEventId;
   const rendered = decodeBridgeToolExecutionResult(await core.call("executeExa", [{
-    toolName: stringField(prepared, "toolName"), method: stringField(prepared, "method"),
-    path: stringField(prepared, "path"),
+    toolName: prepared.toolName, method: prepared.method, path: prepared.path,
     ...(bodyJson === undefined ? {} : { bodyJson }),
     ...(lastEventId === undefined ? {} : { lastEventId }),
   }]));
@@ -721,10 +719,10 @@ export async function executeTool(
     case "openai_usage_fetch":
       return executeOpenAiUsageWithHostAuth(pi, core, prepared, ctx);
     case "exa_fetch":
-      return executeExaInCore(core, prepared, ctx);
+      return executeExaInCore(core, prepared);
     case "exa_agent_create_run_approval":
       return withMutationApproval(core, "exa_agent_create_run", prepared, ctx, signal, () =>
-        executeExaInCore(core, prepared, ctx)
+        executeExaInCore(core, prepared)
       );
     case "query_threads":
     case "read_thread": {
