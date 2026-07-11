@@ -75,14 +75,17 @@ function shouldAutoTriggerSkillAutocomplete(
 
 function skillItems(skills: readonly SkillAutocompleteEntry[], prefix: string): AutocompleteItem[] {
   const query = prefix.slice(1);
-  return skills.filter((skill) => RESOLVABLE_SKILL_NAME_PATTERN.test(skill.name) && skill.name.startsWith(query)).map((skill) => {
+  const items: AutocompleteItem[] = [];
+  for (const skill of skills) {
+    if (!RESOLVABLE_SKILL_NAME_PATTERN.test(skill.name) || !skill.name.startsWith(query)) continue;
     const description = skill.description || skill.location;
-    return {
+    items.push({
       value: `$${skill.name}`,
       label: `$${skill.name}`,
       ...(description ? { description } : {}),
-    };
-  });
+    });
+  }
+  return items;
 }
 
 export function renderComposerInput(width: number, next: (width: number) => string[], enabled: boolean): string[] {
