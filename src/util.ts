@@ -433,7 +433,7 @@ export async function fileThreadSources(core: CoreBridge, ctx: unknown): Promise
 }
 
 export async function threadSources(core: CoreBridge, ctx: unknown): Promise<ThreadSource[]> {
-  return await fileThreadSources(core, ctx);
+  return fileThreadSources(core, ctx);
 }
 
 async function syncDirectory(path: string): Promise<void> {

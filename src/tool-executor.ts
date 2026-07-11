@@ -520,7 +520,7 @@ async function withMutationApproval(
   if (outcome !== "approved") {
     return mutationApprovalDenied(core, action, outcome);
   }
-  return await run();
+  return run();
 }
 
 async function validatePreparedMutationPath(

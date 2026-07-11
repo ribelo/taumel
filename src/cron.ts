@@ -54,15 +54,15 @@ async function deliverCron(
     prompt: content,
   };
   if (mode !== "goal") {
-    return await sendCronMessage(pi, content, deliveryKind, coalesced, cronDetails);
+    return sendCronMessage(pi, content, deliveryKind, coalesced, cronDetails);
   }
 
   const objective = coalesced > 1 ? `[cron: ${coalesced} coalesced fires]\n${content}` : content;
   const result = decodeCronGoalCreationResult(core.call("createCronGoal", [{ objective, ctx }]));
   if (!result.created) {
-    return await sendCronMessage(pi, content, deliveryKind, coalesced, cronDetails);
+    return sendCronMessage(pi, content, deliveryKind, coalesced, cronDetails);
   }
-  return await sendCronMessage(pi, content, deliveryKind, coalesced, {
+  return sendCronMessage(pi, content, deliveryKind, coalesced, {
     ...cronDetails,
     goalCreated: true,
   });
