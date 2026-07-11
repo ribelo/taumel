@@ -74,7 +74,13 @@ export function stringArrayField(source: object, name: string): string[] {
 }
 export function recordArrayFieldOrUndefined<T extends object = object>(source: object, name: string): T[] | undefined {
   const value = property(source, name);
-  return Array.isArray(value) ? value.map(objectValue).filter((item): item is object => item !== undefined) as T[] : undefined;
+  if (!Array.isArray(value)) return undefined;
+  const records: T[] = [];
+  for (const item of value) {
+    const record = objectValue(item);
+    if (record !== undefined) records.push(record as T);
+  }
+  return records;
 }
 export function recordArrayFieldOrEmpty<T extends object = object>(source: object, name: string): T[] {
   return recordArrayFieldOrUndefined<T>(source, name) ?? [];
