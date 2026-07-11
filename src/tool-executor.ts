@@ -387,10 +387,9 @@ async function runPreparedRead(
   prepared: Extract<PreparedSuccess, { action: "read" }>,
   ctx: unknown,
 ) {
-  const offset = optionalNumberField(prepared, "offset");
-  const limit = optionalNumberField(prepared, "limit");
+  const { offset, limit } = prepared;
   return decodeToolResultEnvelope(await core.call("readFile", [{
-    path: stringField(prepared, "path"), defaultCwd: defaultCwdFromContext(ctx),
+    path: prepared.path, defaultCwd: defaultCwdFromContext(ctx),
     ...(offset === undefined ? {} : { offset }), ...(limit === undefined ? {} : { limit }),
   }]));
 }
@@ -401,7 +400,7 @@ async function runPreparedViewMedia(
   ctx: unknown,
 ) {
   return decodeViewMediaResultEnvelope(await core.call("viewMedia", [{
-    path: stringField(prepared, "path"), defaultCwd: defaultCwdFromContext(ctx),
+    path: prepared.path, defaultCwd: defaultCwdFromContext(ctx),
   }]));
 }
 
@@ -418,16 +417,9 @@ async function writePreparedStdin(
   ctx: unknown,
   signal?: AbortSignal,
 ) {
-  const sessionId = optionalNumberField(prepared, "sessionId");
-  if (sessionId === undefined) throw new Error("write_stdin requires sessionId");
-  const rawOutputMode = optionalStringField(prepared, "outputMode");
-  if (rawOutputMode !== undefined && rawOutputMode !== "delta" && rawOutputMode !== "status") {
-    throw new Error("Invalid write_stdin output mode");
-  }
-  const outputMode = rawOutputMode;
-  const yieldTimeMs = optionalNumberField(prepared, "yieldTimeMs");
+  const { sessionId, outputMode, yieldTimeMs } = prepared;
   return decodeExecToolResult(await core.call("writeExecStdin", [{
-    sessionId, chars: stringField(prepared, "chars"),
+    sessionId, chars: prepared.chars,
     ownerId: sessionInfoFromContext(ctx).sessionId ?? "current",
     ...(outputMode === undefined ? {} : { outputMode }),
     ...(yieldTimeMs === undefined ? {} : { yieldTimeMs }),
