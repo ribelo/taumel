@@ -188,7 +188,9 @@ export function childBridgeFacts(bridge: ChildSessionBridge | undefined) {
 
 export function stringFlag(pi: PiLike, name: string): string | undefined {
   const value = typeof pi.getFlag === "function" ? pi.getFlag(name) : undefined;
-  return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed === "" ? undefined : trimmed;
 }
 
 export function modelRegistryFrom(pi: PiLike, ctx: unknown): unknown {
