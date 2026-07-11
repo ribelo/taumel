@@ -245,13 +245,12 @@ function assistantTextFromMessage(message: unknown): string | undefined {
   const content = assistant.content;
   if (typeof content === "string") return content.trim() === "" ? undefined : content;
   if (!Array.isArray(content)) return undefined;
-  const text = content
-    .map((part) => {
-      const text = hostObject<TextPart>(part)?.text;
-      return typeof text === "string" ? text : "";
-    })
-    .filter((part) => part.trim() !== "")
-    .join("\n");
+  const parts: string[] = [];
+  for (const part of content) {
+    const text = hostObject<TextPart>(part)?.text;
+    if (typeof text === "string" && text.trim() !== "") parts.push(text);
+  }
+  const text = parts.join("\n");
   return text === "" ? undefined : text;
 }
 
