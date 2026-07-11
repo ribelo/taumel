@@ -56,11 +56,11 @@ async function readRoot(path: string): Promise<{ exists: boolean; root: Settings
   }
 }
 export function parseTaumelGlobalSettings(value: unknown, path = taumelGlobalSettingsPath()) {
-  const diagnostics: TaumelConfigDiagnostic[] = settingsObject(value)
-    ? nestedDiagnostics(value, path)
+  const root = settingsObject(value) ? value : undefined;
+  const diagnostics: TaumelConfigDiagnostic[] = root !== undefined
+    ? nestedDiagnostics(root, path)
     : [diagnostic(path, "<root>", "global Pi settings must be a JSON object")];
-  const root = settingsObject(value) ? value : {};
-  const taumel = settingsObject(root["taumel"]) ? root["taumel"] : {};
+  const taumel = settingsObject(root?.["taumel"]) ? root["taumel"] : {};
   const composer = settingsObject(taumel["composer"]) ? taumel["composer"] : {};
   const enabled = composer["enabled"];
   return { settings: { taumel: { composer: { enabled: typeof enabled === "boolean" ? enabled : true } } }, diagnostics };
