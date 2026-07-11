@@ -122,10 +122,12 @@ function cronTaskLine(task: ToolRenderFields, theme: unknown): string {
 
 function cronTaskEntries(task: ToolRenderFields, theme: unknown): Entry[] {
   const entries: Entry[] = [{ text: cronTaskLine(task, theme) }];
+  const cron = stringFieldOrUndefined(task, "cron");
+  const nextDueText = stringFieldOrUndefined(task, "nextDueText");
   const details = [
-    stringFieldOrUndefined(task, "cron") !== undefined ? `cron=${stringFieldOrUndefined(task, "cron")}` : undefined,
+    cron !== undefined ? `cron=${cron}` : undefined,
     boolState(boolFieldOrUndefined(task, "recurring"), "recurring", "one-shot"),
-    stringFieldOrUndefined(task, "nextDueText") !== undefined ? `next=${stringFieldOrUndefined(task, "nextDueText")}` : undefined,
+    nextDueText !== undefined ? `next=${nextDueText}` : undefined,
   ].filter((part): part is string => part !== undefined && part !== "");
   if (details.length > 0) entries.push({ text: themeFg(theme, "dim", details.join(" · ")), exempt: true });
   const prompt = stringFieldOrUndefined(task, "prompt");
@@ -225,7 +227,8 @@ function buildRalph(name: string, result: unknown, options: unknown, theme: unkn
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
   const taskId = stringFieldOrUndefined(details, "taskId") ?? stringFieldOrUndefined(args, "task_id") ?? "";
-  const facts = [numberFieldOrUndefined(details, "iteration") !== undefined ? `iteration ${numberFieldOrUndefined(details, "iteration")}` : undefined, stringFieldOrUndefined(details, "status")].filter((part): part is string => part !== undefined && part !== "");
+  const iteration = numberFieldOrUndefined(details, "iteration");
+  const facts = [iteration !== undefined ? `iteration ${iteration}` : undefined, stringFieldOrUndefined(details, "status")].filter((part): part is string => part !== undefined && part !== "");
   const header = headerSpec(name, taskId, dotFromDetails(details), theme, facts.length > 0 ? themeFg(theme, "dim", `(${facts.join(" · ")})`) : "");
   if (!expanded) return { header, body: undefined };
   const entries = [...labeled("Task id", taskId, theme), ...labeled("Status", stringFieldOrUndefined(details, "status"), theme)];
@@ -243,8 +246,10 @@ function buildExaSearch(name: string, result: unknown, options: unknown, theme: 
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
   const results = exaResults(details);
+  const urls = args["urls"];
+  const ids = args["ids"];
   const subject = name === "crawling_exa"
-    ? `${Array.isArray(args["urls"]) ? args["urls"].length : Array.isArray(args["ids"]) ? args["ids"].length : results.length} ${Array.isArray(args["urls"]) ? "urls" : "ids"}`
+    ? `${Array.isArray(urls) ? urls.length : Array.isArray(ids) ? ids.length : results.length} ${Array.isArray(urls) ? "urls" : "ids"}`
     : quotedQuery(args);
   const header = headerSpec(name, subject, dotFromDetails(details), theme, themeFg(theme, "dim", `(${results.length} result${results.length === 1 ? "" : "s"})`));
   if (!expanded) return { header, body: undefined };
