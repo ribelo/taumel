@@ -269,9 +269,6 @@ let load_goal_state_data = function
             (Failure ("Ignoring incompatible saved Taumel goal entry: " ^ message));
           current_goal := None)
 
-let load_goal_state ctx =
-  load_goal_state_data (Session_store.custom_entry_data ctx "taumel.goal")
-
 let load_goal_automation_state_data = function
   | None -> goal_automation := Taumel.Goal.Automation_enabled
   | Some data -> (
@@ -281,10 +278,6 @@ let load_goal_automation_state_data = function
           report_session_sync_error "goal automation load"
             (Failure ("Ignoring incompatible saved Taumel goal automation entry: " ^ message));
           goal_automation := Taumel.Goal.Automation_enabled)
-
-let load_goal_automation_state ctx =
-  load_goal_automation_state_data
-    (Session_store.custom_entry_data ctx "taumel.goal_automation")
 
 let apply_active_permissions (resolved : Taumel.Permissions.active) =
   active_profile_state := resolved.profile;
@@ -309,20 +302,12 @@ let load_permissions_state_data ~child_session permissions =
     ~session_isolated_child persisted
   |> apply_active_permissions
 
-let load_permissions_state ctx =
-  load_permissions_state_data
-    ~child_session:(Session_store.custom_entry_data ctx "taumel.childSession")
-    (Session_store.custom_entry_data ctx "taumel.permissions")
-
 let load_ralph_state_data = function
   | None -> ralph_tasks := []
   | Some data -> (
       match Result.bind (json_from_js data) Taumel.Ralph_loop.codec.decode with
       | Ok tasks -> ralph_tasks := tasks
       | Error _ -> ralph_tasks := [])
-
-let load_ralph_state ctx =
-  load_ralph_state_data (Session_store.custom_entry_data ctx "taumel.ralph")
 
 let load_visibility_state_data visibility =
   visibility_warning_flags := Taumel.Visibility.empty_warning_flags;
@@ -336,10 +321,6 @@ let load_visibility_state_data visibility =
             (Failure
                ("Ignoring incompatible saved Taumel visibility entry: " ^ message));
           visibility_state := Taumel.Visibility.empty)
-
-let load_visibility_state ctx =
-  load_visibility_state_data
-    (Session_store.custom_entry_data ctx "taumel.visibility")
 
 let load_session_state ctx =
   let snapshot = persisted_session_snapshot ctx in
