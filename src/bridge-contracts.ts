@@ -64,7 +64,7 @@ export type ThreadCatalogScansResult = Static<typeof ThreadCatalogScansResultSch
 
 export const ExecNotificationSchema = Type.Object(
   {
-    session_id: Type.Integer({ minimum: 0 }),
+    sessionId: Type.Integer({ minimum: 0 }),
     customType: Type.String({ minLength: 1 }),
     content: Type.String({ minLength: 1 }),
     display: Type.Boolean(),
@@ -80,7 +80,7 @@ export const PendingExecNotificationsResultSchema = Type.Object(
 export const ExecNotificationClaimedSchema = Type.Object(
   {
     kind: Type.Literal("claimed"),
-    session_id: Type.Integer({ minimum: 0 }),
+    sessionId: Type.Integer({ minimum: 0 }),
     customType: Type.String({ minLength: 1 }),
     content: Type.String({ minLength: 1 }),
     display: Type.Boolean(),

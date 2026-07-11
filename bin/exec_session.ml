@@ -1065,7 +1065,7 @@ let exec_notification_deliverable owner_id session =
   && not session.notification_delivery_claimed
 
 let exec_notification_obj session =
-  Tool_contracts.ExecNotification.create ~session_id:(float_of_int session.id)
+  Tool_contracts.ExecNotification.create ~sessionId:(float_of_int session.id)
     ~customType:"notification" ~content:(exec_notification_content session)
     ~display:true ()
 
@@ -1094,7 +1094,7 @@ let claim_exec_notification_delivery owner_id session_id =
       session.notification_delivery_claimed <- true;
       let claim =
         Tool_contracts.ExecNotificationClaimed.create ~kind:"claimed"
-          ~session_id:(float_of_int session.id) ~customType:"notification"
+          ~sessionId:(float_of_int session.id) ~customType:"notification"
           ~content:(exec_notification_content session) ~display:true ()
       in
       Tool_contracts.ExecNotificationClaimed.t_to_js claim |> inject

@@ -129,12 +129,12 @@ for (const invalid of [
 }
 
 const pending = decodePendingExecNotificationsResult({
-  notifications: [{ session_id: 7, customType: "notification", content: "done", display: true }],
+  notifications: [{ sessionId: 7, customType: "notification", content: "done", display: true }],
 });
-if (pending.notifications[0]?.session_id !== 7) throw new Error("pending exec notification did not decode");
+if (pending.notifications[0]?.sessionId !== 7) throw new Error("pending exec notification did not decode");
 const claimed = decodeExecNotificationClaim({
   kind: "claimed",
-  session_id: 7,
+  sessionId: 7,
   customType: "notification",
   content: "done",
   display: true,
@@ -144,8 +144,8 @@ if (decodeExecNotificationClaim({ kind: "unavailable" }).kind !== "unavailable")
   throw new Error("unavailable exec claim did not decode");
 }
 for (const invalid of [
-  { notifications: [{ session_id: -1, customType: "notification", content: "done", display: true }] },
-  { kind: "claimed", session_id: 7 },
+  { notifications: [{ sessionId: -1, customType: "notification", content: "done", display: true }] },
+  { kind: "claimed", sessionId: 7 },
   { kind: "other" },
   { kind: "unavailable", content: "unexpected" },
 ]) {

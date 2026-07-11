@@ -50,7 +50,7 @@ export async function flushPendingExecNotifications(
     core.call("pendingExecNotifications", [ownerId]),
   );
   for (const notification of notifications) {
-    const sessionId = notification.session_id;
+    const sessionId = notification.sessionId;
     const claim = decodeExecNotificationClaim(
       core.call("claimExecNotificationDelivery", [ownerId, sessionId]),
     );
