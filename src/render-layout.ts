@@ -112,15 +112,27 @@ function railEntryPhysical(entry: Entry, expanded: boolean, contentWidth: number
 
 function layoutRail(entries: readonly Entry[], expanded: boolean, width: number): string[] {
   const contentWidth = Math.max(1, width - visibleWidth(RAIL_FIRST));
-  const physical = entries.flatMap((entry) => railEntryPhysical(entry, expanded, contentWidth));
-  return physical.map((line, index) => (index === 0 ? RAIL_FIRST + line : RAIL_CONT + line));
+  const lines: string[] = [];
+  for (const entry of entries) {
+    for (const line of railEntryPhysical(entry, expanded, contentWidth)) {
+      lines.push((lines.length === 0 ? RAIL_FIRST : RAIL_CONT) + line);
+    }
+  }
+  return lines;
 }
 
 function layoutFlush(entries: readonly Entry[], clip: boolean, width: number): string[] {
-  return entries.flatMap((entry) => {
-    if (entry.exempt || !clip) return [entry.text];
-    return entry.text.split(/\r?\n/).map((line) => truncateToWidth(line, width, ELLIPSIS));
-  });
+  const lines: string[] = [];
+  for (const entry of entries) {
+    if (entry.exempt || !clip) {
+      lines.push(entry.text);
+      continue;
+    }
+    for (const line of entry.text.split(/\r?\n/)) {
+      lines.push(truncateToWidth(line, width, ELLIPSIS));
+    }
+  }
+  return lines;
 }
 
 export function renderBlock(block: Block, expanded: boolean): { render(width: number): string[]; invalidate(): void } {
