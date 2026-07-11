@@ -73,7 +73,7 @@ export async function initializeTaumelGlobalConfig(path = taumelGlobalSettingsPa
   const read = await readRoot(path);
   const diagnostics = [...read.diagnostics, ...nestedDiagnostics(read.root, path)];
   if (diagnostics.length) return result(false, `Taumel global config is malformed: ${path}`, path, [], [], diagnostics);
-  const root = JSON.parse(JSON.stringify(read.root)) as SettingsObject;
+  const root = read.root;
   const initialized: string[] = [];
   const taumel = settingsObject(root["taumel"]) ? root["taumel"] : (root["taumel"] = {} as SettingsObject);
   const composer = settingsObject(taumel["composer"]) ? taumel["composer"] : (taumel["composer"] = {} as SettingsObject);
@@ -90,7 +90,7 @@ export async function writeTaumelComposerEnabled(path: string, enabled: boolean)
   if (read.diagnostics.length || nestedDiagnostics(read.root, path).length) {
     throw new Error(`Cannot write Taumel composer config because global Pi settings are malformed: ${path}`);
   }
-  const root = JSON.parse(JSON.stringify(read.root)) as SettingsObject;
+  const root = read.root;
   const taumel = settingsObject(root["taumel"]) ? root["taumel"] : (root["taumel"] = {} as SettingsObject);
   const composer = settingsObject(taumel["composer"]) ? taumel["composer"] : (taumel["composer"] = {} as SettingsObject);
   composer["enabled"] = enabled; await writeFileAtomically(path, `${JSON.stringify(root, null, 2)}\n`);
