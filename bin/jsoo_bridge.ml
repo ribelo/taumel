@@ -75,8 +75,6 @@ let has_property obj name =
 let object_field obj name =
   if has_property obj name then Some (Unsafe.get obj name) else None
 
-let first_object_field obj names = List.find_map (object_field obj) names
-
 let property_value obj name =
   if is_property_container (inject obj) then Some (Unsafe.get obj name) else None
 
@@ -168,14 +166,6 @@ let await_js_result promise =
 let js_lines lines =
   lines |> List.map Js.string |> Array.of_list |> Js.array
 
-let effect_kind_to_string = function
-  | Taumel.Tool_gateway.Pure -> "pure"
-  | Taumel.Tool_gateway.Execute -> "execute"
-  | Taumel.Tool_gateway.Mutate -> "mutate"
-  | Taumel.Tool_gateway.Network -> "network"
- 
-  | Taumel.Tool_gateway.Ask_user -> "ask_user"
-
 let js_array values = values |> Array.of_list |> Js.array |> inject
 
 let ok_obj fields =
@@ -183,16 +173,6 @@ let ok_obj fields =
 
 let error_obj message =
   Unsafe.obj [| ("ok", js_bool false); ("error", js_string message) |]
-
-let text_result text =
-  Unsafe.obj
-    [|
-      ( "content",
-        js_array
-          [ Unsafe.obj [| ("type", js_string "text"); ("text", js_string text) |] ]
-      );
-      ("details", Unsafe.obj [| ("ok", js_bool true) |]);
-    |]
 
 let object_keys obj =
   if not (is_property_container (inject obj)) then []
@@ -254,15 +234,6 @@ let json_from_js value =
     | Some encoded -> Taumel.Shared.decode_json_string encoded
   with exn ->
     Error ("unsupported JavaScript JSON value: " ^ Printexc.to_string exn)
-
-let js_text_content value =
-  match json_from_js value with
-  | Ok (Taumel.Shared.String text) -> text
-  | Ok (Object fields) -> (
-      match List.assoc_opt "text" fields with
-      | Some (String text) -> text
-      | _ -> "")
-  | _ -> ""
 
 let js_content_to_text value =
   let rec json_text = function

@@ -9,10 +9,6 @@ let child_session_metadata_from_js metadata =
   | Ok metadata -> metadata
   | Error _ -> Taumel.Shared.Object []
 
-let child_session_parent_from_js parent =
-  ( optional_string_field parent "parentSessionId",
-    optional_string_field parent "parentSessionFile" )
-
 let child_session_bridge_from_js facts =
   if not (get_bool facts "available") then None
   else
@@ -50,15 +46,6 @@ let child_bridge_details facts =
   json_to_js
     (Taumel.Child_session.bridge_details
        (child_session_bridge_from_js facts))
-
-let js_child_dispatch_plan (plan : Taumel.Child_session.dispatch_plan) =
-  Unsafe.obj
-    [|
-      ("send", js_bool plan.send);
-      ("prompt", js_string plan.prompt);
-      ("deliverAs", js_string plan.deliver_as);
-      ("result", json_to_js plan.result);
-    |]
 
 let plan_child_dispatch facts =
   let facts = Tool_contracts.ChildDispatchFacts.t_of_js (ojs_of_js facts) in

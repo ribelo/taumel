@@ -98,14 +98,6 @@ let ascii_string_at bytes index length =
   done;
   Buffer.contents buf
 
-(* Multiplication-based unsigned int32 read to avoid signed 32-bit lsl overflow *)
-let int32_be_bytes bytes index =
-  let b0 = byte_at bytes index in
-  let b1 = byte_at bytes (index + 1) in
-  let b2 = byte_at bytes (index + 2) in
-  let b3 = byte_at bytes (index + 3) in
-  b0 * 16777216 + b1 * 65536 + b2 * 256 + b3
-
 let int32_le_bytes bytes index =
   let b0 = byte_at bytes index in
   let b1 = byte_at bytes (index + 1) in

@@ -78,11 +78,6 @@ let now_ms () =
   | None -> 0.0
   | Some now -> Option.value (float_value (Unsafe.fun_call now [||])) ~default:0.0
 
-let optional_positive_float obj name =
-  match float_field obj name with
-  | Some value when value > 0. -> Some value
-  | _ -> None
-
 let clamp value lower upper = min (max value lower) upper
 
 let normalize_exec_yield_ms = function

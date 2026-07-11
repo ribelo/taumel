@@ -6,9 +6,6 @@ let arg_at args index =
 let string_arg args index =
   Js.to_string (Unsafe.coerce (arg_at args index))
 
-let bool_arg args index =
-  Js.to_bool (Unsafe.coerce (arg_at args index))
-
 let int_arg args index =
   match float_value (arg_at args index) with
   | Some value -> int_of_float value

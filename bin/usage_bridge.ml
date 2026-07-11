@@ -12,9 +12,6 @@ let openai_host_auth () =
   in
   Tool_contracts.OpenAiUsageHostAuth.t_to_js result |> inject
 
-let optional_js_field obj name =
-  optional_field obj name
-
 let openai_host_params params =
   let params =
     Tool_contracts.OpenAiUsageHostLookupFacts.t_of_js (ojs_of_js params)
@@ -125,20 +122,6 @@ let account_fields params =
     | None -> Option.bind credential (fun credential -> credential.account_id)
   in
   (account_label, account_id)
-
-let result_account params =
-  let api_key_present = optional_bool params "apiKeyPresent" (env_string "OPENAI_API_KEY" <> "") in
-  let not_configured = optional_bool params "notConfigured" false in
-  let fetched_at = fetched_at_ms params in
-  let account_label, _account_id = account_fields params in
-  let error = Option.bind (optional_string_field params "error") Taumel.Shared.trim_non_empty in
-  let payload = payload params in
-  match payload with
-  | Some payload ->
-      Taumel.Usage.openai_payload_to_account ?account_label ?error ~not_configured
-        ~fetched_at_ms:fetched_at ~api_key_present payload
-  | None ->
-      Taumel.Usage.fallback_account ~api_key_present ?account_label ?error ~not_configured ()
 
 let token_state params =
   Taumel.Usage.token_state_from_fields

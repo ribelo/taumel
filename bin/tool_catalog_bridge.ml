@@ -45,9 +45,6 @@ let ralph_child_context ctx =
         | Some data when get_string data "kind" = "ralph" -> true
         | _ -> false
 
-let tool_names_from_js tool_names =
-  array_items tool_names |> List.filter_map string_value
-
 let plan_active_tools_sync_js facts =
   let facts = Tool_contracts.ActiveToolsSyncFacts.t_of_js (ojs_of_js facts) in
   let ctx =
