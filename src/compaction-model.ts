@@ -105,22 +105,24 @@ async function readProjectCompactionModel(cwd: string): Promise<string | undefin
 async function writeProjectCompactionModel(cwd: string, model: string | undefined): Promise<void> {
   const path = projectSettingsPath(cwd);
   const settings = await readSettingsJson(path);
-  const taumel = { ...(settingsObject(settings["taumel"]) ?? {}) };
-  const compaction = { ...(settingsObject(taumel["compaction"]) ?? {}) };
+  const taumel = settingsObject(settings["taumel"]) ?? {};
+  const compaction = settingsObject(taumel["compaction"]) ?? {};
   if (model === undefined) {
     delete compaction["model"];
   } else {
     compaction["model"] = model;
   }
-  const nextTaumel: SettingsObject = { ...taumel, compaction };
   if (Object.keys(compaction).length === 0) {
-    delete nextTaumel["compaction"];
+    delete taumel["compaction"];
+  } else {
+    taumel["compaction"] = compaction;
   }
-  const next: SettingsObject = { ...settings, taumel: nextTaumel };
-  if (Object.keys(nextTaumel).length === 0) {
-    delete next["taumel"];
+  if (Object.keys(taumel).length === 0) {
+    delete settings["taumel"];
+  } else {
+    settings["taumel"] = taumel;
   }
-  await writeFileAtomically(path, `${JSON.stringify(next, null, 2)}\n`);
+  await writeFileAtomically(path, `${JSON.stringify(settings, null, 2)}\n`);
 }
 
 function cwdFromContext(ctx: unknown): string {
