@@ -26,8 +26,6 @@ import {
   type WorkspaceMutationFacts,
 } from "./bridge-contracts.ts";
 
-type ContextHost = { readonly sessionManager?: unknown; readonly modelRegistry?: unknown; readonly cwd?: unknown };
-type RegistryHost = { readonly authStorage?: unknown };
 type WorkspaceMetadataListing = { readonly metadataDir: string; readonly path: string; readonly children?: string[] };
 type ExecHostFacts = {
   readonly platform: string; readonly tempRoots: string[]; readonly systemRoPaths: string[];
@@ -38,12 +36,6 @@ type ThreadSource =
   | { readonly kind: "sessionFile"; readonly path: string; readonly text: string }
   | { readonly kind: "diagnostic"; readonly path: string; readonly error: string };
 type NodeError = { readonly code?: unknown };
-type ActiveToolsReceiver = { readonly setActiveToolsByName?: (names: string[]) => unknown; readonly setActiveTools?: (names: string[]) => unknown };
-type ValueReceiver = {
-  readonly setModelById?: (value: string) => unknown; readonly setModel?: (value: string) => unknown;
-  readonly selectModel?: (value: string) => unknown; readonly setThinkingLevel?: (value: string) => unknown;
-  readonly setThinking?: (value: string) => unknown;
-};
 
 function objectValue(value: unknown): object | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value : undefined;
