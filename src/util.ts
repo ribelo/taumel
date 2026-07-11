@@ -508,7 +508,10 @@ export async function writePatchFiles(application: PatchApplication): Promise<vo
   )) throw new Error("Invalid Taumel apply_patch result");
 
   const snapshots = new Map<string, PatchFileSnapshot>();
-  for (const path of [...parsedWrites.map((write) => write.path), ...deletes]) {
+  for (const write of parsedWrites) {
+    if (!snapshots.has(write.path)) snapshots.set(write.path, await snapshotPatchFile(write.path));
+  }
+  for (const path of deletes) {
     if (!snapshots.has(path)) snapshots.set(path, await snapshotPatchFile(path));
   }
   const createdParentDirs = [...new Set(parsedWrites.flatMap((write) => missingParentDirs(write.path)))];
