@@ -370,10 +370,10 @@ export async function createChildSession(
 ): Promise<ChildSessionBridge | undefined> {
   const parent = sessionInfoFromContext(ctx);
   const plan = childSessionStartPlan(core, metadata, parent);
-  const activeTools = plan.activeTools === undefined ? undefined : [...plan.activeTools];
+  const activeTools = plan.activeTools;
   const modelId = plan.modelId;
   const thinkingLevel = plan.thinkingLevel;
-  const setupEntries = [...plan.setupEntries];
+  const setupEntries = plan.setupEntries;
   const cwd = cwdFromContext(ctx);
   const normalizedModelId = normalizeChildModelId(modelId);
   const model = resolveChildModel(pi, ctx, normalizedModelId);
