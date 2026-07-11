@@ -616,9 +616,7 @@ async function executeLegacyEdit(
 }
 
 async function executeApplyPatch(
-  pi: PiLike,
   core: CoreBridge,
-  name: string,
   rawParams: unknown,
   prepared: Extract<PreparedSuccess, { action: "apply_patch" }>,
   ctx: unknown,
@@ -662,7 +660,7 @@ async function executeApplyPatch(
 export async function executeTool(
   pi: PiLike,
   core: CoreBridge,
-  childSessions: Map<string, ChildSessionBridge>,
+  _childSessions: Map<string, ChildSessionBridge>,
   name: string,
   rawParams: unknown,
   ctx: unknown,
@@ -728,7 +726,7 @@ export async function executeTool(
       );
     case "apply_patch_approval":
       return withMutationApproval(core, "apply_patch", prepared, ctx, signal, () =>
-        executeApplyPatch(pi, core, name, parsed.params, {
+        executeApplyPatch(core, parsed.params, {
           ...prepared,
           action: "apply_patch",
           filesystemApproval: true,
@@ -744,7 +742,7 @@ export async function executeTool(
     case "edit":
       return executeLegacyEdit(core, prepared);
     case "apply_patch":
-      return executeApplyPatch(pi, core, name, parsed.params, prepared, ctx);
+      return executeApplyPatch(core, parsed.params, prepared, ctx);
     default:
       throw new Error(`${name} is registered by Taumel, but its executor is not connected yet.`);
   }

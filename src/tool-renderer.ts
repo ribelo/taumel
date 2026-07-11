@@ -322,7 +322,7 @@ function buildShell(name: string, result: unknown, options: unknown, theme: unkn
   return { header, body: { mode: "rail", entries: tailEntries(output, expanded, theme, 5, 100000) } };
 }
 
-function buildRead(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
+function buildRead(result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
   const path = stringFieldOrUndefined(details, "path") ?? stringFieldOrUndefined(args, "path") ?? "";
@@ -378,7 +378,7 @@ function buildViewMedia(name: string, result: unknown, options: unknown, theme: 
   return { header, body: { mode: "rail", entries } };
 }
 
-function buildWrite(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
+function buildWrite(result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
   const path = stringFieldOrUndefined(details, "displayPath") ?? stringFieldOrUndefined(details, "path") ?? stringFieldOrUndefined(args, "path") ?? "";
@@ -395,7 +395,7 @@ function buildWrite(name: string, result: unknown, options: unknown, theme: unkn
   return { header, body: { mode: "rail", entries } };
 }
 
-function buildEdit(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
+function buildEdit(result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
   const path = stringFieldOrUndefined(details, "displayPath") ?? stringFieldOrUndefined(details, "path") ?? stringFieldOrUndefined(args, "path") ?? "";
@@ -675,10 +675,10 @@ function progressText(name: string): string {
 
 function buildResult(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
   if (name === "exec_command" || name === "write_stdin") return buildShell(name, result, options, theme, args);
-  if (name === "read") return buildRead(name, result, options, theme, args);
+  if (name === "read") return buildRead(result, options, theme, args);
   if (name === "view_media") return buildViewMedia(name, result, options, theme, args);
-  if (name === "write") return buildWrite(name, result, options, theme, args);
-  if (name === "edit") return buildEdit(name, result, options, theme, args);
+  if (name === "write") return buildWrite(result, options, theme, args);
+  if (name === "edit") return buildEdit(result, options, theme, args);
   if (name === "apply_patch") return buildApplyPatch(name, result, options, theme, args);
   const domain = buildDomainResult(name, result, options, theme, args);
   if (domain !== undefined) return domain;

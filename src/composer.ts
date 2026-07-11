@@ -247,7 +247,7 @@ function listSkills(core: CoreBridge, controller: ComposerController): SkillAuto
   return result.skills.map(({ name, description, location }) => ({ name, description, location }));
 }
 
-export function installSkillAutocomplete(pi: PiLike, core: CoreBridge, controller: ComposerController): void {
+export function installSkillAutocomplete(_pi: PiLike, core: CoreBridge, controller: ComposerController): void {
   controller.skillEntries = () => listSkills(core, controller);
 }
 
