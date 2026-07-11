@@ -67,11 +67,16 @@ export function parseTaumelGlobalSettings(value: unknown, path = taumelGlobalSet
 }
 export function requireTaumelGlobalSettings(value: unknown): TaumelGlobalSettings { return parseTaumelGlobalSettings(value).settings; }
 export async function readTaumelGlobalSettings(path = taumelGlobalSettingsPath()): Promise<TaumelGlobalSettings> { return parseTaumelGlobalSettings((await readRoot(path)).root, path).settings; }
-export async function readTaumelGlobalConfigDiagnostics(path = taumelGlobalSettingsPath()): Promise<TaumelConfigDiagnostic[]> { const read = await readRoot(path); return [...read.diagnostics, ...parseTaumelGlobalSettings(read.root, path).diagnostics]; }
+export async function readTaumelGlobalConfigDiagnostics(path = taumelGlobalSettingsPath()): Promise<TaumelConfigDiagnostic[]> {
+  const read = await readRoot(path);
+  read.diagnostics.push(...parseTaumelGlobalSettings(read.root, path).diagnostics);
+  return read.diagnostics;
+}
 function result(ok: boolean, message: string, path: string, initialized: string[], missing: string[], diagnostics: TaumelConfigDiagnostic[]): TaumelInitResult { return { ok, action: "command_result", message, details: { path, initialized, missing, diagnostics } }; }
 export async function initializeTaumelGlobalConfig(path = taumelGlobalSettingsPath()): Promise<TaumelInitResult> {
   const read = await readRoot(path);
-  const diagnostics = [...read.diagnostics, ...nestedDiagnostics(read.root, path)];
+  const diagnostics = read.diagnostics;
+  diagnostics.push(...nestedDiagnostics(read.root, path));
   if (diagnostics.length) return result(false, `Taumel global config is malformed: ${path}`, path, [], [], diagnostics);
   const root = read.root;
   const initialized: string[] = [];
