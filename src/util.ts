@@ -514,7 +514,15 @@ export async function writePatchFiles(application: PatchApplication): Promise<vo
   for (const path of deletes) {
     if (!snapshots.has(path)) snapshots.set(path, await snapshotPatchFile(path));
   }
-  const createdParentDirs = [...new Set(parsedWrites.flatMap((write) => missingParentDirs(write.path)))];
+  const createdParentDirs: string[] = [];
+  const seenParentDirs = new Set<string>();
+  for (const write of parsedWrites) {
+    for (const dir of missingParentDirs(write.path)) {
+      if (seenParentDirs.has(dir)) continue;
+      seenParentDirs.add(dir);
+      createdParentDirs.push(dir);
+    }
+  }
 
   try {
     for (const write of parsedWrites) {
