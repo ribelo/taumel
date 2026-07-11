@@ -224,8 +224,11 @@ function tailEntries(text: string, expanded: boolean, theme: unknown, cap: numbe
   const all = cleaned.split(/\r?\n/);
   const limit = expanded ? expandedCap : cap;
   if (all.length <= limit) return all.map((line) => ({ text: themeFg(theme, "toolOutput", line) }));
-  const visible = all.slice(-limit);
-  return [{ text: moreLine(all.length - limit, theme, "more lines"), exempt: true }, ...visible.map((line) => ({ text: themeFg(theme, "toolOutput", line) }))];
+  const entries: Entry[] = [{ text: moreLine(all.length - limit, theme, "more lines"), exempt: true }];
+  for (let index = all.length - limit; index < all.length; index += 1) {
+    entries.push({ text: themeFg(theme, "toolOutput", all[index]) });
+  }
+  return entries;
 }
 
 function buildShell(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
@@ -332,14 +335,17 @@ function buildWrite(result: unknown, options: unknown, theme: unknown, args: Too
   const path = stringFieldOrUndefined(details, "displayPath") ?? stringFieldOrUndefined(details, "path") ?? stringFieldOrUndefined(args, "path") ?? "";
   const mode = stringFieldOrUndefined(details, "mode");
   const contents = stringFieldOrUndefined(details, "contents") ?? "";
-  const lineCount = contents === "" ? 0 : contents.trimEnd().split(/\r?\n/).length;
+  const lines = contents === "" ? [] : contents.trimEnd().split(/\r?\n/);
+  const lineCount = lines.length;
   const trailing = themeFg(theme, "dim", mode === "append" ? `(append +${lineCount})` : `(${lineCount} line${lineCount === 1 ? "" : "s"})`);
   const header = pathHeaderSpec("write", path, dotFromDetails(details), theme, trailing);
   if (contents.trim() === "") return { header, body: undefined };
-  const all = contents.trimEnd().split(/\r?\n/).map((line) => themeFg(theme, "toolOutput", line));
-  const limit = expanded ? all.length : 3;
-  const entries: Entry[] = all.slice(0, limit).map((text) => ({ text }));
-  if (all.length > limit) entries.push({ text: moreLine(all.length - limit, theme, "more lines"), exempt: true });
+  const limit = expanded ? lines.length : Math.min(lines.length, 3);
+  const entries: Entry[] = [];
+  for (let index = 0; index < limit; index += 1) {
+    entries.push({ text: themeFg(theme, "toolOutput", lines[index]) });
+  }
+  if (lines.length > limit) entries.push({ text: moreLine(lines.length - limit, theme, "more lines"), exempt: true });
   return { header, body: { mode: "rail", entries } };
 }
 
