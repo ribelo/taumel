@@ -21,13 +21,9 @@ import {
   execHostFacts,
   isStaleContextError,
   modelRegistryFrom,
-  numberField,
-  optionalStringField,
   openAiCredentialRaw,
   openAiUsageTokenRaw,
-  requiredError,
   sessionInfoFromContext,
-  stringArrayFromUnknown,
   threadSources,
   validateWorkspaceMutationPaths,
   writeFileAtomically,
@@ -539,11 +535,9 @@ async function validatePreparedMutationPath(
   prepared: PreparedMutationAction,
   paths: readonly string[],
 ): Promise<string | undefined> {
-  const validateWorkspacePaths = prepared["validateWorkspacePaths"] !== false;
-  if (!validateWorkspacePaths) return undefined;
-  const workspaceRoots = stringArrayFromUnknown(prepared["workspaceRoots"]) ?? [];
+  if (!prepared.validateWorkspacePaths) return undefined;
   try {
-    await validateWorkspaceMutationPaths(core, paths, workspaceRoots);
+    await validateWorkspaceMutationPaths(core, paths, prepared.workspaceRoots);
   } catch (error) {
     return error instanceof Error ? error.message : String(error);
   }
@@ -645,8 +639,7 @@ async function executeApplyPatch(
   ctx: unknown,
 ): Promise<ToolResultEnvelope> {
   const files: Record<string, string> = {};
-  const affectedPaths = stringArrayFromUnknown(prepared["affectedPaths"]);
-  if (affectedPaths === undefined) throw new Error("Invalid Taumel apply_patch plan");
+  const { affectedPaths } = prepared;
   const readValidationError = await validatePreparedMutationPath(core, prepared, affectedPaths);
   if (readValidationError !== undefined) {
     return errorToolResult(core, readValidationError, { ok: false, error: readValidationError });
@@ -660,7 +653,7 @@ async function executeApplyPatch(
     }
   }
   const application = decodePatchApplicationResult(core.call("applyPatchToFiles", [{
-    params: rawParams, files, ctx, filesystemApproval: prepared["filesystemApproval"] === true,
+    params: rawParams, files, ctx, filesystemApproval: prepared.filesystemApproval === true,
   }]));
   if (application.kind === "error") return errorToolResult(core, application.message, { ...application });
   const deletes = [...application.deletes];
