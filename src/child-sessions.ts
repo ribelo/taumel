@@ -244,14 +244,7 @@ function assistantTextFromMessage(message: unknown): string | undefined {
   if (assistant === undefined) return undefined;
   const content = assistant.content;
   if (typeof content === "string") return content.trim() === "" ? undefined : content;
-  if (!Array.isArray(content)) return undefined;
-  const parts: string[] = [];
-  for (const part of content) {
-    const text = hostObject<TextPart>(part)?.text;
-    if (typeof text === "string" && text.trim() !== "") parts.push(text);
-  }
-  const text = parts.join("\n");
-  return text === "" ? undefined : text;
+  return completionTextFromContent(content);
 }
 
 function completionFromAgentEndEvent(event: unknown): ChildDispatchCompletion | undefined {
@@ -545,12 +538,11 @@ export async function sendToChildSession(
 
 function completionTextFromContent(content: unknown): string | undefined {
   if (!Array.isArray(content)) return undefined;
-  const parts = content
-    .map((item) => {
-      const text = hostObject<TextPart>(item)?.text;
-      return typeof text === "string" ? text : "";
-    })
-    .filter((text) => text.trim() !== "");
+  const parts: string[] = [];
+  for (const item of content) {
+    const text = hostObject<TextPart>(item)?.text;
+    if (typeof text === "string" && text.trim() !== "") parts.push(text);
+  }
   return parts.length === 0 ? undefined : parts.join("\n");
 }
 
