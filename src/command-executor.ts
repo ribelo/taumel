@@ -72,9 +72,9 @@ function hostIdle(_ctx: unknown): boolean {
 
 function syncActiveTools(pi: PiLike, core: CoreBridge, ctx: unknown, enabledName?: string): void {
   if (typeof pi.getActiveTools !== "function" || typeof pi.setActiveTools !== "function") return;
-  let current = [...pi.getActiveTools()];
+  const current = [...pi.getActiveTools()];
   if (enabledName !== undefined && enabledName !== "" && !current.includes(enabledName) && liveToolNames(pi, toolNames).includes(enabledName)) {
-    current = [...current, enabledName];
+    current.push(enabledName);
     pi.setActiveTools(current);
   }
   const plan = decodeActiveToolsPlan(core.call("planActiveToolsSync", [{ tools: current, ctx }]));
