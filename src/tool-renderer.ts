@@ -463,12 +463,14 @@ function buildApplyPatch(name: string, result: unknown, options: unknown, theme:
     ...deletedFiles,
     ...deletes.filter((path) => !deletedPathsWithContents.has(path)).map((path) => ({ path, before: "", after: "" })),
   ];
+  let totalAdded = 0;
+  let totalRemoved = 0;
   const perFile = files.map((file) => {
     const { added, removed } = diffCounts(file.before, file.after);
+    totalAdded += added;
+    totalRemoved += removed;
     return { ...file, added, removed };
   });
-  const totalAdded = perFile.reduce((sum, file) => sum + file.added, 0);
-  const totalRemoved = perFile.reduce((sum, file) => sum + file.removed, 0);
   const fileCount = perFile.length;
   const header = headerSpec(name, `${fileCount} file${fileCount === 1 ? "" : "s"}`, dotColor, theme, themeFg(theme, "dim", `(+${totalAdded} -${totalRemoved})`));
 
