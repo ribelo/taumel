@@ -19,7 +19,6 @@ import {
 import {
   childBridgeFacts,
   execHostFacts,
-  isRecord,
   isStaleContextError,
   modelRegistryFrom,
   numberField,
@@ -36,8 +35,6 @@ import {
   writeFileAtomically,
   writePatchFiles,
   appendToFile,
-  coreCallRecord,
-  coreCallStringArray,
 } from "./util.ts";
 import { notificationMessageRenderer, renderersForTool } from "./tool-renderer.ts";
 import {
@@ -49,25 +46,44 @@ import {
   refreshOwnedChildPermissions,
   sendToChildSession,
 } from "./child-sessions.ts";
+import { installExecNotificationLifecycle, startExecCompletionWaiter } from "./exec-notifications.ts";
+import { decodeBridgeToolExecutionResult, decodeBridgeToolResult, decodeEditApplicationResult, decodeExecApprovalPromptPlan, decodeExecApprovalResult, decodeExecPolicyAllowRuleResult, decodeExecToolResult, decodePatchApplicationResult, decodeToolNamesResult, decodeToolResultEnvelope, decodeViewMediaResultEnvelope, type PreparedToolAction, type ToolResultEnvelope } from "./bridge-contracts.ts";
 import {
-  agentDeliveryKind,
-  createAgentChildSessionForPrepared,
-  executeAgentWait,
-  flushPendingAgentNotifications,
-  flushPendingExecNotifications,
-  isSpawnedObjectiveCompletion,
-  noninteractiveTurnDrain,
-  recordAgentDispatchCompletionInBackground,
-  startChildGoalContinuationLoop,
-  startExecCompletionWaiter,
-  type PendingAgentWaits,
-} from "./agent-orchestration.ts";
+  decodeOpenAiUsageHostAuth,
+  decodeOpenAiUsageHostParams,
+  type OpenAiUsageHostLookupFacts,
+  type OpenAiUsageHostParams,
+} from "./bridge-contracts.ts";
 import {
   errorToolResult,
   hostToolResult,
   preparedAction,
   preparedToolResult,
 } from "./tool-results.ts";
+
+type SettingsObject = { [key: string]: unknown };
+type ToolContext = { readonly cwd?: unknown; readonly model?: unknown; readonly ui?: unknown; readonly sessionManager?: unknown };
+type ToolUi = { readonly confirm?: (...args: unknown[]) => Promise<unknown>; readonly select?: (...args: unknown[]) => Promise<unknown> };
+type SessionManagerHost = { readonly getEntries?: () => unknown };
+type SessionEntry = { readonly type?: unknown; readonly customType?: unknown; readonly data?: unknown };
+type ChildMetadata = { readonly isolated_child?: unknown; readonly kind?: unknown; readonly parentSessionId?: unknown };
+type ImageModel = { readonly input?: unknown };
+type EditReplacement = { readonly oldText?: unknown; readonly newText?: unknown };
+type NodeError = { readonly code?: unknown };
+
+type PreparedSuccess = Exclude<PreparedToolAction, { ok: false }>;
+type PreparedExaAction = Extract<PreparedSuccess, { action: "exa_fetch" | "exa_agent_create_run_approval" }>;
+type PreparedOpenAiAction = Extract<PreparedSuccess, { action: "openai_usage_fetch" }>;
+type PreparedApprovalAction = Extract<PreparedSuccess, { action: "exec_command_approval" | "write_approval" | "edit_approval" | "apply_patch_approval" | "exa_agent_create_run_approval" }>;
+type PreparedMutationAction = Extract<PreparedSuccess, { action: "write" | "write_approval" | "edit" | "edit_approval" | "apply_patch" | "apply_patch_approval" }>;
+type PreparedDirectMutation = Extract<PreparedSuccess, { action: "write" | "edit" | "apply_patch" }>;
+
+function settingsObject(value: unknown): SettingsObject | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as SettingsObject : undefined;
+}
+function toolContext(value: unknown): Partial<ToolContext> | undefined {
+  return typeof value === "object" && value !== null ? value as Partial<ToolContext> : undefined;
+}
 
 export {
   applyChildSessionUpdate,
@@ -118,22 +134,19 @@ async function appendExecPolicyAllowRule(core: CoreBridge, tokens: readonly stri
   } catch {
     settings = {};
   }
-  const root: Record<string, unknown> = isRecord(settings) ? { ...settings } : {};
-  const taumel = isRecord(root["taumel"]) ? { ...root["taumel"] } : {};
-  const execPolicy = isRecord(taumel["execPolicy"]) ? { ...taumel["execPolicy"] } : {};
+  const root: SettingsObject = { ...(settingsObject(settings) ?? {}) };
+  const taumel: SettingsObject = { ...(settingsObject(root["taumel"]) ?? {}) };
+  const execPolicy: SettingsObject = { ...(settingsObject(taumel["execPolicy"]) ?? {}) };
   const rules = Array.isArray(execPolicy["rules"]) ? [...execPolicy["rules"]] : [];
   rules.push({ pattern: [...tokens], decision: "allow", match: [[...tokens]] });
   execPolicy["rules"] = rules;
   taumel["execPolicy"] = execPolicy;
   root["taumel"] = taumel;
   await writeFileAtomically(settingsPath, `${JSON.stringify(root, null, 2)}\n`);
-  const result = coreCallRecord(core, "appendExecPolicyAllowRule", [{ tokens: [...tokens] }], "exec policy amendment result");
-  if (result["ok"] !== true) {
-    throw new Error("Invalid Taumel exec policy amendment result");
-  }
+  decodeExecPolicyAllowRuleResult(core.call("appendExecPolicyAllowRule", [{ tokens: [...tokens] }]));
 }
 
-function mutationApprovalDenied(core: CoreBridge, action: string, outcome: ApprovalOutcome): Record<string, unknown> {
+function mutationApprovalDenied(core: CoreBridge, action: string, outcome: ApprovalOutcome): ToolResultEnvelope {
   return errorToolResult(core, approvalOutcomeMessage(action, outcome), {
     ok: false,
     approvalRequired: true,
@@ -141,19 +154,24 @@ function mutationApprovalDenied(core: CoreBridge, action: string, outcome: Appro
   });
 }
 
-function childSessionMetadataFromContext(ctx: unknown): Record<string, unknown> | undefined {
-  if (!isRecord(ctx) || !isRecord(ctx["sessionManager"])) return undefined;
-  const getEntries = ctx["sessionManager"]["getEntries"];
+function childSessionMetadataFromContext(ctx: unknown): Partial<ChildMetadata> | undefined {
+  const sessionManager = toolContext(ctx)?.sessionManager;
+  if (typeof sessionManager !== "object" || sessionManager === null) return undefined;
+  const getEntries = (sessionManager as SessionManagerHost).getEntries;
   if (typeof getEntries !== "function") return undefined;
   try {
-    const entries = getEntries.call(ctx["sessionManager"]);
+    const entries = getEntries.call(sessionManager);
     if (!Array.isArray(entries)) return undefined;
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const entry = entries[index];
-      if (!isRecord(entry) || entry["type"] !== "custom" || entry["customType"] !== "taumel.childSession") {
+      if (typeof entry !== "object" || entry === null) continue;
+      const sessionEntry = entry as SessionEntry;
+      if (sessionEntry.type !== "custom" || sessionEntry.customType !== "taumel.childSession") {
         continue;
       }
-      return isRecord(entry["data"]) ? entry["data"] : undefined;
+      return typeof sessionEntry.data === "object" && sessionEntry.data !== null
+        ? sessionEntry.data as Partial<ChildMetadata>
+        : undefined;
     }
   } catch {
     return undefined;
@@ -161,120 +179,137 @@ function childSessionMetadataFromContext(ctx: unknown): Record<string, unknown> 
   return undefined;
 }
 
-function approvalRequesterLabel(ctx: unknown): string | undefined {
-  const metadata = childSessionMetadataFromContext(ctx);
-  if (metadata === undefined || metadata["kind"] !== "agent") return undefined;
-  const workerId = typeof metadata["workerId"] === "string" ? metadata["workerId"].trim() : "";
-  const profile =
-    typeof metadata["profileName"] === "string" ? metadata["profileName"].trim() :
-    typeof metadata["definitionName"] === "string" ? metadata["definitionName"].trim() :
-    "";
-  if (workerId === "" && profile === "") return undefined;
-  if (workerId === "") return `agent profile ${profile}`;
-  if (profile === "") return `agent ${workerId}`;
-  return `agent ${workerId} (${profile})`;
-}
-
 let loadedMainSessionId: string | undefined;
 
 function childApprovalOwnerIsLoaded(ctx: unknown): boolean {
   const metadata = childSessionMetadataFromContext(ctx);
-  if (metadata === undefined || metadata["kind"] !== "agent") return true;
+  if (metadata === undefined) return true;
+  const isolatedChild = metadata.isolated_child === true || metadata.kind === "ralph";
+  if (!isolatedChild) return true;
   const parentSessionId =
-    typeof metadata["parentSessionId"] === "string" ? metadata["parentSessionId"].trim() : "";
+    typeof metadata.parentSessionId === "string" ? metadata.parentSessionId.trim() : "";
   return parentSessionId !== "" && parentSessionId === loadedMainSessionId;
 }
 
-function boundedApprovalEvidence(prepared: Record<string, unknown>): string {
+function installIsolatedChildOwnershipLifecycle(
+  pi: PiLike,
+  childSessions: Map<string, ChildSessionBridge>,
+): void {
+  const loadParent = (ctx: unknown) => {
+    if (childSessionMetadataFromContext(ctx) !== undefined) return;
+    loadedMainSessionId = sessionInfoFromContext(ctx).sessionId;
+    refreshOwnedChildPermissions(childSessions, ctx);
+  };
+  // A newly spawned child starts while its parent is still loaded, so its
+  // session_start must retain ownership. Resuming or switching into a child is
+  // different: the parent is no longer the loaded main session.
+  pi.on("session_start", (_event, ctx) => loadParent(ctx));
+  const replaceLoadedSession = (_event: unknown, ctx: unknown) => {
+    if (childSessionMetadataFromContext(ctx) !== undefined) {
+      loadedMainSessionId = undefined;
+      return;
+    }
+    loadParent(ctx);
+  };
+  pi.on("session_resume", replaceLoadedSession);
+  pi.on("session_switch", replaceLoadedSession);
+  pi.on("session_shutdown", (_event, ctx) => {
+    const ownerId = sessionInfoFromContext(ctx).sessionId;
+    if (ownerId !== undefined && ownerId === loadedMainSessionId) loadedMainSessionId = undefined;
+  });
+}
+
+function boundedApprovalEvidence(prepared: PreparedApprovalAction): string {
   const limit = 4_000;
-  const action = typeof prepared["action"] === "string" ? prepared["action"] : "";
+  const action = prepared.action;
   const lines: string[] = [];
-  if (action === "exec_command") {
-    lines.push(`Command: ${stringField(prepared, "cmd")}`);
-    lines.push(`Working directory: ${stringField(prepared, "workdir")}`);
+  if (action === "exec_command_approval") {
+    lines.push(`Command: ${prepared.cmd}`);
+    lines.push(`Working directory: ${prepared.workdir}`);
   } else {
-    const paths = stringArrayFromUnknown(prepared["affectedPaths"]);
+    const paths = "affectedPaths" in prepared ? prepared.affectedPaths : undefined;
     if (paths !== undefined) lines.push(`Paths: ${paths.join(", ")}`);
     else {
-      const path = typeof prepared["path"] === "string" ? prepared["path"] : "";
+      const path = "path" in prepared ? prepared.path : "";
       if (path !== "") lines.push(`Path: ${path}`);
     }
-    const patch = typeof prepared["patch"] === "string" ? prepared["patch"] : undefined;
-    const contents = typeof prepared["contents"] === "string" ? prepared["contents"] : undefined;
-    const edits = Array.isArray(prepared["edits"]) ? prepared["edits"] : [];
+    const patch = "patch" in prepared ? prepared.patch : undefined;
+    const contents = "contents" in prepared ? prepared.contents : undefined;
+    const edits = "edits" in prepared ? prepared.edits : [];
     const effect =
       patch ??
       (contents === undefined ? undefined : contents.split(/\r?\n/).map((line) => `+${line}`).join("\n")) ??
       edits
-        .filter(isRecord)
-        .map((edit) => `-${String(edit["oldText"] ?? "")}\n+${String(edit["newText"] ?? "")}`)
+        .map((edit) => {
+          const replacement = typeof edit === "object" && edit !== null ? edit as EditReplacement : {};
+          return `-${String(replacement.oldText ?? "")}\n+${String(replacement.newText ?? "")}`;
+        })
         .join("\n");
     if (effect !== undefined && effect !== "") lines.push(`Bounded effect diff:\n${effect}`);
   }
-  const sandbox = isRecord(prepared["sandbox"]) ? prepared["sandbox"] : undefined;
+  const sandbox = "sandbox" in prepared ? prepared.sandbox : undefined;
   if (sandbox !== undefined) {
     const mode =
-      typeof sandbox["filesystemMode"] === "string" ? sandbox["filesystemMode"] :
-      typeof sandbox["filesystem_mode"] === "string" ? sandbox["filesystem_mode"] : "";
-    const roots = stringArrayFromUnknown(sandbox["workspaceRoots"] ?? sandbox["workspace_roots"]);
-    lines.push(`Sandbox boundary: ${mode || "active sandbox"}${roots === undefined ? "" : `; roots: ${roots.join(", ")}`}`);
+      sandbox.filesystemMode;
+    const roots = sandbox.workspaceRoots;
+    lines.push(`Sandbox boundary: ${mode || "active sandbox"}; roots: ${roots.join(", ")}`);
   } else {
-    const roots = stringArrayFromUnknown(prepared["workspaceRoots"]);
+    const roots = "workspaceRoots" in prepared ? prepared.workspaceRoots : undefined;
     if (roots !== undefined) lines.push(`Sandbox boundary: workspace roots: ${roots.join(", ")}`);
   }
   const evidence = lines.join("\n\n");
   return evidence.length <= limit ? evidence : `${evidence.slice(0, limit)}\n… effect diff truncated`;
 }
 
-function openAiUsageHostAuth(core: CoreBridge): Record<string, unknown> {
-  return coreCallRecord(core, "openAiUsageHostAuth", [], "OpenAI usage auth plan");
+function openAiUsageHostAuth(core: CoreBridge) {
+  return decodeOpenAiUsageHostAuth(core.call("openAiUsageHostAuth", []));
 }
 
-function openAiUsageHostParams(core: CoreBridge, params: Record<string, unknown>): Record<string, unknown> {
-  const planned = coreCallRecord(core, "openAiUsageHostParams", [params], "OpenAI usage host params");
-  if (planned["ok"] !== true || !isRecord(planned["params"])) {
-    throw new Error("Invalid Taumel OpenAI usage host params");
-  }
-  return planned["params"];
+function openAiUsageHostParams(core: CoreBridge, facts: OpenAiUsageHostLookupFacts): OpenAiUsageHostParams {
+  return decodeOpenAiUsageHostParams(core.call("openAiUsageHostParams", [facts]));
 }
 
 async function executeOpenAiUsageInCore(
   core: CoreBridge,
   ctx: unknown,
-  params: Record<string, unknown>,
+  params: OpenAiUsageHostParams,
 ) {
-  const rendered = await coreCallRecord(core, "executeOpenAiUsage", [params, ctx], "OpenAI usage result");
-  if (rendered["ok"] !== true) {
-    return errorToolResult(core, requiredError(rendered, "OpenAI usage"), rendered);
-  }
-  return preparedToolResult(core, rendered);
+  const rendered = decodeBridgeToolResult(await core.call("executeOpenAiUsage", [params, ctx]));
+  return preparedToolResult(core, { ...rendered });
 }
 
 async function executeExaInCore(
   core: CoreBridge,
-  prepared: Record<string, unknown>,
+  prepared: PreparedExaAction,
   ctx: unknown,
 ) {
-  const rendered = await coreCallRecord(core, "executeExa", [prepared, ctx], "Exa result");
-  if (rendered["ok"] !== true) {
-    return errorToolResult(core, requiredError(rendered, "Exa"), rendered);
+  const bodyJson = optionalStringField(prepared, "bodyJson");
+  const lastEventId = optionalStringField(prepared, "lastEventId");
+  const rendered = decodeBridgeToolExecutionResult(await core.call("executeExa", [{
+    toolName: stringField(prepared, "toolName"), method: stringField(prepared, "method"),
+    path: stringField(prepared, "path"),
+    ...(bodyJson === undefined ? {} : { bodyJson }),
+    ...(lastEventId === undefined ? {} : { lastEventId }),
+  }]));
+  if (!rendered.ok) {
+    return errorToolResult(core, rendered.error, { ...rendered });
   }
-  return preparedToolResult(core, rendered);
+  return preparedToolResult(core, { ...rendered });
 }
 
 export async function executeOpenAiUsageWithHostAuth(
   pi: PiLike,
   core: CoreBridge,
-  prepared: Record<string, unknown>,
+  prepared: PreparedOpenAiAction,
   ctx: unknown,
 ) {
   const apiKeyPresent = prepared["apiKeyPresent"] === true;
   const registry = modelRegistryFrom(pi, ctx);
   const auth = openAiUsageHostAuth(core);
-  const providerKey = stringField(auth, "providerKey");
-  const credentialKey = stringField(auth, "credentialKey");
+  const providerKey = auth.providerKey;
+  const credentialKey = auth.credentialKey;
   const credential = openAiCredentialRaw(registry, credentialKey);
-  let tokenFacts: Record<string, unknown>;
+  let tokenFacts: Omit<OpenAiUsageHostLookupFacts, "apiKeyPresent">;
 
   try {
     tokenFacts = { token: await openAiUsageTokenRaw(registry, providerKey) };
@@ -317,13 +352,13 @@ function resolveBashPath(): string {
 async function runPreparedExec(
   pi: PiLike,
   core: CoreBridge,
-  prepared: Record<string, unknown>,
+  prepared: Extract<PreparedSuccess, { action: "exec_command" }>,
   ctx: unknown,
   signal: AbortSignal | undefined,
   forceUnsandboxed = false,
 ) {
   const ownerId = sessionInfoFromContext(ctx).sessionId ?? "current";
-  const result = await coreCallRecord(core, "runExecCommand", [
+  const result = decodeExecToolResult(await core.call("runExecCommand", [
     prepared,
     execHostFacts(core, prepared),
     {
@@ -333,13 +368,12 @@ async function runPreparedExec(
     ownerId,
     signal ?? null,
     forceUnsandboxed,
-  ], "exec_command result");
+  ]));
   // The command outlived the first yield window and is now a background session.
   // Start a detached waiter that delivers its completion if the parent is idle
-  // when it exits (the exec analogue of subagent onCompletion); turn_end/idle
+  // when it exits (the exec analogue of isolated_child onCompletion); turn_end/idle
   // flushes cover the other cases.
-  const details = result["details"];
-  const sessionId = isRecord(details) ? optionalNumberField(details, "session_id") : undefined;
+  const sessionId = result.details.session_id;
   if (sessionId !== undefined) {
     void startExecCompletionWaiter(pi, core, ctx, sessionId);
   }
@@ -347,76 +381,93 @@ async function runPreparedExec(
 }
 
 function defaultCwdFromContext(ctx: unknown): string {
-  return isRecord(ctx) && typeof ctx["cwd"] === "string" && ctx["cwd"] !== "" ? ctx["cwd"] : process.cwd();
+  const cwd = toolContext(ctx)?.cwd;
+  return typeof cwd === "string" && cwd !== "" ? cwd : process.cwd();
 }
 
 async function runPreparedRead(
   core: CoreBridge,
-  prepared: Record<string, unknown>,
+  prepared: Extract<PreparedSuccess, { action: "read" }>,
   ctx: unknown,
 ) {
-  return await coreCallRecord(core, "readFile", [
-    prepared,
-    { defaultCwd: defaultCwdFromContext(ctx) },
-  ], "read result");
+  const offset = optionalNumberField(prepared, "offset");
+  const limit = optionalNumberField(prepared, "limit");
+  return decodeToolResultEnvelope(await core.call("readFile", [{
+    path: stringField(prepared, "path"), defaultCwd: defaultCwdFromContext(ctx),
+    ...(offset === undefined ? {} : { offset }), ...(limit === undefined ? {} : { limit }),
+  }]));
 }
 
 async function runPreparedViewMedia(
   core: CoreBridge,
-  prepared: Record<string, unknown>,
+  prepared: Extract<PreparedSuccess, { action: "view_media" }>,
   ctx: unknown,
 ) {
-  return await coreCallRecord(core, "viewMedia", [
-    prepared,
-    { defaultCwd: defaultCwdFromContext(ctx) },
-  ], "view_media result");
+  return decodeViewMediaResultEnvelope(await core.call("viewMedia", [{
+    path: stringField(prepared, "path"), defaultCwd: defaultCwdFromContext(ctx),
+  }]));
 }
 
 function contextModelSupportsImages(ctx: unknown): boolean {
-  if (!isRecord(ctx) || !isRecord(ctx["model"])) return false;
-  const input = ctx["model"]["input"];
+  const rawModel = toolContext(ctx)?.model;
+  if (typeof rawModel !== "object" || rawModel === null) return false;
+  const input = (rawModel as ImageModel).input;
   return Array.isArray(input) && input.includes("image");
 }
 
 async function writePreparedStdin(
   core: CoreBridge,
-  prepared: Record<string, unknown>,
+  prepared: Extract<PreparedSuccess, { action: "write_stdin" }>,
   ctx: unknown,
   signal?: AbortSignal,
 ) {
-  return await coreCallRecord(core, "writeExecStdin", [
-    prepared,
-    sessionInfoFromContext(ctx).sessionId ?? "current",
-    signal ?? null,
-  ], "write_stdin result");
+  const sessionId = optionalNumberField(prepared, "sessionId");
+  if (sessionId === undefined) throw new Error("write_stdin requires sessionId");
+  const rawOutputMode = optionalStringField(prepared, "outputMode");
+  if (rawOutputMode !== undefined && rawOutputMode !== "delta" && rawOutputMode !== "status") {
+    throw new Error("Invalid write_stdin output mode");
+  }
+  const outputMode = rawOutputMode;
+  const yieldTimeMs = optionalNumberField(prepared, "yieldTimeMs");
+  return decodeExecToolResult(await core.call("writeExecStdin", [{
+    sessionId, chars: stringField(prepared, "chars"),
+    ownerId: sessionInfoFromContext(ctx).sessionId ?? "current",
+    ...(outputMode === undefined ? {} : { outputMode }),
+    ...(yieldTimeMs === undefined ? {} : { yieldTimeMs }),
+    ...(signal === undefined ? {} : { signal }),
+  }]));
 }
 
 async function confirmExecApproval(
   core: CoreBridge,
-  prepared: Record<string, unknown>,
+  prepared: PreparedApprovalAction,
   ctx: unknown,
   signal?: AbortSignal,
 ): Promise<ApprovalOutcome> {
   if (!childApprovalOwnerIsLoaded(ctx)) return "unavailable";
-  const ui = isRecord(ctx) && isRecord(ctx["ui"]) ? ctx["ui"] : {};
-  const confirm = ui["confirm"];
-  const plan = coreCallRecord(core, "planExecApprovalPrompt", [prepared, {
+  const rawUi = toolContext(ctx)?.ui;
+  const ui = typeof rawUi === "object" && rawUi !== null ? rawUi as ToolUi : undefined;
+  const confirm = ui?.confirm;
+  const plan = decodeExecApprovalPromptPlan(core.call("planExecApprovalPrompt", [{
+    approvalTitle: stringField(prepared, "approvalTitle"),
+    approvalPrompt: stringField(prepared, "approvalPrompt"),
+    approvalTimeoutMs: optionalNumberField(prepared, "approvalTimeoutMs") ?? 0,
     uiAvailable: typeof confirm === "function",
-  }], "exec approval prompt plan");
-  const action = stringField(plan, "action");
-  if (action === "unavailable") {
+  }]));
+  if (plan.kind === "unavailable") {
     return "unavailable";
   }
-  if (action !== "confirm" || typeof confirm !== "function") {
+  if (typeof confirm !== "function") {
     throw new Error("Invalid Taumel exec approval prompt plan");
   }
   if (signal?.aborted === true) return "interrupted";
 
-  const allowAlwaysTokens = stringArrayFromUnknown(prepared["execPolicyAllowAlwaysTokens"]);
-  const select = ui["select"];
+  const allowAlwaysTokens = prepared.action === "exec_command_approval"
+    ? prepared.execPolicyAllowAlwaysTokens
+    : undefined;
+  const select = ui?.select;
 
-  const options = isRecord(plan["options"]) ? plan["options"] : {};
-  const timeoutMs = optionalNumberField(options, "timeout");
+  const timeoutMs = plan.timeoutMs;
   const controller = new AbortController();
   let outcome: ApprovalOutcome | undefined;
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -438,22 +489,18 @@ async function confirmExecApproval(
     removeAbortListener = () => signal.removeEventListener("abort", abort);
   }
 
-  const confirmOptions: Record<string, unknown> = {
-    ...options,
-    signal: controller.signal,
-  };
-  delete confirmOptions["timeout"];
+  const confirmOptions = { signal: controller.signal };
 
   try {
-    const requester = approvalRequesterLabel(ctx);
+    const requester = undefined;
     const title =
       requester === undefined
-        ? stringField(plan, "title")
-        : `${stringField(plan, "title")} - ${requester}`;
+        ? plan.title
+        : `${plan.title} - ${requester}`;
     const prompt =
       requester === undefined
-        ? `${stringField(plan, "prompt")}\n\n${boundedApprovalEvidence(prepared)}`
-        : `Requesting ${requester}\n\n${stringField(plan, "prompt")}\n\n${boundedApprovalEvidence(prepared)}`;
+        ? `${plan.prompt}\n\n${boundedApprovalEvidence(prepared)}`
+        : `Requesting ${requester}\n\n${plan.prompt}\n\n${boundedApprovalEvidence(prepared)}`;
     if (allowAlwaysTokens !== undefined && allowAlwaysTokens.length > 0 && typeof select === "function") {
       const selected = await withGoalClockPaused(core, async () =>
         await select.call(ui, title, ["Deny", "Allow once", "Allow always"])
@@ -488,11 +535,11 @@ async function confirmExecApproval(
 async function withMutationApproval(
   core: CoreBridge,
   action: string,
-  prepared: Record<string, unknown>,
+  prepared: PreparedApprovalAction,
   ctx: unknown,
   signal: AbortSignal | undefined,
-  run: () => Promise<Record<string, unknown>> | Record<string, unknown>,
-): Promise<Record<string, unknown>> {
+  run: () => Promise<ToolResultEnvelope> | ToolResultEnvelope,
+): Promise<ToolResultEnvelope> {
   const outcome = await confirmExecApproval(core, prepared, ctx, signal);
   if (outcome !== "approved") {
     return mutationApprovalDenied(core, action, outcome);
@@ -502,7 +549,7 @@ async function withMutationApproval(
 
 async function validatePreparedMutationPath(
   core: CoreBridge,
-  prepared: Record<string, unknown>,
+  prepared: PreparedMutationAction,
   paths: readonly string[],
 ): Promise<string | undefined> {
   const validateWorkspacePaths = prepared["validateWorkspacePaths"] !== false;
@@ -519,22 +566,25 @@ async function validatePreparedMutationPath(
 function readInvocation(args: unknown[]) {
   const params =
     typeof args[0] === "string" && args.length > 1 ? args[1] : args[0];
-  const signal = args.find((arg): arg is AbortSignal => isRecord(arg) && "aborted" in arg);
+  const signal = args.find((arg): arg is AbortSignal => arg instanceof AbortSignal);
   const ctx =
     args.length >= 5
       ? args[4]
-      : args.find((arg) => isRecord(arg) && ("cwd" in arg || "sessionManager" in arg));
+      : args.find((arg) => typeof arg === "object" && arg !== null && ("cwd" in arg || "sessionManager" in arg));
   return { params, signal, ctx: ctx ?? {} };
 }
 
-async function runThreadTool(core: CoreBridge, name: string, prepared: Record<string, unknown>, ctx: unknown) {
-  return coreCallRecord(core, "runThreadTool", [name, prepared, await threadSources(core, ctx), ctx], "thread tool result");
+async function runThreadTool(core: CoreBridge, name: string, prepared: Extract<PreparedSuccess, { action: "query_threads" | "read_thread" }>, ctx: unknown) {
+  if (name !== "query_threads" && name !== "read_thread") throw new Error(`Invalid thread tool: ${name}`);
+  return decodeToolResultEnvelope(core.call("runThreadTool", [{
+    name, params: prepared, catalog: await threadSources(core, ctx), ctx,
+  }]));
 }
 
 async function executeLegacyWrite(
   core: CoreBridge,
-  prepared: Record<string, unknown>,
-): Promise<Record<string, unknown>> {
+  prepared: Extract<PreparedSuccess, { action: "write" }>,
+): Promise<ToolResultEnvelope> {
   const path = stringField(prepared, "path");
   const displayPath = stringField(prepared, "displayPath") || path;
   const contents = stringField(prepared, "contents");
@@ -562,8 +612,8 @@ async function executeLegacyWrite(
 
 async function executeLegacyEdit(
   core: CoreBridge,
-  prepared: Record<string, unknown>,
-): Promise<Record<string, unknown>> {
+  prepared: Extract<PreparedSuccess, { action: "edit" }>,
+): Promise<ToolResultEnvelope> {
   const path = stringField(prepared, "path");
   const displayPath = stringField(prepared, "displayPath") || path;
   if (path === "") throw new Error("Invalid Taumel edit plan");
@@ -575,21 +625,19 @@ async function executeLegacyEdit(
   try {
     content = await readFile(path, "utf8");
   } catch (error) {
-    const errorMessage = isRecord(error) && typeof error["code"] === "string"
-      ? `Error code: ${error["code"]}`
+    const code = typeof error === "object" && error !== null ? (error as NodeError).code : undefined;
+    const errorMessage = typeof code === "string"
+      ? `Error code: ${code}`
       : String(error);
     return errorToolResult(core, `Could not edit file: ${displayPath}. ${errorMessage}.`, {
       ok: false,
       error: errorMessage,
     });
   }
-  const application = coreCallRecord(core, "applyEditToFile", [prepared, content], "edit result");
-  if (application["ok"] !== true) {
-    return errorToolResult(core, requiredError(application, "edit"), application);
-  }
-  const nextContent = application["contents"];
-  if (typeof nextContent !== "string") throw new Error("Invalid Taumel edit result");
-  const editCount = numberField(application, "editCount");
+  const application = decodeEditApplicationResult(core.call("applyEditToFile", [{ prepared, contents: content }]));
+  if (application.kind === "error") return errorToolResult(core, application.message, { ...application });
+  const nextContent = application.contents;
+  const editCount = application.editCount;
   await writePatchFiles({ deletes: [], writes: [{ path, contents: nextContent }] });
   return hostToolResult(core, "edit", {
     ok: true,
@@ -607,9 +655,9 @@ async function executeApplyPatch(
   core: CoreBridge,
   name: string,
   rawParams: unknown,
-  prepared: Record<string, unknown>,
+  prepared: Extract<PreparedSuccess, { action: "apply_patch" }>,
   ctx: unknown,
-): Promise<Record<string, unknown>> {
+): Promise<ToolResultEnvelope> {
   const files: Record<string, string> = {};
   const affectedPaths = stringArrayFromUnknown(prepared["affectedPaths"]);
   if (affectedPaths === undefined) throw new Error("Invalid Taumel apply_patch plan");
@@ -621,48 +669,36 @@ async function executeApplyPatch(
     try {
       files[path] = await readFile(path, "utf8");
     } catch (error) {
-      if (!isRecord(error) || error["code"] !== "ENOENT") throw error;
+      const code = typeof error === "object" && error !== null ? (error as NodeError).code : undefined;
+      if (code !== "ENOENT") throw error;
     }
   }
-  const application = coreCallRecord(core, "applyPatchToFiles", [
-    rawParams,
-    files,
-    ctx,
-    { filesystemApproval: prepared["filesystemApproval"] === true },
-  ], "apply_patch result");
-  if (application["ok"] !== true) {
-    return errorToolResult(core, requiredError(application, "apply_patch"), application);
-  }
-  const deletes = stringArrayFromUnknown(application["deletes"]);
-  const writes = application["writes"];
-  if (!Array.isArray(writes) || !writes.every(isRecord)) {
-    throw new Error("Invalid Taumel apply_patch result");
-  }
+  const application = decodePatchApplicationResult(core.call("applyPatchToFiles", [{
+    params: rawParams, files, ctx, filesystemApproval: prepared["filesystemApproval"] === true,
+  }]));
+  if (application.kind === "error") return errorToolResult(core, application.message, { ...application });
+  const deletes = [...application.deletes];
+  const writes = application.writes;
   // Attach the pre-patch file contents so the renderer can compute a real
   // unified diff per file (apply_patch details already carry the new contents).
   const writesWithBefore = writes.map((write) => {
-    const writePath = stringField(write, "path");
-    return writePath === "" ? write : { ...write, before: files[writePath] ?? "" };
+    const writePath = write.path;
+    return { ...write, before: files[writePath] ?? "" };
   });
-  const writePaths = writes
-    .map((write) => stringField(write, "path"))
-    .filter((path) => path !== "");
-  const writeValidationError = await validatePreparedMutationPath(core, prepared, [...(deletes ?? []), ...writePaths]);
+  const deletedFiles = deletes.map((path) => ({ path, before: files[path] ?? "" }));
+  const writePaths = writes.map((write) => write.path);
+  const writeValidationError = await validatePreparedMutationPath(core, prepared, [...deletes, ...writePaths]);
   if (writeValidationError !== undefined) {
     return errorToolResult(core, writeValidationError, { ok: false, error: writeValidationError });
   }
-  if (stringField(application, "action") !== "apply_patch") {
-    throw new Error("Invalid Taumel apply_patch result");
-  }
-  await writePatchFiles(application);
-  return hostToolResult(core, "apply_patch", { ...application, writes: writesWithBefore });
+  await writePatchFiles({ deletes, writes });
+  return hostToolResult(core, "apply_patch", { ...application, writes: writesWithBefore, deletedFiles });
 }
 
 export async function executeTool(
   pi: PiLike,
   core: CoreBridge,
   childSessions: Map<string, ChildSessionBridge>,
-  pendingAgentWaits: PendingAgentWaits,
   name: string,
   rawParams: unknown,
   ctx: unknown,
@@ -677,16 +713,10 @@ export async function executeTool(
     return errorToolResult(core, error, { ok: false, error, modelSupportsImages: false });
   }
   const prepared = preparedAction(core, name, parsed.params, ctx);
-  if (prepared["ok"] !== true) {
-    return errorToolResult(core, requiredError(prepared, "tool preparation"), prepared);
+  if (!prepared.ok) {
+    return errorToolResult(core, prepared.error, { ...prepared });
   }
-  if (name === "agent_wait") {
-    return executeAgentWait(core, parsed.params, ctx, signal, prepared, pendingAgentWaits);
-  }
-
-  const action = typeof prepared["action"] === "string" ? prepared["action"] : "";
-  if (action === "") throw new Error(`Invalid Taumel ${name} preparation: missing action`);
-  switch (action) {
+  switch (prepared.action) {
     case "tool_result":
       return preparedToolResult(core, prepared);
     case "openai_usage_fetch":
@@ -697,81 +727,6 @@ export async function executeTool(
       return withMutationApproval(core, "exa_agent_create_run", prepared, ctx, signal, () =>
         executeExaInCore(core, prepared, ctx)
       );
-    case "agent_spawn": {
-      const { bridge, prompt } = await createAgentChildSessionForPrepared(
-        pi,
-        core,
-        childSessions,
-        prepared,
-        ctx,
-      );
-      const goalMode = isSpawnedObjectiveCompletion(prepared);
-      const onCompletion = goalMode
-        ? startChildGoalContinuationLoop(pi, core, prepared, ctx, pendingAgentWaits, bridge)
-        : recordAgentDispatchCompletionInBackground(pi, core, prepared, ctx, pendingAgentWaits, bridge);
-      const dispatch = await sendToChildSession(pi, core, bridge, prompt, "no initial prompt", {
-        awaitCompletion: false,
-        onCompletion,
-      });
-      const result = coreCallRecord(core, "finishAgentAction", [{
-        prepared,
-        bridge: childBridgeFacts(bridge),
-        dispatch,
-      }, ctx], "agent result");
-      return result;
-    }
-    case "agent_send": {
-      const workerId = stringField(prepared, "workerId");
-      const keyScope = childSessionCacheKeyScopeFromContext(ctx);
-      await applyChildSessionUpdatesFromDetails(childSessions, prepared, keyScope);
-      const deliveryKind = agentDeliveryKind(prepared);
-      if (
-        (deliveryKind === "suspended" || deliveryKind === "no_active_run") &&
-        stringField(prepared, "prompt") === ""
-      ) {
-        return preparedToolResult(core, prepared);
-      }
-      let bridge = childSessions.get(childSessionCacheKey(workerId, keyScope));
-      if (bridge === undefined) {
-        bridge = (
-          await createAgentChildSessionForPrepared(
-            pi,
-            core,
-            childSessions,
-            prepared,
-            ctx,
-          )
-        ).bridge;
-      }
-      const dispatch = await sendToChildSession(
-        pi,
-        core,
-        bridge,
-        stringField(prepared, "prompt"),
-        "empty prompt",
-        {
-          awaitCompletion: false,
-          deliverAs: optionalStringField(prepared, "dispatchDeliverAs") ?? "",
-          onCompletion: recordAgentDispatchCompletionInBackground(pi, core, prepared, ctx, pendingAgentWaits, bridge),
-        },
-      );
-      return coreCallRecord(core, "finishAgentAction", [{ prepared, dispatch }, ctx], "agent result");
-    }
-    case "agent_wait":
-      return preparedToolResult(core, prepared);
-    case "agent_close": {
-      const keyScope = childSessionCacheKeyScopeFromContext(ctx);
-      const applied = await applyChildSessionUpdatesFromDetails(childSessions, prepared, keyScope);
-      if (!applied) {
-        await applyChildSessionUpdate(
-          childSessions,
-          coreCallRecord(core, "planAgentBridgeUpdate", [{ prepared }], "agent bridge update plan"),
-          undefined,
-          keyScope,
-        );
-      }
-      return preparedToolResult(core, prepared);
-    }
     case "query_threads":
     case "read_thread": {
       const result = await runThreadTool(core, name, prepared, ctx);
@@ -781,19 +736,11 @@ export async function executeTool(
       return runPreparedExec(pi, core, prepared, ctx, signal);
     case "exec_command_approval": {
       const outcome = await confirmExecApproval(core, prepared, ctx, signal);
-      const approvalPlan = coreCallRecord(core, "finishExecApproval", [{
-        prepared,
+      const approvalPlan = decodeExecApprovalResult(core.call("finishExecApproval", [{
         outcome: outcome === "approved_always" ? "approved" : outcome,
-      }], "exec approval result");
-      if (stringField(approvalPlan, "action") === "result") {
-        const result = approvalPlan["result"];
-        if (!isRecord(result)) throw new Error("Invalid Taumel exec approval result");
-        return result;
-      }
-      if (stringField(approvalPlan, "action") !== "exec_command") {
-        throw new Error("Invalid Taumel exec approval result");
-      }
-      return runPreparedExec(pi, core, prepared, ctx, signal, approvalPlan["forceUnsandboxed"] === true);
+      }]));
+      if (approvalPlan.kind === "denied") return approvalPlan.result;
+      return runPreparedExec(pi, core, { ...prepared, action: "exec_command" }, ctx, signal, approvalPlan.forceUnsandboxed);
     }
     case "write_stdin":
       return writePreparedStdin(core, prepared, ctx, signal);
@@ -844,7 +791,7 @@ function sorted(values: readonly string[]): string[] {
 }
 
 function assertToolCatalogMatchesCore(core: CoreBridge): void {
-  const coreToolNames = coreCallStringArray(core, "toolPolicyNames", [], "tool policy names");
+  const coreToolNames = [...decodeToolNamesResult(core.call("toolPolicyNames", [])).names];
   const expected = sorted(toolNames);
   const actual = sorted(coreToolNames);
   if (expected.length !== actual.length || expected.some((name, index) => name !== actual[index])) {
@@ -852,115 +799,32 @@ function assertToolCatalogMatchesCore(core: CoreBridge): void {
   }
 }
 
-export const agentGatewayToolNames = [
-  "agent_spawn",
-  "agent_send",
-  "agent_wait",
-  "agent_list",
-  "agent_close",
-  "agent_profiles",
-] as const;
-
-const agentGatewayToolNameSet = new Set<string>(agentGatewayToolNames);
-
-export type GatewayToolRegistration = {
-  readonly registerAgentTools: () => void;
-};
-
 export function registerGatewayTools(
   pi: PiLike,
   core: CoreBridge,
   childSessions: Map<string, ChildSessionBridge>,
-): GatewayToolRegistration {
-  if (typeof pi.registerTool !== "function") {
-    return { registerAgentTools: () => undefined };
-  }
-  const registerTool = pi.registerTool;
+): void {
+  if (typeof pi.registerTool !== "function") return;
   if (typeof pi.registerMessageRenderer === "function") {
     pi.registerMessageRenderer("notification", notificationMessageRenderer());
   }
-  pi.on("session_shutdown", (_event, ctx) => {
-    const ownerId = sessionInfoFromContext(ctx).sessionId;
-    if (ownerId !== undefined) core.call("shutdownExecOwner", [ownerId]);
-    if (ownerId !== undefined && ownerId === loadedMainSessionId) loadedMainSessionId = undefined;
-  });
-  const clearRetainedAgentOutputs = (_event: unknown, ctx: unknown) => {
-    const ownerId = sessionInfoFromContext(ctx).sessionId;
-    if (ownerId !== undefined) core.call("clearRetainedAgentOutputsForSession", [ownerId]);
-    if (ownerId !== undefined && childSessionMetadataFromContext(ctx) === undefined) {
-      loadedMainSessionId = ownerId;
-      refreshOwnedChildPermissions(childSessions, ctx);
-    }
-  };
-  pi.on("session_start", clearRetainedAgentOutputs);
-  pi.on("session_resume", clearRetainedAgentOutputs);
-  pi.on("session_switch", clearRetainedAgentOutputs);
+  installExecNotificationLifecycle(pi, core);
+  installIsolatedChildOwnershipLifecycle(pi, childSessions);
   assertToolCatalogMatchesCore(core);
-  const allowedToolNames = coreCallStringArray(core, "allowedToolNames", [], "allowed tool names");
-  const allowed = new Set(allowedToolNames);
-  const registered = new Set<string>();
-  const pendingAgentWaits: PendingAgentWaits = new Map();
-  // turn_end: flush pending child completions via steering, injected at the start
-  // of the next parent turn (before the assistant response).
-  //
-  // agent_end: the loop is ending. We must NOT trigger synchronously here: Pi
-  // keeps isStreaming === true throughout the agent_end emit and only clears it
-  // in finishRun() after listeners settle, so a synchronous triggerTurn would be
-  // routed to steer() on a loop that's already terminating and never drained.
-  // Deferring to a macrotask runs after finishRun(), when the parent is idle and
-  // triggerTurn starts a fresh turn. (queueMicrotask runs too early; nextTurn
-  // could defer indefinitely.)
-  pi.on("turn_end", async (_event, ctx) => {
-    try {
-      await flushPendingAgentNotifications(pi, core, ctx, "steer", pendingAgentWaits);
-      await flushPendingExecNotifications(pi, core, ctx, "steer");
-    } catch (error) {
-      if (isStaleContextError(error)) return;
-      console.warn("Taumel agent turn_end notification flush failed:", error);
-    }
-  });
-  pi.on("agent_end", (_event, ctx) => {
-    setTimeout(() => {
-      void flushPendingAgentNotifications(pi, core, ctx, "trigger", pendingAgentWaits).catch((error) => {
-        if (isStaleContextError(error)) return;
-        console.warn("Taumel agent agent_end notification flush failed:", error);
-      });
-      void flushPendingExecNotifications(pi, core, ctx, "trigger").catch((error) => {
-        if (isStaleContextError(error)) return;
-        console.warn("Taumel exec agent_end notification flush failed:", error);
-      });
-    }, 0);
-  });
-  pi.on("agent_settled", async (_event, ctx) => {
-    try {
-      await noninteractiveTurnDrain(pi, core, ctx, pendingAgentWaits);
-    } catch (error) {
-      if (isStaleContextError(error)) return;
-      console.warn("Taumel noninteractive drain failed:", error);
-    }
-  });
-  const registerMatching = (agentTools: boolean) => {
-    for (const spec of toolContracts) {
-      const name = spec.name;
-      if (!allowed.has(name) || registered.has(name)) continue;
-      if (agentGatewayToolNameSet.has(name) !== agentTools) continue;
-      registerTool({
-        name,
-        label: spec.label,
-        description: spec.description,
-        promptSnippet: spec.promptSnippet,
-        promptGuidelines: spec.promptGuidelines ?? [],
-        parameters: spec.parameters,
-        ...renderersForTool(name),
-        renderShell: "self",
-        execute: async (...args) => {
-          const { params, signal, ctx } = readInvocation(args);
-          return executeTool(pi, core, childSessions, pendingAgentWaits, name, params, ctx, signal);
-        },
-      });
-      registered.add(name);
-    }
-  };
-  registerMatching(false);
-  return { registerAgentTools: () => registerMatching(true) };
+  const allowed = new Set(decodeToolNamesResult(core.call("allowedToolNames", [])).names);
+  for (const contract of toolContracts) {
+    const name = contract.name;
+    if (!allowed.has(name)) continue;
+    pi.registerTool({
+      name,
+      label: contract.label,
+      description: contract.description,
+      parameters: contract.parameters,
+      promptSnippet: contract.promptSnippet ?? "",
+      ...(contract.promptGuidelines !== undefined ? { promptGuidelines: contract.promptGuidelines } : {}),
+      execute: async (...args: unknown[]) =>
+        executeTool(pi, core, childSessions, name, args[1], args[4], args[2] instanceof AbortSignal ? args[2] : undefined),
+      ...(renderersForTool(name) ?? {}),
+    });
+  }
 }

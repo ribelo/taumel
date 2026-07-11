@@ -4,7 +4,7 @@ Taumel is a standalone OCaml/js_of_ocaml rewrite experiment for the tau pi
 extension. It does not depend on the Tau codebase.
 
 The OCaml core owns policy and domain behavior: capability profiles, tool
-authorization, sandbox policy, mutation planning, sub-agents, goals, Ralph-loop
+authorization, sandbox policy, mutation planning, goals, Ralph-loop
 state, thread lookup, OpenAI usage rendering, Exa HTTP tools, and the footer
 model. TypeScript owns the Pi-facing tool contracts with
 TypeBox schemas, validates tool arguments before calling OCaml, and stays

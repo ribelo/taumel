@@ -8,7 +8,7 @@ let active_profile () =
 let active_sandbox () =
   Taumel.Runtime_policy.active_sandbox ~cwd:state.cwd
     ~network_mode:!active_network_mode ~no_sandbox:!active_no_sandbox
-    ~subagent:!active_subagent (active_profile ())
+    ~isolated_child:!active_isolated_child (active_profile ())
 
 let gateway_authorized name =
   let sandbox = active_sandbox () in

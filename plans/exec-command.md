@@ -2,7 +2,6 @@
 kind: requirement
 status: draft
 tags: [exec-command, execution, sandbox, tools]
-depends_on: ["[[plans/sandbox]]", "[[plans/tool-gateway]]", "[[plans/capability-profile]]", "[[plans/subagents]]"]
 ---
 # Exec command
 

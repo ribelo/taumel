@@ -10,12 +10,10 @@ let prepared_result_from_json json =
     if has_property result "details" then Unsafe.get result "details"
     else Unsafe.inject Js.null
   in
-  ok_obj
-    [
-      ("action", js_string "tool_result");
-      ("text", js_string (js_content_to_text (Unsafe.get result "content")));
-      ("details", inject details);
-    ]
+  Tool_contracts.BridgeToolResult.create ~ok:true ~action:"tool_result"
+    ~text:(js_content_to_text (Unsafe.get result "content"))
+    ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details)) ()
+  |> Tool_contracts.BridgeToolResult.t_to_js |> inject
 
 let stringify_json value =
   let json_ctor = Unsafe.get Unsafe.global "JSON" in
@@ -198,25 +196,30 @@ let http_body body_json =
   | None -> Eta_http.Request.Empty
   | Some body -> Eta_http.Request.Fixed [ Bytes.of_string body ]
 
-let execute_effect prepared =
-  let tool_name = get_string prepared "toolName" in
+let execute_effect raw_prepared =
+  let prepared = Tool_contracts.ExaExecutionFacts.t_of_js (ojs_of_js raw_prepared) in
+  let tool_name = Tool_contracts.ExaExecutionFacts.get_toolName prepared in
   match gateway_authorized tool_name with
-  | Error error -> Effect.pure (inject (gateway_error_obj error))
+  | Error error ->
+      Effect.pure
+        (Tool_contracts.BridgeErrorResult.create ~ok:false
+           ~error:(gateway_error_message error) ()
+        |> Tool_contracts.BridgeErrorResult.t_to_js |> inject)
   | Ok _sandbox ->
       let api_key = exa_api_key () in
       if api_key = "" then
         Effect.pure (inject (prepared_missing_key tool_name))
       else
-        let body_json = get_string prepared "bodyJson" in
+        let body_json = Option.value (Tool_contracts.ExaExecutionFacts.get_bodyJson prepared) ~default:"" in
         let body = http_body body_json in
         let request =
           Eta_http.Request.make
             ~headers:
               (headers ~api_key
                  ~has_body:(body_json <> "")
-                 ~last_event_id:(get_string prepared "lastEventId"))
-            ~body (get_string prepared "method")
-            (base_url ^ get_string prepared "path")
+                 ~last_event_id:(Option.value (Tool_contracts.ExaExecutionFacts.get_lastEventId prepared) ~default:""))
+            ~body (Tool_contracts.ExaExecutionFacts.get_method prepared)
+            (base_url ^ Tool_contracts.ExaExecutionFacts.get_path prepared)
         in
         let client =
           Eta_http_js.Client.make ~max_response_body_bytes:(4 * 1024 * 1024) ()
@@ -246,4 +249,4 @@ let execute_effect prepared =
                                   ~status:response.Eta_http.Response.status
                                   ~body:(Bytes.to_string body)))))
 
-let execute prepared _ctx = js_promise_of_effect (execute_effect prepared)
+let execute prepared = js_promise_of_effect (execute_effect prepared)

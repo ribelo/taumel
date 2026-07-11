@@ -30,38 +30,9 @@ Taumel work that may remain live after its initiating call and therefore carries
 the identity of the parent session that may observe or control it.
 _Avoid_: Background global, detached task
 
-**Agent identity**:
-A durable child agent that may perform multiple runs while retaining its
-spawn-time execution snapshot until closed.
-_Avoid_: Agent run, disposable worker
-
-**Agent run**:
-One bounded execution undertaken by an agent identity, with its own lifecycle
-and terminal result.
-_Avoid_: Agent identity, child session
-
-**Workspace binding**:
-The immutable association between an agent identity and the workspace in which
-its runs operate.
-_Avoid_: Current directory, fallback workspace
-
-**Execution snapshot**:
-The immutable resolved instructions, model routing, tool surface, spawn-time
-permission ceiling, and workspace binding that define a durable agent identity.
-_Avoid_: Current profile, profile reference, run prompt
-
-**Tool surface**:
-The tools assigned to one agent as its callable interface, independent of
-whether its current permission envelope will authorize a particular call. A
-child may have a different tool surface from its parent without gaining broader
-permissions.
-_Avoid_: Permission set, inherited capability ceiling
-
 **Permission envelope**:
-The side-effect authority within which an agent's tools execute, including
-sandbox, approval, network, and no-sandbox constraints. A child's effective
-envelope is clamped by both its spawn-time ceiling and its parent's current
-envelope.
+The side-effect authority within which tools execute, including sandbox,
+approval, network, and no-sandbox constraints.
 _Avoid_: Tool surface, active tools
 
 **Owner permission state**:

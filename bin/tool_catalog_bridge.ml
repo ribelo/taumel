@@ -2,37 +2,30 @@ open Jsoo_bridge
 open Runtime_access
 
 let js_command_spec (spec : Taumel.Tool_catalog.command_spec) =
-  Unsafe.obj
-    [|
-      ("name", js_string spec.name);
-      ("description", js_string spec.description);
-    |]
+  Tool_contracts.CommandSpec.create ~name:spec.name
+    ~description:spec.description ()
 
-let command_notification_record name result =
-  if is_js_object result then
-    Taumel.Tool_catalog.command_notification ~command_name:(Js.to_string name)
-      ~ok:(get_bool result "ok") ~message:(get_string result "message")
-      ~error:(get_string result "error")
-  else
-    Taumel.Tool_catalog.command_notification ~command_name:(Js.to_string name)
-      ~ok:false ~message:"" ~error:""
-
-let plan_command_notification name result facts =
-  let notification = command_notification_record name result in
+let plan_command_notification facts =
+  let facts = Tool_contracts.CommandNotificationFacts.t_of_js (ojs_of_js facts) in
+  let notification =
+    Taumel.Tool_catalog.command_notification
+      ~command_name:(Tool_contracts.CommandNotificationFacts.get_commandName facts)
+      ~ok:(Tool_contracts.CommandNotificationFacts.get_ok facts)
+      ~message:(Tool_contracts.CommandNotificationFacts.get_message facts)
+      ~error:(Tool_contracts.CommandNotificationFacts.get_error facts)
+  in
   match
     Taumel.Tool_catalog.plan_command_notification
-      ~ui_available:(get_bool facts "uiAvailable")
+      ~ui_available:(Tool_contracts.CommandNotificationFacts.get_uiAvailable facts)
       notification
   with
   | Taumel.Tool_catalog.Notification_unavailable ->
-      ok_obj [ ("action", js_string "unavailable") ]
+      Tool_contracts.CommandNotificationUnavailable.create ~kind:"unavailable" ()
+      |> Tool_contracts.CommandNotificationUnavailable.t_to_js |> inject
   | Taumel.Tool_catalog.Notification_send notification ->
-      ok_obj
-        [
-          ("action", js_string "notify");
-          ("message", js_string notification.message);
-          ("level", js_string notification.level);
-        ]
+      Tool_contracts.CommandNotificationSend.create ~kind:"notify"
+        ~message:notification.message ~level:notification.level ()
+      |> Tool_contracts.CommandNotificationSend.t_to_js |> inject
 
 let active_ralph_child_session session_id =
   List.exists
@@ -55,10 +48,15 @@ let ralph_child_context ctx =
 let tool_names_from_js tool_names =
   array_items tool_names |> List.filter_map string_value
 
-let plan_active_tools_sync_js tool_names ctx =
+let plan_active_tools_sync_js facts =
+  let facts = Tool_contracts.ActiveToolsSyncFacts.t_of_js (ojs_of_js facts) in
+  let ctx =
+    Tool_contracts.ActiveToolsSyncFacts.get_ctx facts
+    |> Option.map Obj.magic |> Option.value ~default:(Unsafe.obj [||])
+  in
   Session_sync.refresh_session_state_from_host ~scope:"active tools sync" ctx;
   Session_sync.sync_persisted_session ctx;
-  let tool_names = tool_names_from_js tool_names in
+  let tool_names = Tool_contracts.ActiveToolsSyncFacts.get_tools facts in
   let ralph_child = ralph_child_context ctx in
   let provider =
     if App_state.state.provider = "" then None else Some App_state.state.provider
@@ -69,20 +67,30 @@ let plan_active_tools_sync_js tool_names ctx =
         (Taumel.Visibility.disabled Taumel.Visibility.Tools
            !App_state.visibility_state)
   in
-  ok_obj
-    [
-      ("changed", js_bool plan.changed);
-      ("tools", js_array (List.map js_string plan.tools));
-    ]
+  let result =
+    Tool_contracts.ActiveToolsPlan.create ~changed:plan.changed
+      ~tools:plan.tools ()
+  in
+  Tool_contracts.ActiveToolsPlan.t_to_js result |> inject
 
 let tool_policy_names_js () =
-  js_array (List.map js_string Taumel.Tool_catalog.tool_names)
+  let result =
+    Tool_contracts.ToolNamesResult.create ~names:Taumel.Tool_catalog.tool_names ()
+  in
+  Tool_contracts.ToolNamesResult.t_to_js result |> inject
 
 let allowed_tool_names_js () =
-  Taumel.Tool_gateway.exposeable_specs (active_profile ())
-    Taumel.Runtime_policy.gateway_registry
-  |> List.map (fun (spec : Taumel.Tool_gateway.spec) -> spec.name)
-  |> js_array_of_strings
+  let names =
+    Taumel.Tool_gateway.exposeable_specs (active_profile ())
+      Taumel.Runtime_policy.gateway_registry
+    |> List.map (fun (spec : Taumel.Tool_gateway.spec) -> spec.name)
+  in
+  let result = Tool_contracts.ToolNamesResult.create ~names () in
+  Tool_contracts.ToolNamesResult.t_to_js result |> inject
 
 let command_specs_js () =
-  js_array (List.map js_command_spec Taumel.Tool_catalog.command_specs)
+  let result =
+    Tool_contracts.CommandSpecsResult.create
+      ~specs:(List.map js_command_spec Taumel.Tool_catalog.command_specs) ()
+  in
+  Tool_contracts.CommandSpecsResult.t_to_js result |> inject

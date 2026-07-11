@@ -1,21 +1,23 @@
 import type { CoreBridge } from "./types.ts";
-import { coreCallRecord } from "./util.ts";
+import { decodePreparedToolAction, decodeToolResultEnvelope, type PreparedToolAction, type ToolResultEnvelope } from "./bridge-contracts.ts";
 
-export function preparedToolResult(core: CoreBridge, prepared: Record<string, unknown>, extraDetails: Record<string, unknown> = {}) {
-  return coreCallRecord(core, "toolResultEnvelope", [{ prepared, extraDetails }], "prepared tool result envelope");
+type PreparedTextResult = { readonly text: string; readonly details: unknown };
+
+export function preparedToolResult(core: CoreBridge, prepared: PreparedTextResult) {
+  return decodeToolResultEnvelope(core.call("toolResultEnvelope", [{ prepared, extraDetails: {} }]));
 }
 
 export function errorToolResult(core: CoreBridge, text: string, details: unknown = undefined) {
-  return coreCallRecord(core, "toolResultEnvelope", [{
+  return decodeToolResultEnvelope(core.call("toolResultEnvelope", [{
     error: text,
     ...(details !== undefined ? { details } : {}),
-  }], "error tool result envelope");
+  }]));
 }
 
-export function hostToolResult(core: CoreBridge, action: string, details: unknown): Record<string, unknown> {
-  return coreCallRecord(core, "hostToolResult", [{ action, details }], "host tool result");
+export function hostToolResult(core: CoreBridge, action: string, details: unknown): ToolResultEnvelope {
+  return decodeToolResultEnvelope(core.call("hostToolResult", [{ action, details }]));
 }
 
-export function preparedAction(core: CoreBridge, name: string, params: unknown, ctx: unknown) {
-  return coreCallRecord(core, "prepareTool", [name, params, ctx], "tool preparation result");
+export function preparedAction(core: CoreBridge, name: string, params: unknown, ctx: unknown): PreparedToolAction {
+  return decodePreparedToolAction(core.call("prepareTool", [{ name, params, ctx }]));
 }

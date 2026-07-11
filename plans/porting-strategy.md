@@ -19,7 +19,6 @@ establish a concrete task order.
 - Sandbox.
 - Tool gateway.
 - Capability profile.
-- Sub-agents.
 - Goal.
 - Ralph-loop.
 - Thread tools.
@@ -45,7 +44,7 @@ shall emit semantically distinct transcript events for Taumel-owned activity and
 shall not send a second external notification through an OS or terminal channel.
 
 Model-driven progressive tool disclosure is omitted. Taumel exposes the complete
-tool surface assigned by user visibility and agent-profile policy; it does not
+tool surface assigned by user visibility; it does not
 add `select_tools`, model-specific schema-loading capabilities, or a second
 model-owned tool-visibility state.
 
@@ -79,7 +78,6 @@ navigation, expansion state, and shortcuts for viewing them.
 3. Tool gateway.
 4. Sandbox and `/permissions`.
 5. Canonical tools: `exec_command`, `write_stdin`, `apply_patch`.
-6. Sub-agents.
 7. Goal.
 8. Ralph-loop.
 9. Thread tools.

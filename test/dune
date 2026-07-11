@@ -65,12 +65,6 @@
  (libraries taumel))
 
 (test
- (name test_subagent_plan)
- (modules test_subagent_plan)
- (package taumel)
- (libraries taumel))
-
-(test
  (name test_exa_plan)
  (modules test_exa_plan)
  (package taumel)

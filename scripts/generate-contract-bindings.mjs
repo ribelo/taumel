@@ -1,13 +1,16 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const projectRoot = dirname(scriptDir);
-const sourcePath = join(projectRoot, "src", "tool-contracts.ts");
+const sourcePaths = [
+  join(projectRoot, "src", "tool-contracts.ts"),
+  join(projectRoot, "src", "bridge-contracts.ts"),
+];
 const outputDir = join(projectRoot, "bin", "generated");
 const ts2ocamlBin = join(projectRoot, "node_modules", ".bin", "ts2ocaml");
 const opaqueDtsSchemaIds = new Set([
@@ -108,7 +111,7 @@ function interfaceText(name, schema, namedSchemas) {
   return [`export interface ${name} {`, ...fields, "}"].join("\n");
 }
 
-async function loadContracts() {
+async function loadContracts(sourcePath) {
   const source = await readFile(sourcePath, "utf8");
   const transpiled = ts.transpileModule(source, {
     compilerOptions: {
@@ -118,7 +121,7 @@ async function loadContracts() {
     },
     fileName: sourcePath,
   });
-  const tempPath = join(dirname(sourcePath), "tool-contracts.generated.mjs");
+  const tempPath = join(dirname(sourcePath), `${basename(sourcePath, ".ts")}.generated.mjs`);
   await writeFile(tempPath, transpiled.outputText, "utf8");
   try {
     return await import(`${pathToFileURL(tempPath).href}?v=${Date.now()}`);
@@ -129,8 +132,11 @@ async function loadContracts() {
 
 async function main() {
   await mkdir(outputDir, { recursive: true });
-  const contracts = await loadContracts();
-  const dtsSchemas = contracts.dtsSchemas;
+  const modules = await Promise.all(sourcePaths.map(loadContracts));
+  const dtsSchemas = modules.flatMap((contracts) => [
+    ...(Array.isArray(contracts.dtsSchemas) ? contracts.dtsSchemas : []),
+    ...(Array.isArray(contracts.bridgeDtsSchemas) ? contracts.bridgeDtsSchemas : []),
+  ]);
   if (!Array.isArray(dtsSchemas)) throw new Error("tool-contracts.ts must export dtsSchemas");
   const namedSchemas = new Map(dtsSchemas.map(([name, schema]) => [name, schema]));
   const dts = [

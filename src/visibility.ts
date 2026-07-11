@@ -4,7 +4,9 @@ import { type Focusable, fuzzyFilter, Input, Key, truncateToWidth } from "@earen
 
 import type { CoreBridge, PiLike } from "./types.ts";
 import { taumelGlobalSettingsPath } from "./global-settings.ts";
-import { coreCallOptionalRecord, coreCallRecord, isRecord, stringArrayFromUnknown, stringField, writeFileAtomically } from "./util.ts";
+import { writeFileAtomically } from "./util.ts";
+import { decodeSkillListResult } from "./bridge-contracts.ts";
+import { decodeVisibilityListResult, decodeVisibilityRowsResult, decodeVisibilitySavePlan, decodeVisibilityToggleResult, decodeVisibilityWarningsResult, type VisibilityPrompt, type VisibilityRowsResult } from "./bridge-contracts.ts";
 import { toolNames } from "./tool-contracts.ts";
 import {
   bg,
@@ -23,7 +25,7 @@ import {
   uiFromContext,
 } from "./manager-kit.ts";
 
-type Category = "agents" | "tools" | "skills";
+type Category = "tools" | "skills";
 
 type Row = {
   readonly name: string;
@@ -41,6 +43,25 @@ type VisibilityState = {
 };
 
 type ManagerAction = { readonly kind: "exit" };
+type VisibilityContext = { readonly isProjectTrusted?: () => unknown; readonly cwd?: unknown; readonly sessionManager?: unknown };
+type VisibilitySessionManager = {
+  readonly getEntries?: () => unknown;
+  readonly appendCustomEntry?: (customType: string, data: unknown) => unknown;
+};
+type VisibilityEntry = { readonly type?: unknown; readonly customType?: unknown };
+type VisibilitySettings = { [key: string]: unknown };
+
+function objectAdapter<T extends object>(value: unknown): Partial<T> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Partial<T>
+    : undefined;
+}
+
+function settingsObject(value: unknown): VisibilitySettings | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as VisibilitySettings
+    : undefined;
+}
 
 type MutationOutcome = {
   readonly ok: boolean;
@@ -56,13 +77,13 @@ type ManagerCallbacks = {
 };
 
 function isProjectTrusted(ctx: unknown): boolean {
-  if (!isRecord(ctx)) return false;
-  const trusted = ctx["isProjectTrusted"];
+  const trusted = objectAdapter<VisibilityContext>(ctx)?.isProjectTrusted;
   return typeof trusted === "function" ? trusted.call(ctx) === true : false;
 }
 
 function cwdFromContext(ctx: unknown): string {
-  return isRecord(ctx) && typeof ctx["cwd"] === "string" && ctx["cwd"] !== "" ? ctx["cwd"] : process.cwd();
+  const cwd = objectAdapter<VisibilityContext>(ctx)?.cwd;
+  return typeof cwd === "string" && cwd !== "" ? cwd : process.cwd();
 }
 
 function projectSettingsPath(ctx: unknown): string {
@@ -81,17 +102,18 @@ function uniqueStrings(values: readonly string[]): string[] {
   return result;
 }
 
-function visibilityFromSettings(settings: unknown): Partial<Record<Category, string[]>> {
-  const taumel = isRecord(settings) && isRecord(settings["taumel"]) ? settings["taumel"] : {};
+function visibilityFromSettings(settings: unknown): Partial<{ tools: string[]; skills: string[] }> {
+  const root = settingsObject(settings);
+  const taumel = settingsObject(root?.["taumel"]);
   const category = (name: Category): string[] | undefined => {
-    const block = isRecord(taumel) && isRecord(taumel[name]) ? taumel[name] : undefined;
-    if (!isRecord(block) || block["disabled"] === undefined) return undefined;
+    const block = settingsObject(taumel?.[name]);
+    if (block?.["disabled"] === undefined) return undefined;
     return stringArray(block["disabled"]);
   };
-  return { agents: category("agents"), tools: category("tools"), skills: category("skills") };
+  return { tools: category("tools"), skills: category("skills") };
 }
 
-function readVisibilityFile(path: string): Partial<Record<Category, string[]>> {
+function readVisibilityFile(path: string): Partial<{ tools: string[]; skills: string[] }> {
   if (!existsSync(path)) return {};
   try {
     return visibilityFromSettings(JSON.parse(readFileSync(path, "utf8")) as unknown);
@@ -100,61 +122,35 @@ function readVisibilityFile(path: string): Partial<Record<Category, string[]>> {
   }
 }
 
-function readConfigVisibilityDefaults(ctx: unknown): Record<Category, string[]> {
+function readConfigVisibilityDefaults(ctx: unknown): { tools: string[]; skills: string[] } {
   const global = readVisibilityFile(taumelGlobalSettingsPath());
   const project = isProjectTrusted(ctx) ? readVisibilityFile(projectSettingsPath(ctx)) : {};
   return {
-    agents: project.agents ?? global.agents ?? [],
     tools: project.tools ?? global.tools ?? [],
     skills: project.skills ?? global.skills ?? [],
   };
 }
 
 function hasSessionVisibilityEntry(ctx: unknown): boolean {
-  if (!isRecord(ctx) || !isRecord(ctx["sessionManager"])) return false;
-  const getEntries = ctx["sessionManager"]["getEntries"];
+  const sessionManager = objectAdapter<VisibilitySessionManager>(objectAdapter<VisibilityContext>(ctx)?.sessionManager);
+  const getEntries = sessionManager?.getEntries;
   if (typeof getEntries !== "function") return false;
   try {
-    const entries = getEntries.call(ctx["sessionManager"]);
+    const entries = getEntries.call(sessionManager);
     return Array.isArray(entries) && entries.some((entry) =>
-      isRecord(entry) && entry["type"] === "custom" && entry["customType"] === "taumel.visibility"
+      objectAdapter<VisibilityEntry>(entry)?.type === "custom" && objectAdapter<VisibilityEntry>(entry)?.customType === "taumel.visibility"
     );
   } catch {
     return false;
   }
 }
 
-function legacyDisabledAgentsFromSession(ctx: unknown): string[] {
-  if (!isRecord(ctx) || !isRecord(ctx["sessionManager"])) return [];
-  const getEntries = ctx["sessionManager"]["getEntries"];
-  if (typeof getEntries !== "function") return [];
-  try {
-    const entries = getEntries.call(ctx["sessionManager"]);
-    if (!Array.isArray(entries)) return [];
-    for (let index = entries.length - 1; index >= 0; index -= 1) {
-      const entry = entries[index];
-      if (!isRecord(entry) || entry["type"] !== "custom" || entry["customType"] !== "taumel.agents") {
-        continue;
-      }
-      const data = isRecord(entry["data"]) ? entry["data"] : {};
-      const profiles = Array.isArray(data["profiles"]) ? data["profiles"].filter(isRecord) : [];
-      return uniqueStrings(profiles.flatMap((profile) =>
-        profile["enabled"] === false && typeof profile["name"] === "string" ? [profile["name"]] : []
-      ));
-    }
-  } catch {
-    return [];
-  }
-  return [];
-}
-
-function appendSessionVisibilityEntry(ctx: unknown, disabled: Record<Category, string[]>): void {
-  if (!isRecord(ctx) || !isRecord(ctx["sessionManager"])) return;
-  const append = ctx["sessionManager"]["appendCustomEntry"];
+function appendSessionVisibilityEntry(ctx: unknown, disabled: { tools: string[]; skills: string[] }): void {
+  const sessionManager = objectAdapter<VisibilitySessionManager>(objectAdapter<VisibilityContext>(ctx)?.sessionManager);
+  const append = sessionManager?.appendCustomEntry;
   if (typeof append !== "function") return;
-  append.call(ctx["sessionManager"], "taumel.visibility", {
+  append.call(sessionManager, "taumel.visibility", {
     version: 1,
-    agents: { disabled: disabled.agents },
     tools: { disabled: disabled.tools },
     skills: { disabled: disabled.skills },
   });
@@ -164,17 +160,12 @@ function seedVisibilityFromProject(ctx: unknown): boolean {
   if (hasSessionVisibilityEntry(ctx)) return false;
   const projectDisabled = readConfigVisibilityDefaults(ctx);
   if (
-    projectDisabled.agents.length === 0 &&
     projectDisabled.tools.length === 0 &&
     projectDisabled.skills.length === 0
   ) {
     return false;
   }
-  const disabled = {
-    ...projectDisabled,
-    agents: uniqueStrings([...projectDisabled.agents, ...legacyDisabledAgentsFromSession(ctx)]),
-  };
-  appendSessionVisibilityEntry(ctx, disabled);
+  appendSessionVisibilityEntry(ctx, projectDisabled);
   return true;
 }
 
@@ -182,36 +173,9 @@ function isCtrlS(data: string): boolean {
   return data === "\x13";
 }
 
-function parseRows(details: unknown): VisibilityState {
-  if (!isRecord(details)) throw new Error("Invalid Taumel visibility details");
-  const category = details["category"];
-  if (category !== "agents" && category !== "tools" && category !== "skills") {
-    throw new Error("Invalid Taumel visibility category");
-  }
-  const rows = Array.isArray(details["rows"])
-    ? details["rows"].filter(isRecord).map((row): Row => ({
-      name: typeof row["name"] === "string" ? row["name"] : "",
-      state: typeof row["state"] === "string" ? row["state"] : "",
-      available: row["available"] === true,
-      description: typeof row["description"] === "string" ? row["description"] : "",
-    })).filter((row) => row.name !== "")
-    : [];
-  return {
-    category,
-    title: typeof details["title"] === "string" ? details["title"] : `Taumel ${category}`,
-    rows,
-    disabled: stringArray(details["disabled"]),
-    unavailable: stringArray(details["unavailable"]),
-  };
-}
-
-function detailsFromCommandResult(result: unknown): unknown {
-  return isRecord(result) ? result["details"] : undefined;
-}
-
 function loadVisibilityState(core: CoreBridge, category: Category, ctx: unknown): VisibilityState {
-  const result = coreCallRecord(core, "visibilityRows", [category, ctx], "visibility rows");
-  return parseRows(detailsFromCommandResult(result));
+  const result = decodeVisibilityRowsResult(core.call("visibilityRows", [{ category, ctx }]));
+  return { ...result, rows: [...result.rows], disabled: [...result.disabled], unavailable: [...result.unavailable] };
 }
 
 const MAX_VISIBLE_ROWS = 10;
@@ -410,26 +374,29 @@ class VisibilityManagerComponent implements Focusable {
 export async function saveProjectVisibility(
   category: Category,
   disabled: readonly string[],
-  details: unknown,
+  details: VisibilityRowsResult,
   ctx: unknown,
-): Promise<Record<string, unknown>> {
-  const state = parseRows(details);
+) {
+  const state: VisibilityState = details;
   if (!isProjectTrusted(ctx)) {
     const message = `Cannot save ${category} visibility: project is not trusted.`;
     return commandResult(false, message, { ...state, category });
   }
   const path = projectSettingsPath(ctx);
-  let root: Record<string, unknown> = {};
+  let root: VisibilitySettings = {};
   if (existsSync(path)) {
     try {
       const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
-      root = isRecord(parsed) ? { ...parsed } : {};
+      const parsedRoot = settingsObject(parsed);
+      root = parsedRoot === undefined ? {} : { ...parsedRoot };
     } catch {
       root = {};
     }
   }
-  const taumel = isRecord(root["taumel"]) ? { ...root["taumel"] } : {};
-  const block = isRecord(taumel[category]) ? { ...taumel[category] } : {};
+  const currentTaumel = settingsObject(root["taumel"]);
+  const taumel: VisibilitySettings = currentTaumel === undefined ? {} : { ...currentTaumel };
+  const currentBlock = settingsObject(taumel[category]);
+  const block: VisibilitySettings = currentBlock === undefined ? {} : { ...currentBlock };
   block["disabled"] = [...disabled];
   taumel[category] = block;
   root["taumel"] = taumel;
@@ -438,23 +405,22 @@ export async function saveProjectVisibility(
   return commandResult(true, `Saved ${category} visibility to ${path}.${stale}`, { ...state, category, path });
 }
 
-async function saveFromCore(core: CoreBridge, category: Category, ctx: unknown): Promise<Record<string, unknown>> {
-  const plan = coreCallRecord(core, "handleCommand", [category, "save", ctx], "visibility save plan");
-  if (plan["action"] !== "visibility_save_project") return plan;
-  return saveProjectVisibility(category, stringArrayFromUnknown(plan["disabled"]) ?? [], plan["details"], ctx);
+async function saveFromCore(core: CoreBridge, category: Category, ctx: unknown) {
+  const plan = decodeVisibilitySavePlan(core.call("visibilitySaveProjectPlan", [{ category, ctx }]));
+  return saveProjectVisibility(category, [...plan.disabled], plan.details, ctx);
 }
 
 export async function executeVisibilityManager(
   core: CoreBridge,
-  prompt: Record<string, unknown>,
+  prompt: VisibilityPrompt,
   ctx: unknown,
   syncTools: (enabledName?: string) => void,
 ): Promise<unknown> {
-  const category = stringField(prompt, "category") as Category;
+  const category = prompt.category;
   const ui = uiFromContext(ctx);
   const custom = ui?.["custom"];
   if (typeof custom !== "function") {
-    return coreCallRecord(core, "handleCommand", [category, "list", ctx], "visibility list result");
+    return decodeVisibilityListResult(core.call("visibilityListCommand", [{ category, ctx }]));
   }
 
   let state = loadVisibilityState(core, category, ctx);
@@ -471,12 +437,10 @@ export async function executeVisibilityManager(
       onDone: done,
       requestRender,
       onToggle: async (name) => {
-        const result = coreCallRecord(core, "toggleVisibilityRow", [category, name, ctx], "visibility toggle result");
-        const ok = mutationOk(result);
+        const result = decodeVisibilityToggleResult(core.call("toggleVisibilityRow", [{ category, name, ctx }]));
+        const ok = result.ok;
         if (ok) dirty = true;
-        const enabledName = isRecord(result["details"]) && typeof result["details"]["enabledName"] === "string"
-          ? result["details"]["enabledName"]
-          : undefined;
+        const enabledName = result.ok ? result.details.enabledName : undefined;
         if (category === "tools") syncTools(enabledName);
         state = loadVisibilityState(core, category, ctx);
         const message = resultMessage(result, "Visibility updated.");
@@ -494,7 +458,7 @@ export async function executeVisibilityManager(
     });
   });
 
-  if (isRecord(action) && action["kind"] === "exit") {
+  if (typeof action === "object" && action !== null && (action as { kind?: unknown }).kind === "exit") {
     return commandResult(true, dirty ? "Visibility updated." : "Visibility manager closed.", {
       ...state,
       category,
@@ -505,7 +469,8 @@ export async function executeVisibilityManager(
 
 function toolNameFromUnknown(value: unknown): string | undefined {
   if (typeof value === "string" && value !== "") return value;
-  if (isRecord(value) && typeof value["name"] === "string" && value["name"] !== "") return value["name"];
+  const name = objectAdapter<{ name?: unknown }>(value)?.name;
+  if (typeof name === "string" && name !== "") return name;
   return undefined;
 }
 
@@ -518,30 +483,18 @@ function liveToolNames(pi: PiLike): string[] {
 }
 
 function listSkillNames(core: CoreBridge, ctx: unknown): string[] {
-  const result = coreCallOptionalRecord(core, "listSkills", [{ cwd: cwdFromContext(ctx), includeDisabled: true }]);
-  if (result === undefined || !Array.isArray(result["skills"])) return [];
-  return result["skills"].filter(isRecord).flatMap((skill) =>
-    typeof skill["name"] === "string" && skill["name"] !== "" ? [skill["name"]] : []
-  );
-}
-
-function listAgentNames(core: CoreBridge, ctx: unknown): string[] {
-  try {
-    const state = loadVisibilityState(core, "agents", ctx);
-    return state.rows.filter((row) => row.available).map((row) => row.name);
-  } catch {
-    return [];
-  }
+  return decodeSkillListResult(core.call("listSkills", [{
+    cwd: cwdFromContext(ctx),
+    includeDisabled: true,
+  }])).skills.map((skill) => skill.name);
 }
 
 function notifyVisibilityWarnings(pi: PiLike, core: CoreBridge, ctx: unknown): void {
-  const result = coreCallOptionalRecord(core, "visibilityWarnings", [{
+  const result = decodeVisibilityWarningsResult(core.call("visibilityWarnings", [{
     tools: liveToolNames(pi),
     skills: listSkillNames(core, ctx),
-    agents: listAgentNames(core, ctx),
-  }]);
-  if (result === undefined) return;
-  const messages = stringArrayFromUnknown(result["messages"]) ?? [];
+  }]));
+  const messages = result.messages;
   const ui = uiFromContext(ctx);
   for (const message of messages) notify(ui, message, "warning");
 }

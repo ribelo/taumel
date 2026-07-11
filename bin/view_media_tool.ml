@@ -489,9 +489,10 @@ let success_result ~path ~full_path ~original_mime_type candidate ~original_widt
       ("details", inject details);
     |]
 
-let view_media prepared runtime =
-  let path = get_string prepared "path" in
-  let cwd = get_string runtime "defaultCwd" in
+let view_media raw_facts =
+  let facts = Tool_contracts.ViewMediaFacts.t_of_js (ojs_of_js raw_facts) in
+  let path = Tool_contracts.ViewMediaFacts.get_path facts in
+  let cwd = Tool_contracts.ViewMediaFacts.get_defaultCwd facts in
   if String.trim path = "" then error_result "view_media requires a non-empty path"
   else
     let full_path = resolve_path cwd path in

@@ -27,7 +27,7 @@ let workspace_sandbox =
     network_mode = Sandbox.Network_disabled;
     approval_policy = Sandbox.On_request;
     no_sandbox = false;
-    subagent = false;
+    isolated_child = false;
   }
 
 let full_access_sandbox =

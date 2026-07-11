@@ -26,7 +26,7 @@ type config = {
   network_mode : network_mode;
   approval_policy : approval_policy;
   no_sandbox : bool;
-  subagent : bool;
+  isolated_child : bool;
 }
 
 type decision =

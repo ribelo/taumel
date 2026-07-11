@@ -37,21 +37,19 @@ const sessionManager = {
 };
 const ctx = { cwd: process.cwd(), sessionManager };
 
-const create = core.call("prepareTool", [
-  "cron_create",
-  { cron: "* * * * *", prompt: "persist me", recurring: true },
-  ctx,
-]);
+const create = core.call("prepareTool", [{
+  name: "cron_create", params: { cron: "* * * * *", prompt: "persist me", recurring: true }, ctx,
+}]);
 assert.equal(create?.ok, true, `cron_create failed: ${JSON.stringify(create)}`);
 assert.equal(entries.at(-1)?.customType, "taumel.cron", "cron_create should persist a cron entry");
 assert.equal(entries.at(-1)?.data?.tasks?.length, 1, "cron_create should persist one task");
 
-const startup = core.call("cronStartup", [{ type: "session_start", reason: "resume" }, ctx]);
-assert.equal(startup?.notify, true, "resume with stored cron tasks should notify");
+const startup = core.call("cronStartup", [{ reason: "resume", ctx }]);
+assert.equal(startup?.kind, "notify", "resume with stored cron tasks should notify");
 assert.equal(entries.at(-1)?.data?.enabled, false, "resume should persist disabled cron state");
 assert.equal(entries.at(-1)?.data?.tasks?.length, 1, "resume should keep stored cron tasks");
 
-const list = core.call("prepareTool", ["cron_list", {}, ctx]);
+const list = core.call("prepareTool", [{ name: "cron_list", params: {}, ctx }]);
 assert.equal(list?.details?.enabled, false, `cron_list should expose disabled master switch: ${JSON.stringify(list)}`);
 assert.equal(list?.details?.tasks?.length, 1, `cron_list should retain stored task: ${JSON.stringify(list)}`);
 assert.equal(list?.details?.tasks?.[0]?.enabled, true, `cron_list should expose task enabled flag: ${JSON.stringify(list)}`);
@@ -59,14 +57,13 @@ assert.equal(typeof list?.details?.tasks?.[0]?.nextDueText, "string", `cron_list
 assert.match(list?.text ?? "", /disabled.*\/cron enable/i, "cron_list text should explain disabled stored tasks");
 
 const prompt = core.call("planCronPrompt", [
-  { enabled: false, tasks: entries.at(-1)?.data?.tasks ?? [] },
-  { uiAvailable: true },
+  { prompt: { ok: true, action: "cron_prompt", enabled: false, tasks: list.details.tasks }, uiAvailable: true },
 ]);
-assert.equal(prompt?.action, "result", `deprecated cron prompt planner should not open multi-row picker: ${JSON.stringify(prompt)}`);
+assert.equal(prompt?.kind, "result", `deprecated cron prompt planner should not open multi-row picker: ${JSON.stringify(prompt)}`);
 assert(!Array.isArray(prompt?.labels), `deprecated cron prompt planner should not return action labels: ${JSON.stringify(prompt)}`);
 
 const taskId = entries.at(-1)?.data?.tasks?.[0]?.id;
-const disabled = core.call("handleCommand", ["cron", `disable ${taskId}`, ctx]);
+const disabled = core.call("handleCommand", [{ name: "cron", args: `disable ${taskId}`, ctx }]);
 assert.equal(disabled?.details?.enabled, false, `task disable action should report disabled: ${JSON.stringify(disabled)}`);
 assert.equal(entries.at(-1)?.data?.tasks?.[0]?.enabled, false, "task disable action should persist task enabled=false");
 
@@ -87,7 +84,9 @@ ctx.ui = {
     return { kind: "exit" };
   },
 };
-const managerResult = await executeCronManager(core, { enabled: false, tasks: entries.at(-1)?.data?.tasks ?? [] }, ctx);
+const managerResult = await executeCronManager(core, {
+  ok: true, action: "cron_prompt", enabled: false, tasks: list.details.tasks,
+}, ctx);
 assert.equal(managerResult?.ok, true, `cron manager should close cleanly: ${JSON.stringify(managerResult)}`);
 assert.equal(
   renderedCronManagerLines.filter((line) => line.includes(taskId)).length,

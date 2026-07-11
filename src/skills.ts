@@ -1,40 +1,53 @@
 import type { CoreBridge, PiLike } from "./types.ts";
-import { coreCallRecord, isRecord } from "./util.ts";
+import { decodeSkillResolveResult, type SkillResolveResult } from "./bridge-contracts.ts";
+
+type PromptEvent = {
+  text?: unknown; prompt?: unknown; content?: unknown; message?: unknown; input?: unknown;
+  messages?: unknown;
+};
+type PromptMessage = { role?: unknown; content?: unknown };
+type SkillContext = { cwd?: unknown; ui?: unknown };
+type NotificationUi = { notify: (message: string, level: "warning") => unknown };
+
+function objectValue<T extends object>(value: unknown): Partial<T> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Partial<T>
+    : undefined;
+}
+
+function notificationUi(value: unknown): NotificationUi | undefined {
+  const candidate = objectValue<NotificationUi>(value);
+  return typeof candidate?.notify === "function" ? candidate as NotificationUi : undefined;
+}
 
 function promptFromEvent(event: unknown): string {
-  if (!isRecord(event)) return "";
+  const source = objectValue<PromptEvent>(event);
+  if (source === undefined) return "";
   for (const key of ["text", "prompt", "content", "message", "input"]) {
-    const value = event[key];
+    const value = source[key as keyof PromptEvent];
     if (typeof value === "string") return value;
   }
-  const messages = event["messages"];
+  const messages = source.messages;
   if (Array.isArray(messages)) {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       const message = messages[index];
-      if (isRecord(message) && message["role"] === "user" && typeof message["content"] === "string") {
-        return message["content"];
+      const candidate = objectValue<PromptMessage>(message);
+      if (candidate?.role === "user" && typeof candidate.content === "string") {
+        return candidate.content;
       }
     }
   }
   return "";
 }
 
-function notifyWarnings(result: Record<string, unknown>, ctx?: unknown): void {
-  const warnings = Array.isArray(result["warnings"])
-    ? result["warnings"].filter(isRecord)
-    : [];
-  if (warnings.length === 0 || !isRecord(ctx) || !isRecord(ctx["ui"])) return;
-  const notify = ctx["ui"]["notify"];
-  if (typeof notify !== "function") return;
+function notifyWarnings(result: SkillResolveResult, ctx?: unknown): void {
+  const warnings = result.warnings;
+  const context = objectValue<SkillContext>(ctx);
+  const ui = notificationUi(context?.ui);
+  if (warnings.length === 0 || ui === undefined) return;
   for (const warning of warnings) {
-    if (typeof warning["message"] === "string" && warning["message"] !== "") {
-      notify.call(ctx["ui"], warning["message"], "warning");
-    }
+    ui.notify(warning.message, "warning");
   }
-}
-
-function blockRecords(result: Record<string, unknown>): Record<string, unknown>[] {
-  return Array.isArray(result["blocks"]) ? result["blocks"].filter(isRecord) : [];
 }
 
 export function installSkillResolver(pi: PiLike, core: CoreBridge): void {
@@ -47,19 +60,18 @@ export function installSkillResolver(pi: PiLike, core: CoreBridge): void {
       else bypassOnce.set(prompt, bypassCount - 1);
       return { action: "continue" };
     }
-    const cwd = isRecord(ctx) && typeof ctx["cwd"] === "string" ? ctx["cwd"] : process.cwd();
-    const result = coreCallRecord(core, "resolveSkillMentions", [{ prompt, cwd, ctx }], "skill resolver result");
+    const context = objectValue<SkillContext>(ctx);
+    const cwd = typeof context?.cwd === "string" ? context.cwd : process.cwd();
+    const result = decodeSkillResolveResult(core.call("resolveSkillMentions", [{ prompt, cwd, ctx }]));
     notifyWarnings(result, ctx);
-    const blocks = blockRecords(result);
+    const blocks = result.blocks;
     if (blocks.length === 0) return { action: "continue" };
     if (typeof pi.sendMessage !== "function" || typeof pi.sendUserMessage !== "function") {
       return { action: "continue" };
     }
     let sentCount = 0;
     for (const block of blocks) {
-      const content = typeof block["content"] === "string" ? block["content"] : "";
-      const name = typeof block["name"] === "string" ? block["name"] : "";
-      if (content === "" || name === "") continue;
+      const { content, name } = block;
       sentCount += 1;
       await pi.sendMessage({
         customType: "skill",

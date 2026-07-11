@@ -1,7 +1,7 @@
 import { Key, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 
 import type { CoreBridge } from "./types.ts";
-import { coreCallOptionalRecord, coreCallRecord, isRecord, stringField } from "./util.ts";
+import { decodeCronCommandResult, decodeCronListResult, decodeCronPrompt, decodeCronPromptPlan, type CronPrompt, type CronTaskPatch } from "./bridge-contracts.ts";
 import {
   bg,
   bold,
@@ -36,6 +36,7 @@ type CronState = {
   readonly enabled: boolean;
   readonly tasks: readonly CronTask[];
 };
+type CronStateDetails = { readonly enabled: boolean; readonly tasks: readonly CronTask[] };
 
 type ManagerAction =
   | { readonly kind: "exit" }
@@ -61,48 +62,16 @@ type CronManagerCallbacks = {
   readonly requestRender: () => void;
 };
 
-function boolFlag(record: Record<string, unknown>, name: string): boolean {
-  return record[name] === true;
-}
-
-function stringOr(record: Record<string, unknown>, name: string, fallback: string): string {
-  const value = record[name];
-  return typeof value === "string" ? value : fallback;
-}
-
-function parseTask(value: unknown): CronTask | undefined {
-  if (!isRecord(value)) return undefined;
-  const id = stringOr(value, "id", "");
-  const cron = stringOr(value, "cron", "");
-  if (id === "" || cron === "") return undefined;
-  const mode = value["mode"] === "goal" ? "goal" : "message";
-  return {
-    id,
-    cron,
-    prompt: stringOr(value, "prompt", ""),
-    recurring: boolFlag(value, "recurring"),
-    mode,
-    enabled: boolFlag(value, "enabled"),
-    nextDueText: stringOr(value, "nextDueText", String(value["nextDue"] ?? "")),
-    pending: boolFlag(value, "pending"),
-  };
-}
-
-function stateDetails(state: CronState): Record<string, unknown> {
+function stateDetails(state: CronState): CronStateDetails {
   return { enabled: state.enabled, tasks: state.tasks };
 }
 
-function parseStateFromDetails(details: unknown): CronState {
-  if (!isRecord(details)) throw new Error("Invalid Taumel cron details");
-  const tasks = Array.isArray(details["tasks"])
-    ? details["tasks"].map(parseTask).filter((task): task is CronTask => task !== undefined)
-    : [];
-  return { enabled: boolFlag(details, "enabled"), tasks };
-}
-
 function loadCronState(core: CoreBridge, ctx: unknown): CronState {
-  const result = coreCallRecord(core, "prepareTool", ["cron_list", {}, ctx], "cron list result");
-  return parseStateFromDetails(result["details"]);
+  const result = decodeCronListResult(core.call("prepareTool", [{ name: "cron_list", params: {}, ctx }]));
+  return {
+    enabled: result.details.enabled,
+    tasks: result.details.tasks.map((task) => ({ ...task, mode: task.mode })),
+  };
 }
 
 function taskTableRow(
@@ -394,12 +363,12 @@ class CronManagerComponent {
   }
 }
 
-function command(core: CoreBridge, args: string, ctx: unknown): Record<string, unknown> {
-  return coreCallRecord(core, "handleCommand", ["cron", args, ctx], "cron command result");
+function command(core: CoreBridge, args: string, ctx: unknown) {
+  return decodeCronCommandResult(core.call("handleCronManagerCommand", [{ args, ctx }]));
 }
 
-function updateTask(core: CoreBridge, patch: Record<string, unknown>, ctx: unknown): Record<string, unknown> {
-  return coreCallRecord(core, "cronUpdateTask", [patch, ctx], "cron update result");
+function updateTask(core: CoreBridge, patch: CronTaskPatch, ctx: unknown) {
+  return decodeCronCommandResult(core.call("cronUpdateTask", [{ patch, ctx }]));
 }
 
 async function runMutation(
@@ -467,28 +436,28 @@ async function editTaskSchedule(
   return mutationOk(result);
 }
 
-function fallbackCronPrompt(core: CoreBridge, prompt: Record<string, unknown>, ctx: unknown): unknown {
-  const plan = coreCallOptionalRecord(core, "planCronPrompt", [prompt, { uiAvailable: false }]);
-  if (plan?.["action"] === "result" && isRecord(plan["result"])) return plan["result"];
-  const state = loadCronState(core, ctx);
-  return commandResult(true, state.tasks.length === 0 ? "No cron tasks." : "Cron tasks listed.", stateDetails(state));
+function fallbackCronPrompt(core: CoreBridge, prompt: CronPrompt): unknown {
+  return decodeCronPromptPlan(core.call("planCronPrompt", [{ prompt, uiAvailable: false }])).result;
 }
 
 function parseManagerAction(value: unknown): ManagerAction {
-  if (!isRecord(value)) return { kind: "exit" };
-  const kind = stringOr(value, "kind", "exit");
-  if (kind === "edit_prompt" || kind === "edit_schedule") return { kind, id: stringField(value, "id") };
+  if (typeof value !== "object" || value === null) return { kind: "exit" };
+  const candidate = value as { kind?: unknown; id?: unknown };
+  if ((candidate.kind === "edit_prompt" || candidate.kind === "edit_schedule") && typeof candidate.id === "string") {
+    return { kind: candidate.kind, id: candidate.id };
+  }
   return { kind: "exit" };
 }
 
 export async function executeCronManager(
   core: CoreBridge,
-  prompt: Record<string, unknown>,
+  rawPrompt: unknown,
   ctx: unknown,
 ): Promise<unknown> {
+  const prompt = decodeCronPrompt(rawPrompt);
   const ui = uiFromContext(ctx);
   const custom = ui?.["custom"];
-  if (typeof custom !== "function") return fallbackCronPrompt(core, prompt, ctx);
+  if (typeof custom !== "function") return fallbackCronPrompt(core, prompt);
 
   let state = loadCronState(core, ctx);
   let selectedId: string | undefined;

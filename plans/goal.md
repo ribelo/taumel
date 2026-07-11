@@ -33,7 +33,6 @@ does not pause the goal lifecycle.
 
 ### Permission boundary
 
-- **goal-pm01** (ubiquitous): Goal lifecycle and automation state shall not change, save, restore, or override the session's sandbox preset, approval policy, network mode, `no-sandbox` state, tool surface, or agent allowlist.
 - **goal-pm02** (state-driven): While a goal is active, every model and tool turn shall use the session's independently current permission envelope, including explicit user changes made after the goal started.
 
 ### Tools

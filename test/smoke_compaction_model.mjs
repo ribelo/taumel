@@ -75,7 +75,7 @@ const event = {
     },
   };
   const handler = makeHarness(
-    { action: "compact", model: "openrouter/deepseek/deepseek-v4-pro" },
+    { kind: "compact", model: "openrouter/deepseek/deepseek-v4-pro" },
     registry,
     async (...args) => {
       compactCalls.push(args);
@@ -122,7 +122,7 @@ const event = {
     },
   };
   const handler = makeHarness(
-    { action: "compact", model: "openrouter/deepseek/deepseek-v4-pro" },
+    { kind: "compact", model: "openrouter/deepseek/deepseek-v4-pro" },
     registry,
     async () => {
       throw new Error("compact should not run without auth");
@@ -148,7 +148,7 @@ const event = {
     },
   };
   const handler = makeHarness(
-    { action: "compact", model: "not-a-model-id" },
+    { kind: "compact", model: "not-a-model-id" },
     registry,
     async () => {
       throw new Error("compact should not run for invalid model ids");
@@ -174,7 +174,7 @@ const event = {
     },
   };
   const handler = makeHarness(
-    { action: "compact", model: "openrouter/deepseek/deepseek-v4-pro" },
+    { kind: "compact", model: "openrouter/deepseek/deepseek-v4-pro" },
     registry,
     async () => {
       throw new Error("provider failed");
@@ -208,7 +208,7 @@ const event = {
     },
   };
   const handlers = makeHarness(
-    { action: "compact", model: "openrouter/deepseek/deepseek-v4-pro" },
+    { kind: "compact", model: "openrouter/deepseek/deepseek-v4-pro" },
     registry,
     async () => {
       throw new Error("compact should not run for branch summaries");
@@ -266,7 +266,7 @@ const event = {
     },
   };
   const treeHandler = makeHarness(
-    { action: "compact", model: "openrouter/deepseek/deepseek-v4-pro" },
+    { kind: "compact", model: "openrouter/deepseek/deepseek-v4-pro" },
     registry,
     async () => {
       throw new Error("compact should not run for branch summaries");
@@ -332,7 +332,7 @@ function makeCommandHarness(plans) {
 // Show current model (no configured model -> inherit).
 {
   const { pi, core, ctx } = makeCommandHarness([
-    { action: "show", model: "", source: "inherit" },
+    { kind: "show", model: "", source: "inherit" },
   ]);
   const result = await executeCompactionModelCommand(pi, core, "", ctx);
   assert.equal(result.ok, true, "show current should succeed");
@@ -342,7 +342,7 @@ function makeCommandHarness(plans) {
 // Show current model (configured).
 {
   const { pi, core, ctx } = makeCommandHarness([
-    { action: "show", model: "openai/gpt-4o", source: "global" },
+    { kind: "show", model: "openai/gpt-4o", source: "global" },
   ]);
   const result = await executeCompactionModelCommand(pi, core, "", ctx);
   assert.equal(result.ok, true, "show configured should succeed");
@@ -352,7 +352,7 @@ function makeCommandHarness(plans) {
 // Set model (set_project action).
 {
   const { pi, core, ctx, notifications } = makeCommandHarness([
-    { action: "set_project", model: "anthropic/claude-3-5-sonnet" },
+    { kind: "set_project", model: "anthropic/claude-3-5-sonnet" },
   ]);
   const result = await executeCompactionModelCommand(pi, core, "anthropic/claude-3-5-sonnet", ctx);
   assert.equal(result.ok, true, "set model should succeed");
@@ -362,7 +362,7 @@ function makeCommandHarness(plans) {
 // Clear model.
 {
   const { pi, core, ctx } = makeCommandHarness([
-    { action: "clear_project" },
+    { kind: "clear_project" },
   ]);
   const result = await executeCompactionModelCommand(pi, core, "clear", ctx);
   assert.equal(result.ok, true, "clear should succeed");
@@ -390,7 +390,7 @@ function makeCommandHarness(plans) {
     init: () => undefined,
     call(name) {
       assert.equal(name, "planCompactionModelCommand");
-      return { action: "open_picker", current: "" };
+      return { kind: "open_picker", current: "" };
     },
   };
   const result = await executeCompactionModelCommand(pi, core, "", ctx);

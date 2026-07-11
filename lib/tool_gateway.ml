@@ -3,7 +3,6 @@ type effect_kind =
   | Execute
   | Mutate
   | Network
-  | Spawn_agent
   | Ask_user
 
 type spec = {
@@ -28,7 +27,7 @@ let register spec registry = Shared.String_map.add spec.name spec registry
 let specs registry = registry |> Shared.String_map.bindings |> List.map snd
 
 let effect_requires_sandbox = function
-  | Execute | Mutate | Network | Spawn_agent -> true
+  | Execute | Mutate | Network -> true
   | Pure | Ask_user -> false
 
 let effect_to_string = function
@@ -36,7 +35,6 @@ let effect_to_string = function
   | Execute -> "execute"
   | Mutate -> "mutate"
   | Network -> "network"
-  | Spawn_agent -> "spawn_agent"
   | Ask_user -> "ask_user"
 
 let text_result_json ?(details = Shared.Null) text =

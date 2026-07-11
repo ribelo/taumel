@@ -2,6 +2,7 @@ import type {
   ChildSessionBridge,
   ComposerController,
   CoreBridge,
+  MessageDeliveryOptions,
   PiLike,
 } from "./types.ts";
 
@@ -12,7 +13,6 @@ import { initializeTaumelGlobalConfig, taumelStatus } from "./global-settings.ts
 import { executeVisibilityManager, saveProjectVisibility } from "./visibility.ts";
 import {
   applyChildSessionUpdate,
-  childSessionCacheKeyScopeFromContext,
   createChildSession,
   executeOpenAiUsageWithHostAuth,
   refreshOwnedChildPermissions,
@@ -23,24 +23,43 @@ import {
   childBridgeFacts,
   contextIsLive,
   contextWithOverrides,
-  coreCallRecord,
-  coreCallRecordArray,
   extensionRuntimeIsLive,
-  isRecord,
   isStaleContextError,
-  stringArrayFromUnknown,
-  stringArrayField,
-  stringField,
 } from "./util.ts";
 import { toolNames } from "./tool-contracts.ts";
+import { decodeActiveToolsPlan, decodeCommandChildSessionPlan, decodeCommandExecutionPlan, decodeCommandNotificationPlan, decodeCommandSpecsResult } from "./bridge-contracts.ts";
+import { decodeBridgeCommandResult, decodeCommandChildDispatchPlan, decodeGatewayCommandOutput, decodeGoalContinuationPlan, decodeGoalRollbackResult, decodePermissionsCommandResult, decodePermissionsPrompt, decodePermissionsPromptPlan, type GatewayCommandOutput, type GoalContinuationFacts, type ToolResultEnvelope } from "./bridge-contracts.ts";
 
-function commandResultFromToolResult(core: CoreBridge, result: unknown): Record<string, unknown> {
-  return coreCallRecord(core, "toolResultToCommandResult", [result], "command result conversion");
+type CommandContext = { readonly hasPendingMessages?: () => unknown; readonly ui?: unknown };
+type CommandUi = {
+  readonly notify?: (message: string, level: string) => unknown;
+  readonly select?: (title: string, labels: readonly string[]) => unknown;
+};
+type NamedTool = { readonly name?: unknown };
+type AssistantMessage = { readonly role?: unknown; readonly stopReason?: unknown };
+type AssistantEvent = { readonly messages?: unknown; readonly willRetry?: unknown };
+type CommandResultLike = {
+  readonly ok?: unknown; readonly action?: unknown; readonly message?: unknown; readonly error?: unknown;
+  readonly details?: unknown; readonly goalStartObjective?: unknown; readonly goalRollback?: unknown;
+  readonly goalFollowup?: unknown;
+};
+type VisibilityCommandDetails = { readonly visibilityChanged?: unknown; readonly category?: unknown; readonly enabledName?: unknown };
+type ChildUpdateDetails = { readonly childSessionUpdates?: unknown };
+type SessionLifecycleEvent = { readonly type?: unknown; readonly willRetry?: unknown };
+
+function commandContext(value: unknown): Partial<CommandContext> | undefined {
+  return typeof value === "object" && value !== null ? value as Partial<CommandContext> : undefined;
+}
+function commandResult(value: unknown): Partial<CommandResultLike> | undefined {
+  return typeof value === "object" && value !== null ? value as Partial<CommandResultLike> : undefined;
+}
+
+function commandResultFromToolResult(core: CoreBridge, result: ToolResultEnvelope) {
+  return decodeBridgeCommandResult(core.call("toolResultToCommandResult", [result]));
 }
 
 function hasPendingMessages(ctx: unknown): boolean {
-  if (!isRecord(ctx)) return false;
-  const hasPending = ctx["hasPendingMessages"];
+  const hasPending = commandContext(ctx)?.hasPendingMessages;
   if (typeof hasPending !== "function") return false;
   return hasPending.call(ctx) === true;
 }
@@ -53,7 +72,8 @@ function hostIdle(_ctx: unknown): boolean {
 
 function toolNameFromUnknown(value: unknown): string | undefined {
   if (typeof value === "string" && value !== "") return value;
-  if (isRecord(value) && typeof value["name"] === "string" && value["name"] !== "") return value["name"];
+  const name = typeof value === "object" && value !== null ? (value as NamedTool).name : undefined;
+  if (typeof name === "string" && name !== "") return name;
   return undefined;
 }
 
@@ -72,26 +92,26 @@ function syncActiveTools(pi: PiLike, core: CoreBridge, ctx: unknown, enabledName
     current = [...current, enabledName];
     pi.setActiveTools(current);
   }
-  const plan = coreCallRecord(core, "planActiveToolsSync", [current, ctx], "active tools sync plan");
-  const tools = stringArrayFromUnknown(plan["tools"]);
-  if (tools === undefined) throw new Error("Invalid Taumel active tools sync plan");
-  if (plan["changed"] === true) pi.setActiveTools(tools);
+  const plan = decodeActiveToolsPlan(core.call("planActiveToolsSync", [{ tools: current, ctx }]));
+  if (plan.changed) pi.setActiveTools([...plan.tools]);
 }
 
 function applyVisibilityCommandSideEffects(pi: PiLike, core: CoreBridge, result: unknown, ctx: unknown): void {
-  if (!isRecord(result) || !isRecord(result["details"])) return;
-  const details = result["details"];
-  if (details["visibilityChanged"] !== true || details["category"] !== "tools") return;
-  const enabledName = typeof details["enabledName"] === "string" ? details["enabledName"] : undefined;
+  const rawDetails = commandResult(result)?.details;
+  const details = typeof rawDetails === "object" && rawDetails !== null ? rawDetails as VisibilityCommandDetails : undefined;
+  if (details?.visibilityChanged !== true || details.category !== "tools") return;
+  const enabledName = typeof details.enabledName === "string" ? details.enabledName : undefined;
   syncActiveTools(pi, core, ctx, enabledName);
 }
 
 function latestAssistantStopReason(event: unknown): string {
-  if (!isRecord(event) || !Array.isArray(event["messages"])) return "";
-  for (let index = event["messages"].length - 1; index >= 0; index -= 1) {
-    const message = event["messages"][index];
-    if (!isRecord(message) || message["role"] !== "assistant") continue;
-    return typeof message["stopReason"] === "string" ? message["stopReason"] : "";
+  const messages = typeof event === "object" && event !== null ? (event as AssistantEvent).messages : undefined;
+  if (!Array.isArray(messages)) return "";
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const rawMessage = messages[index];
+    const message = typeof rawMessage === "object" && rawMessage !== null ? rawMessage as AssistantMessage : undefined;
+    if (message?.role !== "assistant") continue;
+    return typeof message.stopReason === "string" ? message.stopReason : "";
   }
   return "";
 }
@@ -101,19 +121,19 @@ async function sendGoalMessage(
   customType: string,
   content: string,
   display: boolean,
-  options: Record<string, unknown>,
+  options: MessageDeliveryOptions,
 ): Promise<void> {
   if (typeof pi.sendMessage === "function") {
     await pi.sendMessage({ customType, content, display }, options);
     return;
   }
   if (typeof pi.sendUserMessage === "function") {
-    await pi.sendUserMessage(content, { deliverAs: options["deliverAs"] });
+    await pi.sendUserMessage(content, { deliverAs: options.deliverAs });
   }
 }
 
-async function sendVisibleGoalResult(pi: PiLike, result: Record<string, unknown>): Promise<void> {
-  const message = stringField(result, "message");
+async function sendVisibleGoalResult(pi: PiLike, result: CommandResultLike): Promise<void> {
+  const message = typeof result.message === "string" ? result.message : "";
   if (message === "") return;
   await sendGoalMessage(
     pi,
@@ -129,26 +149,25 @@ async function sendGoalContinuation(
   core: CoreBridge,
   ctx: unknown,
   initial: boolean,
-  facts: Record<string, unknown>,
+  facts: Omit<GoalContinuationFacts, "initial" | "latestAssistantStopReason" | "ctx">,
   event: unknown,
 ): Promise<void> {
   if (!extensionRuntimeIsLive(pi) || !contextIsLive(ctx)) return;
-  const plan = coreCallRecord(core, "planGoalContinuation", [initial, facts, event, ctx], "goal continuation plan");
-  const action = stringField(plan, "action");
-  if (action === "none") return;
-  if (action !== "send_goal_continuation") {
-    throw new Error("Invalid Taumel goal continuation plan");
-  }
+  const stopReason = latestAssistantStopReason(event);
+  const plan = decodeGoalContinuationPlan(core.call("planGoalContinuation", [{
+    ...facts, initial, ...(stopReason === "" ? {} : { latestAssistantStopReason: stopReason }), ctx,
+  }]));
+  if (plan.kind === "none") return;
   try {
     if (!extensionRuntimeIsLive(pi) || !contextIsLive(ctx)) return;
     await sendGoalMessage(
       pi,
-      stringField(plan, "customType"),
-      stringField(plan, "content"),
-      plan["display"] === true,
+      plan.customType,
+      plan.content,
+      plan.display,
       {
-        triggerTurn: plan["triggerTurn"] === true,
-        deliverAs: stringField(plan, "deliverAs"),
+        triggerTurn: plan.triggerTurn,
+        deliverAs: plan.deliverAs,
       },
     );
   } catch (error) {
@@ -164,11 +183,12 @@ async function executeGoalCommandSideEffects(
   result: unknown,
   ctx: unknown,
 ): Promise<void> {
-  if (name !== "goal" || !isRecord(result) || result["action"] !== "command_result") {
+  const command = commandResult(result);
+  if (name !== "goal" || command?.action !== "command_result") {
     return;
   }
   const startObjective =
-    typeof result["goalStartObjective"] === "string" ? result["goalStartObjective"] : "";
+    typeof command.goalStartObjective === "string" ? command.goalStartObjective : "";
   if (startObjective !== "") {
     try {
       if (typeof pi.sendUserMessage !== "function") {
@@ -176,15 +196,15 @@ async function executeGoalCommandSideEffects(
       }
       await pi.sendUserMessage(startObjective);
     } catch (error) {
-      if (isRecord(result["goalRollback"])) {
-        coreCallRecord(core, "rollbackGoalCommand", [result["goalRollback"], ctx], "goal command rollback");
+      if (typeof command.goalRollback === "object" && command.goalRollback !== null) {
+        decodeGoalRollbackResult(core.call("rollbackGoalCommand", [{ snapshot: command.goalRollback, ctx }]));
       }
       throw error;
     }
     return;
   }
-  await sendVisibleGoalResult(pi, result);
-  if (result["goalFollowup"] === true) {
+  await sendVisibleGoalResult(pi, command);
+  if (command.goalFollowup === true) {
     await sendGoalContinuation(pi, core, ctx, true, {
       hostIdle: true,
       hasPendingMessages: false,
@@ -194,66 +214,31 @@ async function executeGoalCommandSideEffects(
   }
 }
 
-async function executeSelectionPrompt(
-  core: CoreBridge,
-  prompt: Record<string, unknown>,
-  ctx: unknown,
-  planMethod: string,
-  finishMethod: string,
-  label: string,
-): Promise<unknown> {
-  const finish = (selection: Record<string, unknown>) => {
-    return coreCallRecord(core, finishMethod, [prompt, selection, ctx], `${label} prompt result`);
-  };
-
-  const ui = isRecord(ctx) && isRecord(ctx["ui"]) ? ctx["ui"] : {};
-  const select = ui["select"];
-  const plan = coreCallRecord(core, planMethod, [prompt, {
-    uiAvailable: typeof select === "function",
-  }], `${label} prompt plan`);
-  if (stringField(plan, "action") === "result") {
-    const result = plan["result"];
-    if (!isRecord(result)) throw new Error(`Invalid Taumel ${label} prompt result`);
-    return result;
-  }
-  if (stringField(plan, "action") !== "select" || typeof select !== "function") {
-    throw new Error(`Invalid Taumel ${label} prompt plan`);
-  }
-  const selected = await select.call(ui, stringField(plan, "title"), stringArrayField(plan, "labels"));
-  if (selected === undefined || selected === null) {
-    return finish({ status: "cancelled" });
-  }
-
-  return finish({ status: "selected", selected: String(selected) });
-}
-
 async function executePermissionsPrompt(
   core: CoreBridge,
-  prompt: Record<string, unknown>,
+  rawPrompt: unknown,
   ctx: unknown,
 ): Promise<unknown> {
-  return executeSelectionPrompt(core, prompt, ctx, "planPermissionsPrompt", "finishPermissionsPrompt", "permissions");
-}
+  const prompt = decodePermissionsPrompt(rawPrompt);
+  const finish = (selection: { status: "selected" | "cancelled"; selected?: string }) =>
+    decodePermissionsCommandResult(core.call("finishPermissionsPrompt", [{ prompt, selection, ctx }]));
 
-async function executeAgentsPrompt(
-  core: CoreBridge,
-  prompt: Record<string, unknown>,
-  ctx: unknown,
-): Promise<unknown> {
-  return executeSelectionPrompt(core, prompt, ctx, "planAgentsPrompt", "finishAgentsPrompt", "agents");
-}
-
-async function executeAgentRunsPrompt(
-  core: CoreBridge,
-  prompt: Record<string, unknown>,
-  ctx: unknown,
-): Promise<unknown> {
-  return executeSelectionPrompt(core, prompt, ctx, "planAgentRunsPrompt", "finishAgentRunsPrompt", "agent runs");
+  const rawUi = commandContext(ctx)?.ui;
+  const ui = typeof rawUi === "object" && rawUi !== null ? rawUi as CommandUi : undefined;
+  const select = ui?.select;
+  const plan = decodePermissionsPromptPlan(core.call("planPermissionsPrompt", [{
+    prompt, uiAvailable: typeof select === "function",
+  }]));
+  if (plan.kind === "result") return plan.result;
+  if (typeof select !== "function") throw new Error("Invalid Taumel permissions prompt plan");
+  const selected = await select.call(ui, plan.title, [...plan.labels]);
+  if (selected === undefined || selected === null) return finish({ status: "cancelled" });
+  return finish({ status: "selected", selected: String(selected) });
 }
 
 async function executeCronPrompt(
   core: CoreBridge,
-  prompt: Record<string, unknown>,
+  prompt: Extract<GatewayCommandOutput, { action: "cron_prompt" }>,
   ctx: unknown,
 ): Promise<unknown> {
   return executeCronManager(core, prompt, ctx);
@@ -262,7 +247,7 @@ async function executeCronPrompt(
 async function executeVisibilityPrompt(
   pi: PiLike,
   core: CoreBridge,
-  prompt: Record<string, unknown>,
+  prompt: Extract<GatewayCommandOutput, { action: "visibility_prompt" }>,
   ctx: unknown,
 ): Promise<unknown> {
   return executeVisibilityManager(core, prompt, ctx, (enabledName) => syncActiveTools(pi, core, ctx, enabledName));
@@ -271,30 +256,22 @@ async function executeVisibilityPrompt(
 async function executeCommandAction(
   pi: PiLike,
   core: CoreBridge,
-  result: unknown,
+  result: GatewayCommandOutput,
   ctx: unknown,
 ): Promise<unknown> {
-  if (!isRecord(result)) return result;
-  switch (stringField(result, "action")) {
+  if (!("action" in result)) return result;
+  switch (result.action) {
     case "permissions_prompt":
       return executePermissionsPrompt(core, result, ctx);
-    case "agents_prompt":
-      return executeAgentsPrompt(core, result, ctx);
-    case "agent_runs_prompt":
-      return executeAgentRunsPrompt(core, result, ctx);
     case "cron_prompt":
       return executeCronPrompt(core, result, ctx);
     case "visibility_prompt":
       return executeVisibilityPrompt(pi, core, result, ctx);
     case "visibility_save_project": {
-      const category = stringField(result, "category");
-      if (category !== "agents" && category !== "tools" && category !== "skills") {
-        throw new Error("Invalid Taumel visibility save category");
-      }
-      return saveProjectVisibility(category, stringArrayFromUnknown(result["disabled"]) ?? [], result["details"], ctx);
+      return saveProjectVisibility(result.category, [...result.disabled], result.details, ctx);
     }
     case "openai_usage_fetch":
-      return commandResultFromToolResult(core, await executeOpenAiUsageWithHostAuth(pi, core, result, ctx));
+      return commandResultFromToolResult(core, await executeOpenAiUsageWithHostAuth(pi, core, { ...result }, ctx));
     default:
       return result;
   }
@@ -305,13 +282,13 @@ async function applyChildSessionUpdatesFromCommandResult(
   result: unknown,
   keyScope?: string,
 ): Promise<void> {
-  if (!isRecord(result)) return;
-  const details = isRecord(result["details"]) ? result["details"] : undefined;
-  const updates = Array.isArray(details?.["childSessionUpdates"])
-    ? details["childSessionUpdates"]
+  const rawDetails = commandResult(result)?.details;
+  const details = typeof rawDetails === "object" && rawDetails !== null ? rawDetails as ChildUpdateDetails : undefined;
+  const updates = Array.isArray(details?.childSessionUpdates)
+    ? details.childSessionUpdates
     : [];
   for (const update of updates) {
-    if (isRecord(update)) {
+    if (typeof update === "object" && update !== null) {
       await applyChildSessionUpdate(childSessions, update, undefined, keyScope);
     }
   }
@@ -349,17 +326,17 @@ export async function executeGatewayCommand(
     }
   }
 
-  const callCore = (commandCtx: unknown) => coreCallRecord(core, "handleCommand", [name, args, commandCtx], "command result");
-  const plan = coreCallRecord(core, "planCommandExecution", [name, args, ctx], "command execution plan");
-  if (plan["ok"] !== true) return plan;
+  const callCore = (commandCtx: unknown) =>
+    decodeGatewayCommandOutput(core.call("handleCommand", [{ name, args, ctx: commandCtx }]));
+  const plan = decodeCommandExecutionPlan(core.call("planCommandExecution", [{ name, args, ctx }]));
+  if (plan.kind === "error") return { ok: false, error: plan.message };
 
-  if (stringField(plan, "action") !== "command_child_session") {
+  if (plan.kind === "direct") {
     const result = await executeCommandAction(pi, core, callCore(ctx), ctx);
     applyVisibilityCommandSideEffects(pi, core, result, ctx);
     await applyChildSessionUpdatesFromCommandResult(
       childSessions,
       result,
-      name === "agent-runs" ? childSessionCacheKeyScopeFromContext(ctx) : undefined,
     );
     await executeGoalCommandSideEffects(pi, core, name, result, ctx);
     if (name === "permissions" || name === "sandbox" || name === "approval" || name === "network") {
@@ -368,40 +345,37 @@ export async function executeGatewayCommand(
     return result;
   }
 
-  const contextOverrides = isRecord(plan["contextOverrides"]) ? plan["contextOverrides"] : {};
+  const contextOverrides = Object.fromEntries(plan.contextOverrides.map(({ name, value }) => [name, value]));
   let commandCtx = contextWithOverrides(ctx, contextOverrides);
   const currentActiveToolNames = typeof pi.getActiveTools === "function" ? pi.getActiveTools() : undefined;
-  const childSessionPlan = coreCallRecord(core, "planCommandChildSession", [{
-    plan,
+  const childSessionPlan = decodeCommandChildSessionPlan(core.call("planCommandChildSession", [{
+    metadata: plan.metadata,
+    activeToolsMode: plan.activeToolsMode,
     currentActiveToolsAvailable: currentActiveToolNames !== undefined,
     currentActiveTools: currentActiveToolNames ?? [],
-  }], "command child session plan");
-  if (childSessionPlan["ok"] !== true) return childSessionPlan;
-  const metadata = isRecord(childSessionPlan["metadata"]) ? childSessionPlan["metadata"] : {};
+  }]));
+  const metadata = childSessionPlan.metadata;
   const bridge = await createChildSession(pi, core, ctx, metadata);
 
-  const childContextKey = stringField(plan, "childSessionContextKey");
+  const childContextKey = plan.childSessionContextKey;
   if (childContextKey !== "" && bridge?.sessionId && !bridge.cancelled && !bridge.error) {
     commandCtx = contextWithOverrides(commandCtx, { [childContextKey]: bridge.sessionId });
   }
 
-  const result = callCore(commandCtx);
-  const dispatchPlan = coreCallRecord(core, "planCommandChildDispatch", [{
+  const result = decodeBridgeCommandResult(callCore(commandCtx));
+  const dispatchPlan = decodeCommandChildDispatchPlan(core.call("planCommandChildDispatch", [{
     result,
     bridge: childBridgeFacts(bridge),
-  }], "command child dispatch plan");
-  const plannedResult = dispatchPlan["result"];
-  if (!isRecord(plannedResult)) throw new Error("Invalid Taumel command child dispatch result");
-  if (stringField(dispatchPlan, "action") !== "command_child_dispatch") {
-    return plannedResult;
-  }
+  }]));
+  const plannedResult = dispatchPlan.result;
+  if (dispatchPlan.kind === "return") return plannedResult;
 
-  await applyChildSessionUpdate(childSessions, dispatchPlan["bridgeUpdate"], bridge);
-  const dispatch = await sendToChildSession(pi, core, bridge, stringField(dispatchPlan, "prompt"));
-  const finished = coreCallRecord(core, "finishCommandChildDispatch", [{
+  await applyChildSessionUpdate(childSessions, dispatchPlan.bridgeUpdate, bridge);
+  const dispatch = await sendToChildSession(pi, core, bridge, dispatchPlan.prompt);
+  const finished = decodeBridgeCommandResult(core.call("finishCommandChildDispatch", [{
     result: plannedResult,
     dispatch,
-  }], "command child dispatch result");
+  }]));
   return finished;
 }
 
@@ -412,11 +386,11 @@ export function registerGatewayCommands(
   composer?: ComposerController,
 ): void {
   if (typeof pi.registerCommand !== "function") return;
-  const specs = coreCallRecordArray(core, "commandSpecs", [], "command specs");
+  const { specs } = decodeCommandSpecsResult(core.call("commandSpecs", []));
   for (const spec of specs) {
-    const name = stringField(spec, "name");
+    const name = spec.name;
     pi.registerCommand(name, {
-      description: stringField(spec, "description"),
+      description: spec.description,
       handler: async (_args, ctx) => {
         const result = await executeGatewayCommand(
           pi,
@@ -427,20 +401,23 @@ export function registerGatewayCommands(
           _args,
           ctx,
         );
-        const ui = isRecord(ctx) && isRecord(ctx["ui"]) ? ctx["ui"] : {};
-        const notify = ui["notify"];
-        const notification = coreCallRecord(core, "planCommandNotification", [name, result, {
+        const rawUi = commandContext(ctx)?.ui;
+        const ui = typeof rawUi === "object" && rawUi !== null ? rawUi as CommandUi : undefined;
+        const notify = ui?.notify;
+        const currentResult = commandResult(result);
+        const notification = decodeCommandNotificationPlan(core.call("planCommandNotification", [{
+          commandName: name,
+          ok: currentResult?.ok === true,
+          message: typeof currentResult?.message === "string" ? currentResult.message : "",
+          error: typeof currentResult?.error === "string" ? currentResult.error : "",
           uiAvailable: typeof notify === "function",
-        }], "command notification plan");
-        const action = stringField(notification, "action");
-        if (action === "notify" && typeof notify === "function") {
+        }]));
+        if (notification.kind === "notify" && typeof notify === "function") {
           notify.call(
             ui,
-            stringField(notification, "message"),
-            stringField(notification, "level"),
+            notification.message,
+            notification.level,
           );
-        } else if (action !== "unavailable") {
-          throw new Error("Invalid Taumel command notification plan");
         }
         return result;
       },
@@ -453,8 +430,9 @@ export function installGoalContinuationLoop(pi: PiLike, core: CoreBridge): void 
   let compacting = false;
 
   const observeSessionEvent = (event: unknown) => {
-    if (!isRecord(event)) return;
-    switch (event["type"]) {
+    if (typeof event !== "object" || event === null) return;
+    const lifecycle = event as SessionLifecycleEvent;
+    switch (lifecycle.type) {
       case "auto_retry_start":
         retrying = true;
         break;
@@ -466,7 +444,7 @@ export function installGoalContinuationLoop(pi: PiLike, core: CoreBridge): void 
         break;
       case "compaction_end":
         compacting = false;
-        if (event["willRetry"] === true) retrying = true;
+        if (lifecycle.willRetry === true) retrying = true;
         break;
     }
   };
@@ -486,7 +464,7 @@ export function installGoalContinuationLoop(pi: PiLike, core: CoreBridge): void 
       await sendGoalContinuation(pi, core, ctx, false, {
         hostIdle: hostIdle(ctx),
         hasPendingMessages: hasPendingMessages(ctx),
-        retrying: retrying || (isRecord(event) && event["willRetry"] === true),
+        retrying: retrying || (typeof event === "object" && event !== null && (event as SessionLifecycleEvent).willRetry === true),
         compacting,
       }, event);
     } catch (error) {

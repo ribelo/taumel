@@ -2,7 +2,6 @@ open Jsoo_bridge
 open App_state
 
 type category = Taumel.Visibility.category =
-  | Agents
   | Tools
   | Skills
 
@@ -13,11 +12,9 @@ let effect_kind_label = function
   | Taumel.Tool_gateway.Execute -> "execute"
   | Taumel.Tool_gateway.Mutate -> "mutate"
   | Taumel.Tool_gateway.Network -> "network"
-  | Taumel.Tool_gateway.Spawn_agent -> "spawn agent"
   | Taumel.Tool_gateway.Ask_user -> "ask user"
 
 let category_of_name = function
-  | "agents" -> Some Agents
   | "tools" -> Some Tools
   | "skills" -> Some Skills
   | _ -> None
@@ -25,12 +22,10 @@ let category_of_name = function
 let category_name = Taumel.Visibility.category_key
 
 let category_title = function
-  | Agents -> "Taumel agent profiles"
   | Tools -> "Taumel tools"
   | Skills -> "Taumel skills"
 
 let usage = function
-  | Agents -> "usage: /agents [list|enable <profile>|disable <profile>|save]"
   | Tools -> "usage: /tools [list|enable <tool>|disable <tool>|save]"
   | Skills -> "usage: /skills [list|enable <skill>|disable <skill>|save]"
 
@@ -52,14 +47,8 @@ let skill_items ctx =
          in
          (skill.name, description))
 
-let agent_items () =
-  (!agent_catalog).catalog_profiles
-  |> List.map (fun (profile : Taumel.Agent_profiles.profile_spec) ->
-         (profile.spec_name, profile.spec_description))
-
 let available_items category ctx =
   match category with
-  | Agents -> agent_items ()
   | Tools -> tool_items ()
   | Skills -> skill_items ctx
 
@@ -189,7 +178,7 @@ let set_category category ctx name disabled =
            (String.capitalize_ascii (Taumel.Visibility.category_label category))
            (name ^ if disabled then " disabled" else " enabled"))
 
-let toggle_row category name ctx =
+let toggle_row_for category name ctx =
   Session_sync.sync_persisted_session ctx;
   let name = String.trim name in
   let rows = visibility_rows category ctx in
@@ -211,6 +200,19 @@ let toggle_row category name ctx =
            (String.capitalize_ascii (Taumel.Visibility.category_label category))
            (name ^ if disabling then " disabled" else " enabled"))
 
+let toggle_row raw_facts =
+  let facts = Tool_contracts.VisibilityToggleFacts.t_of_js (ojs_of_js raw_facts) in
+  let category = Tool_contracts.VisibilityToggleFacts.get_category facts |> category_of_name |> Option.get in
+  let name = Tool_contracts.VisibilityToggleFacts.get_name facts in
+  let ctx = Tool_contracts.VisibilityToggleFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
+  let result = toggle_row_for category name ctx in
+  if get_bool result "ok" then
+    Tool_contracts.VisibilityToggleSuccess.t_of_js (ojs_of_js result)
+    |> Tool_contracts.VisibilityToggleSuccess.t_to_js |> inject
+  else
+    Tool_contracts.VisibilityToggleError.t_of_js (ojs_of_js result)
+    |> Tool_contracts.VisibilityToggleError.t_to_js |> inject
+
 let handle category args ctx =
   Session_sync.sync_persisted_session ctx;
   let command, rest = Command_util.split_command args in
@@ -224,26 +226,50 @@ let handle category args ctx =
   | "save" -> save_result category ctx
   | _ -> error_obj (usage category)
 
-let rows category ctx =
+let rows raw_facts =
+  let facts = Tool_contracts.VisibilityRowsFacts.t_of_js (ojs_of_js raw_facts) in
+  let category = Tool_contracts.VisibilityRowsFacts.get_category facts |> category_of_name |> Option.get in
+  let ctx = Tool_contracts.VisibilityRowsFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
   Session_sync.sync_persisted_session ctx;
-  ok_obj
-    [
-      ("action", js_string "visibility_rows");
-      ("category", js_string (category_name category));
-      ("title", js_string (category_title category));
-      ("details", inject (visibility_details category ctx));
-    ]
+  let visible_rows =
+    visibility_rows category ctx
+    |> List.map (fun (row : Taumel.Visibility.row) ->
+           Tool_contracts.VisibilityRow.create ~name:row.name ~state:row.state
+             ~available:row.available ~description:row.description ())
+  in
+  Tool_contracts.VisibilityRowsResult.create ~category:(category_name category)
+    ~title:(category_title category) ~rows:visible_rows
+    ~disabled:(Taumel.Visibility.disabled category !visibility_state)
+    ~unavailable:(unavailable_names category ctx) ()
+  |> Tool_contracts.VisibilityRowsResult.t_to_js |> inject
 
-let warnings facts =
+let category_context_from_facts raw_facts =
+  let facts = Tool_contracts.VisibilityRowsFacts.t_of_js (ojs_of_js raw_facts) in
+  let category = Tool_contracts.VisibilityRowsFacts.get_category facts |> category_of_name |> Option.get in
+  let ctx = Tool_contracts.VisibilityRowsFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
+  (category, ctx)
+
+let save_project_plan raw_facts =
+  let category, ctx = category_context_from_facts raw_facts in
+  Session_sync.sync_persisted_session ctx;
+  save_result category ctx |> ojs_of_js |> Tool_contracts.VisibilitySavePlan.t_of_js
+  |> Tool_contracts.VisibilitySavePlan.t_to_js |> inject
+
+let list_command raw_facts =
+  let category, ctx = category_context_from_facts raw_facts in
+  handle category "list" ctx |> ojs_of_js |> Tool_contracts.VisibilityListResult.t_of_js
+  |> Tool_contracts.VisibilityListResult.t_to_js |> inject
+
+let warnings raw_facts =
+  let facts = Tool_contracts.VisibilityWarningFacts.t_of_js (ojs_of_js raw_facts) in
   let category_available name =
-    let value = Unsafe.get facts name in
-    array_items value |> List.filter_map string_value
+    if name = "tools" then Tool_contracts.VisibilityWarningFacts.get_tools facts
+    else Tool_contracts.VisibilityWarningFacts.get_skills facts
   in
   let categories =
     [
       (Tools, category_available "tools");
       (Skills, category_available "skills");
-      (Agents, category_available "agents");
     ]
   in
   let messages = ref [] in
@@ -258,4 +284,5 @@ let warnings facts =
       | None -> ()
       | Some message -> messages := message :: !messages)
     categories;
-  ok_obj [ ("messages", js_string_array (List.rev !messages)) ]
+  Tool_contracts.VisibilityWarningsResult.create ~messages:(List.rev !messages) ()
+  |> Tool_contracts.VisibilityWarningsResult.t_to_js |> inject

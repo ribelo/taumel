@@ -10,8 +10,6 @@ type update =
   | Set_no_sandbox of bool
   | Allow_tools of string list
   | Deny_all_tools
-  | Allow_agents of string list
-  | Deny_all_agents
 
 type menu_option = {
   label : string;
@@ -57,13 +55,13 @@ let prompt_selection_plan ~ui_available ~title options =
         Prompt_select { title; labels }
 
 let create ?(workspace_roots = []) ?(network_mode = Sandbox.Network_disabled)
-    ?(no_sandbox = false) ?(subagent = false) (profile : Capability_profile.t) =
+    ?(no_sandbox = false) ?(isolated_child = false) (profile : Capability_profile.t) =
   let network_mode =
     match profile.sandbox_preset with
     | Capability_profile.Danger_full_access -> Sandbox.Network_enabled
     | Capability_profile.Read_only | Capability_profile.Workspace_write -> network_mode
   in
-  Sandbox.config_of_profile ~workspace_roots ~network_mode ~no_sandbox ~subagent
+  Sandbox.config_of_profile ~workspace_roots ~network_mode ~no_sandbox ~isolated_child
     profile
   |> Result.map (fun sandbox -> { profile; sandbox })
 
@@ -76,7 +74,7 @@ type active = {
   profile : Capability_profile.t;
   network_mode : Sandbox.network_mode;
   no_sandbox : bool;
-  subagent : bool;
+  isolated_child : bool;
   filesystem_mode : string;
 }
 
@@ -95,34 +93,34 @@ let profile_for_sandbox_preset (profile : Capability_profile.t)
   { profile with Capability_profile.sandbox_preset = sandbox_preset }
 
 let active_state ~(profile : Capability_profile.t) ~network_mode ~no_sandbox
-    ~subagent =
+    ~isolated_child =
   let network_mode = network_for_active_profile profile network_mode in
   {
     profile;
     network_mode;
     no_sandbox;
-    subagent;
+    isolated_child;
     filesystem_mode =
       Capability_profile.sandbox_to_string profile.sandbox_preset;
   }
 
-let default_active_state ~session_subagent =
+let default_active_state ~session_isolated_child =
   active_state
     ~profile:
       (profile_for_sandbox_preset Capability_profile.default
          Capability_profile.Danger_full_access)
     ~network_mode:Sandbox.Network_enabled ~no_sandbox:false
-    ~subagent:session_subagent
+    ~isolated_child:session_isolated_child
 
-let persisted_active_state ~session_subagent permissions =
-  let subagent = session_subagent || permissions.sandbox.subagent in
+let persisted_active_state ~session_isolated_child permissions =
+  let isolated_child = session_isolated_child || permissions.sandbox.isolated_child in
   let profile =
-    if subagent then { permissions.profile with no_sandbox_allowed = false }
+    if isolated_child then { permissions.profile with no_sandbox_allowed = false }
     else permissions.profile
   in
   active_state ~profile ~network_mode:permissions.sandbox.network_mode
-    ~no_sandbox:(if subagent then false else permissions.sandbox.no_sandbox)
-    ~subagent
+    ~no_sandbox:(if isolated_child then false else permissions.sandbox.no_sandbox)
+    ~isolated_child
 
 let apply_flag_overrides ~host_sandbox_preset ~host_network_mode
     ~host_no_sandbox active =
@@ -133,34 +131,34 @@ let apply_flag_overrides ~host_sandbox_preset ~host_network_mode
         active_state
           ~profile:(profile_for_sandbox_preset active.profile sandbox_preset)
           ~network_mode:(network_mode_for_sandbox_preset sandbox_preset)
-          ~no_sandbox:active.no_sandbox ~subagent:active.subagent
+          ~no_sandbox:active.no_sandbox ~isolated_child:active.isolated_child
   in
   let active =
     match host_network_mode with
     | None -> active
     | Some network_mode ->
         active_state ~profile:active.profile ~network_mode
-          ~no_sandbox:active.no_sandbox ~subagent:active.subagent
+          ~no_sandbox:active.no_sandbox ~isolated_child:active.isolated_child
   in
   match host_no_sandbox with
   | None -> active
   | Some requested ->
-      let no_sandbox = (not active.subagent) && requested in
+      let no_sandbox = (not active.isolated_child) && requested in
       active_state
         ~profile:{ active.profile with no_sandbox_allowed = no_sandbox }
-        ~network_mode:active.network_mode ~no_sandbox ~subagent:active.subagent
+        ~network_mode:active.network_mode ~no_sandbox ~isolated_child:active.isolated_child
 
 let resolve_active ~host_sandbox_preset ~host_network_mode ~host_no_sandbox
-    ~session_subagent persisted =
+    ~session_isolated_child persisted =
   let active =
     match persisted with
-    | Missing -> default_active_state ~session_subagent
+    | Missing -> default_active_state ~session_isolated_child
     | Invalid ->
         active_state ~profile:Capability_profile.default
           ~network_mode:Sandbox.Network_disabled ~no_sandbox:false
-          ~subagent:session_subagent
+          ~isolated_child:session_isolated_child
     | Persisted permissions ->
-        persisted_active_state ~session_subagent permissions
+        persisted_active_state ~session_isolated_child permissions
   in
   apply_flag_overrides ~host_sandbox_preset ~host_network_mode ~host_no_sandbox
     active
@@ -174,7 +172,7 @@ let rebuild_sandbox (state : state) =
   in
   Sandbox.config_of_profile ~workspace_roots:state.sandbox.workspace_roots
     ~network_mode ~no_sandbox:state.sandbox.no_sandbox
-    ~subagent:state.sandbox.subagent state.profile
+    ~isolated_child:state.sandbox.isolated_child state.profile
   |> Result.map (fun sandbox -> { state with sandbox })
 
 let apply_update (state : state) = function
@@ -218,18 +216,6 @@ let apply_update (state : state) = function
           state with
           profile = { state.profile with tools = Capability_profile.None_allowed };
         }
-  | Allow_agents agents ->
-      Ok
-        {
-          state with
-          profile = { state.profile with agents = Capability_profile.of_list agents };
-        }
-  | Deny_all_agents ->
-      Ok
-        {
-          state with
-          profile = { state.profile with agents = Capability_profile.None_allowed };
-        }
 
 let network_to_string = function
   | Sandbox.Network_disabled -> "disabled"
@@ -252,17 +238,11 @@ let summary (state : state) =
     | Some [] -> "none"
     | Some values -> String.concat "," values
   in
-  let agents =
-    match Capability_profile.allowlist_names state.profile.agents with
-    | None -> "all"
-    | Some [] -> "none"
-    | Some values -> String.concat "," values
-  in
-  Printf.sprintf "sandbox=%s approval=%s network=%s tools=%s agents=%s no_sandbox=%b subagent=%b"
+  Printf.sprintf "sandbox=%s approval=%s network=%s tools=%s no_sandbox=%b isolated_child=%b"
     (Capability_profile.sandbox_to_string state.profile.sandbox_preset)
     (Capability_profile.approval_to_string state.profile.approval_policy)
     (network_to_string state.sandbox.network_mode)
-    tools agents state.sandbox.no_sandbox state.sandbox.subagent
+    tools state.sandbox.no_sandbox state.sandbox.isolated_child
 
 let sandbox_menu_options (state : state) =
   let option preset label value description =
@@ -331,7 +311,7 @@ let persisted_to_json (state : state) =
       ("profile", Capability_profile.to_json state.profile);
       ("networkMode", Shared.String (network_to_string state.sandbox.network_mode));
       ("noSandbox", Shared.Bool state.sandbox.no_sandbox);
-      ("subagent", Shared.Bool state.sandbox.subagent);
+      ("isolated_child", Shared.Bool state.sandbox.isolated_child);
     ]
 
 let persisted_of_json = function
@@ -350,12 +330,12 @@ let persisted_of_json = function
             | Some (Shared.Bool value) -> value
             | _ -> false
           in
-          let subagent =
-            match List.assoc_opt "subagent" fields with
+          let isolated_child =
+            match List.assoc_opt "isolated_child" fields with
             | Some (Shared.Bool value) -> value
             | _ -> false
           in
-          create ~network_mode ~no_sandbox ~subagent profile
+          create ~network_mode ~no_sandbox ~isolated_child profile
       | None -> Error "permissions state requires profile")
   | _ -> Error "permissions state must be an object"
 
@@ -389,11 +369,9 @@ let parse input =
       | None -> Error ("unknown no-sandbox value: " ^ value))
   | "tools" :: "allow" :: tools -> Ok (Some (Allow_tools tools))
   | [ "tools"; "deny-all" ] -> Ok (Some Deny_all_tools)
-  | "agents" :: "allow" :: agents -> Ok (Some (Allow_agents agents))
-  | [ "agents"; "deny-all" ] -> Ok (Some Deny_all_agents)
   | _ ->
       Error
-        "usage: /permissions [show|sandbox <preset>|approval <policy>|no-sandbox <enabled|disabled>|tools allow <names...>|tools deny-all|agents allow <names...>|agents deny-all]"
+        "usage: /permissions [show|sandbox <preset>|approval <policy>|no-sandbox <enabled|disabled>|tools allow <names...>|tools deny-all]"
 
 (* /permissions configures everything except network access, which now lives in
    the dedicated /network command. The permissive [parse] above still accepts a

@@ -8,6 +8,7 @@
     ]
   },
   "scripts": {
+    "typecheck": "tsc",
     "ocaml:init": "nix develop -c taumel-opam-init",
     "build:ocaml": "nix develop -c sh scripts/build-ocaml.sh",
     "test:ocaml": "nix develop -c sh -c 'node scripts/generate-contract-bindings.mjs && dune runtest'",
@@ -18,10 +19,14 @@
     "smoke:cron-persistence": "bun test/smoke_cron_persistence.mjs",
     "smoke:compaction-model": "bun test/smoke_compaction_model.mjs",
     "smoke:tool-renderers": "bun test/smoke_tool_renderers.mjs",
+    "smoke:exec-notifications": "bun test/smoke_exec_notifications.mjs",
+    "smoke:gateway-registration": "bun test/smoke_gateway_registration.mjs",
+    "smoke:global-settings": "bun test/smoke_global_settings.mjs",
+    "smoke:bridge-contracts": "bun test/smoke_bridge_contracts.mjs",
     "smoke:thinking-shortcuts": "bun test/smoke_thinking_shortcuts.mjs",
     "smoke:util": "bun test/smoke_util.mjs",
-    "smoke:entrypoint": "bun test/smoke_entrypoint.mjs",
-    "gate": "npm run build:ocaml && npm run test:ocaml && npm run smoke:artifact && npm run smoke:tool-contracts && npm run smoke:exa-contracts && npm run smoke:cron-loop && npm run smoke:cron-persistence && npm run smoke:compaction-model && npm run smoke:tool-renderers && npm run smoke:thinking-shortcuts && npm run smoke:util && npm run smoke:entrypoint"
+    "check:typed-boundaries": "node test/check_typed_boundaries.mjs",
+    "gate": "npm run typecheck && npm run check:typed-boundaries && npm run build:ocaml && npm run test:ocaml && npm run smoke:artifact && npm run smoke:tool-contracts && npm run smoke:exa-contracts && npm run smoke:cron-loop && npm run smoke:cron-persistence && npm run smoke:compaction-model && npm run smoke:tool-renderers && npm run smoke:exec-notifications && npm run smoke:gateway-registration && npm run smoke:global-settings && npm run smoke:bridge-contracts && npm run smoke:thinking-shortcuts && npm run smoke:util"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.79.9",

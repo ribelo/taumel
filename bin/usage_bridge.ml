@@ -6,49 +6,50 @@ let account () =
 
 let openai_host_auth () =
   let auth = Taumel.Usage.openai_host_auth in
-  Unsafe.obj
-    [|
-      ("providerKey", js_string auth.provider_key);
-      ("credentialKey", js_string auth.credential_key);
-      ("source", js_string auth.source);
-    |]
+  let result =
+    Tool_contracts.OpenAiUsageHostAuth.create ~providerKey:auth.provider_key
+      ~credentialKey:auth.credential_key ~source:auth.source ()
+  in
+  Tool_contracts.OpenAiUsageHostAuth.t_to_js result |> inject
 
 let optional_js_field obj name =
   optional_field obj name
 
 let openai_host_params params =
+  let params =
+    Tool_contracts.OpenAiUsageHostLookupFacts.t_of_js (ojs_of_js params)
+  in
   let lookup =
     Taumel.Usage.token_lookup_from_host
-      ~error:(get_string params "tokenError")
-      (get_string params "token")
+      ~error:(Option.value
+        (Tool_contracts.OpenAiUsageHostLookupFacts.get_tokenError params)
+        ~default:"")
+      (Option.value (Tool_contracts.OpenAiUsageHostLookupFacts.get_token params)
+         ~default:"")
   in
-  let token_fields =
-    match lookup with
-    | Taumel.Usage.Token_lookup_present token ->
-        [ ("tokenState", js_string "present"); ("token", js_string token) ]
-    | Taumel.Usage.Token_lookup_missing -> [ ("tokenState", js_string "missing") ]
-    | Taumel.Usage.Token_lookup_error message ->
-        [
-          ("tokenState", js_string "error");
-          ( "tokenError",
-            js_string
-              (Option.value (Taumel.Shared.trim_non_empty message)
-                 ~default:Taumel.Usage.token_lookup_error_default) );
-        ]
+  let apiKeyPresent =
+    Tool_contracts.OpenAiUsageHostLookupFacts.get_apiKeyPresent params
   in
-  let credential_fields =
-    match optional_js_field params "credential" with
-    | None -> []
-    | Some credential -> [ ("credential", inject credential) ]
+  let credential =
+    Tool_contracts.OpenAiUsageHostLookupFacts.get_credential params
   in
-  ok_obj
-    [
-      ( "params",
-        Unsafe.obj
-          (Array.of_list
-             ([ ("apiKeyPresent", js_bool (get_bool params "apiKeyPresent")) ]
-             @ credential_fields @ token_fields)) );
-    ]
+  match lookup with
+  | Taumel.Usage.Token_lookup_present token ->
+      Tool_contracts.OpenAiUsageHostParamsPresent.create ~apiKeyPresent
+        ?credential ~tokenState:"present" ~token ()
+      |> Tool_contracts.OpenAiUsageHostParamsPresent.t_to_js |> inject
+  | Taumel.Usage.Token_lookup_missing ->
+      Tool_contracts.OpenAiUsageHostParamsMissing.create ~apiKeyPresent
+        ?credential ~tokenState:"missing" ()
+      |> Tool_contracts.OpenAiUsageHostParamsMissing.t_to_js |> inject
+  | Taumel.Usage.Token_lookup_error message ->
+      let tokenError =
+        Option.value (Taumel.Shared.trim_non_empty message)
+          ~default:Taumel.Usage.token_lookup_error_default
+      in
+      Tool_contracts.OpenAiUsageHostParamsError.create ~apiKeyPresent
+        ?credential ~tokenState:"error" ~tokenError ()
+      |> Tool_contracts.OpenAiUsageHostParamsError.t_to_js |> inject
 
 let optional_bool params name default =
   if has_property params name then get_bool params name else default
@@ -173,12 +174,10 @@ let host_result params =
   result_from_fetch_state params fetch_state
 
 let normalized_tool_result result =
-  ok_obj
-    [
-      ("action", js_string "tool_result");
-      ("text", js_string (Taumel.Usage.render result.Taumel.Usage.account));
-      ("details", json_to_js (Taumel.Usage.result_details result));
-    ]
+  Tool_contracts.BridgeToolResult.create ~ok:true ~action:"tool_result"
+    ~text:(Taumel.Usage.render result.Taumel.Usage.account)
+    ~details:(Ts2ocaml.unknown_of_js (ojs_of_js (json_to_js (Taumel.Usage.result_details result)))) ()
+  |> Tool_contracts.BridgeToolResult.t_to_js |> inject
 
 let execute_openai_effect params =
   let token = String.trim (get_string params "token") in

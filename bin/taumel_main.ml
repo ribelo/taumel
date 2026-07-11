@@ -22,46 +22,44 @@ let core_call name_js args_js =
   | "toolPolicyNames" -> Tool_catalog_bridge.tool_policy_names_js ()
   | "allowedToolNames" -> Tool_catalog_bridge.allowed_tool_names_js ()
   | "commandSpecs" -> Tool_catalog_bridge.command_specs_js ()
-  | "planActiveToolsSync" ->
-      Tool_catalog_bridge.plan_active_tools_sync_js (arg 0) (arg 1)
+   | "planActiveToolsSync" -> Tool_catalog_bridge.plan_active_tools_sync_js (arg 0)
   | "planEnvironmentContext" ->
       Environment_context_bridge.plan_context (arg 0) (arg 1)
   | "resolveSkillMentions" -> Skill_tools.resolve_mentions (arg 0)
   | "listSkills" -> Skill_tools.list_skills (arg 0)
-  | "planCompactionModelCommand" ->
-      Compaction_model_bridge.plan_command (string_arg args 0) (arg 1)
+   | "planCompactionModelCommand" ->
+       Compaction_model_bridge.plan_command (arg 0)
   | "planSessionBeforeCompact" ->
-      Compaction_model_bridge.plan_session_before_compact (arg 0) (arg 1)
+       Compaction_model_bridge.plan_session_before_compact (arg 0)
   | "refreshExecPolicy" -> Exec_policy_bridge.compile_settings (arg 0)
-  | "appendExecPolicyAllowRule" ->
-      Exec_policy_bridge.append_allow_rule (get_string_array (arg 0) "tokens")
+   | "appendExecPolicyAllowRule" ->
+       Exec_policy_bridge.append_allow_rule (arg 0)
   | "sandboxMetadataDirNames" -> Sandbox_bridge.sandbox_metadata_dir_names ()
   | "validateWorkspaceMutationPaths" ->
       Sandbox_bridge.validate_workspace_mutation_paths (arg 0)
   | "sandboxHostPathPlan" -> Sandbox_bridge.sandbox_host_path_plan (arg 0)
-  | "planChildSessionStart" ->
-      Child_session_bridge.plan_child_session_start (arg 0) (arg 1)
+   | "planChildSessionStart" -> Child_session_bridge.plan_child_session_start (arg 0)
   | "planChildDispatch" -> Child_session_bridge.plan_child_dispatch (arg 0)
-  | "prepareTool" -> Tool_dispatch.prepare (string_arg args 0) (arg 1) (arg 2)
-  | "applyPatchToFiles" ->
-      Mutation_tools.apply_patch_to_files (arg 0) (arg 1) (arg 2) (arg 3)
-  | "applyEditToFile" -> Mutation_tools.apply_edit_to_file (arg 0) (string_arg args 1)
+  | "prepareTool" -> Tool_dispatch.prepare (arg 0)
+   | "applyPatchToFiles" ->
+       Mutation_tools.apply_patch_to_files (arg 0)
+   | "applyEditToFile" -> Mutation_tools.apply_edit_to_file (arg 0)
   | "planExecHostCall" ->
       Sandbox_bridge.plan_exec_host_call (arg 0) (arg 1) (arg 2) (arg 3)
   | "formatExecResult" ->
       Sandbox_bridge.format_exec_result (arg 0) (arg 1) (arg 2) (arg 3)
-  | "planExecApprovalPrompt" ->
-      Sandbox_bridge.plan_exec_approval_prompt (arg 0) (arg 1)
+   | "planExecApprovalPrompt" ->
+       Sandbox_bridge.plan_exec_approval_prompt (arg 0)
   | "finishExecApproval" -> Sandbox_bridge.finish_exec_approval (arg 0)
   | "planWriteStdinHostCall" ->
       Sandbox_bridge.plan_write_stdin_host_call (arg 0) (arg 1)
   | "runExecCommand" ->
       Exec_session.run_exec_command (arg 0) (arg 1) (arg 2)
         (string_arg args 3) (arg 4) (arg 5)
-  | "writeExecStdin" ->
-      Exec_session.write_stdin (arg 0) (string_arg args 1) (arg 2)
-  | "readFile" -> Read_tool.read_file (arg 0) (arg 1)
-  | "viewMedia" -> View_media_tool.view_media (arg 0) (arg 1)
+   | "writeExecStdin" ->
+       Exec_session.write_stdin (arg 0)
+   | "readFile" -> Read_tool.read_file (arg 0)
+   | "viewMedia" -> View_media_tool.view_media (arg 0)
   | "shutdownExecOwner" -> Exec_session.shutdown_owner (string_arg args 0)
   | "pendingExecNotifications" ->
       Exec_session.pending_exec_notifications (string_arg args 0)
@@ -74,16 +72,18 @@ let core_call name_js args_js =
       Exec_session.mark_exec_notification_delivered (int_arg args 0)
   | "awaitExecCompletion" ->
       Exec_session.await_exec_completion (int_arg args 0)
-  | "planCommandExecution" ->
-      Command_bridge.plan_execution (string_arg args 0) (string_arg args 1) (arg 2)
-  | "planGoalContinuation" ->
-      Goal_tools.plan_continuation (bool_arg args 0) (arg 1) (arg 2) (arg 3)
-  | "rollbackGoalCommand" -> Goal_tools.rollback_goal_command (arg 0) (arg 1)
-  | "cronPoll" -> Cron_tools.poll (arg 0) (arg 1)
-  | "cronDelivered" -> Cron_tools.delivered (arg 0) (arg 1)
+   | "planCommandExecution" ->
+       Command_bridge.plan_execution (arg 0)
+   | "planGoalContinuation" ->
+       Goal_tools.plan_continuation (arg 0)
+   | "rollbackGoalCommand" -> Goal_tools.rollback_goal_command (arg 0)
+   | "cronPoll" -> Cron_tools.poll (arg 0)
+   | "cronDelivered" -> Cron_tools.delivered (arg 0)
   | "cronGoalFacts" -> Cron_tools.goal_facts (arg 0)
-  | "cronStartup" -> Cron_tools.startup (arg 0) (arg 1)
-  | "cronUpdateTask" -> Cron_tools.update_task (arg 0) (arg 1)
+  | "createCronGoal" -> Goal_tools.create_from_cron (arg 0)
+   | "cronStartup" -> Cron_tools.startup (arg 0)
+  | "cronUpdateTask" -> Cron_tools.update_task (arg 0)
+  | "handleCronManagerCommand" -> Cron_tools.handle_manager_command (arg 0)
   | "refreshFooterState" -> Footer_runtime.refresh_state (arg 0)
   | "planChildGoalContinuation" ->
       Goal_tools.plan_child_goal_continuation (arg 0)
@@ -105,66 +105,33 @@ let core_call name_js args_js =
   | "planCommandChildSession" -> Command_bridge.plan_child_session (arg 0)
   | "planCommandChildDispatch" -> Command_bridge.plan_child_dispatch (arg 0)
   | "finishCommandChildDispatch" -> Command_bridge.finish_child_dispatch (arg 0)
-  | "planAgentSpawn" -> Agent_tools.plan_spawn (arg 0)
-  | "finishAgentAction" -> Agent_tools.finish_action (arg 0) (arg 1)
-  | "recordAgentDispatchCompletion" ->
-      Agent_tools.record_dispatch_completion (arg 0) (arg 1)
-  | "recordAgentBackgroundNotification" ->
-      Agent_tools.record_background_notification (arg 0) (arg 1)
-  | "pendingAgentNotifications" ->
-      Agent_tools.pending_agent_notifications (arg 0)
-  | "countActiveChildRuns" ->
-      Agent_tools.count_active_child_runs (arg 0)
-  | "recordAgentChildSessionStart" ->
-      Agent_tools.record_child_session_start (arg 0) (arg 1)
-  | "recordAgentActiveToolsSnapshot" ->
-      Agent_tools.record_active_tools_snapshot (arg 0) (arg 1)
-  | "planAgentBridgeUpdate" -> Agent_tools.plan_bridge_update (arg 0)
-  | "refreshAgentProfileCatalog" -> Agent_tools.refresh_profile_catalog (arg 0)
-  | "handleCommand" ->
-      Command_bridge.handle (string_arg args 0) (string_arg args 1) (arg 2)
-  | "handleComposerCommand" -> Composer_commands.handle (string_arg args 0) (arg 1)
-  | "planCommandNotification" ->
-      Tool_catalog_bridge.plan_command_notification (Unsafe.coerce (arg 0)) (arg 1)
-        (arg 2)
-  | "visibilityRows" -> (
-      match Visibility_commands.category_of_name (string_arg args 0) with
-      | None -> error_obj "unknown visibility category"
-      | Some category -> Visibility_commands.rows category (arg 1))
-  | "toggleVisibilityRow" -> (
-      match Visibility_commands.category_of_name (string_arg args 0) with
-      | None -> error_obj "unknown visibility category"
-      | Some category ->
-          Visibility_commands.toggle_row category (string_arg args 1) (arg 2))
+  | "handleCommand" -> Command_bridge.handle (arg 0)
+  | "handleComposerCommand" -> Composer_commands.handle (arg 0)
+   | "planCommandNotification" ->
+       Tool_catalog_bridge.plan_command_notification (arg 0)
+   | "visibilityRows" -> Visibility_commands.rows (arg 0)
+   | "visibilitySaveProjectPlan" -> Visibility_commands.save_project_plan (arg 0)
+   | "visibilityListCommand" -> Visibility_commands.list_command (arg 0)
+   | "toggleVisibilityRow" -> Visibility_commands.toggle_row (arg 0)
   | "visibilityWarnings" -> Visibility_commands.warnings (arg 0)
   | "reloadSessionState" ->
-      Session_sync.clear_retained_agent_outputs_for_session
-        (Session_store.session_id_from_ctx (arg 0));
       Session_sync.load_session_state (arg 0);
       App_state.loaded_session_id := Some (Session_store.session_id_from_ctx (arg 0));
       ok_obj []
-  | "clearRetainedAgentOutputsForSession" ->
-      Session_sync.clear_retained_agent_outputs_for_session (string_arg args 0);
-      ok_obj []
-  | "planAgentsPrompt" -> Agent_tools.plan_agents_prompt (arg 0) (arg 1)
-  | "finishAgentsPrompt" -> Agent_tools.finish_agents_prompt (arg 0) (arg 1) (arg 2)
-  | "planAgentRunsPrompt" -> Agent_tools.plan_agent_runs_prompt (arg 0) (arg 1)
-  | "finishAgentRunsPrompt" -> Agent_tools.finish_agent_runs_prompt (arg 0) (arg 1) (arg 2)
-  | "planCronPrompt" -> Cron_tools.plan_prompt (arg 0) (arg 1)
+   | "planCronPrompt" -> Cron_tools.plan_prompt (arg 0)
   | "finishCronPrompt" -> Cron_tools.finish_prompt (arg 0) (arg 1) (arg 2)
-  | "planPermissionsPrompt" -> Permissions_commands.plan_prompt (arg 0) (arg 1)
+   | "planPermissionsPrompt" -> Permissions_commands.plan_prompt (arg 0)
   | "finishPermissionsPrompt" ->
-      Permissions_commands.finish_prompt (arg 0) (arg 1) (arg 2)
+       Permissions_commands.finish_prompt (arg 0)
   | "toolResultEnvelope" -> tool_result_envelope (arg 0)
   | "hostToolResult" -> host_tool_result (arg 0)
   | "toolResultToCommandResult" -> tool_result_to_command_result (arg 0)
-  | "runThreadTool" -> Thread_bridge.run (string_arg args 0) (arg 1) (arg 2) (arg 3)
+   | "runThreadTool" -> Thread_bridge.run (arg 0)
   | "planThreadCatalogScans" -> Thread_bridge.plan_catalog_scans (arg 0)
-  | "currentThreadSource" -> Thread_bridge.current_source (arg 0)
   | "openAiUsageHostAuth" -> Usage_bridge.openai_host_auth ()
   | "openAiUsageHostParams" -> Usage_bridge.openai_host_params (arg 0)
   | "executeOpenAiUsage" -> Usage_bridge.execute_openai (arg 0) (arg 1)
-  | "executeExa" -> Exa_bridge.execute (arg 0) (arg 1)
+   | "executeExa" -> Exa_bridge.execute (arg 0)
   | other -> failwith ("unknown Taumel core method: " ^ other)
 
 let () =

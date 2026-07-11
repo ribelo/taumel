@@ -172,7 +172,9 @@ let explicit_prompt_or_forbidden cmd =
           || rule.decision = Taumel.Exec_policy.Forbidden)
         check.matched_rules
 
-let append_allow_rule tokens =
+let append_allow_rule raw_facts =
+  let facts = Tool_contracts.ExecPolicyAllowRuleFacts.t_of_js (ojs_of_js raw_facts) in
+  let tokens = Tool_contracts.ExecPolicyAllowRuleFacts.get_tokens facts in
   let raw_rule =
     Taumel.Exec_policy.{
       raw_id = None;
@@ -191,7 +193,9 @@ let append_allow_rule tokens =
       scopes = List.sort_uniq String.compare (existing.scopes @ [ "global" ]);
       errors = existing.errors @ appended.errors;
     };
-  ok_obj [ ("activeRuleCount", js_number (float_of_int (Taumel.Exec_policy.active_rule_count !exec_policy))) ]
+  Tool_contracts.ExecPolicyAllowRuleResult.create
+    ~activeRuleCount:(float_of_int (Taumel.Exec_policy.active_rule_count !exec_policy)) ()
+  |> Tool_contracts.ExecPolicyAllowRuleResult.t_to_js |> inject
 
 let js_decision decision = js_string (Taumel.Exec_policy.decision_to_string decision)
 
@@ -338,12 +342,18 @@ let scope_rules_from_js obj =
     | Some _ -> Error "execPolicy.rules must be an array"
 
 let compile_settings settings =
+  let settings =
+    Tool_contracts.RefreshExecPolicyFacts.t_of_js (ojs_of_js settings)
+  in
   let scopes, scope_errors =
-    get_object_array settings "scopes"
+    Tool_contracts.RefreshExecPolicyFacts.get_scopes settings
     |> List.fold_left
          (fun (scopes, errors) scope ->
-           let name = get_string scope "scope" in
-           let policy = Unsafe.get scope "execPolicy" in
+           let name = Tool_contracts.ExecPolicyScope.get_scope scope in
+           let policy =
+             Tool_contracts.ExecPolicyScope.get_execPolicy scope
+             |> Ts2ocaml.unknown_to_js |> Obj.magic
+           in
            match scope_rules_from_js policy with
            | Ok rules -> ((name, rules) :: scopes, errors)
            | Error message ->
@@ -355,9 +365,13 @@ let compile_settings settings =
   let compiled = { compiled with errors = List.rev_append scope_errors compiled.errors } in
   exec_policy := compiled;
   let errors = compiled.errors in
-  ok_obj
-    [
-      ("activeRuleCount", js_number (float_of_int (Taumel.Exec_policy.active_rule_count compiled)));
-      ("scopes", js_array (List.map js_string (Taumel.Exec_policy.contributing_scopes compiled)));
-      ("errors", js_array (List.map (fun (error : Taumel.Exec_policy.compile_error) -> js_string (error.scope ^ ": " ^ error.message)) errors));
-    ]
+  let result =
+    Tool_contracts.RefreshExecPolicyResult.create ~ok:true
+      ~activeRuleCount:(float_of_int (Taumel.Exec_policy.active_rule_count compiled))
+      ~scopes:(Taumel.Exec_policy.contributing_scopes compiled)
+      ~errors:(List.map
+        (fun (error : Taumel.Exec_policy.compile_error) ->
+          error.scope ^ ": " ^ error.message)
+        errors) ()
+  in
+  Tool_contracts.RefreshExecPolicyResult.t_to_js result |> inject

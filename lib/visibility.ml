@@ -1,10 +1,8 @@
 type category =
-  | Agents
   | Tools
   | Skills
 
 type t = {
-  agents_disabled : string list;
   tools_disabled : string list;
   skills_disabled : string list;
 }
@@ -17,40 +15,34 @@ type row = {
 }
 
 type warning_flags = {
-  agents_warned : bool;
   tools_warned : bool;
   skills_warned : bool;
 }
 
-let empty = { agents_disabled = []; tools_disabled = []; skills_disabled = [] }
+let empty = { tools_disabled = []; skills_disabled = [] }
 
 let empty_warning_flags =
-  { agents_warned = false; tools_warned = false; skills_warned = false }
+  { tools_warned = false; skills_warned = false }
 
 let category_key = function
-  | Agents -> "agents"
   | Tools -> "tools"
   | Skills -> "skills"
 
 let category_label = function
-  | Agents -> "agent profile"
   | Tools -> "tool"
   | Skills -> "skill"
 
 let category_plural = function
-  | Agents -> "agent profiles"
   | Tools -> "tools"
   | Skills -> "skills"
 
 let disabled category state =
   match category with
-  | Agents -> state.agents_disabled
   | Tools -> state.tools_disabled
   | Skills -> state.skills_disabled
 
 let with_disabled category values state =
   match category with
-  | Agents -> { state with agents_disabled = values }
   | Tools -> { state with tools_disabled = values }
   | Skills -> { state with skills_disabled = values }
 
@@ -75,7 +67,6 @@ let encode state =
   Shared.Object
     [
       ("version", Shared.Number 1.);
-      ("agents", category_json state.agents_disabled);
       ("tools", category_json state.tools_disabled);
       ("skills", category_json state.skills_disabled);
     ]
@@ -102,21 +93,11 @@ let decode_category path fields name =
 let decode json =
   let ( let* ) = Result.bind in
   let* fields = Shared.json_object_fields "taumel.visibility" json in
-  let* agents_disabled = decode_category "taumel.visibility" fields "agents" in
   let* tools_disabled = decode_category "taumel.visibility" fields "tools" in
   let* skills_disabled = decode_category "taumel.visibility" fields "skills" in
-  Ok { agents_disabled; tools_disabled; skills_disabled }
+  Ok { tools_disabled; skills_disabled }
 
 let codec = { Shared.encode; decode }
-
-let enabled_from_legacy_profile_toggles toggles =
-  toggles
-  |> List.filter_map (fun (toggle : Agent_runs.profile_toggle) ->
-         if toggle.toggle_enabled then None else Some toggle.toggle_profile)
-  |> normalize_list
-
-let of_legacy_agents_state (state : Agent_runs.session_state) =
-  { empty with agents_disabled = enabled_from_legacy_profile_toggles state.profile_toggles }
 
 let is_disabled state category name =
   List.mem (normalize_name name) (disabled category state)
@@ -170,7 +151,6 @@ let unavailable_warning state category ~available =
 let maybe_warn_once state flags category ~available =
   let already =
     match category with
-    | Agents -> flags.agents_warned
     | Tools -> flags.tools_warned
     | Skills -> flags.skills_warned
   in
@@ -178,7 +158,6 @@ let maybe_warn_once state flags category ~available =
   else
     let flags =
       match category with
-      | Agents -> { flags with agents_warned = true }
       | Tools -> { flags with tools_warned = true }
       | Skills -> { flags with skills_warned = true }
     in

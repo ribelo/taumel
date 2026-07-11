@@ -72,10 +72,10 @@ let register_handlers host =
             with
             | None -> ()
             | Some snapshot ->
-                let subagent =
-                  Session_sync.persisted_session_snapshot_is_subagent snapshot
+                let isolated_child =
+                  Session_sync.persisted_session_snapshot_is_isolated_child snapshot
                 in
-                if install_footer && not subagent then install host ctx;
+                if install_footer && not isolated_child then install host ctx;
                 ensure_refresh_loop host;
                 emit_changed host))
   in

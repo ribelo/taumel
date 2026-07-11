@@ -22,7 +22,6 @@ unusable.
 ### Tool and domain
 
 - **threads-tl01** (ubiquitous): The system shall provide exactly the thread tools `query_threads` and `read_thread`, with no deprecated aliases or legacy thread-search tool names.
-- **threads-tl02** (unwanted): The system shall remove `find_thread` from tool contracts, catalogs, renderers, capability profiles, subagent tool rewriting, tests, and prompts. Any intended old `find_thread` permission shall become `query_threads`; no compatibility mapping shall remain.
 - **threads-tl03** (unwanted): The system shall not provide compatibility shims for removed or legacy thread parameters. `read_thread` shall accept `threadID`, not `thread_id` or `id`, and shall not accept the removed `goal` parameter.
 - **threads-dm01** (ubiquitous): The system shall use `thread` as the user- and model-facing domain word for recovered conversation context; Pi sessions, session files, JSONL lines, and filesystem paths are storage/adapter details exposed only as recovery metadata when useful.
 - **threads-dm02** (event-driven): When deriving `threadID` for a persisted Pi JSONL session, the system shall use the session record `id` when present and shall fall back to the filename stem only when no usable session id exists.
@@ -43,7 +42,6 @@ unusable.
 - **threads-se21** (ubiquitous): `includeTools = false` shall suppress only tool calls, tool results, and Taumel notifications. It shall not suppress visible user/assistant messages or branch, compaction, and goal summaries.
 - **threads-se08** (ubiquitous): The `query_threads` `limit` shall default to 10 and cap at 50. Each returned thread shall include at most 3 top hits by default.
 - **threads-se24** (unwanted): The v1 thread tools shall not expose configurable snippet or transcript byte/line budgets. The only query/read knobs shall be `limit`, `around`, `scope`, `includeTools`, `mode`, and `cursor`.
-- **threads-se09** (ubiquitous): While `includeTools` is true, `query_threads` shall search tool calls, tool results, and Taumel notifications by default, including `exec_command`, `write_stdin`, `agent_wait`, `agent_spawn`, and completion notifications. Tool-result matches shall return only bounded visible snippets, never the full embedded result blob.
 - **threads-se10** (ubiquitous): The thread tools shall use persisted thread sources as their data source. They shall not merge live in-memory session branch/entry state into `query_threads` or `read_thread`; a current thread is searchable only through its persisted JSONL/session representation.
 - **threads-se11** (ubiquitous): The thread tools shall discover sources only from configured/current workspace Pi/Taumel session roots and the user's Pi session roots. They shall not accept arbitrary filesystem paths or directories as query inputs.
 - **threads-se12** (event-driven): When `query_threads` runs with `scope = current_workspace`, the system shall include a persisted thread if its recorded `cwd`/workspace matches the current workspace, or if the source path is under the current workspace's configured session root when recorded workspace metadata is absent or incomplete.
@@ -94,4 +92,3 @@ unusable.
 - **threads-vf04** (ubiquitous): Tests shall cover `read_thread` `overview`, `window`, and `full` modes, including budgets and no raw JSON output.
 - **threads-vf05** (ubiquitous): Tests shall verify a locator returned by `query_threads` can be passed directly to `read_thread`.
 - **threads-vf06** (event-driven): Tests shall verify invalid JSONL entries become bounded diagnostics and do not fail the whole query.
-- **threads-vf07** (unwanted): Tests shall verify no tool catalog, capability, renderer, prompt, or subagent rewriting reference to `find_thread` remains.

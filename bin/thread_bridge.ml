@@ -107,34 +107,24 @@ let prepare_read params =
             @ locator_fields))
 
 let js_catalog_scan (scan : Taumel.Thread_tools.catalog_scan) =
-  Unsafe.obj
-    [|
-      ("root", js_string scan.root);
-      ("maxDepth", js_number (float_of_int scan.max_depth));
-      ("maxFiles", js_number (float_of_int scan.max_files));
-      ("suffix", js_string scan.suffix);
-    |]
+  Tool_contracts.ThreadCatalogScan.create ~root:scan.root
+    ~maxDepth:(float_of_int scan.max_depth) ~maxFiles:(float_of_int scan.max_files)
+    ~suffix:scan.suffix ()
 
 let plan_catalog_scans facts =
+  let facts = Tool_contracts.ThreadCatalogFacts.t_of_js (ojs_of_js facts) in
   let override =
-    Option.bind (optional_string_field facts "override") Taumel.Shared.trim_non_empty
+    Option.bind (Tool_contracts.ThreadCatalogFacts.get_override facts)
+      Taumel.Shared.trim_non_empty
   in
-  Taumel.Thread_tools.catalog_scans ?override
-    ~cwd:(get_string facts "cwd")
-    ~home:(get_string facts "home") ()
-  |> List.map js_catalog_scan |> js_array
-
-let json_field_or_empty_array obj name =
-  if not (has_property obj name) then Taumel.Shared.Array []
-  else match json_from_js (Unsafe.get obj name) with Ok json -> json | Error _ -> Array []
-
-let current_source facts =
-  Taumel.Thread_tools.current_source_json
-    ~cwd:(get_string facts "cwd")
-    ~session_id:(get_string facts "sessionId")
-    ~branch:(json_field_or_empty_array facts "branch")
-    ~entries:(json_field_or_empty_array facts "entries")
-  |> json_to_js
+  let scans =
+    Taumel.Thread_tools.catalog_scans ?override
+      ~cwd:(Tool_contracts.ThreadCatalogFacts.get_cwd facts)
+      ~home:(Tool_contracts.ThreadCatalogFacts.get_home facts) ()
+    |> List.map js_catalog_scan
+  in
+  let result = Tool_contracts.ThreadCatalogScansResult.create ~scans () in
+  Tool_contracts.ThreadCatalogScansResult.t_to_js result |> inject
 
 let catalog_from_js catalog =
   array_items catalog
@@ -279,7 +269,12 @@ let run_read params catalog =
                  |]) );
         ]
 
-let run name params catalog ctx =
+let run raw_facts =
+  let facts = Tool_contracts.ThreadToolFacts.t_of_js (ojs_of_js raw_facts) in
+  let name = Tool_contracts.ThreadToolFacts.get_name facts in
+  let params = Tool_contracts.ThreadToolFacts.get_params facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
+  let catalog = Tool_contracts.ThreadToolFacts.get_catalog facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
+  let ctx = Tool_contracts.ThreadToolFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
   Session_sync.sync_session_from_host ~scope:"thread tool run" ctx;
   let result =
     match name with

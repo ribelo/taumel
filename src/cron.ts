@@ -1,5 +1,14 @@
 import type { CoreBridge, PiLike } from "./types.ts";
-import { contextIsLive, coreCallOptionalRecord, extensionRuntimeIsLive, isRecord, isStaleContextError, stringField } from "./util.ts";
+import { contextIsLive, extensionRuntimeIsLive, isStaleContextError } from "./util.ts";
+import { decodeCronDeliveredResult, decodeCronGoalCreationResult, decodeCronGoalFacts, decodeCronPollPlan, decodeCronStartupPlan, type CronPollPlan } from "./bridge-contracts.ts";
+
+type CronMessageDetails = {
+  readonly id: string; readonly cron: string; readonly schedule: string;
+  readonly coalesced: number; readonly prompt: string; readonly goalCreated?: boolean;
+};
+type CronUi = { notify: (message: string, level: "warning") => unknown };
+type CronContext = { ui?: unknown };
+type SessionStartEvent = { reason?: unknown };
 
 function canSend(pi: PiLike): boolean {
   return typeof pi.sendMessage === "function";
@@ -10,7 +19,7 @@ async function sendCronMessage(
   content: string,
   deliveryKind: "trigger" | "steer",
   coalesced: number,
-  details: Record<string, unknown> = {},
+  details?: CronMessageDetails,
 ): Promise<boolean> {
   const prefix = coalesced > 1 ? `[cron: ${coalesced} coalesced fires]\n` : "[cron]\n";
   const options = deliveryKind === "trigger" ? { triggerTurn: true } : { deliverAs: "steer" };
@@ -19,7 +28,7 @@ async function sendCronMessage(
       customType: "taumel.cron.fire",
       content: `${prefix}${content}`,
       display: true,
-      details,
+      ...(details === undefined ? {} : { details }),
     }, options);
     return true;
   }
@@ -29,18 +38,18 @@ async function sendCronMessage(
 async function deliverCron(
   pi: PiLike,
   core: CoreBridge,
-  delivery: Record<string, unknown>,
+  delivery: Extract<CronPollPlan, { kind: "deliver" }>,
   ctx: unknown,
   deliveryKind: "trigger" | "steer",
 ): Promise<boolean> {
   if (!extensionRuntimeIsLive(pi) || !contextIsLive(ctx)) return false;
-  const mode = stringField(delivery, "mode");
-  const content = stringField(delivery, "content");
-  const coalesced = typeof delivery["coalesced"] === "number" ? delivery["coalesced"] as number : 1;
-  const cronDetails: Record<string, unknown> = {
-    id: stringField(delivery, "id"),
-    cron: stringField(delivery, "cron"),
-    schedule: typeof delivery["schedule"] === "string" ? delivery["schedule"] : "",
+  const mode = delivery.mode;
+  const content = delivery.content;
+  const coalesced = delivery.coalesced;
+  const cronDetails: CronMessageDetails = {
+    id: delivery.id,
+    cron: delivery.cron,
+    schedule: delivery.schedule,
     coalesced,
     prompt: content,
   };
@@ -49,8 +58,8 @@ async function deliverCron(
   }
 
   const objective = coalesced > 1 ? `[cron: ${coalesced} coalesced fires]\n${content}` : content;
-  const result = coreCallOptionalRecord(core, "prepareTool", ["create_goal", { objective }, ctx]);
-  if (result === undefined || result["ok"] !== true) {
+  const result = decodeCronGoalCreationResult(core.call("createCronGoal", [{ objective, ctx }]));
+  if (!result.created) {
     return await sendCronMessage(pi, content, deliveryKind, coalesced, cronDetails);
   }
   return await sendCronMessage(pi, content, deliveryKind, coalesced, {
@@ -60,9 +69,11 @@ async function deliverCron(
 }
 
 function notify(ctx: unknown, message: string): void {
-  if (!isRecord(ctx) || !isRecord(ctx["ui"])) return;
-  const fn = ctx["ui"]["notify"];
-  if (typeof fn === "function") fn.call(ctx["ui"], message, "warning");
+  if (typeof ctx !== "object" || ctx === null) return;
+  const ui = (ctx as CronContext).ui;
+  if (typeof ui !== "object" || ui === null) return;
+  const candidate = ui as Partial<CronUi>;
+  if (typeof candidate.notify === "function") candidate.notify.call(ui, message, "warning");
 }
 
 export function installCronLoop(pi: PiLike, core: CoreBridge): void {
@@ -95,21 +106,22 @@ export function installCronLoop(pi: PiLike, core: CoreBridge): void {
         if (latestCtx === ctx) latestCtx = undefined;
         return;
       }
-      const goalFacts = coreCallOptionalRecord(core, "cronGoalFacts", [ctx]);
-      const goalSlotFree = goalFacts?.["goalSlotFree"] === true;
-      const goalDriving = goalFacts?.["goalDriving"] === true;
-      const plan = coreCallOptionalRecord(core, "cronPoll", [{
+      const goalFacts = decodeCronGoalFacts(core.call("cronGoalFacts", [{ ctx }]));
+      const goalSlotFree = goalFacts.goalSlotFree;
+      const goalDriving = goalFacts.goalDriving;
+      const plan = decodeCronPollPlan(core.call("cronPoll", [{
         now: Date.now(),
         hostIdle: typeof pi.isIdle === "function" ? pi.isIdle() : true,
         goalDriving,
         goalSlotFree,
-      }, ctx]);
+        ctx,
+      }]));
       if (stopped || generation !== pollGeneration) return;
-      if (plan !== undefined && stringField(plan, "action") === "deliver") {
+      if (plan.kind === "deliver") {
         const delivered = await deliverCron(pi, core, plan, ctx, deliveryKind);
         if (stopped || generation !== pollGeneration) return;
         if (!delivered) return;
-        core.call("cronDelivered", [{ id: stringField(plan, "id"), now: Date.now() }, ctx]);
+        decodeCronDeliveredResult(core.call("cronDelivered", [{ id: plan.id, now: Date.now(), ctx }]));
       }
     } catch (error) {
       if (isStaleContextError(error)) {
@@ -129,8 +141,10 @@ export function installCronLoop(pi: PiLike, core: CoreBridge): void {
     if (stopped) return;
     if (!extensionRuntimeIsLive(pi)) return;
     if (!rememberCtx(ctx)) return;
-    const result = coreCallOptionalRecord(core, "cronStartup", [event, ctx]);
-    if (result !== undefined && result["notify"] === true) notify(ctx, stringField(result, "message"));
+    const source = typeof event === "object" && event !== null ? event as SessionStartEvent : undefined;
+    const reason = typeof source?.reason === "string" ? source.reason : "";
+    const result = decodeCronStartupPlan(core.call("cronStartup", [{ reason, ctx }]));
+    if (result.kind === "notify") notify(ctx, result.message);
   });
   pi.on("turn_start", (_event, ctx) => {
     if (!stopped && extensionRuntimeIsLive(pi)) rememberCtx(ctx);

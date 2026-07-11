@@ -1,6 +1,7 @@
 import type { CoreBridge, PiLike } from "./types.ts";
 
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+type ThinkingNotificationContext = { ui?: { notify?: (message: string, level: "info") => unknown } };
 
 const thinkingLevels: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
@@ -20,8 +21,9 @@ function stepThinkingLevel(pi: PiLike, ctx: unknown, delta: -1 | 1): void {
   const nextIndex = Math.max(0, Math.min(thinkingLevels.length - 1, index + delta));
   pi.setThinkingLevel(thinkingLevels[nextIndex]);
   const after = currentThinkingLevel(pi);
-  const ui = typeof ctx === "object" && ctx !== null ? (ctx as Record<string, unknown>)["ui"] : undefined;
-  const notify = typeof ui === "object" && ui !== null ? (ui as Record<string, unknown>)["notify"] : undefined;
+  const context = typeof ctx === "object" && ctx !== null ? ctx as ThinkingNotificationContext : undefined;
+  const ui = context?.ui;
+  const notify = ui?.notify;
   if (typeof notify === "function") notify.call(ui, `Thinking level: ${after}`, "info");
 }
 

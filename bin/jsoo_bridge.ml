@@ -173,7 +173,7 @@ let effect_kind_to_string = function
   | Taumel.Tool_gateway.Execute -> "execute"
   | Taumel.Tool_gateway.Mutate -> "mutate"
   | Taumel.Tool_gateway.Network -> "network"
-  | Taumel.Tool_gateway.Spawn_agent -> "spawn_agent"
+ 
   | Taumel.Tool_gateway.Ask_user -> "ask_user"
 
 let js_array values = values |> Array.of_list |> Js.array |> inject
@@ -280,13 +280,9 @@ let js_content_to_text value =
   match json_from_js value with Ok json -> json_text json | Error _ -> ""
 
 let command_result_obj ~ok ~message ~details =
-  Unsafe.obj
-    [|
-      ("ok", js_bool ok);
-      ("action", js_string "command_result");
-      ("message", js_string message);
-      ("details", inject details);
-    |]
+  Tool_contracts.BridgeCommandResult.create ~ok ~action:"command_result" ~message
+    ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details)) ()
+  |> Tool_contracts.BridgeCommandResult.t_to_js |> inject
 
 let tool_result_to_command_result result =
   if not (is_js_object result) then
@@ -334,19 +330,10 @@ let command_result_with_details result extra =
     next
 
 let text_tool_result text details =
-  Unsafe.obj
-    [|
-      ( "content",
-        js_array
-          [
-            Unsafe.obj
-              [|
-                ("type", js_string "text");
-                ("text", js_string text);
-              |];
-          ] );
-      ("details", inject details);
-    |]
+  let content = Tool_contracts.ToolResultTextContent.create ~type_:"text" ~text () in
+  Tool_contracts.ToolResultEnvelope.create ~content:[ content ]
+    ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details)) ()
+  |> Tool_contracts.ToolResultEnvelope.t_to_js |> inject
 
 let prepared_tool_result_with_extra prepared extra =
   text_tool_result (get_string prepared "text")

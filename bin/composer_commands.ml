@@ -1,43 +1,30 @@
 open Jsoo_bridge
 
-let builtin_overrides_from_js settings =
-  match
-    Option.bind (optional_field settings "taumel") (fun taumel ->
-        optional_field taumel "agents")
-  with
-  | None -> Taumel.Global_settings.default.taumel.agents
-  | Some agents ->
-      object_keys agents
-      |> List.filter (fun name -> List.mem name Taumel.Global_settings.builtin_profile_names)
-      |> List.map (fun name ->
-             let override = Unsafe.get agents name in
-             ( name,
-               ({
-                  provider = get_string override "provider";
-                  model = get_string override "model";
-                  thinking = get_string override "thinking";
-                }
-                 : Taumel.Global_settings.agent_builtin_override) ))
-
 let settings_from_js settings =
   let taumel = Unsafe.get settings "taumel" in
   let composer = Unsafe.get taumel "composer" in
-  let builtins = builtin_overrides_from_js settings in
   {
     Taumel.Global_settings.taumel =
-      { composer = { enabled = get_bool composer "enabled" }; agents = builtins };
+      { composer = { enabled = get_bool composer "enabled" } };
   }
 
-let handle args facts =
-  let settings = settings_from_js (Unsafe.get facts "settings") in
-  let path = get_string facts "path" in
+let handle raw_facts =
+  let facts = Tool_contracts.ComposerCommandFacts.t_of_js (ojs_of_js raw_facts) in
+  let args = Tool_contracts.ComposerCommandFacts.get_args facts in
+  let settings_js = Tool_contracts.ComposerCommandFacts.get_settings facts
+    |> Tool_contracts.ComposerSettings.t_to_js |> Obj.magic
+  in
+  let settings = settings_from_js settings_js in
+  let path = Tool_contracts.ComposerCommandFacts.get_path facts in
   match Taumel.Global_settings.plan_composer_command ~settings ~path args with
-  | Error message -> error_obj message
+  | Error message ->
+      Tool_contracts.ComposerCommandError.create ~kind:"error" ~message ()
+      |> Tool_contracts.ComposerCommandError.t_to_js |> inject
   | Ok result ->
-      ok_obj
-        [
-          ("action", js_string "command_result");
-          ("message", js_string result.message);
-          ("settings", json_to_js (Taumel.Global_settings.to_json result.settings));
-          ("writeSettings", js_bool result.write_settings);
-        ]
+      let settings =
+        Taumel.Global_settings.to_json result.settings |> json_to_js |> ojs_of_js
+        |> Tool_contracts.ComposerSettings.t_of_js
+      in
+      Tool_contracts.ComposerCommandSuccess.create ~kind:"result" ~message:result.message
+        ~settings ~writeSettings:result.write_settings ()
+      |> Tool_contracts.ComposerCommandSuccess.t_to_js |> inject

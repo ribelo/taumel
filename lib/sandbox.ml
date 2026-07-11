@@ -25,14 +25,14 @@ let approval_policy_of_profile = function
   | Capability_profile.Untrusted -> Untrusted
 
 let config_of_profile ?(workspace_roots = []) ?(network_mode = Network_disabled)
-    ?(no_sandbox = false) ?(subagent = false)
+    ?(no_sandbox = false) ?(isolated_child = false)
     (profile : Capability_profile.t) =
-  if subagent && no_sandbox then Error "sub-agents cannot enable --no-sandbox"
+  if isolated_child && no_sandbox then Error "isolated child sessions cannot enable --no-sandbox"
   else if
-    subagent
+    isolated_child
     && profile.Capability_profile.sandbox_preset
        = Capability_profile.Danger_full_access
-  then Error "danger-full-access is not allowed for subagents"
+  then Error "danger-full-access is not allowed for isolated children"
   else if no_sandbox && not profile.Capability_profile.no_sandbox_allowed then
     Error "--no-sandbox is not allowed by the active capability profile"
   else
@@ -43,7 +43,7 @@ let config_of_profile ?(workspace_roots = []) ?(network_mode = Network_disabled)
         network_mode;
         approval_policy = approval_policy_of_profile profile.approval_policy;
         no_sandbox;
-        subagent;
+        isolated_child;
       }
 
 let split_path = Sandbox_paths.split_path
@@ -96,7 +96,7 @@ let validate_resolved_workspace_mutation_paths ~workspace_roots paths =
       network_mode = Network_disabled;
       approval_policy = Never;
       no_sandbox = false;
-      subagent = false;
+      isolated_child = false;
     }
   in
   let rec loop = function
@@ -189,10 +189,6 @@ let authorize_effect (config : config) = function
       match config.network_mode with
       | Network_enabled -> Ok ()
       | Network_disabled -> Error "network is disabled by sandbox policy")
-  | Tool_gateway.Spawn_agent ->
-      (* Nesting and ownership are enforced by Subagents; the sandbox only
-         authorizes the spawn effect itself. *)
-      Ok ()
 
 let decision_rank = function Allow -> 0 | Requires_approval _ -> 1 | Deny _ -> 2
 

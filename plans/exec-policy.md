@@ -12,7 +12,6 @@ traces_to: ["codex/execpolicy (crate: codex-execpolicy)"]
 Add a rules-based command classification to Taumel's exec authorization, ported
 from codex `execpolicy`. A rule classifies a command as `allow`, `prompt`, or
 `forbidden`; the result feeds the existing `authorize_exec` decision as one more
-input. The shared OCaml core already authorizes exec for parent, subagent, and
 Ralph child sessions, so the classification covers all of them through the path
 that already exists.
 
@@ -44,7 +43,6 @@ already-authorized running session and stays out of scope for v1, matching codex
 - **execpolicy-c1y5** (ubiquitous): The system shall evaluate global and project rules as one pool and select the strictest decision across both scopes, so project rules tighten and global rules hold.
 - **execpolicy-d4q8** (event-driven): When rules load, the system shall confirm each rule's `match` examples resolve to that rule and each `not_match` example resolves elsewhere.
 - **execpolicy-n7l2** (event-driven): When a session starts or resumes, the system shall load and compile the rule set into core state; the exec path shall evaluate against the compiled set.
-- **execpolicy-s5g6** (ubiquitous): The system shall apply the policy to parent, subagent, and Ralph child `exec_command` calls through the shared core.
 - **execpolicy-v8a1** (unwanted): If a rule's `match` or `not_match` examples fail validation, then the system shall surface the error through a notification and skip that rule while keeping the valid rules.
 - **execpolicy-b3e7** (unwanted): If a scope's config block is malformed, then the system shall surface the error through a notification and keep the valid rules from the other scope.
 - **execpolicy-f6c9** (state-driven): While any scope holds a validation error, the system shall use `prompt` as the no-match default.

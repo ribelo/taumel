@@ -11,162 +11,127 @@ import type {
   PiLike,
   SessionInfo,
 } from "./types.ts";
+import {
+  decodeThreadCatalogScansResult,
+  decodeChildSessionStartPlan,
+  decodeSandboxHostPathPlan,
+  decodeWorkspaceMutationValidation,
+  decodeToolNamesResult,
+  type ThreadCatalogFacts,
+  type ThreadCatalogScan,
+  type ChildSessionStartPlan,
+  type ChildSessionMetadata,
+  type SandboxHostPathPlan,
+  type PreparedToolAction,
+  type WorkspaceMutationFacts,
+} from "./bridge-contracts.ts";
 
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+type ContextHost = { readonly sessionManager?: unknown; readonly modelRegistry?: unknown; readonly cwd?: unknown };
+type RegistryHost = { readonly authStorage?: unknown };
+type WorkspaceMetadataListing = { readonly metadataDir: string; readonly path: string; readonly children?: string[] };
+type ExecHostFacts = {
+  readonly platform: string; readonly tempRoots: string[]; readonly systemRoPaths: string[];
+  readonly homeMount: string; readonly workspaceRoots: string[];
+  readonly workspaceMetadataListings: WorkspaceMetadataListing[];
+};
+type ThreadSource =
+  | { readonly kind: "sessionFile"; readonly path: string; readonly text: string }
+  | { readonly kind: "diagnostic"; readonly path: string; readonly error: string };
+type NodeError = { readonly code?: unknown };
+type ActiveToolsReceiver = { readonly setActiveToolsByName?: (names: string[]) => unknown; readonly setActiveTools?: (names: string[]) => unknown };
+type ValueReceiver = {
+  readonly setModelById?: (value: string) => unknown; readonly setModel?: (value: string) => unknown;
+  readonly selectModel?: (value: string) => unknown; readonly setThinkingLevel?: (value: string) => unknown;
+  readonly setThinking?: (value: string) => unknown;
+};
+
+function objectValue(value: unknown): object | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value : undefined;
 }
 
-export function stringField(record: Record<string, unknown>, name: string): string {
-  const value = record[name];
-  if (typeof value !== "string") {
-    throw new Error(`Invalid Taumel string field: ${name}`);
-  }
+function property(source: object, name: string): unknown {
+  return Reflect.get(source, name);
+}
+
+export function stringField(source: object, name: string): string {
+  const value = property(source, name);
+  if (typeof value !== "string") throw new Error(`Invalid Taumel string field: ${name}`);
   return value;
 }
-
-export function stringFieldOrUndefined(record: Record<string, unknown>, name: string): string | undefined {
-  const value = record[name];
+export function stringFieldOrUndefined(source: object, name: string): string | undefined {
+  const value = property(source, name);
   return typeof value === "string" ? value : undefined;
 }
-
-export function optionalStringField(record: Record<string, unknown>, name: string): string | undefined {
-  const value = record[name];
+export function optionalStringField(source: object, name: string): string | undefined {
+  const value = property(source, name);
   if (value === undefined || value === null) return undefined;
-  if (typeof value !== "string") {
-    throw new Error(`Invalid Taumel string field: ${name}`);
-  }
+  if (typeof value !== "string") throw new Error(`Invalid Taumel string field: ${name}`);
   return value;
 }
-
-export function numberField(record: Record<string, unknown>, name: string): number {
-  const value = record[name];
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error(`Invalid Taumel number field: ${name}`);
-  }
+export function numberField(source: object, name: string): number {
+  const value = property(source, name);
+  if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`Invalid Taumel number field: ${name}`);
   return value;
 }
-
-export function numberFieldOrUndefined(record: Record<string, unknown>, name: string): number | undefined {
-  const value = record[name];
+export function numberFieldOrUndefined(source: object, name: string): number | undefined {
+  const value = property(source, name);
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
-
-export function optionalNumberField(record: Record<string, unknown>, name: string): number | undefined {
-  const value = record[name];
+export function optionalNumberField(source: object, name: string): number | undefined {
+  const value = property(source, name);
   if (value === undefined || value === null) return undefined;
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error(`Invalid Taumel number field: ${name}`);
-  }
+  if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`Invalid Taumel number field: ${name}`);
   return value;
 }
-
-export function boolFieldOrUndefined(record: Record<string, unknown>, name: string): boolean | undefined {
-  const value = record[name];
+export function boolFieldOrUndefined(source: object, name: string): boolean | undefined {
+  const value = property(source, name);
   return typeof value === "boolean" ? value : undefined;
 }
-
-export function recordFieldOrUndefined(record: Record<string, unknown>, name: string): Record<string, unknown> | undefined {
-  const value = record[name];
-  return isRecord(value) ? value : undefined;
+export function recordFieldOrUndefined<T extends object = object>(source: object, name: string): T | undefined {
+  return objectValue(property(source, name)) as T | undefined;
 }
-
 export function stringArrayFromUnknown(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  if (!value.every((item): item is string => typeof item === "string" && item !== "")) return undefined;
+  if (!Array.isArray(value) || !value.every((item): item is string => typeof item === "string" && item !== "")) return undefined;
   return value;
 }
-
-export function stringArrayFieldOrUndefined(record: Record<string, unknown>, name: string): string[] | undefined {
-  const value = record[name];
+export function stringArrayFieldOrUndefined(source: object, name: string): string[] | undefined {
+  const value = property(source, name);
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : undefined;
 }
-
-export function stringArrayFieldOrEmpty(record: Record<string, unknown>, name: string): string[] {
-  return stringArrayFieldOrUndefined(record, name) ?? [];
+export function stringArrayFieldOrEmpty(source: object, name: string): string[] {
+  return stringArrayFieldOrUndefined(source, name) ?? [];
 }
-
-export function stringArrayField(record: Record<string, unknown>, name: string): string[] {
-  const value = record[name];
-  if (!Array.isArray(value) || !value.every((item): item is string => typeof item === "string")) {
-    throw new Error(`Invalid Taumel string array field: ${name}`);
-  }
+export function stringArrayField(source: object, name: string): string[] {
+  const value = property(source, name);
+  if (!Array.isArray(value) || !value.every((item): item is string => typeof item === "string")) throw new Error(`Invalid Taumel string array field: ${name}`);
   return value;
 }
-
-export function recordArrayFieldOrUndefined(record: Record<string, unknown>, name: string): Record<string, unknown>[] | undefined {
-  const value = record[name];
-  return Array.isArray(value) ? value.filter(isRecord) : undefined;
+export function recordArrayFieldOrUndefined<T extends object = object>(source: object, name: string): T[] | undefined {
+  const value = property(source, name);
+  return Array.isArray(value) ? value.map(objectValue).filter((item): item is object => item !== undefined) as T[] : undefined;
 }
-
-export function recordArrayFieldOrEmpty(record: Record<string, unknown>, name: string): Record<string, unknown>[] {
-  return recordArrayFieldOrUndefined(record, name) ?? [];
+export function recordArrayFieldOrEmpty<T extends object = object>(source: object, name: string): T[] {
+  return recordArrayFieldOrUndefined<T>(source, name) ?? [];
 }
-
-export function recordArrayField(record: Record<string, unknown>, name: string): Record<string, unknown>[] {
-  const value = record[name];
-  if (!Array.isArray(value) || !value.every(isRecord)) {
-    throw new Error(`Invalid Taumel record array field: ${name}`);
-  }
-  return value;
+export function recordArrayField<T extends object = object>(source: object, name: string): T[] {
+  const value = property(source, name);
+  if (!Array.isArray(value) || !value.every((item) => objectValue(item) !== undefined)) throw new Error(`Invalid Taumel record array field: ${name}`);
+  return value as T[];
 }
-
-export function requiredError(record: Record<string, unknown>, source: string): string {
-  const error = stringField(record, "error");
-  if (error === "") throw new Error(`Invalid Taumel ${source} error`);
+export function requiredError(source: object, label: string): string {
+  const error = stringField(source, "error");
+  if (error === "") throw new Error(`Invalid Taumel ${label} error`);
   return error;
 }
-
-export function contextWithOverrides(ctx: unknown, overrides: Record<string, unknown>): Record<string, unknown> {
-  return isRecord(ctx) ? { ...ctx, ...overrides } : overrides;
+export function contextWithOverrides(ctx: unknown, overrides: object): object {
+  const context = objectValue(ctx);
+  return context === undefined ? overrides : { ...context, ...overrides };
 }
-
 export function maybeCall(receiver: unknown, name: string, args: readonly unknown[] = []): unknown {
-  if (!isRecord(receiver)) return undefined;
-  const method = receiver[name];
-  if (typeof method !== "function") return undefined;
-  return method.apply(receiver, args);
-}
-
-export function coreCallRecord(
-  core: CoreBridge,
-  name: string,
-  args: readonly unknown[] = [],
-  label = `${name} result`,
-): Record<string, unknown> {
-  const result = core.call(name, args);
-  if (!isRecord(result)) throw new Error(`Invalid Taumel ${label}`);
-  return result;
-}
-
-export function coreCallOptionalRecord(
-  core: CoreBridge,
-  name: string,
-  args: readonly unknown[] = [],
-): Record<string, unknown> | undefined {
-  const result = core.call(name, args);
-  return isRecord(result) ? result : undefined;
-}
-
-export function coreCallStringArray(
-  core: CoreBridge,
-  name: string,
-  args: readonly unknown[] = [],
-  label = `${name} result`,
-): string[] {
-  const result = stringArrayFromUnknown(core.call(name, args));
-  if (result === undefined) throw new Error(`Invalid Taumel ${label}`);
-  return result;
-}
-
-export function coreCallRecordArray(
-  core: CoreBridge,
-  name: string,
-  args: readonly unknown[] = [],
-  label = `${name} result`,
-): Record<string, unknown>[] {
-  const result = core.call(name, args);
-  if (!Array.isArray(result) || !result.every(isRecord)) throw new Error(`Invalid Taumel ${label}`);
-  return result;
+  const target = objectValue(receiver);
+  if (target === undefined) return undefined;
+  const method = property(target, name);
+  return typeof method === "function" ? method.apply(receiver, args) : undefined;
 }
 
 export function isStaleContextError(error: unknown): boolean {
@@ -177,15 +142,15 @@ export function isStaleContextError(error: unknown): boolean {
 
 export function contextIsLive(ctx: unknown): boolean {
   try {
-    if (!isRecord(ctx)) return true;
-    const sessionManager = ctx["sessionManager"];
-    if (!isRecord(sessionManager)) return true;
-    const getSessionId = sessionManager["getSessionId"];
+    const sessionManager = objectValue(ctx) === undefined ? undefined : property(ctx as object, "sessionManager");
+    const manager = objectValue(sessionManager);
+    if (manager === undefined) return true;
+    const getSessionId = property(manager, "getSessionId");
     if (typeof getSessionId === "function") {
       getSessionId.call(sessionManager);
       return true;
     }
-    const getSessionFile = sessionManager["getSessionFile"];
+    const getSessionFile = property(manager, "getSessionFile");
     if (typeof getSessionFile === "function") {
       getSessionFile.call(sessionManager);
     }
@@ -217,8 +182,9 @@ export function extensionRuntimeIsLive(pi: PiLike): boolean {
 }
 
 export function stringFromMethod(receiver: unknown, name: string): string | undefined {
-  if (!isRecord(receiver)) return undefined;
-  const method = receiver[name];
+  const target = objectValue(receiver);
+  if (target === undefined) return undefined;
+  const method = property(target, name);
   if (typeof method !== "function") return undefined;
   try {
     const value = method.call(receiver);
@@ -236,24 +202,24 @@ export function sessionInfoFromManager(sessionManager: unknown): SessionInfo {
 }
 
 export function sessionInfoFromContext(ctx: unknown): SessionInfo {
-  if (!isRecord(ctx)) return {};
-  return sessionInfoFromManager(ctx["sessionManager"]);
+  const context = objectValue(ctx);
+  return context === undefined ? {} : sessionInfoFromManager(property(context, "sessionManager"));
 }
 
-export function childBridgeFacts(bridge: ChildSessionBridge | undefined): Record<string, unknown> {
+export function childBridgeFacts(bridge: ChildSessionBridge | undefined) {
   if (!bridge) return { available: false };
   return {
     available: true,
     cancelled: bridge.cancelled === true,
-    sessionId: bridge.sessionId ?? null,
-    sessionFile: bridge.sessionFile ?? null,
-    error: bridge.error ?? null,
+    ...(bridge.sessionId === undefined ? {} : { sessionId: bridge.sessionId }),
+    ...(bridge.sessionFile === undefined ? {} : { sessionFile: bridge.sessionFile }),
+    ...(bridge.error === undefined ? {} : { error: bridge.error }),
     missingSessionIdentifier: bridge.missingSessionIdentifier === true,
-    activeTools: bridge.activeTools ?? null,
+    ...(bridge.activeTools === undefined ? {} : { activeTools: [...bridge.activeTools] }),
     activeToolsApplied: bridge.activeToolsApplied === true,
-    modelId: bridge.modelId ?? null,
+    ...(bridge.modelId === undefined ? {} : { modelId: bridge.modelId }),
     modelApplied: bridge.modelApplied === true,
-    thinkingLevel: bridge.thinkingLevel ?? null,
+    ...(bridge.thinkingLevel === undefined ? {} : { thinkingLevel: bridge.thinkingLevel }),
     thinkingApplied: bridge.thinkingApplied === true,
   };
 }
@@ -264,13 +230,16 @@ export function stringFlag(pi: PiLike, name: string): string | undefined {
 }
 
 export function modelRegistryFrom(pi: PiLike, ctx: unknown): unknown {
-  if (isRecord(ctx) && ctx["modelRegistry"] !== undefined) return ctx["modelRegistry"];
+  const context = objectValue(ctx);
+  const registry = context === undefined ? undefined : property(context, "modelRegistry");
+  if (registry !== undefined) return registry;
   return pi.modelRegistry;
 }
 
 export function openAiCredentialRaw(registry: unknown, credentialKey: string): unknown {
-  if (!isRecord(registry)) return undefined;
-  const authStorage = registry["authStorage"];
+  const target = objectValue(registry);
+  if (target === undefined) return undefined;
+  const authStorage = property(target, "authStorage");
   return maybeCall(authStorage, "get", [credentialKey]);
 }
 
@@ -298,27 +267,28 @@ export function existingPaths(paths: readonly string[]): string[] {
 }
 
 export function sandboxStringArrayField(sandbox: unknown, name: string): string[] {
-  if (!isRecord(sandbox)) throw new Error("Invalid Taumel sandbox config");
-  return stringArrayField(sandbox, name).filter((value) => value !== "");
+  const config = objectValue(sandbox);
+  if (config === undefined) throw new Error("Invalid Taumel sandbox config");
+  return stringArrayField(config, name).filter((value) => value !== "");
 }
 
 export function sandboxMetadataDirNames(core: CoreBridge): string[] {
-  return coreCallStringArray(core, "sandboxMetadataDirNames", [], "sandbox metadata dir names");
+  return [...decodeToolNamesResult(core.call("sandboxMetadataDirNames", [])).names];
 }
 
-export function sandboxHostPathPlan(core: CoreBridge): Record<string, unknown> {
-  return coreCallRecord(core, "sandboxHostPathPlan", [{
+export function sandboxHostPathPlan(core: CoreBridge): SandboxHostPathPlan {
+  return decodeSandboxHostPathPlan(core.call("sandboxHostPathPlan", [{
     tmpDir: tmpdir(),
     envTmpDir: process.env["TMPDIR"] ?? "",
-  }], "sandbox host path plan");
+  }]));
 }
 
 export function workspaceMetadataListings(
   core: CoreBridge,
   workspaceRoots: readonly string[],
-): Record<string, unknown>[] {
+): WorkspaceMetadataListing[] {
   const metadataDirNames = sandboxMetadataDirNames(core);
-  const listings: Record<string, unknown>[] = [];
+  const listings: WorkspaceMetadataListing[] = [];
   for (const root of workspaceRoots) {
     const normalizedRoot = root.replace(/\/+$/, "");
     for (const metadataDir of metadataDirNames) {
@@ -334,8 +304,11 @@ export function workspaceMetadataListings(
   return listings;
 }
 
-export function execHostFacts(core: CoreBridge, prepared: Record<string, unknown>): Record<string, unknown> {
-  const sandbox = prepared["sandbox"];
+export function execHostFacts(
+  core: CoreBridge,
+  prepared: Extract<PreparedToolAction, { action: "exec_command" }>,
+): ExecHostFacts {
+  const sandbox = prepared.sandbox;
   const hostPathPlan = sandboxHostPathPlan(core);
   const workspaceRoots = existingPaths(sandboxStringArrayField(sandbox, "workspaceRoots").map(realpathOrSelf));
   const home = realpathOrSelf(homedir());
@@ -343,8 +316,8 @@ export function execHostFacts(core: CoreBridge, prepared: Record<string, unknown
   const homeMount = homeParent !== "/" && existsSync(homeParent) ? homeParent : home;
   return {
     platform: process.platform,
-    tempRoots: existingPaths(stringArrayField(hostPathPlan, "tempRootCandidates").map(realpathOrSelf)),
-    systemRoPaths: existingPaths(stringArrayField(hostPathPlan, "systemRoPathCandidates")),
+    tempRoots: existingPaths(hostPathPlan.tempRootCandidates.map(realpathOrSelf)),
+    systemRoPaths: existingPaths(hostPathPlan.systemRoPathCandidates),
     homeMount,
     workspaceRoots,
     workspaceMetadataListings: workspaceMetadataListings(core, workspaceRoots),
@@ -353,19 +326,20 @@ export function execHostFacts(core: CoreBridge, prepared: Record<string, unknown
 
 export function childSessionStartPlan(
   core: CoreBridge,
-  metadata: Record<string, unknown>,
+  metadata: ChildSessionMetadata,
   parent: SessionInfo,
-): Record<string, unknown> {
-  return coreCallRecord(core, "planChildSessionStart", [metadata, {
+): ChildSessionStartPlan {
+  return decodeChildSessionStartPlan(core.call("planChildSessionStart", [{ metadata,
     parentSessionId: parent.sessionId ?? "",
     parentSessionFile: parent.sessionFile ?? "",
-  }], "child session start plan");
+  }]));
 }
 
 export function setActiveToolsOn(receiver: unknown, toolNames: readonly string[]): boolean {
-  if (!isRecord(receiver)) return false;
+  const target = objectValue(receiver);
+  if (target === undefined) return false;
   for (const methodName of ["setActiveToolsByName", "setActiveTools"]) {
-    const method = receiver[methodName];
+    const method = property(target, methodName);
     if (typeof method !== "function") continue;
     method.call(receiver, [...toolNames]);
     return true;
@@ -375,14 +349,16 @@ export function setActiveToolsOn(receiver: unknown, toolNames: readonly string[]
 
 export function applyChildActiveTools(ctx: unknown, toolNames: readonly string[]): boolean {
   if (setActiveToolsOn(ctx, toolNames)) return true;
-  if (isRecord(ctx) && setActiveToolsOn(ctx["sessionManager"], toolNames)) return true;
+  const context = objectValue(ctx);
+  if (context !== undefined && setActiveToolsOn(property(context, "sessionManager"), toolNames)) return true;
   return false;
 }
 
 export function applyValueOn(receiver: unknown, methodNames: readonly string[], value: string | undefined): boolean {
-  if (!isRecord(receiver) || value === undefined) return false;
+  const target = objectValue(receiver);
+  if (target === undefined || value === undefined) return false;
   for (const methodName of methodNames) {
-    const method = receiver[methodName];
+    const method = property(target, methodName);
     if (typeof method !== "function") continue;
     method.call(receiver, value);
     return true;
@@ -397,7 +373,8 @@ export function applyChildModelThinking(
 ): { readonly modelApplied: boolean; readonly thinkingApplied: boolean } {
   const modelMethods = ["setModelById", "setModel", "selectModel"];
   const thinkingMethods = ["setThinkingLevel", "setThinking"];
-  const sessionManager = isRecord(ctx) ? ctx["sessionManager"] : undefined;
+  const context = objectValue(ctx);
+  const sessionManager = context === undefined ? undefined : property(context, "sessionManager");
   return {
     modelApplied:
       applyValueOn(ctx, modelMethods, modelId) || applyValueOn(sessionManager, modelMethods, modelId),
@@ -407,32 +384,8 @@ export function applyChildModelThinking(
   };
 }
 
-export function currentThreadFacts(ctx: unknown): Record<string, unknown> {
-  const context = isRecord(ctx) ? ctx : {};
-  const cwd = typeof context["cwd"] === "string" ? context["cwd"] : process.cwd();
-  const sessionManager = isRecord(context["sessionManager"]) ? context["sessionManager"] : {};
-  const getSessionId = sessionManager["getSessionId"];
-  const sessionId =
-    typeof getSessionId === "function" ? String(getSessionId.call(sessionManager)) : "";
-  const getBranch = sessionManager["getBranch"];
-  const branch = typeof getBranch === "function" ? getBranch.call(sessionManager) : [];
-  const getEntries = sessionManager["getEntries"];
-  const entries = typeof getEntries === "function" ? getEntries.call(sessionManager) : [];
-  return { cwd, sessionId, branch, entries };
-}
-
-export function currentThreadSource(core: CoreBridge, ctx: unknown): Record<string, unknown> {
-  return coreCallRecord(core, "currentThreadSource", [currentThreadFacts(ctx)], "current thread source");
-}
-
-export async function discoverCatalogFiles(scan: Record<string, unknown>): Promise<string[]> {
-  const root = stringField(scan, "root");
-  const maxDepth = numberField(scan, "maxDepth");
-  const maxFiles = numberField(scan, "maxFiles");
-  const suffix = stringField(scan, "suffix");
-  if (root === "" || maxFiles <= 0 || suffix === "") {
-    throw new Error("Invalid Taumel thread catalog scan");
-  }
+export async function discoverCatalogFiles(scan: ThreadCatalogScan): Promise<string[]> {
+  const { root, maxDepth, maxFiles, suffix } = scan;
   const files: string[] = [];
   async function visit(dir: string, depth: number): Promise<void> {
     if (files.length >= maxFiles || depth < 0) return;
@@ -456,19 +409,23 @@ export async function discoverCatalogFiles(scan: Record<string, unknown>): Promi
   return files;
 }
 
-export function threadCatalogFacts(ctx: unknown): Record<string, unknown> {
+export function threadCatalogFacts(ctx: unknown): ThreadCatalogFacts {
+  const context = objectValue(ctx);
+  const cwd = context === undefined ? undefined : property(context, "cwd");
   return {
-    cwd: isRecord(ctx) && typeof ctx["cwd"] === "string" ? ctx["cwd"] : "",
+    cwd: typeof cwd === "string" ? cwd : "",
     home: homedir(),
   };
 }
 
-export function sessionCatalogScans(core: CoreBridge, ctx: unknown): Record<string, unknown>[] {
-  return coreCallRecordArray(core, "planThreadCatalogScans", [threadCatalogFacts(ctx)], "thread catalog scans");
+export function sessionCatalogScans(core: CoreBridge, ctx: unknown): ThreadCatalogScan[] {
+  return [...decodeThreadCatalogScansResult(
+    core.call("planThreadCatalogScans", [threadCatalogFacts(ctx)]),
+  ).scans];
 }
 
-export async function fileThreadSources(core: CoreBridge, ctx: unknown): Promise<Record<string, unknown>[]> {
-  const sources: Record<string, unknown>[] = [];
+export async function fileThreadSources(core: CoreBridge, ctx: unknown): Promise<ThreadSource[]> {
+  const sources: ThreadSource[] = [];
   for (const scan of sessionCatalogScans(core, ctx)) {
     for (const file of await discoverCatalogFiles(scan)) {
       try {
@@ -489,7 +446,7 @@ export async function fileThreadSources(core: CoreBridge, ctx: unknown): Promise
   return sources;
 }
 
-export async function threadSources(core: CoreBridge, ctx: unknown): Promise<Record<string, unknown>[]> {
+export async function threadSources(core: CoreBridge, ctx: unknown): Promise<ThreadSource[]> {
   return await fileThreadSources(core, ctx);
 }
 
@@ -539,6 +496,7 @@ type PatchWrite = {
   path: string;
   contents: string;
 };
+type PatchApplication = { readonly deletes: readonly string[]; readonly writes: readonly PatchWrite[] };
 
 type PatchFileSnapshot =
   | { kind: "missing" }
@@ -553,7 +511,8 @@ async function snapshotPatchFile(path: string): Promise<PatchFileSnapshot> {
     if (stats.isFile()) return { kind: "file", contents: await readFile(path) };
     return { kind: "other" };
   } catch (error) {
-    if (isRecord(error) && error["code"] === "ENOENT") return { kind: "missing" };
+    const code = typeof error === "object" && error !== null ? (error as NodeError).code : undefined;
+    if (code === "ENOENT") return { kind: "missing" };
     throw error;
   }
 }
@@ -607,22 +566,12 @@ async function rollbackPatchFiles(
   }
 }
 
-export async function writePatchFiles(application: Record<string, unknown>): Promise<void> {
-  const deletes = stringArrayFromUnknown(application["deletes"]);
-  if (deletes === undefined) throw new Error("Invalid Taumel apply_patch result");
-  const writes = application["writes"];
-  if (!Array.isArray(writes) || !writes.every(isRecord)) {
-    throw new Error("Invalid Taumel apply_patch result");
-  }
-  const parsedWrites: PatchWrite[] = [];
-  for (const write of writes) {
-    const path = stringField(write, "path");
-    const contents = write["contents"];
-    if (path === "" || typeof contents !== "string") {
-      throw new Error("Invalid Taumel apply_patch result");
-    }
-    parsedWrites.push({ path, contents });
-  }
+export async function writePatchFiles(application: PatchApplication): Promise<void> {
+  const deletes = [...application.deletes];
+  const parsedWrites = [...application.writes];
+  if (deletes.some((path) => typeof path !== "string") || parsedWrites.some((write) =>
+    typeof write !== "object" || write === null || typeof write.path !== "string" || write.path === "" || typeof write.contents !== "string"
+  )) throw new Error("Invalid Taumel apply_patch result");
 
   const snapshots = new Map<string, PatchFileSnapshot>();
   for (const path of [...parsedWrites.map((write) => write.path), ...deletes]) {
@@ -647,7 +596,8 @@ async function resolveRealPath(path: string): Promise<string> {
   try {
     return await realpath(path);
   } catch (error) {
-    if (!isRecord(error) || error["code"] !== "ENOENT") throw error;
+    const code = typeof error === "object" && error !== null ? (error as NodeError).code : undefined;
+    if (code !== "ENOENT") throw error;
     const parent = dirname(path);
     if (parent === path) return path;
     const resolvedParent = await resolveRealPath(parent);
@@ -658,7 +608,7 @@ async function resolveRealPath(path: string): Promise<string> {
 async function resolvedWorkspaceMutationPathFacts(
   paths: readonly string[],
   workspaceRoots: readonly string[],
-): Promise<Record<string, unknown>> {
+): Promise<WorkspaceMutationFacts> {
   const resolvedRoots = await Promise.all(
     workspaceRoots.map(async (root) => {
       try {
@@ -679,10 +629,8 @@ export async function validateWorkspaceMutationPaths(
   paths: readonly string[],
   workspaceRoots: readonly string[],
 ): Promise<void> {
-  const result = coreCallRecord(core, "validateWorkspaceMutationPaths", [
+  const result = decodeWorkspaceMutationValidation(core.call("validateWorkspaceMutationPaths", [
     await resolvedWorkspaceMutationPathFacts(paths, workspaceRoots),
-  ], "workspace mutation path validation");
-  if (result["ok"] !== true) {
-    throw new Error(requiredError(result, "workspace mutation path validation"));
-  }
+  ]));
+  if (result.kind === "invalid") throw new Error(result.message);
 }

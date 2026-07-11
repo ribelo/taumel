@@ -19,7 +19,6 @@ type active_tools_sync = {
 
 let tool_specs =
   Sandbox.canonical_tool_specs
-  @ Subagents.tool_specs
   @ Goal.tool_specs @ Ralph_loop.tool_specs
   @ [
       { Tool_gateway.name = "cron_create"; effect_kind = Tool_gateway.Mutate };
@@ -41,10 +40,8 @@ let command_specs =
     { name = "usage"; description = "Show OpenAI account and quota usage." };
     { name = "goal"; description = "Show or update the thread goal." };
     { name = "cron"; description = "List, enable, disable, or cancel cron tasks." };
-    { name = "agents"; description = "List, enable, disable, or save Taumel agent profile visibility." };
     { name = "tools"; description = "List, enable, disable, or save Taumel tool visibility." };
     { name = "skills"; description = "List, enable, disable, or save Taumel skill visibility." };
-    { name = "agent-runs"; description = "Inspect and close Taumel agent identities and runs." };
     { name = "execpolicy"; description = "Show or check exec command policy decisions." };
     { name = "compaction-model"; description = "Choose a model for context compaction." };
   ]
@@ -116,7 +113,7 @@ let ensure_tool_names required tool_names =
 let ralph_control_tool_names = [ "ralph_continue"; "ralph_finish" ]
 let ambient_hidden_tool_names = [ "usage"; "user_detection_tool" ]
 let child_goal_removed_tool_names = [ "create_goal" ]
-let child_goal_required_tool_names = [ "update_goal" ]
+let child_goal_required_tool_names = [ "get_goal"; "update_goal" ]
 
 let rewrite_shell_tool_names tool_names =
   let push name values = if List.mem name values then values else values @ [ name ] in
@@ -136,26 +133,8 @@ let rewrite_active_tools ?provider ?(ralph_child = false) tool_names =
     tool_names |> rewrite_mutation_tool_names ?provider |> rewrite_shell_tool_names
     |> remove_tool_names ambient_hidden_tool_names
   in
-  let tool_names =
-    if ralph_child then remove_tool_names Subagents.all_agent_tool_names tool_names
-    else tool_names
-  in
   if ralph_child then ensure_tool_names ralph_control_tool_names tool_names
   else remove_tool_names ralph_control_tool_names tool_names
-
-let plan_agent_child_active_tools ~worker_tools ~current_active_tools_available
-    ~current_active_tools =
-  let agent_child_tools tool_names =
-    tool_names
-    |> remove_tool_names Subagents.all_agent_tool_names
-    |> remove_tool_names child_goal_removed_tool_names
-    |> ensure_tool_names child_goal_required_tool_names
-  in
-  match worker_tools with
-  | Some tools -> Some (agent_child_tools tools)
-  | None when current_active_tools_available ->
-      Some (rewrite_active_tools current_active_tools |> agent_child_tools)
-  | None -> None
 
 let plan_active_tools_sync ?provider ?(ralph_child = false) ?(disabled_tools = [])
     tool_names =

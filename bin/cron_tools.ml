@@ -64,6 +64,13 @@ let task_summary (task : Taumel.Cron.task) =
 
 let tasks_array tasks = js_array (List.map (fun task -> inject (task_summary task)) tasks)
 
+let typed_task (task : Taumel.Cron.task) =
+  Tool_contracts.CronTask.create ~id:task.id
+    ~schedule:(Taumel.Cron_expr.describe task.cron) ~cron:task.cron ~prompt:task.prompt
+    ~recurring:task.recurring ~mode:(Taumel.Cron.mode_to_string task.mode)
+    ~enabled:task.enabled ~nextDue:(float_of_int task.next_due)
+    ~nextDueText:(human_time task.next_due) ~pending:(Option.is_some task.pending_since) ()
+
 let tool_result text details =
   Unsafe.obj
     [|
@@ -113,12 +120,13 @@ let prepare_list _params ctx =
         "Cron tasks listed. Cron is disabled; run /cron enable to arm stored tasks."
       else "Cron tasks listed."
     in
-    tool_result message
-      (Unsafe.obj
-         [|
-           ("enabled", js_bool !cron_state.enabled);
-           ("tasks", tasks_array !cron_state.tasks);
-         |])
+    let details =
+      Tool_contracts.CronListDetails.create ~enabled:!cron_state.enabled
+        ~tasks:(List.map typed_task !cron_state.tasks) ()
+    in
+    Tool_contracts.CronListResult.create ~ok:true ~action:"tool_result" ~text:message
+      ~details ()
+    |> Tool_contracts.CronListResult.t_to_js |> inject
 
 let prepare_delete params ctx =
   if not (sync ctx) then error_obj stale_session_message
@@ -181,7 +189,7 @@ let updated_task_details id =
       ("tasks", tasks_array !cron_state.tasks);
     |]
 
-let update_task params ctx =
+let update_task_impl params ctx =
   if not (sync ctx) then command_result ~ok:false stale_session_message (Unsafe.obj [||])
   else
     let id = String.trim (get_string params "id") in
@@ -209,6 +217,17 @@ let update_task params ctx =
         cron_state := state;
         save_state_if_changed ctx previous;
         command_result ("Updated cron task " ^ id ^ ".") (updated_task_details id)
+
+let update_task raw_facts =
+  let facts = Tool_contracts.CronTaskUpdateFacts.t_of_js (ojs_of_js raw_facts) in
+  let params = Tool_contracts.CronTaskUpdateFacts.get_patch facts
+    |> Tool_contracts.CronTaskPatch.t_to_js |> Obj.magic
+  in
+  let ctx = Tool_contracts.CronTaskUpdateFacts.get_ctx facts
+    |> Ts2ocaml.unknown_to_js |> Obj.magic
+  in
+  update_task_impl params ctx |> ojs_of_js |> Tool_contracts.CronCommandResult.t_of_js
+  |> Tool_contracts.CronCommandResult.t_to_js |> inject
 
 let handle_command args ctx =
   if not (sync ctx) then command_result ~ok:false stale_session_message (Unsafe.obj [||])
@@ -246,6 +265,15 @@ let handle_command args ctx =
           |]
   | _ -> command_result ~ok:false "Usage: /cron [enable|disable]" (Unsafe.obj [||])
 
+let handle_manager_command raw_facts =
+  let facts = Tool_contracts.CronManagerCommandFacts.t_of_js (ojs_of_js raw_facts) in
+  let args = Tool_contracts.CronManagerCommandFacts.get_args facts in
+  let ctx = Tool_contracts.CronManagerCommandFacts.get_ctx facts
+    |> Ts2ocaml.unknown_to_js |> Obj.magic
+  in
+  handle_command args ctx |> ojs_of_js |> Tool_contracts.CronCommandResult.t_of_js
+  |> Tool_contracts.CronCommandResult.t_to_js |> inject
+
 let task_label (task : Taumel.Cron.task) =
   Printf.sprintf "%s  %s  %s  %s  next=%s" task.id
     (if task.enabled then "enabled" else "disabled") task.cron
@@ -259,14 +287,15 @@ let task_listing_message enabled tasks =
         ((Printf.sprintf "Cron is %s." (if enabled then "enabled" else "disabled"))
         :: List.map task_label tasks)
 
-let plan_prompt prompt _facts =
+let plan_prompt_impl prompt =
   let tasks = get_object_array prompt "tasks" in
   if tasks = [] then
     Unsafe.obj
       [|
         ("action", js_string "result");
         ("result", command_result "No cron tasks." (Unsafe.obj [| ("tasks", js_array []) |]));
-      |]
+       |]
+
   else
     Unsafe.obj
       [|
@@ -280,6 +309,18 @@ let plan_prompt prompt _facts =
                  ("tasks", tasks_array !cron_state.tasks);
                |]) );
       |]
+
+let plan_prompt raw_facts =
+  let facts = Tool_contracts.CronPromptFacts.t_of_js (ojs_of_js raw_facts) in
+  let prompt = Tool_contracts.CronPromptFacts.get_prompt facts
+    |> Tool_contracts.CronPrompt.t_to_js |> Obj.magic
+  in
+  let old_plan = plan_prompt_impl prompt in
+  let result = Unsafe.get old_plan "result" |> ojs_of_js
+    |> Tool_contracts.CronCommandResult.t_of_js
+  in
+  Tool_contracts.CronPromptPlan.create ~kind:"result" ~result ()
+  |> Tool_contracts.CronPromptPlan.t_to_js |> inject
 
 let finish_prompt _prompt selection ctx =
   if not (sync ctx) then command_result ~ok:false stale_session_message (Unsafe.obj [||])
@@ -314,39 +355,46 @@ let finish_prompt _prompt selection ctx =
 
 let facts_from_js facts =
   {
-    Taumel.Cron.host_idle = get_bool facts "hostIdle";
-    goal_driving = get_bool facts "goalDriving";
-    goal_slot_free = get_bool facts "goalSlotFree";
+    Taumel.Cron.host_idle = Tool_contracts.CronPollFacts.get_hostIdle facts;
+    goal_driving = Tool_contracts.CronPollFacts.get_goalDriving facts;
+    goal_slot_free = Tool_contracts.CronPollFacts.get_goalSlotFree facts;
   }
 
-let poll params ctx =
-  if not (sync ctx) then Unsafe.obj [| ("action", js_string "none") |]
+let poll raw_facts =
+  let facts = Tool_contracts.CronPollFacts.t_of_js (ojs_of_js raw_facts) in
+  let ctx = Tool_contracts.CronPollFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
+  let none () =
+    Tool_contracts.CronPollNone.create ~kind:"none" ()
+    |> Tool_contracts.CronPollNone.t_to_js |> inject
+  in
+  if not (sync ctx) then none ()
   else
-    let now = int_of_float (float_field_default params "now" (float_of_int (App_state.now_seconds ())) /. 1000.) in
+    let now = int_of_float (Tool_contracts.CronPollFacts.get_now facts /. 1000.) in
     let previous = !cron_state in
     cron_state := Taumel.Cron.tick ~now !cron_state;
     save_state_if_changed ctx previous;
-    match Taumel.Cron.pending_delivery ~now (facts_from_js params) !cron_state with
-    | None -> Unsafe.obj [| ("action", js_string "none") |]
+    match Taumel.Cron.pending_delivery ~now (facts_from_js facts) !cron_state with
+    | None -> none ()
     | Some delivery ->
-        Unsafe.obj
-          [|
-            ("action", js_string "deliver");
-            ("id", js_string delivery.task.id);
-            ("mode", js_string (Taumel.Cron.mode_to_string delivery.task.mode));
-            ("content", js_string delivery.content);
-            ("coalesced", js_number (float_of_int delivery.coalesced));
-            ("cron", js_string delivery.task.cron);
-            ("schedule", js_string (Taumel.Cron_expr.describe delivery.task.cron));
-          |]
+        Tool_contracts.CronPollDelivery.create ~kind:"deliver" ~id:delivery.task.id
+          ~mode:(Taumel.Cron.mode_to_string delivery.task.mode) ~content:delivery.content
+          ~coalesced:(float_of_int delivery.coalesced) ~cron:delivery.task.cron
+          ~schedule:(Taumel.Cron_expr.describe delivery.task.cron) ()
+        |> Tool_contracts.CronPollDelivery.t_to_js |> inject
 
-let delivered params ctx =
-  if not (sync ctx) then Unsafe.obj [| ("ok", js_bool false) |]
+let delivered raw_facts =
+  let facts = Tool_contracts.CronDeliveredFacts.t_of_js (ojs_of_js raw_facts) in
+  let ctx = Tool_contracts.CronDeliveredFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
+  let result acknowledged =
+    Tool_contracts.CronDeliveredResult.create ~acknowledged ()
+    |> Tool_contracts.CronDeliveredResult.t_to_js |> inject
+  in
+  if not (sync ctx) then result false
   else
-    let id = get_string params "id" in
-    let now = int_of_float (float_field_default params "now" (float_of_int (App_state.now_seconds ())) /. 1000.) in
+    let id = Tool_contracts.CronDeliveredFacts.get_id facts in
+    let now = int_of_float (Tool_contracts.CronDeliveredFacts.get_now facts /. 1000.) in
     match List.find_opt (fun (task : Taumel.Cron.task) -> task.id = id) !cron_state.tasks with
-    | None -> Unsafe.obj [| ("ok", js_bool false) |]
+    | None -> result false
     | Some task ->
         let pending_since = Option.value task.pending_since ~default:task.next_due in
         let delivery : Taumel.Cron.delivery =
@@ -358,11 +406,17 @@ let delivered params ctx =
         in
         cron_state := Taumel.Cron.complete_delivery ~now delivery !cron_state;
         save_state ctx;
-        Unsafe.obj [| ("ok", js_bool true) |]
+        result true
 
-let goal_facts ctx =
+let goal_facts raw_facts =
+  let facts = Tool_contracts.CronContextFacts.t_of_js (ojs_of_js raw_facts) in
+  let ctx = Tool_contracts.CronContextFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
+  let result goalSlotFree goalDriving =
+    Tool_contracts.CronGoalFacts.create ~goalSlotFree ~goalDriving ()
+    |> Tool_contracts.CronGoalFacts.t_to_js |> inject
+  in
   if not (Session_sync.try_sync_session_from_host ~scope:"cron goal facts" ctx) then
-    Unsafe.obj [| ("goalSlotFree", js_bool false); ("goalDriving", js_bool true) |]
+    result false true
   else
     let goal_slot_free, goal_driving =
       match !App_state.current_goal with
@@ -375,11 +429,7 @@ let goal_facts ctx =
           in
           (slot_free, driving)
     in
-    Unsafe.obj
-      [|
-        ("goalSlotFree", js_bool goal_slot_free);
-        ("goalDriving", js_bool goal_driving);
-      |]
+    result goal_slot_free goal_driving
 
 let startup_reason = function
   | "new" -> Taumel.Cron.New
@@ -389,15 +439,20 @@ let startup_reason = function
   | "fork" -> Taumel.Cron.Fork
   | _ -> Taumel.Cron.Other
 
-let startup event ctx =
-  if not (sync ctx) then Unsafe.obj [| ("notify", js_bool false); ("message", js_string "") |]
+let startup raw_facts =
+  let facts = Tool_contracts.CronStartupFacts.t_of_js (ojs_of_js raw_facts) in
+  let ctx = Tool_contracts.CronStartupFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
+  let none () =
+    Tool_contracts.CronStartupNone.create ~kind:"none" ()
+    |> Tool_contracts.CronStartupNone.t_to_js |> inject
+  in
+  if not (sync ctx) then none ()
   else
-    let plan = Taumel.Cron.apply_startup (startup_reason (get_string event "reason")) !cron_state in
+    let plan = Taumel.Cron.apply_startup (startup_reason (Tool_contracts.CronStartupFacts.get_reason facts)) !cron_state in
     let previous = !cron_state in
     cron_state := plan.state;
     save_state_if_changed ctx previous;
-    Unsafe.obj
-      [|
-        ("notify", js_bool plan.notify);
-        ("message", js_string plan.message);
-      |]
+    if plan.notify && String.trim plan.message <> "" then
+      Tool_contracts.CronStartupNotify.create ~kind:"notify" ~message:plan.message ()
+      |> Tool_contracts.CronStartupNotify.t_to_js |> inject
+    else none ()

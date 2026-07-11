@@ -118,7 +118,7 @@ let permissions_entry metadata =
                 ("version", Shared.Number 1.);
                 ("profile", profile);
                 ("noSandbox", Shared.Bool (bool_field "noSandbox" fields));
-                ("subagent", Shared.Bool (bool_field "subagent" fields));
+                ("isolated_child", Shared.Bool (bool_field "isolated_child" fields));
               ];
         }
   | _ -> None

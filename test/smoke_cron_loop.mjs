@@ -12,7 +12,7 @@ const calls = [];
 const notifications = [];
 const sentMessages = [];
 let runtimeStale = false;
-let cronPollResult = { action: "none" };
+let cronPollResult = { kind: "none" };
 let prepareToolResult = { ok: true };
 
 const on = (event, handler) => {
@@ -61,11 +61,11 @@ try {
     init: () => undefined,
     call: (name, args) => {
       calls.push({ name, args });
-      if (name === "cronStartup") return { notify: true, message: "2 stored cron tasks exist in this session. Cron is disabled on startup; run /cron enable to arm them." };
+      if (name === "cronStartup") return { kind: "notify", message: "2 stored cron tasks exist in this session. Cron is disabled on startup; run /cron enable to arm them." };
       if (name === "cronGoalFacts") return { goalSlotFree: true, goalDriving: false };
       if (name === "cronPoll") return cronPollResult;
-      if (name === "prepareTool") return prepareToolResult;
-      if (name === "cronDelivered") return { ok: true };
+      if (name === "createCronGoal") return { created: prepareToolResult.ok === true };
+      if (name === "cronDelivered") return { acknowledged: true };
       throw new Error(`unexpected core call: ${name}`);
     },
   };
@@ -120,20 +120,20 @@ try {
   runtimeStale = false;
   assert.deepEqual(calls, [], "cron interval should skip a stale captured pi runtime before calling core");
 
-  cronPollResult = { action: "deliver", id: "deadbeef", mode: "goal", content: "goal fire", coalesced: 1, cron: "* * * * *", schedule: "every minute" };
+  cronPollResult = { kind: "deliver", id: "deadbeef", mode: "goal", content: "goal fire", coalesced: 1, cron: "* * * * *", schedule: "every minute" };
   emit("turn_start", { type: "turn_start" }, { sessionManager: {} });
   calls.length = 0;
   intervals[0].fn();
   await tick();
   assert.deepEqual(
     calls.map((call) => call.name),
-    ["cronGoalFacts", "cronPoll", "prepareTool", "cronDelivered"],
+    ["cronGoalFacts", "cronPoll", "createCronGoal", "cronDelivered"],
     "cron loop should persist a delivered goal-mode fire",
   );
   assert.equal(sentMessages.at(-1)?.message?.customType, "taumel.cron.fire");
   assert.equal(sentMessages.at(-1)?.message?.details?.goalCreated, true);
   assert.match(sentMessages.at(-1)?.message?.content ?? "", /goal fire/);
-  cronPollResult = { action: "none" };
+  cronPollResult = { kind: "none" };
 
   emit("session_shutdown", { type: "session_shutdown", reason: "reload" }, { sessionManager: {} });
   assert.deepEqual(cleared, [intervals[0]], "cron loop should clear its interval on session shutdown");

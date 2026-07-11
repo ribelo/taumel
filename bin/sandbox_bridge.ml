@@ -12,7 +12,7 @@ let js_sandbox_config (sandbox : Taumel.Sandbox.config) =
       ("networkMode", js_string (sandbox_network_to_string sandbox.network_mode));
       ("workspaceRoots", js_array (List.map js_string sandbox.workspace_roots));
       ("noSandbox", js_bool sandbox.no_sandbox);
-      ("subagent", js_bool sandbox.subagent);
+      ("isolated_child", js_bool sandbox.isolated_child);
     |]
 
 let sandbox_config_from_js sandbox =
@@ -30,7 +30,7 @@ let sandbox_config_from_js sandbox =
     network_mode;
     approval_policy = Taumel.Sandbox.On_request;
     no_sandbox = get_bool sandbox "noSandbox";
-    subagent = get_bool sandbox "subagent";
+    isolated_child = get_bool sandbox "isolated_child";
   }
 
 let exec_workspace_metadata_listing_from_js obj =
@@ -55,39 +55,43 @@ let exec_host_facts_from_js obj =
   }
 
 let sandbox_metadata_dir_names () =
-  js_array (List.map js_string Taumel.Sandbox.protected_workspace_dir_names)
+  let result =
+    Tool_contracts.ToolNamesResult.create
+      ~names:Taumel.Sandbox.protected_workspace_dir_names ()
+  in
+  Tool_contracts.ToolNamesResult.t_to_js result |> inject
 
 let resolved_mutation_path_from_js obj =
   {
-    Taumel.Sandbox.requested_path = get_string obj "path";
-    resolved_path = get_string obj "resolvedPath";
+    Taumel.Sandbox.requested_path = Tool_contracts.ResolvedMutationPath.get_path obj;
+    resolved_path = Tool_contracts.ResolvedMutationPath.get_resolvedPath obj;
   }
 
-let validate_workspace_mutation_paths facts =
-  let paths =
-    get_object_array facts "paths" |> List.map resolved_mutation_path_from_js
-  in
+let validate_workspace_mutation_paths raw_facts =
+  let facts = Tool_contracts.WorkspaceMutationFacts.t_of_js (ojs_of_js raw_facts) in
+  let paths = Tool_contracts.WorkspaceMutationFacts.get_paths facts |> List.map resolved_mutation_path_from_js in
   match
     Taumel.Sandbox.validate_resolved_workspace_mutation_paths
-      ~workspace_roots:(get_string_array facts "workspaceRoots")
+      ~workspace_roots:(Tool_contracts.WorkspaceMutationFacts.get_workspaceRoots facts)
       paths
   with
-  | Ok () -> ok_obj []
-  | Error message -> error_obj message
+  | Ok () ->
+      Tool_contracts.WorkspaceMutationValid.create ~kind:"valid" ()
+      |> Tool_contracts.WorkspaceMutationValid.t_to_js |> inject
+  | Error message ->
+      Tool_contracts.WorkspaceMutationInvalid.create ~kind:"invalid" ~message ()
+      |> Tool_contracts.WorkspaceMutationInvalid.t_to_js |> inject
 
 let sandbox_host_path_plan facts =
-  let tmp_dir = get_string facts "tmpDir" in
-  let env_tmp_dir = get_string facts "envTmpDir" in
-  Unsafe.obj
-    [|
-      ( "tempRootCandidates",
-        js_array
-          (Taumel.Sandbox.temp_root_candidates ~tmp_dir ~env_tmp_dir
-          |> List.map js_string) );
-      ( "systemRoPathCandidates",
-        js_array
-          (List.map js_string Taumel.Sandbox.system_ro_path_candidates) );
-    |]
+  let facts = Tool_contracts.SandboxHostPathFacts.t_of_js (ojs_of_js facts) in
+  let tempRootCandidates =
+    Taumel.Sandbox.temp_root_candidates
+      ~tmp_dir:(Tool_contracts.SandboxHostPathFacts.get_tmpDir facts)
+      ~env_tmp_dir:(Tool_contracts.SandboxHostPathFacts.get_envTmpDir facts)
+  in
+  Tool_contracts.SandboxHostPathPlan.create ~tempRootCandidates
+    ~systemRoPathCandidates:Taumel.Sandbox.system_ro_path_candidates ()
+  |> Tool_contracts.SandboxHostPathPlan.t_to_js |> inject
 
 let positive_float_option obj name =
   match float_field obj name with
@@ -168,56 +172,49 @@ let format_exec_result prepared result sandboxed escalated =
     (Taumel.Sandbox.render_exec_result ?diagnostic result)
     (Taumel.Sandbox.exec_result_details ~sandboxed ~escalated ?diagnostic result)
 
-let finish_exec_approval params =
+let finish_exec_approval raw_facts =
+  let facts = Tool_contracts.ExecApprovalOutcomeFacts.t_of_js (ojs_of_js raw_facts) in
   let outcome =
     match
       Taumel.Sandbox.approval_prompt_outcome_of_string
-        (get_string params "outcome")
+        (Tool_contracts.ExecApprovalOutcomeFacts.get_outcome facts)
     with
     | Some outcome -> outcome
     | None ->
-        if get_bool params "approved" then Taumel.Sandbox.Approval_approved
-        else Taumel.Sandbox.Approval_denied_by_user
+         Taumel.Sandbox.Approval_denied_by_user
   in
   match Taumel.Sandbox.exec_approval_outcome ~outcome with
   | Taumel.Sandbox.Approval_granted ->
-      ok_obj [ ("action", js_string "exec_command"); ("forceUnsandboxed", js_bool true) ]
+      Tool_contracts.ExecApprovalRun.create ~kind:"run" ~forceUnsandboxed:true ()
+      |> Tool_contracts.ExecApprovalRun.t_to_js |> inject
   | Taumel.Sandbox.Approval_denied denied ->
-      ok_obj
-        [
-          ("action", js_string "result");
-          ( "result",
-            text_result_with_details denied.message denied.details );
-        ]
+      let result = text_result_with_details denied.message denied.details in
+      Tool_contracts.ExecApprovalDenied.create ~kind:"denied"
+        ~result:(Tool_contracts.ToolResultEnvelope.t_of_js (ojs_of_js result)) ()
+      |> Tool_contracts.ExecApprovalDenied.t_to_js |> inject
 
-let plan_exec_approval_prompt prepared facts =
+let plan_exec_approval_prompt raw_facts =
+  let facts = Tool_contracts.ExecApprovalPromptFacts.t_of_js (ojs_of_js raw_facts) in
   let prompt =
     {
-      Taumel.Sandbox.title = get_string prepared "approvalTitle";
-      prompt = get_string prepared "approvalPrompt";
-      timeout_ms = int_field_default prepared "approvalTimeoutMs" 0;
+      Taumel.Sandbox.title = Tool_contracts.ExecApprovalPromptFacts.get_approvalTitle facts;
+      prompt = Tool_contracts.ExecApprovalPromptFacts.get_approvalPrompt facts;
+      timeout_ms = int_of_float (Tool_contracts.ExecApprovalPromptFacts.get_approvalTimeoutMs facts);
     }
   in
   match
     Taumel.Sandbox.plan_exec_approval_prompt
-      ~ui_available:(get_bool facts "uiAvailable")
+      ~ui_available:(Tool_contracts.ExecApprovalPromptFacts.get_uiAvailable facts)
       prompt
   with
   | Taumel.Sandbox.Approval_prompt_unavailable ->
-      ok_obj [ ("action", js_string "unavailable") ]
+      Tool_contracts.ExecApprovalUnavailable.create ~kind:"unavailable" ()
+      |> Tool_contracts.ExecApprovalUnavailable.t_to_js |> inject
   | Taumel.Sandbox.Approval_prompt_confirm prompt ->
-      let option_fields =
-        if prompt.timeout_ms > 0 then
-          [ ("timeout", js_number (float_of_int prompt.timeout_ms)) ]
-        else []
-      in
-      ok_obj
-        [
-          ("action", js_string "confirm");
-          ("title", js_string prompt.title);
-          ("prompt", js_string prompt.prompt);
-          ("options", Unsafe.obj (Array.of_list option_fields));
-        ]
+      let timeoutMs = if prompt.timeout_ms > 0 then Some (float_of_int prompt.timeout_ms) else None in
+      Tool_contracts.ExecApprovalConfirm.create ~kind:"confirm" ~title:prompt.title
+        ~prompt:prompt.prompt ?timeoutMs ()
+      |> Tool_contracts.ExecApprovalConfirm.t_to_js |> inject
 
 let optional_positive_float_js obj name =
   if not (has_property obj name) then None else positive_float_option obj name

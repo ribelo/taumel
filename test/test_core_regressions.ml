@@ -6,7 +6,6 @@ module Permissions = Taumel.Permissions
 module Ralph = Taumel.Ralph_loop
 module Sandbox = Taumel.Sandbox
 module Shared = Taumel.Shared
-module Subagents = Taumel.Subagents
 module Threads = Taumel.Thread_tools
 module Tool_catalog = Taumel.Tool_catalog
 module Usage = Taumel.Usage
@@ -43,7 +42,7 @@ let sandbox_config =
     network_mode = Sandbox.Network_disabled;
     approval_policy = Sandbox.Never;
     no_sandbox = false;
-    subagent = false;
+    isolated_child = false;
   }
 
 let test_component_codecs () =
@@ -53,7 +52,6 @@ let test_component_codecs () =
       sandbox_preset = Capability.Read_only;
       approval_policy = Capability.Never;
       tools = Capability.of_list [ "get_goal"; "usage" ];
-      agents = Capability.None_allowed;
       no_sandbox_allowed = true;
     }
   in
@@ -65,8 +63,6 @@ let test_component_codecs () =
     (decoded_profile.sandbox_preset = Capability.Read_only);
   assert_bool "profile tools round trip"
     (Capability.allow_tool decoded_profile "usage");
-  assert_bool "profile agents round trip"
-    (not (Capability.allow_agent decoded_profile "worker"));
   let permissions_state =
     expect_ok "permissions create for codec"
       (Permissions.create ~network_mode:Sandbox.Network_enabled ~no_sandbox:true profile)
@@ -82,13 +78,13 @@ let test_component_codecs () =
   assert_bool "permissions no-sandbox round trip" permissions_state.sandbox.no_sandbox;
   let child_permissions =
     expect_ok "child permissions create for codec"
-      (Permissions.create ~subagent:true profile)
+      (Permissions.create ~isolated_child:true profile)
   in
   let child_permissions =
     expect_ok "child permissions codec"
       (Permissions.codec.decode (Permissions.codec.encode child_permissions))
   in
-  assert_bool "permissions subagent round trip" child_permissions.sandbox.subagent;
+  assert_bool "permissions isolated_child round trip" child_permissions.sandbox.isolated_child;
   let goal =
     expect_ok "goal codec create"
       (Goal.create ~time_limit_seconds:42 ~thread_id:"thread" ~now:10 "persist goal" None)
@@ -127,7 +123,7 @@ let test_read_only_allows_execution () =
       network_mode = Sandbox.Network_disabled;
       approval_policy = Sandbox.On_request;
       no_sandbox = false;
-      subagent = false;
+      isolated_child = false;
     }
   in
   (* Execute must be allowed in read-only mode — the sandbox constrains how,
@@ -137,42 +133,7 @@ let test_read_only_allows_execution () =
   (* Mutate must still be denied in read-only mode (filesystem mutation). *)
   (match Sandbox.authorize_effect read_only_config Gateway.Mutate with
   | Error _ -> ()
-  | Ok _ -> fail "read-only mutate" "expected mutation denied in read-only");
-  assert_bool "root session may spawn agent"
-    (Sandbox.authorize_effect read_only_config Gateway.Spawn_agent = Ok ());
-  assert_bool "subagent spawn effect is sandbox-neutral"
-    (Sandbox.authorize_effect
-       { read_only_config with Sandbox.subagent = true }
-       Gateway.Spawn_agent
-    = Ok ());
-  (* The bwrap plan for read-only must mount the workspace read-only. *)
-  let host =
-    {
-      Sandbox.platform = "linux";
-      temp_roots = [];
-      system_ro_paths = [];
-      home_mount = "";
-      workspace_roots = [ "/repo" ];
-      workspace_metadata_listings = [];
-    }
-  in
-  let invocation =
-    expect_ok "read-only invocation"
-      (Sandbox.plan_exec_invocation read_only_config host ~shell:"bash"
-         ~shell_args:[ "-lc"; "ls" ] ~force_unsandboxed:false)
-  in
-  assert_bool "read-only invocation is sandboxed" invocation.sandboxed;
-  assert_bool "read-only mounts workspace via --ro-bind"
-    (List.mem "--ro-bind" invocation.args
-    && List.mem "/repo" invocation.args);
-  assert_bool "read-only does not bind workspace writable"
-    (not
-       (let rec check = function
-          | [] | [ _ ] -> false
-          | "--bind" :: path :: _ when path = "/repo" -> true
-          | _ :: rest -> check rest
-    in
-        check invocation.args))
+  | Ok _ -> fail "read-only mutate" "expected mutation denied in read-only")
 
 let test_bwrap_keeps_dev_mount_after_root_bind () =
   let config =
@@ -182,7 +143,7 @@ let test_bwrap_keeps_dev_mount_after_root_bind () =
       network_mode = Sandbox.Network_disabled;
       approval_policy = Sandbox.On_request;
       no_sandbox = false;
-      subagent = false;
+      isolated_child = false;
     }
   in
   let host =
@@ -495,65 +456,6 @@ let test_sandbox_edit_application () =
   expect_error "edit no-op denied"
     (Sandbox.apply_edits ~display_path:"noop.txt" "same\n" [ edit "same" "same" ])
 
-let test_child_approval_clamping () =
-  let base_parent =
-    { Capability.default with agents = Capability.of_list [ "worker" ] }
-  in
-  let parent = { base_parent with approval_policy = Capability.Never } in
-  let child =
-    expect_ok "never parent child"
-      (Capability.child_profile parent
-         {
-           Capability.name = "worker";
-           enabled = true;
-           model_id = None;
-           thinking_level = None;
-           sandbox_preset = None;
-           approval_policy = Some Capability.On_request;
-           tools = None;
-           agents = None;
-           allow_no_sandbox = true;
-         })
-  in
-  assert_bool "child can tighten Never parent to On_request"
-    (child.approval_policy = Capability.On_request);
-  let parent_strict = { base_parent with approval_policy = Capability.On_failure } in
-  let child_strict =
-    expect_ok "stricter child allowed"
-      (Capability.child_profile parent_strict
-         {
-           Capability.name = "worker";
-           enabled = true;
-           model_id = None;
-           thinking_level = None;
-           sandbox_preset = None;
-           approval_policy = Some Capability.Never;
-           tools = None;
-           agents = None;
-           allow_no_sandbox = false;
-         })
-  in
-  assert_bool "child Never request clamped to parent On_failure"
-    (child_strict.approval_policy = Capability.On_failure);
-  let parent_untrusted = { base_parent with approval_policy = Capability.Untrusted } in
-  let child_widened =
-    expect_ok "untrusted clamped child"
-      (Capability.child_profile parent_untrusted
-         {
-           Capability.name = "worker";
-           enabled = true;
-           model_id = None;
-           thinking_level = None;
-           sandbox_preset = None;
-           approval_policy = Some Capability.On_failure;
-           tools = None;
-           agents = None;
-           allow_no_sandbox = false;
-         })
-  in
-  assert_bool "child On_failure clamped to Untrusted"
-    (child_widened.approval_policy = Capability.Untrusted)
-
 let test_gateway_wraps_legacy_mutation_tools () =
   (* bash still has no Taumel wrapper; edit/write are Taumel-owned mutation
      wrappers and therefore go through gateway sandbox authorization. *)
@@ -723,7 +625,7 @@ let test_permissions_active_resolution () =
   let resolved =
     Permissions.resolve_active
       ~host_sandbox_preset:None ~host_network_mode:None ~host_no_sandbox:None
-      ~session_subagent:false
+      ~session_isolated_child:false
       Permissions.Missing
   in
   assert_bool "missing permissions defaults to full access"
@@ -735,14 +637,14 @@ let test_permissions_active_resolution () =
   assert_bool "missing permissions leaves no-sandbox disabled"
     (not resolved.no_sandbox);
   assert_bool "missing permissions records root session"
-    (not resolved.subagent);
+    (not resolved.isolated_child);
   assert_equal "missing permissions filesystem mode" "danger-full-access"
     resolved.filesystem_mode;
   let flagged =
     Permissions.resolve_active
       ~host_sandbox_preset:(Some Capability.Read_only)
       ~host_network_mode:(Some Sandbox.Network_enabled)
-      ~host_no_sandbox:(Some true) ~session_subagent:false
+      ~host_no_sandbox:(Some true) ~session_isolated_child:false
       Permissions.Missing
   in
   assert_bool "flags override default sandbox"
@@ -769,7 +671,7 @@ let test_permissions_active_resolution () =
     Permissions.resolve_active
       ~host_sandbox_preset:(Some Capability.Danger_full_access)
       ~host_network_mode:None ~host_no_sandbox:(Some false)
-      ~session_subagent:false
+      ~session_isolated_child:false
       (Permissions.Persisted persisted)
   in
   assert_bool "flags override persisted sandbox"
@@ -782,14 +684,14 @@ let test_permissions_active_resolution () =
     (not overridden.no_sandbox);
   let child =
     Permissions.resolve_active ~host_sandbox_preset:None ~host_network_mode:None
-      ~host_no_sandbox:None ~session_subagent:true
+      ~host_no_sandbox:None ~session_isolated_child:true
       (Permissions.Persisted persisted)
   in
-  assert_bool "subagent persisted permissions are clamped"
+  assert_bool "isolated_child persisted permissions are clamped"
     (not child.profile.no_sandbox_allowed);
-  assert_bool "subagent no-sandbox disabled" (not child.no_sandbox);
-  assert_bool "subagent marker kept" child.subagent;
-  assert_equal "subagent filesystem mode" "workspace-write"
+  assert_bool "isolated_child no-sandbox disabled" (not child.no_sandbox);
+  assert_bool "isolated_child marker kept" child.isolated_child;
+  assert_equal "isolated_child filesystem mode" "workspace-write"
     child.filesystem_mode
 
 let test_goal_command_planning () =
@@ -915,111 +817,6 @@ let test_ralph_command_planning () =
       fail "ralph command denied" ("unexpected error: " ^ message)
   | Ok _ -> fail "ralph command denied" "expected error")
 
-let test_subagent_tool_planning () =
-  let parent_profile =
-    { Capability.default with agents = Capability.of_list [ "worker" ] }
-  in
-  let owner : Subagents.owner = { id = "root"; is_subagent = false; depth = 0 } in
-  let spawn_request =
-    Subagents.Spawn
-      {
-        id = "w1";
-        name = "worker";
-        prompt = "do work";
-        create_goal = false;
-        system_prompt = "";
-        model_id = None;
-        thinking_level = None;
-        sandbox_preset = None;
-        approval_policy = None;
-        tools = None;
-        workspace_roots = [ "/repo" ];
-        no_sandbox = false;
-      }
-  in
-  let spawned =
-    expect_ok "agent spawn"
-      (Subagents.apply_request ~parent_profile ~owner [] spawn_request)
-  in
-  assert_bool "agent spawn changed" spawned.changed;
-  assert_equal "agent spawn action" "agent_spawn" spawned.action;
-  assert_equal "agent spawn prompt" "do work" spawned.prompt;
-  assert_equal "agent spawn message"
-    "Spawned w1 [running] sandbox=workspace-write subagent=true"
-    spawned.message;
-  assert_int "agent spawn worker count" 1 (List.length spawned.workers);
-  (match
-     Subagents.apply_request ~parent_profile ~owner spawned.workers spawn_request
-   with
-  | Error "worker already exists: w1" -> ()
-  | Error message -> fail "agent duplicate" ("unexpected error: " ^ message)
-  | Ok _ -> fail "agent duplicate" "expected duplicate error");
-  let sent =
-    expect_ok "agent send"
-      (Subagents.apply_request ~parent_profile ~owner spawned.workers
-         (Subagents.Send { id = "w1"; prompt = "next"; interrupt = false }))
-  in
-  assert_equal "agent send action" "agent_send" sent.action;
-  assert_equal "agent send prompt" "next" sent.prompt;
-  assert_equal "agent send message"
-    "Sent prompt to w1 [waiting] sandbox=workspace-write subagent=true"
-    sent.message;
-  let listed =
-    expect_ok "agent list"
-      (Subagents.apply_request ~parent_profile ~owner sent.workers Subagents.List)
-  in
-  assert_bool "agent list unchanged" (not listed.changed);
-  assert_equal "agent list text"
-    "w1 [waiting] sandbox=workspace-write subagent=true" listed.message;
-  let other_owner : Subagents.owner =
-    { id = "other"; is_subagent = false; depth = 0 }
-  in
-  (match
-     Subagents.apply_request ~parent_profile ~owner:other_owner sent.workers
-       (Subagents.Close { id = "w1" })
-  with
-  | Error "worker is not owned by this session: w1" -> ()
-  | Error message -> fail "agent ownership" ("unexpected error: " ^ message)
-  | Ok _ -> fail "agent ownership" "expected ownership error");
-  let other_spawned =
-    expect_ok "other owner duplicate agent id"
-      (Subagents.apply_request ~parent_profile ~owner:other_owner sent.workers
-         spawn_request)
-  in
-  assert_int "duplicate agent ids can exist across owners" 2
-    (List.length
-       (List.filter
-          (fun (worker : Subagents.worker) -> worker.id = "w1")
-          other_spawned.workers));
-  let other_closed =
-    expect_ok "close other owner duplicate"
-      (Subagents.apply_request ~parent_profile ~owner:other_owner
-         other_spawned.workers (Subagents.Close { id = "w1" }))
-  in
-  let owner_worker =
-    match
-      List.find_opt
-        (fun (worker : Subagents.worker) ->
-          worker.id = "w1" && worker.parent_id = Some owner.id)
-        other_closed.workers
-    with
-    | Some worker -> worker
-    | None -> fail "owner worker" "expected owner worker"
-  in
-  let other_worker =
-    match
-      List.find_opt
-        (fun (worker : Subagents.worker) ->
-          worker.id = "w1" && worker.parent_id = Some other_owner.id)
-        other_closed.workers
-    with
-    | Some worker -> worker
-    | None -> fail "other worker" "expected other worker"
-  in
-  assert_bool "owner duplicate remains live"
-    (owner_worker.lifecycle = Subagents.Waiting);
-  assert_bool "other duplicate closes independently"
-    (other_worker.lifecycle = Subagents.Closed)
 
 let () =
   test_component_codecs ();
@@ -1030,11 +827,9 @@ let () =
   test_sandbox_patch_relative_paths ();
   test_sandbox_patch_tolerant_tau_cases ();
   test_sandbox_edit_application ();
-  test_child_approval_clamping ();
   test_gateway_wraps_legacy_mutation_tools ();
   test_goal_turn_accounting ();
   test_permissions_active_resolution ();
   test_goal_command_planning ();
   test_goal_continuation_planning ();
   test_ralph_command_planning ();
-  test_subagent_tool_planning ()

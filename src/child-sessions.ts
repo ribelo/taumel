@@ -1,13 +1,14 @@
 import {
   createAgentSession as createPiAgentSession,
-  DefaultResourceLoader,
-  getAgentDir,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
+import type { ChildDispatchCompletion, ChildDispatchResult, ChildSessionCustomEntry, ChildSessionMetadata } from "./bridge-contracts.ts";
+import { decodeChildDispatchPlan } from "./bridge-contracts.ts";
 
 import type {
   ChildSessionBridge,
   CoreBridge,
+  MessageDeliveryOptions,
   PiLike,
   SessionInfo,
 } from "./types.ts";
@@ -15,21 +16,53 @@ import {
   applyChildActiveTools,
   childBridgeFacts,
   childSessionStartPlan,
-  coreCallRecord,
-  isRecord,
   modelRegistryFrom,
-  optionalStringField,
   sessionInfoFromContext,
   sessionInfoFromManager,
-  stringArrayFromUnknown,
-  stringField,
 } from "./util.ts";
-import { statSync } from "node:fs";
+
+type HostMethods = { [name: string]: unknown };
+type ChildContext = { readonly cwd?: unknown; readonly getModel?: () => unknown; readonly model?: unknown; readonly sessionManager?: unknown; readonly taumelSessionId?: unknown };
+type ModelDescriptor = { readonly provider?: unknown; readonly id?: unknown };
+type ModelRegistry = { readonly find?: (provider: string, model: string) => unknown };
+type SessionManagerHost = { readonly getEntries?: () => unknown; readonly appendCustomEntry?: (customType: string, data: unknown) => unknown };
+type CustomEntry = { readonly customType?: unknown; readonly type?: unknown; readonly data?: unknown; readonly value?: unknown };
+type CapabilityProfile = { readonly sandboxPreset?: unknown; readonly approvalPolicy?: unknown; [key: string]: unknown };
+type PermissionsEntry = { readonly profile?: unknown };
+type ChildMetadataEntry = { readonly capabilityProfile?: unknown };
+type AgentMessage = { readonly role?: unknown; readonly content?: unknown; readonly stopReason?: unknown; readonly errorMessage?: unknown };
+type TextPart = { readonly text?: unknown };
+type AgentEndEvent = { readonly type?: unknown; readonly messages?: unknown };
+type SdkSession = {
+  readonly subscribe?: (handler: (event: unknown) => void) => unknown;
+  readonly isStreaming?: unknown;
+  readonly steer?: (prompt: string) => Promise<unknown>;
+  readonly followUp?: (prompt: string) => Promise<unknown>;
+  readonly prompt?: (prompt: string, options: { streamingBehavior: string }) => Promise<unknown>;
+  readonly sessionManager?: unknown; readonly sessionId?: unknown; readonly sessionFile?: unknown;
+  readonly abort?: (reason?: string) => Promise<unknown>; readonly dispose?: () => unknown;
+};
+type CreatedSession = { readonly session?: unknown };
+type NamedTool = { readonly name?: unknown };
+type ChildSendContext = { readonly sendUserMessage?: (content: string, options: MessageDeliveryOptions) => Promise<unknown>; readonly sessionManager?: unknown };
+type HostCompletion = {
+  readonly finalOutput?: unknown; readonly output?: unknown; readonly result?: unknown; readonly content?: unknown;
+  readonly status?: unknown; readonly stopReason?: unknown; readonly isError?: unknown;
+  readonly reason?: unknown; readonly errorMessage?: unknown; readonly error?: unknown;
+};
+type ChildSessionUpdate = { readonly action?: unknown; readonly key?: unknown; readonly reason?: unknown };
+type ChildUpdatesResult = { readonly details?: unknown };
+type ChildUpdatesDetails = { readonly childSessionUpdates?: unknown };
+
+function hostObject<T extends object>(value: unknown): Partial<T> | undefined {
+  return typeof value === "object" && value !== null ? value as Partial<T> : undefined;
+}
 
 async function callOptionalAsync(receiver: unknown, names: readonly string[], args: readonly unknown[] = []): Promise<string | undefined> {
-  if (!isRecord(receiver)) return undefined;
+  const host = hostObject<HostMethods>(receiver);
+  if (host === undefined) return undefined;
   for (const name of names) {
-    const method = receiver[name];
+    const method = host[name];
     if (typeof method !== "function") continue;
     await method.apply(receiver, args);
     return name;
@@ -38,12 +71,14 @@ async function callOptionalAsync(receiver: unknown, names: readonly string[], ar
 }
 
 function cwdFromContext(ctx: unknown): string {
-  return isRecord(ctx) && typeof ctx["cwd"] === "string" && ctx["cwd"] !== "" ? ctx["cwd"] : process.cwd();
+  const cwd = hostObject<ChildContext>(ctx)?.cwd;
+  return typeof cwd === "string" && cwd !== "" ? cwd : process.cwd();
 }
 
 function currentModelFromContext(ctx: unknown): unknown {
-  if (!isRecord(ctx)) return undefined;
-  const getModel = ctx["getModel"];
+  const context = hostObject<ChildContext>(ctx);
+  if (context === undefined) return undefined;
+  const getModel = context.getModel;
   if (typeof getModel === "function") {
     try {
       const model = getModel.call(ctx);
@@ -52,13 +87,14 @@ function currentModelFromContext(ctx: unknown): unknown {
       // Fall through to the exposed model snapshot.
     }
   }
-  return ctx["model"];
+  return context.model;
 }
 
 function modelIdOf(model: unknown): string | undefined {
-  if (!isRecord(model)) return undefined;
-  const provider = typeof model["provider"] === "string" ? model["provider"].trim() : "";
-  const id = typeof model["id"] === "string" ? model["id"].trim() : "";
+  const descriptor = hostObject<ModelDescriptor>(model);
+  if (descriptor === undefined) return undefined;
+  const provider = typeof descriptor.provider === "string" ? descriptor.provider.trim() : "";
+  const id = typeof descriptor.id === "string" ? descriptor.id.trim() : "";
   return provider !== "" && id !== "" ? `${provider}/${id}` : undefined;
 }
 
@@ -78,8 +114,9 @@ function resolveChildModel(pi: PiLike, ctx: unknown, modelId: string | undefined
   modelId = normalizeChildModelId(modelId);
   const registry = modelRegistryFrom(pi, ctx);
   const requested = splitProviderModelId(modelId);
-  if (requested !== undefined && isRecord(registry) && typeof registry["find"] === "function") {
-    const model = registry["find"].call(registry, requested.provider, requested.model);
+  const find = hostObject<ModelRegistry>(registry)?.find;
+  if (requested !== undefined && typeof find === "function") {
+    const model = find.call(registry, requested.provider, requested.model);
     if (model !== undefined && model !== null) {
       return { model, applied: true };
     }
@@ -94,15 +131,16 @@ function resolveChildModel(pi: PiLike, ctx: unknown, modelId: string | undefined
 }
 
 function hasCustomEntry(sessionManager: unknown, customType: string): boolean {
-  if (!isRecord(sessionManager) || typeof sessionManager["getEntries"] !== "function") return false;
+  const manager = hostObject<SessionManagerHost>(sessionManager);
+  if (typeof manager?.getEntries !== "function") return false;
   try {
-    const entries = sessionManager["getEntries"].call(sessionManager);
+    const entries = manager.getEntries.call(sessionManager);
     return Array.isArray(entries) && entries.some((entry) =>
-      isRecord(entry) &&
+      hostObject<CustomEntry>(entry) !== undefined &&
       (
-        entry["customType"] === customType ||
-        entry["type"] === customType ||
-        (entry["type"] === "custom" && entry["customType"] === customType)
+        hostObject<CustomEntry>(entry)?.customType === customType ||
+        hostObject<CustomEntry>(entry)?.type === customType ||
+        (hostObject<CustomEntry>(entry)?.type === "custom" && hostObject<CustomEntry>(entry)?.customType === customType)
       )
     );
   } catch {
@@ -111,16 +149,18 @@ function hasCustomEntry(sessionManager: unknown, customType: string): boolean {
 }
 
 function customEntryData(entry: unknown, customType: string): unknown {
-  if (!isRecord(entry)) return undefined;
-  if (entry["customType"] === customType) return entry["data"];
-  if (entry["type"] === customType) return entry["value"];
-  if (entry["type"] === "custom" && entry["customType"] === customType) return entry["data"];
+  const value = hostObject<CustomEntry>(entry);
+  if (value === undefined) return undefined;
+  if (value.customType === customType) return value.data;
+  if (value.type === customType) return value.value;
+  if (value.type === "custom" && value.customType === customType) return value.data;
   return undefined;
 }
 
 function latestCustomEntry(sessionManager: unknown, customType: string): unknown {
-  if (!isRecord(sessionManager) || typeof sessionManager["getEntries"] !== "function") return undefined;
-  const entries = sessionManager["getEntries"].call(sessionManager);
+  const manager = hostObject<SessionManagerHost>(sessionManager);
+  if (typeof manager?.getEntries !== "function") return undefined;
+  const entries = manager.getEntries.call(sessionManager);
   if (!Array.isArray(entries)) return undefined;
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const data = customEntryData(entries[index], customType);
@@ -158,32 +198,33 @@ export function refreshOwnedChildPermissions(
   childSessions: Map<string, ChildSessionBridge>,
   parentCtx: unknown,
 ): void {
-  if (!isRecord(parentCtx)) return;
-  const parentManager = parentCtx["sessionManager"];
+  const parentManager = hostObject<ChildContext>(parentCtx)?.sessionManager;
+  if (parentManager === undefined) return;
   const parentPermissions = latestCustomEntry(parentManager, "taumel.permissions");
-  if (!isRecord(parentPermissions) || !isRecord(parentPermissions["profile"])) return;
-  const parentProfile = parentPermissions["profile"];
+  const parentProfile = hostObject<CapabilityProfile>(hostObject<PermissionsEntry>(parentPermissions)?.profile);
+  if (parentProfile === undefined) return;
   const scopePrefix = `${childSessionCacheKeyScopeFromContext(parentCtx)}\0`;
 
   for (const [key, child] of childSessions) {
     if (!key.startsWith(scopePrefix)) continue;
     const manager = child.sessionManager;
     const childMetadata = latestCustomEntry(manager, "taumel.childSession");
-    if (!isRecord(childMetadata) || !isRecord(childMetadata["capabilityProfile"])) continue;
-    const ceiling = childMetadata["capabilityProfile"];
+    const ceiling = hostObject<CapabilityProfile>(hostObject<ChildMetadataEntry>(childMetadata)?.capabilityProfile);
+    if (ceiling === undefined) continue;
     const sandboxPreset = stricterValue(
-      ceiling["sandboxPreset"],
-      parentProfile["sandboxPreset"],
+      ceiling.sandboxPreset,
+      parentProfile.sandboxPreset,
       sandboxRank,
     );
     const approvalPolicy = stricterValue(
-      ceiling["approvalPolicy"],
-      parentProfile["approvalPolicy"],
+      ceiling.approvalPolicy,
+      parentProfile.approvalPolicy,
       approvalRank,
     );
     if (sandboxPreset === undefined || approvalPolicy === undefined) continue;
-    if (!isRecord(manager) || typeof manager["appendCustomEntry"] !== "function") continue;
-    manager["appendCustomEntry"].call(manager, "taumel.permissions", {
+    const append = hostObject<SessionManagerHost>(manager)?.appendCustomEntry;
+    if (typeof append !== "function") continue;
+    append.call(manager, "taumel.permissions", {
       version: 1,
       profile: {
         ...ceiling,
@@ -193,48 +234,48 @@ export function refreshOwnedChildPermissions(
       },
       networkMode: "disabled",
       noSandbox: false,
-      subagent: true,
+      isolated_child: true,
     });
   }
 }
 
-function appendSetupEntries(sessionManager: unknown, entries: readonly Record<string, unknown>[]): SessionInfo {
-  if (isRecord(sessionManager) && typeof sessionManager["appendCustomEntry"] === "function") {
+function appendSetupEntries(sessionManager: unknown, entries: readonly ChildSessionCustomEntry[]): SessionInfo {
+  const append = hostObject<SessionManagerHost>(sessionManager)?.appendCustomEntry;
+  if (typeof append === "function") {
     for (const entry of entries) {
-      const customType = stringField(entry, "customType");
-      if (customType === "") continue;
-      sessionManager["appendCustomEntry"].call(sessionManager, customType, entry["data"]);
+      append.call(sessionManager, entry.customType, entry.data);
     }
   }
   return sessionInfoFromManager(sessionManager);
 }
 
-function agentSystemPromptFromMetadata(metadata: Record<string, unknown>): string | undefined {
-  const value = metadata["agentSystemPrompt"];
-  return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
-}
-
 function assistantTextFromMessage(message: unknown): string | undefined {
-  if (!isRecord(message)) return undefined;
-  const content = message["content"];
+  const assistant = hostObject<AgentMessage>(message);
+  if (assistant === undefined) return undefined;
+  const content = assistant.content;
   if (typeof content === "string") return content.trim() === "" ? undefined : content;
   if (!Array.isArray(content)) return undefined;
   const text = content
-    .map((part) => isRecord(part) && typeof part["text"] === "string" ? part["text"] : "")
+    .map((part) => {
+      const text = hostObject<TextPart>(part)?.text;
+      return typeof text === "string" ? text : "";
+    })
     .filter((part) => part.trim() !== "")
     .join("\n");
   return text === "" ? undefined : text;
 }
 
-function completionFromAgentEndEvent(event: unknown): Record<string, unknown> | undefined {
-  if (!isRecord(event) || event["type"] !== "agent_end" || !Array.isArray(event["messages"])) {
+function completionFromAgentEndEvent(event: unknown): ChildDispatchCompletion | undefined {
+  const agentEnd = hostObject<AgentEndEvent>(event);
+  if (agentEnd?.type !== "agent_end" || !Array.isArray(agentEnd.messages)) {
     return undefined;
   }
-  const messages = event["messages"];
-  const assistant = [...messages].reverse().find((message) => isRecord(message) && message["role"] === "assistant");
+  const messages = agentEnd.messages;
+  const assistant = [...messages].reverse().find((message) => hostObject<AgentMessage>(message)?.role === "assistant");
   const finalOutput = assistantTextFromMessage(assistant);
-  const stopReason = isRecord(assistant) && typeof assistant["stopReason"] === "string" ? assistant["stopReason"] : "";
-  const errorMessage = isRecord(assistant) && typeof assistant["errorMessage"] === "string" ? assistant["errorMessage"] : undefined;
+  const assistantMessage = hostObject<AgentMessage>(assistant);
+  const stopReason = typeof assistantMessage?.stopReason === "string" ? assistantMessage.stopReason : "";
+  const errorMessage = typeof assistantMessage?.errorMessage === "string" ? assistantMessage.errorMessage : undefined;
   const status =
     errorMessage !== undefined || stopReason === "error" ? "failed" :
     stopReason === "cancelled" || stopReason === "aborted" ? "cancelled" :
@@ -248,12 +289,13 @@ function completionFromAgentEndEvent(event: unknown): Record<string, unknown> | 
   };
 }
 
-async function sendToSdkAgentSession(session: unknown, prompt: string, options: Record<string, unknown>): Promise<unknown> {
-  if (!isRecord(session)) {
+async function sendToSdkAgentSession(session: unknown, prompt: string, options: MessageDeliveryOptions): Promise<unknown> {
+  const sdk = hostObject<SdkSession>(session);
+  if (sdk === undefined) {
     return undefined;
   }
-  const subscribe = session["subscribe"];
-  let completion: Record<string, unknown> | undefined;
+  const subscribe = sdk.subscribe;
+  let completion: ChildDispatchCompletion | undefined;
   const unsubscribe =
     typeof subscribe === "function"
       ? subscribe.call(session, (event: unknown) => {
@@ -261,18 +303,18 @@ async function sendToSdkAgentSession(session: unknown, prompt: string, options: 
       })
       : undefined;
   try {
-    const deliverAs = typeof options["deliverAs"] === "string" ? options["deliverAs"] : "followUp";
-    const isStreaming = session["isStreaming"] === true;
-    if (isStreaming && deliverAs === "steer" && typeof session["steer"] === "function") {
-      const result = await session["steer"].call(session, prompt);
+    const deliverAs = typeof options.deliverAs === "string" ? options.deliverAs : "followUp";
+    const isStreaming = sdk.isStreaming === true;
+    if (isStreaming && deliverAs === "steer" && typeof sdk.steer === "function") {
+      const result = await sdk.steer.call(session, prompt);
       return completion ?? result;
     }
-    if (isStreaming && typeof session["followUp"] === "function") {
-      const result = await session["followUp"].call(session, prompt);
+    if (isStreaming && typeof sdk.followUp === "function") {
+      const result = await sdk.followUp.call(session, prompt);
       return completion ?? result;
     }
-    if (typeof session["prompt"] === "function") {
-      const result = await session["prompt"].call(session, prompt, {
+    if (typeof sdk.prompt === "function") {
+      const result = await sdk.prompt.call(session, prompt, {
         streamingBehavior: deliverAs === "steer" ? "steer" : "followUp",
       });
       return completion ?? result;
@@ -292,7 +334,7 @@ async function stopChildSession(child: ChildSessionBridge | undefined, reason: s
     return;
   }
   const ctx = child?.ctx;
-  const manager = isRecord(ctx) ? ctx["sessionManager"] : undefined;
+  const manager = hostObject<ChildContext>(ctx)?.sessionManager;
   try {
     const stopped = await callOptionalAsync(ctx, ["abort", "cancel", "stop"], [reason]);
     if (stopped !== undefined) return;
@@ -309,7 +351,7 @@ async function closeChildSession(child: ChildSessionBridge | undefined, reason: 
     return;
   }
   const ctx = child?.ctx;
-  const manager = isRecord(ctx) ? ctx["sessionManager"] : undefined;
+  const manager = hostObject<ChildContext>(ctx)?.sessionManager;
   await stopChildSession(child, reason);
   try {
     const closed = await callOptionalAsync(ctx, ["close", "dispose", "shutdown"], [reason]);
@@ -324,29 +366,15 @@ export async function createChildSession(
   pi: PiLike,
   core: CoreBridge,
   ctx: unknown,
-  metadata: Record<string, unknown>,
+  metadata: ChildSessionMetadata,
 ): Promise<ChildSessionBridge | undefined> {
   const parent = sessionInfoFromContext(ctx);
   const plan = childSessionStartPlan(core, metadata, parent);
-  const activeTools = stringArrayFromUnknown(plan["activeTools"]);
-  const modelId = optionalStringField(plan, "modelId");
-  const thinkingLevel = optionalStringField(plan, "thinkingLevel");
-  const setupEntriesRaw = plan["setupEntries"];
-  if (!Array.isArray(setupEntriesRaw) || !setupEntriesRaw.every(isRecord)) {
-    throw new Error("Invalid Taumel child session start plan");
-  }
-  const setupEntries = setupEntriesRaw;
-  const workspaceDirectory = optionalStringField(metadata, "workspaceDirectory");
-  const cwd = workspaceDirectory ?? cwdFromContext(ctx);
-  if (workspaceDirectory !== undefined) {
-    try {
-      if (!statSync(workspaceDirectory).isDirectory()) {
-        return { error: "working_directory_unavailable" };
-      }
-    } catch {
-      return { error: "working_directory_unavailable" };
-    }
-  }
+  const activeTools = plan.activeTools === undefined ? undefined : [...plan.activeTools];
+  const modelId = plan.modelId;
+  const thinkingLevel = plan.thinkingLevel;
+  const setupEntries = [...plan.setupEntries];
+  const cwd = cwdFromContext(ctx);
   const normalizedModelId = normalizeChildModelId(modelId);
   const model = resolveChildModel(pi, ctx, normalizedModelId);
   if (!model.applied || model.model === undefined) {
@@ -358,7 +386,11 @@ export async function createChildSession(
   if (typeof pi.getAllTools === "function") {
     const liveNames = new Set(
       pi.getAllTools()
-        .map((tool) => typeof tool === "string" ? tool : isRecord(tool) && typeof tool["name"] === "string" ? tool["name"] : undefined)
+        .map((tool) => {
+          if (typeof tool === "string") return tool;
+          const name = hostObject<NamedTool>(tool)?.name;
+          return typeof name === "string" ? name : undefined;
+        })
         .filter((name): name is string => name !== undefined),
     );
     const missing = activeTools.filter((name) => !liveNames.has(name));
@@ -366,45 +398,34 @@ export async function createChildSession(
       return { error: `tool_surface_unavailable: ${missing.join(", ")}` };
     }
   }
-  const systemPrompt = agentSystemPromptFromMetadata(metadata);
   const sessionManager = SessionManager.inMemory(cwd);
   appendSetupEntries(sessionManager, setupEntries);
-  const resourceLoader =
-    systemPrompt === undefined
-      ? undefined
-      : new DefaultResourceLoader({
-        cwd,
-        agentDir: getAgentDir(),
-        appendSystemPromptOverride: (base) => [...base, systemPrompt],
-      });
   try {
-    await resourceLoader?.reload();
     const options = {
       cwd,
       sessionManager,
       ...(model.model !== undefined ? { model: model.model } : {}),
       ...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
       ...(activeTools !== undefined ? { tools: [...activeTools] } : {}),
-      ...(resourceLoader !== undefined ? { resourceLoader } : {}),
     };
     const result =
       typeof pi.createAgentSession === "function"
         ? await pi.createAgentSession(options)
         : await createPiAgentSession(options as Parameters<typeof createPiAgentSession>[0]);
-    const session = isRecord(result) ? result["session"] : undefined;
-    if (!isRecord(session)) return { error: "createAgentSession did not return a session" };
-    const childSessionManager = session["sessionManager"] ?? sessionManager;
+    const session = hostObject<SdkSession>(hostObject<CreatedSession>(result)?.session);
+    if (session === undefined) return { error: "createAgentSession did not return a session" };
+    const childSessionManager = session.sessionManager ?? sessionManager;
     const setupInfo =
       childSessionManager === sessionManager || hasCustomEntry(childSessionManager, "taumel.childSession")
         ? sessionInfoFromManager(childSessionManager)
         : appendSetupEntries(childSessionManager, setupEntries);
     const sessionId =
-      typeof session["sessionId"] === "string" && session["sessionId"] !== ""
-        ? session["sessionId"]
+      typeof session.sessionId === "string" && session.sessionId !== ""
+        ? session.sessionId
         : setupInfo.sessionId;
     const sessionFile =
-      typeof session["sessionFile"] === "string" && session["sessionFile"] !== ""
-        ? session["sessionFile"]
+      typeof session.sessionFile === "string" && session.sessionFile !== ""
+        ? session.sessionFile
         : setupInfo.sessionFile;
     if (!sessionId && !sessionFile) {
       return { missingSessionIdentifier: true };
@@ -423,13 +444,13 @@ export async function createChildSession(
       thinkingApplied: thinkingLevel !== undefined,
       sendUserMessage: (content, options = {}) => sendToSdkAgentSession(session, content, options),
       stop: async (reason) => {
-        if (typeof session["abort"] === "function") await session["abort"].call(session, reason);
+        if (typeof session.abort === "function") await session.abort.call(session, reason);
       },
       close: async (reason) => {
         const closed = await callOptionalAsync(session, ["close", "shutdown"], [reason]);
         if (closed !== undefined) return;
-        if (typeof session["abort"] === "function") await session["abort"].call(session, reason);
-        if (typeof session["dispose"] === "function") session["dispose"].call(session);
+        if (typeof session.abort === "function") await session.abort.call(session, reason);
+        if (typeof session.dispose === "function") session.dispose.call(session);
       },
     };
   } catch (error) {
@@ -446,27 +467,27 @@ export async function sendToChildSession(
   options: {
     readonly awaitCompletion?: boolean;
     readonly deliverAs?: string;
-    readonly onCompletion?: (dispatch: Record<string, unknown>) => void | Promise<void>;
+    readonly onCompletion?: (dispatch: ChildDispatchResult) => void | Promise<void>;
   } = {},
-): Promise<Record<string, unknown>> {
+): Promise<ChildDispatchResult> {
   const childCtx = child?.ctx;
+  const sendContext = hostObject<ChildSendContext>(childCtx);
   const childSendAvailable =
     typeof child?.sendUserMessage === "function" ||
-    (isRecord(childCtx) && typeof childCtx["sendUserMessage"] === "function");
+    typeof sendContext?.sendUserMessage === "function";
   const hostSendAvailable = typeof pi.sendUserMessage === "function";
-  const plan = coreCallRecord(core, "planChildDispatch", [{
+  const plan = decodeChildDispatchPlan(core.call("planChildDispatch", [{
     ...childBridgeFacts(child),
     prompt,
     emptyReason,
     sendAvailable: childSendAvailable || hostSendAvailable,
     deliverAs: options.deliverAs ?? "",
-  }], "child dispatch plan");
-  const result = isRecord(plan["result"]) ? plan["result"] : undefined;
-  if (result === undefined) throw new Error("Invalid Taumel child dispatch result");
-  if (plan["send"] !== true) return result;
+  }]));
+  const result = plan.result;
+  if (!plan.send) return result;
 
-  const dispatchPrompt = stringField(plan, "prompt");
-  const deliverAs = stringField(plan, "deliverAs");
+  const dispatchPrompt = plan.prompt;
+  const deliverAs = plan.deliverAs;
   if (deliverAs === "") throw new Error("Invalid Taumel child dispatch delivery mode");
   const sendOptions = { deliverAs };
   const awaitCompletion = options.awaitCompletion !== false;
@@ -508,8 +529,8 @@ export async function sendToChildSession(
     const hostResult = await child.sendUserMessage(dispatchPrompt, sendOptions);
     return dispatchResultWithHostCompletion(result, hostResult);
   }
-  if (isRecord(childCtx) && typeof childCtx["sendUserMessage"] === "function") {
-    const sendUserMessage = childCtx["sendUserMessage"];
+  if (typeof sendContext?.sendUserMessage === "function") {
+    const sendUserMessage = sendContext.sendUserMessage;
     if (!awaitCompletion) {
       return completeLater(() => sendUserMessage.call(childCtx, dispatchPrompt, sendOptions));
     }
@@ -529,37 +550,39 @@ export async function sendToChildSession(
 function completionTextFromContent(content: unknown): string | undefined {
   if (!Array.isArray(content)) return undefined;
   const parts = content
-    .map((item) => isRecord(item) && typeof item["text"] === "string" ? item["text"] : "")
+    .map((item) => {
+      const text = hostObject<TextPart>(item)?.text;
+      return typeof text === "string" ? text : "";
+    })
     .filter((text) => text.trim() !== "");
   return parts.length === 0 ? undefined : parts.join("\n");
 }
 
-function dispatchCompletionFromHostResult(hostResult: unknown): Record<string, unknown> | undefined {
+function dispatchCompletionFromHostResult(hostResult: unknown): ChildDispatchCompletion | undefined {
   if (typeof hostResult === "string" && hostResult.trim() !== "") {
     return { status: "completed", finalOutput: hostResult };
   }
-  if (!isRecord(hostResult)) {
-    return undefined;
-  }
+  const completion = hostObject<HostCompletion>(hostResult);
+  if (completion === undefined) return undefined;
   const finalOutput =
-    typeof hostResult["finalOutput"] === "string" ? hostResult["finalOutput"] :
-    typeof hostResult["output"] === "string" ? hostResult["output"] :
-    typeof hostResult["result"] === "string" ? hostResult["result"] :
-    completionTextFromContent(hostResult["content"]);
-  const rawStatus = typeof hostResult["status"] === "string" ? hostResult["status"] : "";
-  const stopReason = typeof hostResult["stopReason"] === "string" ? hostResult["stopReason"] : "";
-  const status = rawStatus === "failed" || hostResult["isError"] === true || stopReason === "error" ? "failed" :
+    typeof completion.finalOutput === "string" ? completion.finalOutput :
+    typeof completion.output === "string" ? completion.output :
+    typeof completion.result === "string" ? completion.result :
+    completionTextFromContent(completion.content);
+  const rawStatus = typeof completion.status === "string" ? completion.status : "";
+  const stopReason = typeof completion.stopReason === "string" ? completion.stopReason : "";
+  const status = rawStatus === "failed" || completion.isError === true || stopReason === "error" ? "failed" :
     rawStatus === "cancelled" || rawStatus === "aborted" || stopReason === "cancelled" || stopReason === "aborted" ? "cancelled" :
     rawStatus === "timed_out" || stopReason === "timed_out" ? "timed_out" :
     "completed";
   const reason =
-    typeof hostResult["reason"] === "string" ? hostResult["reason"] :
-    typeof hostResult["errorMessage"] === "string" ? hostResult["errorMessage"] :
-    typeof hostResult["error"] === "string" ? hostResult["error"] :
+    typeof completion.reason === "string" ? completion.reason :
+    typeof completion.errorMessage === "string" ? completion.errorMessage :
+    typeof completion.error === "string" ? completion.error :
     stopReason !== "" ? stopReason :
     undefined;
   const hasOutput = finalOutput !== undefined && finalOutput.trim() !== "";
-  const explicitTerminal = rawStatus !== "" || hostResult["isError"] === true || stopReason !== "";
+  const explicitTerminal = rawStatus !== "" || completion.isError === true || stopReason !== "";
   if (!hasOutput && status === "completed" && !explicitTerminal) {
     return undefined;
   }
@@ -571,16 +594,17 @@ function dispatchCompletionFromHostResult(hostResult: unknown): Record<string, u
 }
 
 function dispatchResultWithHostCompletion(
-  result: Record<string, unknown>,
+  result: ChildDispatchResult,
   hostResult: unknown,
-): Record<string, unknown> {
+): ChildDispatchResult {
   const completion = dispatchCompletionFromHostResult(hostResult);
   return completion === undefined ? result : { ...result, completion };
 }
 
 export function childSessionCacheKeyScopeFromContext(ctx: unknown): string {
-  if (isRecord(ctx) && typeof ctx["taumelSessionId"] === "string") {
-    const value = ctx["taumelSessionId"].trim();
+  const taumelSessionId = hostObject<ChildContext>(ctx)?.taumelSessionId;
+  if (typeof taumelSessionId === "string") {
+    const value = taumelSessionId.trim();
     if (value !== "") return value;
   }
   return sessionInfoFromContext(ctx).sessionId ?? "current";
@@ -596,34 +620,35 @@ export async function applyChildSessionUpdate(
   bridge: ChildSessionBridge | undefined,
   keyScope?: string,
 ): Promise<void> {
-  if (!isRecord(update)) throw new Error("Invalid Taumel child session update");
-  switch (stringField(update, "action")) {
+  const childUpdate = hostObject<ChildSessionUpdate>(update);
+  if (childUpdate === undefined) throw new Error("Invalid Taumel child session update");
+  switch (childUpdate.action) {
     case "none":
       return;
     case "store_child_session": {
-      const rawKey = stringField(update, "key");
+      const rawKey = typeof childUpdate.key === "string" ? childUpdate.key : "";
       if (rawKey === "" || !bridge) throw new Error("Invalid Taumel child session update");
       childSessions.set(childSessionCacheKey(rawKey, keyScope), bridge);
       return;
     }
     case "stop_child_session": {
-      const rawKey = stringField(update, "key");
+      const rawKey = typeof childUpdate.key === "string" ? childUpdate.key : "";
       if (rawKey === "") throw new Error("Invalid Taumel child session update");
       const key = childSessionCacheKey(rawKey, keyScope);
-      await stopChildSession(childSessions.get(key) ?? bridge, optionalStringField(update, "reason") ?? "stopped_by_parent");
+      await stopChildSession(childSessions.get(key) ?? bridge, typeof childUpdate.reason === "string" ? childUpdate.reason : "stopped_by_parent");
       return;
     }
     case "drop_child_session": {
-      const rawKey = stringField(update, "key");
+      const rawKey = typeof childUpdate.key === "string" ? childUpdate.key : "";
       if (rawKey === "") throw new Error("Invalid Taumel child session update");
       childSessions.delete(childSessionCacheKey(rawKey, keyScope));
       return;
     }
     case "delete_child_session": {
-      const rawKey = stringField(update, "key");
+      const rawKey = typeof childUpdate.key === "string" ? childUpdate.key : "";
       if (rawKey === "") throw new Error("Invalid Taumel child session update");
       const key = childSessionCacheKey(rawKey, keyScope);
-      await closeChildSession(childSessions.get(key) ?? bridge, optionalStringField(update, "reason") ?? "closed_by_parent");
+      await closeChildSession(childSessions.get(key) ?? bridge, typeof childUpdate.reason === "string" ? childUpdate.reason : "closed_by_parent");
       childSessions.delete(key);
       return;
     }
@@ -637,13 +662,13 @@ export async function applyChildSessionUpdatesFromDetails(
   result: unknown,
   keyScope?: string,
 ): Promise<boolean> {
-  if (!isRecord(result)) return false;
-  const details = isRecord(result["details"]) ? result["details"] : undefined;
-  const updates = Array.isArray(details?.["childSessionUpdates"])
-    ? details["childSessionUpdates"]
+  const rawDetails = hostObject<ChildUpdatesResult>(result)?.details;
+  const details = hostObject<ChildUpdatesDetails>(rawDetails);
+  const updates = Array.isArray(details?.childSessionUpdates)
+    ? details.childSessionUpdates
     : [];
   for (const update of updates) {
-    if (isRecord(update)) await applyChildSessionUpdate(childSessions, update, undefined, keyScope);
+    if (typeof update === "object" && update !== null) await applyChildSessionUpdate(childSessions, update, undefined, keyScope);
   }
   return updates.length > 0;
 }

@@ -1,8 +1,6 @@
 ---
 kind: requirement
 status: draft
-tags: [visibility, tools, skills, agents, ui, project-settings]
-depends_on: ["[[plans/subagents]]", "[[plans/skill-resolver]]", "[[plans/tool-rendering]]"]
 ---
 # Visibility controls
 
@@ -24,7 +22,7 @@ config with `Ctrl+S` or a command-form `save` action.
 
 ### Scope and precedence
 
-- **vis-sc01** (ubiquitous): The system shall treat tool, skill, and agent-profile visibility as session-effective state, not as a hard authorization policy.
+- **vis-sc01** (ubiquitous): The system shall treat tool and skill visibility as session-effective state, not as a hard authorization policy.
 - **vis-sc02** (ubiquitous): The system shall persist session-effective visibility in session custom entries and restore it when the same thread resumes.
 - **vis-sc03** (event-driven): When a new session starts and no session visibility state exists, the system shall seed session-effective visibility from global Pi config and trusted project Pi config according to the shared Taumel config precedence.
 - **vis-sc04** (ubiquitous): The session-effective state shall take precedence over config defaults for the lifetime of that session.
@@ -38,27 +36,21 @@ config with `Ctrl+S` or a command-form `save` action.
   ```json
   {
     "taumel": {
-      "agents": { "disabled": ["review"] },
-      "tools": { "disabled": ["agent_spawn", "agent_wait"] },
       "skills": { "disabled": ["grilling"] }
     }
   }
   ```
 
-- **vis-cf02** (ubiquitous): New tools, skills, and agent profiles shall default to enabled unless their names appear in the relevant resolved disabled list.
 - **vis-cf03** (ubiquitous): The system shall resolve visibility defaults independently per category, so a trusted project `taumel.tools.disabled` replaces global `taumel.tools.disabled`, while missing project categories still inherit their global disabled lists.
 - **vis-cf04** (event-driven): The system shall read project visibility defaults only when `ctx.isProjectTrusted()` is true.
 - **vis-cf05** (event-driven): When the user saves visibility to project config in an untrusted project, the system shall leave the file unchanged and show a clear warning.
-- **vis-cf06** (ubiquitous): Project save shall update only `taumel.agents.disabled`, `taumel.tools.disabled`, and `taumel.skills.disabled`, preserving other `taumel` settings such as direct `taumel.agents.<profile>` routing entries.
 - **vis-cf07** (event-driven): Restore-time warnings for unavailable visibility names shall be emitted at most once per session per category, with managers/lists allowed to show the same warning again when explicitly opened.
 - **vis-cf08** (event-driven): Project save shall write the current stored disabled set exactly, including unavailable names, and shall warn when unavailable names remain.
 - **vis-cf09** (ubiquitous): Visibility save actions shall write only trusted project Pi config and shall not write global Pi config.
-- **vis-cf10** (event-driven): When the user runs `/taumel init`, the system shall create missing global visibility defaults as empty `taumel.agents.disabled`, `taumel.tools.disabled`, and `taumel.skills.disabled` lists.
 
 ### Tool visibility
 
 - **vis-tl01** (event-driven): When a tool is disabled for the session, the system shall remove it from Pi's active tool list so the model does not see or select it.
-- **vis-tl02** (ubiquitous): Tool visibility shall be independent per tool; disabling `agent_spawn` shall not implicitly disable `agent_wait`, `agent_send`, or other related tools.
 - **vis-tl03** (ubiquitous): The system shall keep implementation simple and define no protected/non-hideable tool list.
 - **vis-tl04** (ubiquitous): Tool visibility shall not require dynamic unregistration from Pi; active-tool synchronization is the visibility mechanism.
 - **vis-tl05** (event-driven): `/tools disable <name>` and `/tools enable <name>` shall update session visibility, persist it to the session, and synchronize active tools immediately.
@@ -78,19 +70,10 @@ config with `Ctrl+S` or a command-form `save` action.
 - **vis-sk07** (event-driven): When `/skills enable <name>` or `/skills disable <name>` names a skill that is not currently discovered, the system shall leave visibility unchanged and return a warning.
 - **vis-sk08** (event-driven): When restoring session or trusted project skill visibility references skills that are no longer discovered, the system shall warn the user and keep the saved names untouched.
 
-### Agent profile visibility
 
-- **vis-ag01** (event-driven): When an agent profile is disabled for the session, user-facing managers shall show it as disabled, while model-facing profile discovery shall avoid presenting it as an available choice.
-- **vis-ag02** (event-driven): `/agents disable <profile>` and `/agents enable <profile>` shall update session profile visibility and persist it to the session immediately.
-- **vis-ag03** (event-driven): `/agents save` shall save the current session-effective disabled profile list to trusted project config.
-- **vis-ag04** (event-driven): `/agents list` shall list profiles with current session-effective visibility. In non-TUI modes, `/agents` with no arguments shall behave like `/agents list`.
-- **vis-ag05** (ubiquitous): Existing agents keep their spawn-time profile snapshot; disabling a profile affects future spawns, not already-created agent identities.
-- **vis-ag06** (event-driven): When `/agents enable <profile>` or `/agents disable <profile>` names a profile that is not currently in the catalog, the system shall leave visibility unchanged and return a warning.
-- **vis-ag07** (event-driven): When restoring session or trusted project agent visibility references profiles that are no longer in the catalog, the system shall warn the user and keep the saved names untouched.
 
 ### Manager UI
 
-- **vis-ui01** (event-driven): In TUI mode, `/agents`, `/tools`, and `/skills` with no arguments shall open cron-style full-screen managers rather than one-shot picker prompts.
 - **vis-ui02** (ubiquitous): Each manager shall show the current session-effective state only: `enabled` or `disabled`, plus the item name and a short description or path where useful.
 - **vis-ui03** (event-driven): Pressing enter on a selected row shall toggle that row and apply the change immediately.
 - **vis-ui04** (event-driven): Pressing `Ctrl+S` shall save the current session-effective disabled list to trusted project config.

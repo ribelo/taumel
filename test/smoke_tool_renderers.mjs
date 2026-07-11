@@ -495,54 +495,6 @@ assert(/• cron_list · 1 task \(disabled\)/.test(cronListCompact) && !cronList
 assert(cronListExpanded.includes("Master switch: disabled") && cronListExpanded.includes("Prompt: check status"), `cron_list expanded should show task details: ${cronListExpanded}`);
 assert(/• cron_delete · cron-a \(deleted\)/.test(cronDeleteCompact), `cron_delete compact should show deletion outcome: ${cronDeleteCompact}`);
 
-const spawnCompact = renderText(renderersForTool("agent_spawn").renderResult(resultFor("agent_spawn"), { expanded: false, isPartial: false }, theme, { args: argsFor("agent_spawn") }));
-assert(/• agent_spawn · finder-1/.test(spawnCompact) && !spawnCompact.includes("\n") && !spawnCompact.includes("running"), `agent_spawn compact should be only the spawned agent id: ${spawnCompact}`);
-const spawnExpanded = renderText(renderersForTool("agent_spawn").renderResult(
-  { content: [{ type: "text", text: "<taumel_agent_spawn>raw xml</taumel_agent_spawn>" }], details: { ok: true, profile: "finder", agent_id: "finder-1", run_id: "finder-1-run-1", status: "running" } },
-  { expanded: true, isPartial: false },
-  theme,
-  { args: { profile: "finder", message: "inspect every file", create_goal: true } },
-));
-assert(spawnExpanded.includes("Objective sent:") && spawnExpanded.includes("inspect every file") && !spawnExpanded.includes("<taumel_agent_spawn>"), `agent_spawn expanded should render fields and sent objective, not XML: ${spawnExpanded}`);
-const profilesCompact = renderText(renderersForTool("agent_profiles").renderResult(resultFor("agent_profiles"), { expanded: false, isPartial: false }, theme, { args: argsFor("agent_profiles") }));
-const profilesExpanded = renderText(renderersForTool("agent_profiles").renderResult(resultFor("agent_profiles"), { expanded: true, isPartial: false }, theme, { args: argsFor("agent_profiles") }));
-assert(/• agent_profiles · 2 profiles \(1 enabled, 1 disabled\)/.test(profilesCompact) && !profilesCompact.includes("item"), `agent_profiles compact should summarize catalog without generic item rows: ${profilesCompact}`);
-assert(profilesExpanded.includes("finder") && profilesExpanded.includes("Find files") && profilesExpanded.includes("disabled for this session") && !profilesExpanded.includes("<taumel_agent_profiles>"), `agent_profiles expanded should use profile fields without XML: ${profilesExpanded}`);
-const listCompact = renderText(renderersForTool("agent_list").renderResult(resultFor("agent_list"), { expanded: false, isPartial: false }, theme, { args: argsFor("agent_list") }));
-const listExpanded = renderText(renderersForTool("agent_list").renderResult(resultFor("agent_list"), { expanded: true, isPartial: false }, theme, { args: argsFor("agent_list") }));
-assert(/• agent_list · open agents \(1\)/.test(listCompact) && !listCompact.includes("worker-1"), `agent_list compact should be a one-line summary: ${listCompact}`);
-assert(listExpanded.includes("worker-1") && listExpanded.includes("Latest run:") && !listExpanded.includes("<taumel_agent_list>"), `agent_list expanded should render actual agents shape: ${listExpanded}`);
-const sendCompact = renderText(renderersForTool("agent_send").renderResult(resultFor("agent_send"), { expanded: false, isPartial: false }, theme, { args: argsFor("agent_send") }));
-const sendExpanded = renderText(renderersForTool("agent_send").renderResult(resultFor("agent_send"), { expanded: true, isPartial: false }, theme, { args: argsFor("agent_send") }));
-assert(/• agent_send · worker-1 \(steered\)/.test(sendCompact), `agent_send compact should center on id and delivery outcome: ${sendCompact}`);
-assert(sendExpanded.includes("Message sent:") && sendExpanded.includes("continue") && !sendExpanded.includes("<taumel_agent_send>"), `agent_send expanded should render outcome and sent body: ${sendExpanded}`);
-const closeCompact = renderText(renderersForTool("agent_close").renderResult({ content: [], details: { ok: true, agent_ids: ["a", "b", "c", "d"], closedCount: 4 } }, { expanded: false, isPartial: false }, theme, { args: { agent_ids: ["a", "b", "c", "d"] } }));
-assert(/• agent_close · 4 agents/.test(closeCompact), `agent_close compact should summarize >3 ids: ${closeCompact}`);
-const waitPoll = renderText(renderersForTool("agent_wait").renderCall({ timeout_seconds: 0 }, theme, { isPartial: true }));
-const waitBounded = renderText(renderersForTool("agent_wait").renderCall({ agent_ids: ["finder-1"], timeout_seconds: 5 }, theme, { isPartial: true }));
-const waitForever = renderText(renderersForTool("agent_wait").renderCall({}, theme, { isPartial: true }));
-assert(waitPoll.includes("poll now") && waitBounded.includes("up to 5s") && waitForever.includes("until completion"), `agent_wait call labels should show poll/bounded/indefinite modes: ${JSON.stringify({ waitPoll, waitBounded, waitForever })}`);
-const waitExpanded = renderText(renderersForTool("agent_wait").renderResult(
-  { content: [{ type: "text", text: "<taumel_agent_wait>raw xml</taumel_agent_wait>" }], details: { ok: true, runs: [
-    { agent_id: "finder-1", run_id: "finder-1-run-1", status: "completed", finalOutput: "first child done", outputAvailable: true },
-    { agent_id: "review-2", run_id: "review-2-run-1", status: "failed", error: "review failed", outputAvailable: true },
-  ] } },
-  { expanded: true, isPartial: false },
-  theme,
-  { args: { run_ids: ["finder-1-run-1", "review-2-run-1"] } },
-));
-assert(waitExpanded.includes("finder-1 · finder-1-run-1 · completed") && waitExpanded.includes("first child done") && waitExpanded.includes("review failed") && !waitExpanded.includes("<taumel_agent_wait>"), `agent_wait expanded should group child responses without XML: ${waitExpanded}`);
-const waitCompact = renderText(renderersForTool("agent_wait").renderResult(
-  { content: [], details: { ok: true, runs: [
-    { agent_id: "finder-1", run_id: "finder-1-run-1", status: "completed", finalOutput: "first child done", outputAvailable: true },
-    { agent_id: "review-2", run_id: "review-2-run-1", status: "failed", error: "review failed", outputAvailable: true },
-  ] } },
-  { expanded: false, isPartial: false },
-  theme,
-  { args: { run_ids: ["finder-1-run-1", "review-2-run-1"] } },
-));
-assert(/• agent_wait · 2 runs \(1 completed, 1 failed\)/.test(waitCompact), `agent_wait compact should summarize outcomes in one line: ${waitCompact}`);
-
 // Exa search — compact count only; expanded rows with domain/full URL.
 const exa = renderersForTool("web_search_exa");
 const compactExa = renderText(exa.renderResult(resultFor("web_search_exa"), { expanded: false, isPartial: false }, theme, { args: argsFor("web_search_exa") }));
@@ -588,15 +540,6 @@ assert(
   /• exec_completion · session 3 ready/.test(renderText(renderNotification({ customType: "notification", content: execNote }, { expanded: false }, strictTheme))),
   "notification renderer should use only real Pi theme tokens",
 );
-
-const agentNote = "Agent run finder-7-run-1 for finder-7 (finder) has finished. To read and consume the result, call agent_wait with run_ids=[finder-7-run-1], timeout_seconds=0.";
-const compactAgentNote = renderText(renderNotification({ customType: "notification", content: agentNote }, { expanded: false }, theme));
-const expandedAgentNote = renderText(renderNotification({ customType: "notification", content: agentNote }, { expanded: true }, theme));
-assertLeftGutter(compactAgentNote, "compact agent notification");
-assertLeftGutter(expandedAgentNote, "expanded agent notification");
-assert(/• agent_completion · finder-7 ready/.test(compactAgentNote), `agent notification header wrong: ${compactAgentNote}`);
-assert(!compactAgentNote.includes("all done here"), `agent notification must not include final output: ${compactAgentNote}`);
-assert(!compactAgentNote.includes("agent_wait") && expandedAgentNote.includes("agent_wait"), `agent notification read instruction should be expanded-only: ${JSON.stringify({ compactAgentNote, expandedAgentNote })}`);
 
 assert(
   renderNotification({ customType: "notification", content: "" }, { expanded: false }, theme) === undefined,

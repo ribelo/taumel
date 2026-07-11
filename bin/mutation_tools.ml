@@ -230,7 +230,10 @@ let prepare_edit params =
           render_mutation_plan plan
             [ ("edits", js_array (List.map js_edit_replacement plan.edits)) ])
 
-let apply_edit_to_file prepared contents =
+let apply_edit_to_file raw_facts =
+  let facts = Tool_contracts.EditApplicationFacts.t_of_js (ojs_of_js raw_facts) in
+  let prepared = Tool_contracts.EditApplicationFacts.get_prepared facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
+  let contents = Tool_contracts.EditApplicationFacts.get_contents facts in
   let request = edit_request_from_params prepared in
   let path = request.path in
   let display_path =
@@ -239,16 +242,13 @@ let apply_edit_to_file prepared contents =
     | _ -> path
   in
   match Taumel.Sandbox.apply_edits ~display_path contents request.edits with
-  | Error message -> error_obj message
+  | Error message ->
+      Tool_contracts.MutationError.create ~kind:"error" ~message ()
+      |> Tool_contracts.MutationError.t_to_js |> inject
   | Ok contents ->
-      ok_obj
-        [
-          ("action", js_string "edit");
-          ("path", js_string path);
-          ("displayPath", js_string display_path);
-          ("contents", js_string contents);
-          ("editCount", js_number (float_of_int (List.length request.edits)));
-        ]
+      Tool_contracts.EditApplied.create ~kind:"applied" ~path ~displayPath:display_path
+        ~contents ~editCount:(float_of_int (List.length request.edits)) ()
+      |> Tool_contracts.EditApplied.t_to_js |> inject
 
 let prepare_apply_patch params =
   with_gateway_profile_authorized "apply_patch" (fun sandbox ->
@@ -281,35 +281,32 @@ let files_map_from_js obj =
          Taumel.Shared.String_map.add path contents map)
        Taumel.Shared.String_map.empty
 
-let apply_patch_to_files params files ctx approval =
+let apply_patch_to_files raw_facts =
+  let facts = Tool_contracts.PatchApplicationFacts.t_of_js (ojs_of_js raw_facts) in
+  let params = Tool_contracts.PatchApplicationFacts.get_params facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
+  let files = Tool_contracts.PatchApplicationFacts.get_files facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
+  let ctx = Tool_contracts.PatchApplicationFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
   Session_sync.sync_session_from_host ~scope:"apply_patch files" ctx;
-  let approved =
-    get_bool approval "approved" || get_bool approval "filesystemApproval"
-  in
+  let approved = Tool_contracts.PatchApplicationFacts.get_filesystemApproval facts in
   with_gateway_profile_authorized "apply_patch" (fun sandbox ->
       match patch_request_from_params params with
-      | Error message -> error_obj message
+      | Error message ->
+          Tool_contracts.MutationError.create ~kind:"error" ~message ()
+          |> Tool_contracts.MutationError.t_to_js |> inject
       | Ok request -> (
           match
             Taumel.Mutation_plan.apply_patch_to_files ~approved sandbox request
               (files_map_from_js files)
           with
-          | Error message -> error_obj message
+          | Error message ->
+              Tool_contracts.MutationError.create ~kind:"error" ~message ()
+              |> Tool_contracts.MutationError.t_to_js |> inject
           | Ok output ->
               let write_objects =
                 output.writes
                 |> List.map (fun (path, contents) ->
-                       Unsafe.obj
-                         [|
-                           ("path", js_string path);
-                           ("contents", js_string contents);
-                         |])
+                       Tool_contracts.PatchWrite.create ~path ~contents ())
               in
-              ok_obj
-                [
-                  ("action", js_string "apply_patch");
-                  ("deletes", js_array (List.map js_string output.deletes));
-                  ("writes", js_array write_objects);
-                  ( "affectedPaths",
-                    js_array (List.map js_string output.affected_paths) );
-                ]))
+              Tool_contracts.PatchApplied.create ~kind:"applied" ~deletes:output.deletes
+                ~writes:write_objects ~affectedPaths:output.affected_paths ()
+              |> Tool_contracts.PatchApplied.t_to_js |> inject))

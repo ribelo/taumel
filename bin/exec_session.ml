@@ -946,10 +946,16 @@ let run_exec_command prepared host runtime owner_id signal force_unsandboxed =
         (normalize_exec_yield_ms call.yield_time_ms)
         ?timeout_ms:call.timeout_ms signal extra
 
-let write_stdin prepared owner_id signal =
-  match int_field prepared "sessionId" with
-  | None -> rejected_promise "write_stdin requires sessionId"
-  | Some session_id -> (
+let write_stdin raw_facts =
+  let facts = Tool_contracts.WriteStdinFacts.t_of_js (ojs_of_js raw_facts) in
+  let session_id = Tool_contracts.WriteStdinFacts.get_sessionId facts |> int_of_float in
+  let chars = Tool_contracts.WriteStdinFacts.get_chars facts in
+  let owner_id = Tool_contracts.WriteStdinFacts.get_ownerId facts in
+  let signal =
+    Tool_contracts.WriteStdinFacts.get_signal facts
+    |> Option.map (fun value -> Ts2ocaml.unknown_to_js value |> Obj.magic)
+    |> Option.value ~default:(inject Js.null)
+  in
   match Hashtbl.find_opt sessions session_id with
   | None -> (
       match Hashtbl.find_opt retained_sessions session_id with
@@ -957,7 +963,6 @@ let write_stdin prepared owner_id signal =
           rejected_promise
             (Printf.sprintf "Shell session %d belongs to another pi session" session_id)
       | Some retained ->
-          let chars = get_string prepared "chars" in
           if chars <> "" then
             rejected_promise
               (Printf.sprintf "session %d already completed; cannot write stdin" session_id)
@@ -996,7 +1001,6 @@ let write_stdin prepared owner_id signal =
       rejected_promise
         (Printf.sprintf "Shell session %d belongs to another pi session" session_id)
   | Some session ->
-      let chars = get_string prepared "chars" in
       let stdin_error =
         if signal_aborted signal then Some "Operation aborted"
         else if chars <> "" && session.exited then
@@ -1018,17 +1022,16 @@ let write_stdin prepared owner_id signal =
       | None ->
           let extra = Unsafe.obj [| ("kind", js_string "write_stdin") |] in
           let output_mode =
-            match optional_string_field prepared "outputMode" with
+            match Tool_contracts.WriteStdinFacts.get_outputMode facts with
             | Some "status" -> "status"
             | _ -> "delta"
           in
           promise_of_session session
             (normalize_write_yield_ms
-               (optional_positive_float prepared "yieldTimeMs")
+               (Tool_contracts.WriteStdinFacts.get_yieldTimeMs facts)
                (chars = ""))
             ~abort_disposition:`Keep_session ~write_stdin_waiter:true ~output_mode signal
             extra)
-  )
 
 let shutdown_owner owner_id =
   Hashtbl.filter_map_inplace
@@ -1045,7 +1048,7 @@ let shutdown_owner owner_id =
     retained_sessions;
   ok_obj [ ("action", js_string "shutdown_exec_owner") ]
 
-(* Background completion notification (mirrors subagent completion delivery).
+(* Background completion notification (mirrors isolated_child completion delivery).
 
    An async session (one that returned a sessionId) that exits while no call is
    consuming its terminal result is left in [sessions] with [exited = true].
@@ -1067,13 +1070,9 @@ let exec_notification_deliverable owner_id session =
   && not session.notification_delivery_claimed
 
 let exec_notification_obj session =
-  Unsafe.obj
-    [|
-      ("session_id", js_number (float_of_int session.id));
-      ("customType", js_string "notification");
-      ("content", js_string (exec_notification_content session));
-      ("display", js_bool true);
-    |]
+  Tool_contracts.ExecNotification.create ~session_id:(float_of_int session.id)
+    ~customType:"notification" ~content:(exec_notification_content session)
+    ~display:true ()
 
 (* Pending deliverable background completions for [owner_id]: terminal sessions
    that have not yet been consumed, are not currently claimed by write_stdin,
@@ -1088,16 +1087,27 @@ let pending_exec_notifications owner_id =
       sessions []
   in
   let pending = List.sort (fun a b -> compare a.id b.id) pending in
-  ok_obj [ ("notifications", js_array (List.map exec_notification_obj pending)) ]
+  let result =
+    Tool_contracts.PendingExecNotificationsResult.create
+      ~notifications:(List.map exec_notification_obj pending) ()
+  in
+  Tool_contracts.PendingExecNotificationsResult.t_to_js result |> inject
 
 let claim_exec_notification_delivery owner_id session_id =
   match Hashtbl.find_opt sessions session_id with
   | Some session when exec_notification_deliverable owner_id session ->
       session.notification_delivery_claimed <- true;
-      let notification = exec_notification_obj session in
-      Unsafe.set notification "claimed" (js_bool true);
-      notification
-  | _ -> ok_obj [ ("claimed", js_bool false) ]
+      let claim =
+        Tool_contracts.ExecNotificationClaimed.create ~kind:"claimed"
+          ~session_id:(float_of_int session.id) ~customType:"notification"
+          ~content:(exec_notification_content session) ~display:true ()
+      in
+      Tool_contracts.ExecNotificationClaimed.t_to_js claim |> inject
+  | _ ->
+      let claim =
+        Tool_contracts.ExecNotificationUnavailable.create ~kind:"unavailable" ()
+      in
+      Tool_contracts.ExecNotificationUnavailable.t_to_js claim |> inject
 
 let release_exec_notification_delivery session_id =
   (match Hashtbl.find_opt sessions session_id with
@@ -1117,7 +1127,7 @@ let mark_exec_notification_delivered session_id =
 (* Resolves when the session has exited (or is already gone/drained), without
    draining or removing it, so the turn_end/idle flush can deliver its output.
    The TS layer starts this detached for each async session and, on resolution,
-   does an idle flush (triggerTurn) - the exec analogue of the subagent
+   does an idle flush (triggerTurn) - the exec analogue of the isolated_child
    onCompletion -> deliverCompletionIfParentIdle path. *)
 let await_exec_completion session_id =
   Unsafe.new_obj (Unsafe.get Unsafe.global "Promise")

@@ -1,11 +1,17 @@
 open Jsoo_bridge
 open App_state
 
-let prepare name params ctx =
-  if name <> "agent_wait" then
-    Session_sync.sync_session_from_host ~scope:"tool prepare"
-      ~reset_missing:(name <> "ralph_continue" && name <> "ralph_finish")
-      ctx;
+let prepare raw_facts =
+  let facts = Tool_contracts.PrepareToolFacts.t_of_js (ojs_of_js raw_facts) in
+  let name = Tool_contracts.PrepareToolFacts.get_name facts in
+  let params = Tool_contracts.PrepareToolFacts.get_params facts
+    |> Ts2ocaml.unknown_to_js |> Obj.magic
+  in
+  let ctx = Tool_contracts.PrepareToolFacts.get_ctx facts
+    |> Ts2ocaml.unknown_to_js |> Obj.magic
+  in
+  Session_sync.sync_session_from_host ~scope:"tool prepare"
+    ~reset_missing:(name <> "ralph_continue" && name <> "ralph_finish") ctx;
   match name with
   | "exec_command" -> Mutation_tools.prepare_exec_command params
   | "write_stdin" -> Mutation_tools.prepare_write_stdin params
@@ -19,9 +25,6 @@ let prepare name params ctx =
   | "update_goal" -> Goal_tools.prepare_update params ctx
   | "query_threads" -> Thread_bridge.prepare_query params
   | "read_thread" -> Thread_bridge.prepare_read params
-  | "agent_spawn" | "agent_send" | "agent_wait" | "agent_list" | "agent_close"
-  | "agent_profiles" ->
-      Agent_tools.prepare name params ctx
   | "cron_create" | "cron_list" | "cron_delete" -> Cron_tools.prepare name params ctx
   | "ralph_continue" | "ralph_finish" -> Ralph_tools.prepare_child_tool name params ctx
   | "web_search_exa" -> Exa_bridge.prepare_web_search params

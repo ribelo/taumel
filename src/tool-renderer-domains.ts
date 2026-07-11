@@ -1,7 +1,6 @@
 import type { Block, Entry, HeaderSpec } from "./render-layout.ts";
 import {
   boolFieldOrUndefined,
-  isRecord,
   numberFieldOrUndefined,
   recordArrayFieldOrEmpty,
   recordFieldOrUndefined,
@@ -9,8 +8,13 @@ import {
   stringFieldOrUndefined,
 } from "./util.ts";
 
+type ToolRenderFields = { readonly [key: string]: unknown };
+function isToolRenderFields(value: unknown): value is ToolRenderFields {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function themeFg(theme: unknown, color: string, value: string): string {
-  if (!isRecord(theme)) return value;
+  if (!isToolRenderFields(theme)) return value;
   const fg = theme["fg"];
   if (typeof fg !== "function") return value;
   const rendered = fg.call(theme, color, value);
@@ -30,20 +34,20 @@ function domainOf(url: string): string {
 }
 
 function textContent(result: unknown): string {
-  if (!isRecord(result) || !Array.isArray(result["content"])) return "";
+  if (!isToolRenderFields(result) || !Array.isArray(result["content"])) return "";
   const parts: string[] = [];
   for (const item of result["content"]) {
-    if (isRecord(item) && item["type"] === "text" && typeof item["text"] === "string") parts.push(item["text"]);
+    if (isToolRenderFields(item) && item["type"] === "text" && typeof item["text"] === "string") parts.push(item["text"]);
   }
   return parts.join("\n");
 }
 
-function detailsRecord(result: unknown): Record<string, unknown> {
-  return isRecord(result) && isRecord(result["details"]) ? result["details"] : {};
+function detailsRecord(result: unknown): ToolRenderFields {
+  return isToolRenderFields(result) && isToolRenderFields(result["details"]) ? result["details"] : {};
 }
 
 function expandedFromOptions(options: unknown): boolean {
-  return isRecord(options) && options["expanded"] === true;
+  return isToolRenderFields(options) && options["expanded"] === true;
 }
 
 function dot(theme: unknown, color: string): string {
@@ -55,7 +59,7 @@ function headerSpec(name: string, subject: string, dotColor: string, theme: unkn
   return { lead, subject, trailing };
 }
 
-function dotFromDetails(details: Record<string, unknown>): string {
+function dotFromDetails(details: ToolRenderFields): string {
   const code = numberFieldOrUndefined(details, "exitCode") ?? numberFieldOrUndefined(details, "code");
   if (code !== undefined) return code === 0 ? "success" : "error";
   if (boolFieldOrUndefined(details, "ok") === false) return "error";
@@ -90,21 +94,21 @@ function boolState(value: boolean | undefined, trueText: string, falseText: stri
   return value ? trueText : falseText;
 }
 
-function quotedQuery(args: Record<string, unknown>): string {
+function quotedQuery(args: ToolRenderFields): string {
   return `"${oneLine(stringFieldOrUndefined(args, "query") ?? "")}"`;
 }
 
-function resultDescription(item: Record<string, unknown>): string | undefined {
+function resultDescription(item: ToolRenderFields): string | undefined {
   const summary = stringFieldOrUndefined(item, "summary") ?? stringFieldOrUndefined(item, "text") ?? stringFieldOrUndefined(item, "content") ?? stringFieldOrUndefined(item, "description");
   if (summary !== undefined) return summary;
   const highlights = item["highlights"];
   return Array.isArray(highlights) ? highlights.find((part): part is string => typeof part === "string") : undefined;
 }
 
-function buildGoal(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
+function buildGoal(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
-  const goal = recordFieldOrUndefined(details, "goal");
+  const goal = recordFieldOrUndefined<ToolRenderFields>(details, "goal");
   const objective = goal !== undefined ? stringFieldOrUndefined(goal, "objective") : undefined;
   const status = goal !== undefined ? stringFieldOrUndefined(goal, "status") : undefined;
   const subject = oneLine(objective ?? stringFieldOrUndefined(args, "objective") ?? stringFieldOrUndefined(args, "status") ?? name);
@@ -122,7 +126,7 @@ function buildGoal(name: string, result: unknown, options: unknown, theme: unkno
   return { header, body: entries.length === 0 ? undefined : { mode: "rail", entries } };
 }
 
-function cronTaskLine(task: Record<string, unknown>, theme: unknown): string {
+function cronTaskLine(task: ToolRenderFields, theme: unknown): string {
   const id = stringFieldOrUndefined(task, "id") ?? "task";
   const schedule = stringFieldOrUndefined(task, "schedule") ?? stringFieldOrUndefined(task, "cron") ?? "";
   const mode = stringFieldOrUndefined(task, "mode");
@@ -130,7 +134,7 @@ function cronTaskLine(task: Record<string, unknown>, theme: unknown): string {
   return [themeFg(theme, "toolOutput", id), schedule, mode, enabled].filter((part): part is string => part !== undefined && part !== "").join(` ${themeFg(theme, "dim", "·")} `);
 }
 
-function cronTaskEntries(task: Record<string, unknown>, theme: unknown): Entry[] {
+function cronTaskEntries(task: ToolRenderFields, theme: unknown): Entry[] {
   const entries: Entry[] = [{ text: cronTaskLine(task, theme) }];
   const details = [
     stringFieldOrUndefined(task, "cron") !== undefined ? `cron=${stringFieldOrUndefined(task, "cron")}` : undefined,
@@ -143,7 +147,7 @@ function cronTaskEntries(task: Record<string, unknown>, theme: unknown): Entry[]
   return entries;
 }
 
-function buildCron(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
+function buildCron(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
   if (name === "cron_delete") {
@@ -153,7 +157,7 @@ function buildCron(name: string, result: unknown, options: unknown, theme: unkno
     return expanded ? { header, body: { mode: "rail", entries: [{ text: themeFg(theme, "toolOutput", `Task ${id}: ${deleted ? "deleted" : "not found"}`) }] } } : { header, body: undefined };
   }
   if (name === "cron_list") {
-    const tasks = recordArrayFieldOrEmpty(details, "tasks");
+    const tasks = recordArrayFieldOrEmpty<ToolRenderFields>(details, "tasks");
     const enabled = boolFieldOrUndefined(details, "enabled") === true;
     const header = headerSpec(name, `${tasks.length} task${tasks.length === 1 ? "" : "s"} (${enabled ? "enabled" : "disabled"})`, dotFromDetails(details), theme);
     if (!expanded) return { header, body: undefined };
@@ -165,7 +169,7 @@ function buildCron(name: string, result: unknown, options: unknown, theme: unkno
     });
     return { header, body: { mode: "rail", entries } };
   }
-  const task = recordFieldOrUndefined(details, "task") ?? details;
+  const task = recordFieldOrUndefined<ToolRenderFields>(details, "task") ?? details;
   const id = stringFieldOrUndefined(task, "id") ?? stringFieldOrUndefined(details, "id") ?? "";
   const schedule = stringFieldOrUndefined(task, "schedule") ?? stringFieldOrUndefined(task, "cron") ?? stringFieldOrUndefined(details, "schedule") ?? "";
   const enabled = boolState(boolFieldOrUndefined(task, "enabled") ?? boolFieldOrUndefined(details, "enabled"), "enabled", "disabled");
@@ -173,18 +177,18 @@ function buildCron(name: string, result: unknown, options: unknown, theme: unkno
   return expanded ? { header, body: { mode: "rail", entries: cronTaskEntries(task, theme) } } : { header, body: undefined };
 }
 
-function subjectFromThreadArgs(args: Record<string, unknown>): string {
-  const locator = recordFieldOrUndefined(args, "locator");
+function subjectFromThreadArgs(args: ToolRenderFields): string {
+  const locator = recordFieldOrUndefined<ToolRenderFields>(args, "locator");
   const threadID = stringFieldOrUndefined(args, "threadID") ?? (locator !== undefined ? stringFieldOrUndefined(locator, "threadID") : undefined) ?? "";
   const mode = stringFieldOrUndefined(args, "mode") ?? "overview";
   return `${threadID} (${mode})`;
 }
 
-function buildQueryThreads(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
+function buildQueryThreads(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
-  const threads = recordArrayFieldOrEmpty(details, "threads");
-  const hits = threads.reduce((total, thread) => total + recordArrayFieldOrEmpty(thread, "hits").length, 0);
+  const threads = recordArrayFieldOrEmpty<ToolRenderFields>(details, "threads");
+  const hits = threads.reduce((total, thread) => total + recordArrayFieldOrEmpty<ToolRenderFields>(thread, "hits").length, 0);
   const header = headerSpec(name, quotedQuery(args), dotFromDetails(details), theme, themeFg(theme, "dim", `(${threads.length} thread${threads.length === 1 ? "" : "s"}, ${hits} hit${hits === 1 ? "" : "s"})`));
   if (!expanded) return { header, body: undefined };
   const entries: Entry[] = [];
@@ -193,7 +197,7 @@ function buildQueryThreads(name: string, result: unknown, options: unknown, them
     const title = stringFieldOrUndefined(thread, "title") ?? stringFieldOrUndefined(thread, "id") ?? `thread ${index + 1}`;
     const id = stringFieldOrUndefined(thread, "id");
     const workspace = stringFieldOrUndefined(thread, "workspace");
-    const threadHits = recordArrayFieldOrEmpty(thread, "hits");
+    const threadHits = recordArrayFieldOrEmpty<ToolRenderFields>(thread, "hits");
     const meta = [id, workspace, `${threadHits.length} hit${threadHits.length === 1 ? "" : "s"}`].filter((part): part is string => part !== undefined && part !== "");
     entries.push({ text: `${themeFg(theme, "accent", String(index + 1))} ${themeFg(theme, "dim", "·")} ${themeFg(theme, "toolOutput", title)} ${themeFg(theme, "dim", "·")} ${themeFg(theme, "dim", meta.join(" · "))}` });
     for (const hit of threadHits) {
@@ -206,10 +210,10 @@ function buildQueryThreads(name: string, result: unknown, options: unknown, them
   return { header, body: { mode: "rail", entries } };
 }
 
-function buildReadThread(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
+function buildReadThread(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
-  const diagnostics = recordArrayFieldOrEmpty(details, "diagnostics");
+  const diagnostics = recordArrayFieldOrEmpty<ToolRenderFields>(details, "diagnostics");
   const cursor = stringFieldOrUndefined(details, "cursor");
   const facts = [diagnostics.length > 0 ? `${diagnostics.length} diagnostic${diagnostics.length === 1 ? "" : "s"}` : undefined, cursor !== undefined ? "more available" : undefined].filter((part): part is string => part !== undefined);
   const baseSubject = subjectFromThreadArgs(args);
@@ -217,7 +221,7 @@ function buildReadThread(name: string, result: unknown, options: unknown, theme:
   const header = headerSpec(name, subject, dotFromDetails(details), theme);
   if (!expanded) return { header, body: undefined };
   const entries: Entry[] = [];
-  const thread = recordFieldOrUndefined(details, "thread");
+  const thread = recordFieldOrUndefined<ToolRenderFields>(details, "thread");
   if (thread !== undefined) {
     entries.push(...labeled("Title", stringFieldOrUndefined(thread, "title"), theme));
     const messages = numberFieldOrUndefined(thread, "messageCount") ?? numberFieldOrUndefined(thread, "message_count");
@@ -231,160 +235,7 @@ function buildReadThread(name: string, result: unknown, options: unknown, theme:
   return { header, body: entries.length === 0 ? undefined : { mode: "rail", entries } };
 }
 
-function buildAgentProfiles(name: string, result: unknown, options: unknown, theme: unknown): Block {
-  const expanded = expandedFromOptions(options);
-  const details = detailsRecord(result);
-  const profiles = recordArrayFieldOrEmpty(details, "profiles");
-  const enabledCount = profiles.filter((profile) => boolFieldOrUndefined(profile, "enabled") !== false).length;
-  const disabledCount = profiles.length - enabledCount;
-  const subject = `${profiles.length} profile${profiles.length === 1 ? "" : "s"} (${enabledCount} enabled${disabledCount > 0 ? `, ${disabledCount} disabled` : ""})`;
-  const header = headerSpec(name, subject, dotFromDetails(details), theme);
-  if (!expanded) return { header, body: undefined };
-  const entries: Entry[] = [];
-  profiles.forEach((profile, index) => {
-    if (index > 0) entries.push({ text: "" });
-    const profileName = stringFieldOrUndefined(profile, "name") ?? `profile ${index + 1}`;
-    const enabled = boolFieldOrUndefined(profile, "enabled") !== false;
-    const sandbox = stringFieldOrUndefined(profile, "sandbox");
-    const tools = stringFieldOrUndefined(profile, "tools");
-    entries.push({ text: [themeFg(theme, "toolOutput", profileName), enabled ? "enabled" : "disabled", sandbox, tools].filter((part): part is string => part !== undefined && part !== "").join(` ${themeFg(theme, "dim", "·")} `) });
-    entries.push(...labeled("Disabled reason", stringFieldOrUndefined(profile, "disabledReason"), theme));
-    entries.push(...labeled("Description", stringFieldOrUndefined(profile, "description"), theme));
-  });
-  if (entries.length === 0) entries.push({ text: themeFg(theme, "dim", "(none)"), exempt: true });
-  return { header, body: { mode: "rail", entries } };
-}
-
-function latestRunFacts(run: Record<string, unknown> | undefined): string[] {
-  if (run === undefined) return [];
-  const runId = stringFieldOrUndefined(run, "run_id");
-  const status = stringFieldOrUndefined(run, "status");
-  const elapsed = numberFieldOrUndefined(run, "elapsedSeconds");
-  return [runId, status, elapsed !== undefined ? `${elapsed}s` : undefined].filter((part): part is string => part !== undefined && part !== "");
-}
-
-function buildAgentList(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
-  const expanded = expandedFromOptions(options);
-  const details = detailsRecord(result);
-  const agents = recordArrayFieldOrEmpty(details, "agents");
-  const openCount = agents.filter((agent) => stringFieldOrUndefined(agent, "lifecycle") !== "closed").length;
-  const closedCount = agents.length - openCount;
-  const subject = args["include_closed"] === true ? `agents (${openCount} open, ${closedCount} closed)` : `open agents (${agents.length})`;
-  const header = headerSpec(name, subject, dotFromDetails(details), theme);
-  if (!expanded) return { header, body: undefined };
-  const entries: Entry[] = [];
-  agents.forEach((agent, index) => {
-    if (index > 0) entries.push({ text: "" });
-    const id = stringFieldOrUndefined(agent, "agent_id") ?? `agent ${index + 1}`;
-    const latest = recordFieldOrUndefined(agent, "latestRun");
-    entries.push({ text: [themeFg(theme, "toolOutput", id), stringFieldOrUndefined(agent, "profile"), stringFieldOrUndefined(agent, "lifecycle")].filter((part): part is string => part !== undefined && part !== "").join(` ${themeFg(theme, "dim", "·")} `) });
-    entries.push(...labeled("Child session", stringFieldOrUndefined(agent, "child_session_id"), theme));
-    const latestFacts = latestRunFacts(latest);
-    if (latestFacts.length > 0) entries.push({ text: `${themeFg(theme, "dim", "Latest run:")} ${themeFg(theme, "toolOutput", latestFacts.join(" · "))}` });
-  });
-  if (entries.length === 0) entries.push({ text: themeFg(theme, "dim", "(none)"), exempt: true });
-  return { header, body: { mode: "rail", entries } };
-}
-
-function buildAgentSpawn(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
-  const expanded = expandedFromOptions(options);
-  const details = detailsRecord(result);
-  const worker = recordFieldOrUndefined(details, "worker");
-  const agentId = stringFieldOrUndefined(details, "agent_id") ?? stringFieldOrUndefined(details, "workerId") ?? stringFieldOrUndefined(worker ?? {}, "id") ?? "";
-  const header = headerSpec(name, agentId, dotFromDetails(details), theme);
-  if (!expanded) return { header, body: undefined };
-  const message = stringFieldOrUndefined(args, "message") ?? stringFieldOrUndefined(args, "objective") ?? "";
-  const label = args["create_goal"] === true ? "Objective sent" : "Message sent";
-  const entries: Entry[] = [];
-  entries.push(...labeled("Profile", stringFieldOrUndefined(details, "profile") ?? stringFieldOrUndefined(args, "profile"), theme));
-  entries.push(...labeled("Agent id", agentId, theme));
-  entries.push(...labeled("Run id", stringFieldOrUndefined(details, "run_id"), theme));
-  entries.push(...labeled("Status", stringFieldOrUndefined(details, "status"), theme));
-  entries.push(...labeled("Child session", stringFieldOrUndefined(details, "childSessionId"), theme));
-  entries.push(...labeled(label, message, theme));
-  return { header, body: entries.length === 0 ? undefined : { mode: "rail", entries } };
-}
-
-function deliveryOutcome(details: Record<string, unknown>, args: Record<string, unknown>): string {
-  const raw = stringFieldOrUndefined(details, "deliveryKind") ?? stringFieldOrUndefined(details, "status") ?? "steered";
-  if (raw === "no_active_run") return "no active run";
-  if (args["interrupt"] === true && raw === "steered") return "interrupted";
-  return raw.replace(/_/g, " ");
-}
-
-function buildAgentSend(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
-  const expanded = expandedFromOptions(options);
-  const details = detailsRecord(result);
-  const agentId = stringFieldOrUndefined(details, "agent_id") ?? stringFieldOrUndefined(args, "agent_id") ?? "";
-  const outcome = deliveryOutcome(details, args);
-  const header = headerSpec(name, `${agentId} (${outcome})`, dotFromDetails(details), theme);
-  if (!expanded) return { header, body: undefined };
-  const entries: Entry[] = [];
-  entries.push(...labeled("Agent id", agentId, theme));
-  entries.push(...labeled("Profile", stringFieldOrUndefined(details, "profile"), theme));
-  entries.push(...labeled("Outcome", outcome, theme));
-  if (args["interrupt"] === true) entries.push({ text: themeFg(theme, "dim", "Interrupt: true"), exempt: true });
-  entries.push(...labeled("Run id", stringFieldOrUndefined(details, "run_id"), theme));
-  entries.push(...labeled("Submission id", stringFieldOrUndefined(details, "submission_id"), theme));
-  entries.push(...labeled("Previous status", stringFieldOrUndefined(details, "previousRunStatus"), theme));
-  entries.push(...labeled("Message sent", stringFieldOrUndefined(args, "message") ?? stringFieldOrUndefined(result as Record<string, unknown>, "prompt"), theme));
-  return { header, body: { mode: "rail", entries } };
-}
-
-function summarizeRunStatuses(runs: Record<string, unknown>[], hasActiveRuns: boolean): string {
-  if (runs.length === 0) return hasActiveRuns ? "active runs (still running)" : "active runs (none)";
-  const counts = new Map<string, number>();
-  for (const run of runs) {
-    const status = stringFieldOrUndefined(run, "status") ?? "unknown";
-    counts.set(status, (counts.get(status) ?? 0) + 1);
-  }
-  if (runs.length === 1) return `1 run ${stringFieldOrUndefined(runs[0], "status") ?? "unknown"}`;
-  const parts = [...counts.entries()].map(([status, count]) => `${count} ${status}`);
-  return `${runs.length} runs (${parts.join(", ")})`;
-}
-
-function buildAgentWait(name: string, result: unknown, options: unknown, theme: unknown): Block {
-  const expanded = expandedFromOptions(options);
-  const details = detailsRecord(result);
-  const runs = recordArrayFieldOrEmpty(details, "runs");
-  const hasActiveRuns = boolFieldOrUndefined(details, "hasActiveRuns") === true;
-  const statuses = runs.map((run) => stringFieldOrUndefined(run, "status") ?? "").filter((status) => status !== "");
-  const header = headerSpec(name, summarizeRunStatuses(runs, hasActiveRuns), aggregateStatusColor(statuses, hasActiveRuns ? "warning" : dotFromDetails(details) as "success" | "warning" | "error"), theme);
-  if (!expanded) return { header, body: undefined };
-  const entries: Entry[] = [];
-  runs.forEach((run, index) => {
-    if (index > 0) entries.push({ text: "" });
-    const headline = [stringFieldOrUndefined(run, "agent_id"), stringFieldOrUndefined(run, "run_id"), stringFieldOrUndefined(run, "status")].filter((part): part is string => part !== undefined && part !== "").join(" · ");
-    entries.push({ text: themeFg(theme, "dim", headline), exempt: true });
-    const body = stringFieldOrUndefined(run, "finalOutput") ?? stringFieldOrUndefined(run, "error") ?? (boolFieldOrUndefined(run, "outputAvailable") === false ? "(output unavailable)" : "");
-    if (body !== "") entries.push(...fullTextEntries(body, theme));
-  });
-  if (entries.length === 0) entries.push({ text: themeFg(theme, "dim", "(none)"), exempt: true });
-  return { header, body: { mode: "rail", entries } };
-}
-
-function buildAgentClose(name: string, result: unknown, options: unknown, theme: unknown): Block {
-  const expanded = expandedFromOptions(options);
-  const details = detailsRecord(result);
-  const ids = stringArrayFieldOrEmpty(details, "agent_ids");
-  const subject = ids.length === 0 ? "none" : ids.length === 1 ? ids[0] : ids.length <= 3 ? ids.join(", ") : `${ids.length} agents`;
-  const header = headerSpec(name, subject, dotFromDetails(details), theme);
-  if (!expanded) return { header, body: undefined };
-  const entries: Entry[] = [{ text: themeFg(theme, "dim", `Closed count: ${ids.length}`), exempt: true }];
-  entries.push(...ids.map((id) => ({ text: themeFg(theme, "toolOutput", id) })));
-  return { header, body: { mode: "rail", entries } };
-}
-
-function buildAgent(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
-  if (name === "agent_profiles") return buildAgentProfiles(name, result, options, theme);
-  if (name === "agent_list") return buildAgentList(name, result, options, theme, args);
-  if (name === "agent_spawn") return buildAgentSpawn(name, result, options, theme, args);
-  if (name === "agent_send") return buildAgentSend(name, result, options, theme, args);
-  if (name === "agent_wait") return buildAgentWait(name, result, options, theme);
-  return buildAgentClose(name, result, options, theme);
-}
-
-function buildRalph(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
+function buildRalph(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
   const taskId = stringFieldOrUndefined(details, "taskId") ?? stringFieldOrUndefined(args, "task_id") ?? "";
@@ -397,12 +248,12 @@ function buildRalph(name: string, result: unknown, options: unknown, theme: unkn
   return { header, body: entries.length === 0 ? undefined : { mode: "rail", entries } };
 }
 
-function exaResults(details: Record<string, unknown>): Record<string, unknown>[] {
-  const response = recordFieldOrUndefined(details, "response") ?? {};
-  return recordArrayFieldOrEmpty(response, "results");
+function exaResults(details: ToolRenderFields): ToolRenderFields[] {
+  const response = recordFieldOrUndefined<ToolRenderFields>(details, "response") ?? {};
+  return recordArrayFieldOrEmpty<ToolRenderFields>(response, "results");
 }
 
-function buildExaSearch(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
+function buildExaSearch(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
   const results = exaResults(details);
@@ -424,26 +275,26 @@ function buildExaSearch(name: string, result: unknown, options: unknown, theme: 
   return { header, body: { mode: "rail", entries } };
 }
 
-function buildCodeContext(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
+function buildCodeContext(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
-  const response = recordFieldOrUndefined(details, "response") ?? {};
+  const response = recordFieldOrUndefined<ToolRenderFields>(details, "response") ?? {};
   const text = stringFieldOrUndefined(response, "response") ?? textContent(result);
   const lineCount = text === "" ? 0 : text.trimEnd().split(/\r?\n/).length;
   const header = headerSpec(name, quotedQuery(args), dotFromDetails(details), theme, lineCount > 0 ? themeFg(theme, "dim", `(${lineCount} lines)`) : "");
   return expanded ? { header, body: { mode: "rail", entries: fullTextEntries(text, theme) } } : { header, body: undefined };
 }
 
-function responseObject(details: Record<string, unknown>): Record<string, unknown> {
-  return recordFieldOrUndefined(details, "response") ?? {};
+function responseObject(details: ToolRenderFields): ToolRenderFields {
+  return recordFieldOrUndefined<ToolRenderFields>(details, "response") ?? {};
 }
 
-function buildExaAgent(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
+function buildExaAgent(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
   const response = responseObject(details);
   if (name === "exa_agent_list_runs" || name === "exa_agent_list_events") {
-    const items = recordArrayFieldOrEmpty(response, "data").length > 0 ? recordArrayFieldOrEmpty(response, "data") : recordArrayFieldOrEmpty(response, "results");
+    const items = recordArrayFieldOrEmpty<ToolRenderFields>(response, "data").length > 0 ? recordArrayFieldOrEmpty<ToolRenderFields>(response, "data") : recordArrayFieldOrEmpty<ToolRenderFields>(response, "results");
     const subject = name === "exa_agent_list_events" ? `${stringFieldOrUndefined(args, "id") ?? "run"} (${items.length} event${items.length === 1 ? "" : "s"})` : `recent runs (${items.length})`;
     const header = headerSpec(name, subject, dotFromDetails(details), theme);
     if (!expanded) return { header, body: undefined };
@@ -462,7 +313,7 @@ function buildExaAgent(name: string, result: unknown, options: unknown, theme: u
   const status = stringFieldOrUndefined(response, "status");
   const header = headerSpec(name, status !== undefined ? `${id} · ${status}` : id, dotFromDetails(details), theme);
   if (!expanded) return { header, body: undefined };
-  const output = recordFieldOrUndefined(response, "output");
+  const output = recordFieldOrUndefined<ToolRenderFields>(response, "output");
   const text = output !== undefined ? stringFieldOrUndefined(output, "text") ?? "" : stringFieldOrUndefined(response, "response") ?? "";
   const entries = [
     ...labeled("ID", id, theme),
@@ -475,12 +326,11 @@ function buildExaAgent(name: string, result: unknown, options: unknown, theme: u
   return { header, body: entries.length === 0 ? undefined : { mode: "rail", entries } };
 }
 
-export function buildDomainResult(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block | undefined {
+export function buildDomainResult(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block | undefined {
   if (name === "get_goal" || name === "create_goal" || name === "update_goal") return buildGoal(name, result, options, theme, args);
   if (name.startsWith("cron_")) return buildCron(name, result, options, theme, args);
   if (name === "query_threads") return buildQueryThreads(name, result, options, theme, args);
   if (name === "read_thread") return buildReadThread(name, result, options, theme, args);
-  if (name.startsWith("agent_")) return buildAgent(name, result, options, theme, args);
   if (name === "ralph_continue" || name === "ralph_finish") return buildRalph(name, result, options, theme, args);
   if (name === "get_code_context_exa") return buildCodeContext(name, result, options, theme, args);
   if (name === "web_search_exa" || name === "crawling_exa") return buildExaSearch(name, result, options, theme, args);

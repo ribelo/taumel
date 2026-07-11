@@ -9,7 +9,6 @@ depends_on: ["[[plans/capability-profile]]", "[[plans/tool-gateway]]"]
 ## Intent
 
 The sandbox is Taumel's central capability gateway. Every path that executes
-commands, mutates files, spawns child agents, or reaches the network passes
 through it, so one boundary constrains all side effects. Codex sandbox behavior
 is the reference model; Tau sets the minimum security baseline.
 
@@ -35,7 +34,6 @@ patch parsing stay separate from each other and from execution.
 - **sandbox-md05** (ubiquitous): The system shall default a profile to `workspace-write`, `on-request`, and `noSandboxAllowed = false`.
 - **sandbox-md06** (state-driven): While the sandbox preset is `danger-full-access`, the system shall force network `enabled`; while the preset is `read-only` or `workspace-write`, network shall default to `disabled` and stay user-controlled.
 - **sandbox-md07** (event-driven): When no persisted permissions exist, the system shall start a top-level session at `danger-full-access` with network enabled and approval `on-request`; when persisted permissions are invalid, it shall fall back to `workspace-write` with network disabled.
-- **sandbox-md08** (event-driven): When the host supplies `--sandbox-mode`, a network flag, or `--no-sandbox`, the system shall override the resolved active state with those values, applying `--no-sandbox` only to non-subagent sessions.
 - **sandbox-md09** (ubiquitous): The system shall treat approval policy and sandbox preset as orthogonal: the preset governs OS enforcement and the approval policy governs only the human-in-the-loop cadence, so `danger-full-access` composes with any approval policy — `never` runs unsandboxed with no prompts, and `on-request` runs unsandboxed while still asking before destructive commands.
 
 ### Effect authorization
@@ -44,7 +42,6 @@ patch parsing stay separate from each other and from execution.
 - **sandbox-ef02** (event-driven): When a tool's effect is mutation while the filesystem mode is `read-only`, the system shall reject it with "mutation is disabled in read-only sandbox".
 - **sandbox-ef03** (event-driven): When a tool's effect is mutation while the filesystem mode is `workspace-write` or `danger-full-access`, the system shall authorize the effect and apply the path checks.
 - **sandbox-ef04** (event-driven): When a tool's effect is network while the network mode is `disabled`, the system shall reject it with "network is disabled by sandbox policy".
-- **sandbox-ef05** (event-driven): When a tool's effect is a child-agent spawn, the system shall authorize the spawn effect and leave nesting and ownership to the subagent layer.
 
 ### Path and mutation authorization
 
@@ -65,7 +62,7 @@ patch parsing stay separate from each other and from execution.
 - **sandbox-ex05** (event-driven): When the approval policy is `on-request`, `on-failure`, or `untrusted`, the system shall surface a decision that requires approval as an approval request.
 - **sandbox-ex06** (unwanted): If a child owned by an unloaded parent session reaches a decision that requires approval, then the system shall deny that decision with reason `approval_unavailable` without opening an approval prompt in the currently loaded session.
 - **sandbox-ex07** (ubiquitous): An approval-unavailable denial shall be terminal for that tool call and model-visible, and shall not suspend the child pending a later parent-session reload.
-- **sandbox-ex08** (ubiquitous): An approval prompt shall show the concrete effect being authorized: command and working directory for execution, or affected paths and a bounded diff for mutation, together with the sandbox boundary being crossed and the requesting agent identity when applicable.
+- **sandbox-ex08** (ubiquitous): An approval prompt shall show the concrete effect being authorized: command and working directory for execution, or affected paths and a bounded diff for mutation, together with the sandbox boundary being crossed.
 - **sandbox-ex09** (ubiquitous): The system shall label model-supplied justification as untrusted explanatory text rather than authorization evidence; truncating a preview shall preserve affected paths and report omitted-content counts.
 
 ### bubblewrap execution
@@ -95,15 +92,9 @@ patch parsing stay separate from each other and from execution.
 ### no-sandbox escape hatch
 
 - **sandbox-ns01** (state-driven): While a session is a top-level orchestrator, the system shall allow `--no-sandbox` only when the active capability profile permits it.
-- **sandbox-ns02** (unwanted): If a subagent or agent definition requests `--no-sandbox`, then the system shall reject it.
 - **sandbox-ns03** (event-driven): When `--no-sandbox` is active, the system shall show it in the footer and sandbox state.
 
-### Capability profile and subagents
 
-- **sandbox-cp01** (event-driven): When deriving a child profile, the system shall set its sandbox preset to the stricter of the parent preset and the requested preset, and its approval policy to the stricter of the parent and requested policy.
-- **sandbox-cp02** (unwanted): If a subagent profile requests `danger-full-access`, then the system shall reject it; an inherited `danger-full-access` parent preset shall downgrade to `workspace-write` for the child.
-- **sandbox-cp03** (event-driven): When deriving a child profile, the system shall allow the child tool surface to differ from and exceed the parent's tool surface, intersect the parent and child agent allowlists, and set the child's `noSandboxAllowed` to false; the child's side effects shall remain bounded by its inherited permission envelope.
-- **sandbox-cp04** (unwanted): If a requested agent is disabled or outside the parent's agent allowlist, then the system shall reject the child profile.
 - **sandbox-cp05** (event-driven): When authorizing any side effect for an existing child, the system shall use the stricter combination of the child's spawn-time permission ceiling and the parent's current sandbox, approval, network, and no-sandbox constraints.
 - **sandbox-cp06** (event-driven): When the user tightens or relaxes the parent's permissions, the new current envelope shall affect subsequent child tool authorizations immediately, while relaxation shall restore no authority beyond the child's spawn-time ceiling.
 - **sandbox-cp07** (state-driven): While a child remains live and its parent session is not loaded, the system shall authorize child side effects against the stricter combination of the child's spawn-time ceiling and the owner permission state captured by that child resource.
@@ -112,7 +103,6 @@ patch parsing stay separate from each other and from execution.
 
 ### Permissions and network commands
 
-- **sandbox-pc01** (event-driven): When the user runs `/permissions`, the system shall set sandbox preset, approval policy, `no-sandbox`, and tool and agent allowlists following Codex naming, and shall direct network changes to `/network`.
 - **sandbox-pc02** (event-driven): When the user runs `/network`, the system shall set network access to `enabled` or `disabled`.
 - **sandbox-pc03** (unwanted): If the user disables network while the preset is `danger-full-access`, then the system shall reject the change and ask them to choose `read-only` or `workspace-write` first.
 - **sandbox-pc04** (event-driven): When the user changes the sandbox preset, the system shall reset network mode to that preset's default and leave the approval policy unchanged.

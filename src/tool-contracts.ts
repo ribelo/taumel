@@ -1,6 +1,5 @@
 import { Compile } from "typebox/compile";
 import Type from "typebox";
-import { isRecord } from "./util.ts";
 
 const stringArray = Type.Array(Type.String());
 
@@ -228,48 +227,6 @@ const ReadThreadParamsSchema = Type.Object(
   { $id: "ReadThreadParams", additionalProperties: false },
 );
 
-const AgentSpawnParamsSchema = Type.Object(
-  {
-    profile: Type.String({ minLength: 1 }),
-    message: Type.String({ minLength: 1 }),
-    create_goal: Type.Optional(Type.Boolean()),
-  },
-  { $id: "AgentSpawnParams", additionalProperties: false },
-);
-
-const AgentSendParamsSchema = Type.Object(
-  {
-    agent_id: Type.String({ minLength: 1 }),
-    message: Type.Optional(Type.String({ minLength: 1 })),
-    interrupt: Type.Optional(Type.Boolean()),
-  },
-  { $id: "AgentSendParams", additionalProperties: false },
-);
-
-const AgentWaitParamsSchema = Type.Object(
-  {
-    run_ids: Type.Optional(stringArray),
-    agent_ids: Type.Optional(stringArray),
-    timeout_seconds: Type.Optional(Type.Number({ minimum: 0 })),
-  },
-  { $id: "AgentWaitParams", additionalProperties: false },
-);
-
-const AgentListParamsSchema = Type.Object(
-  {
-    include_closed: Type.Optional(Type.Boolean()),
-  },
-  { $id: "AgentListParams", additionalProperties: false },
-);
-
-const AgentCloseParamsSchema = Type.Object(
-  {
-    agent_ids: Type.Optional(stringArray),
-    all: Type.Optional(Type.Boolean()),
-  },
-  { $id: "AgentCloseParams", additionalProperties: false },
-);
-
 const RalphTaskParamsSchema = Type.Object(
   {
     task_id: Type.String(),
@@ -387,11 +344,6 @@ export const dtsSchemas = [
   ["ThreadLocator", ThreadLocatorSchema],
   ["QueryThreadsParams", QueryThreadsParamsSchema],
   ["ReadThreadParams", ReadThreadParamsSchema],
-  ["AgentSpawnParams", AgentSpawnParamsSchema],
-  ["AgentSendParams", AgentSendParamsSchema],
-  ["AgentWaitParams", AgentWaitParamsSchema],
-  ["AgentListParams", AgentListParamsSchema],
-  ["AgentCloseParams", AgentCloseParamsSchema],
   ["RalphTaskParams", RalphTaskParamsSchema],
   ["ExaAgentCreateRunParams", ExaAgentCreateRunParamsSchema],
   ["ExaAgentRunIdParams", ExaAgentRunIdParamsSchema],
@@ -407,12 +359,6 @@ export const toolParamSchemas = [
   { name: "read", interfaceName: "ReadParams", schema: ReadParamsSchema },
   { name: "view_media", interfaceName: "ViewMediaParams", schema: ViewMediaParamsSchema },
   { name: "edit", interfaceName: "EditParams", schema: EditParamsSchema },
-  { name: "agent_spawn", interfaceName: "AgentSpawnParams", schema: AgentSpawnParamsSchema },
-  { name: "agent_send", interfaceName: "AgentSendParams", schema: AgentSendParamsSchema },
-  { name: "agent_wait", interfaceName: "AgentWaitParams", schema: AgentWaitParamsSchema },
-  { name: "agent_list", interfaceName: "AgentListParams", schema: AgentListParamsSchema },
-  { name: "agent_close", interfaceName: "AgentCloseParams", schema: AgentCloseParamsSchema },
-  { name: "agent_profiles", interfaceName: "EmptyParams", schema: EmptyParamsSchema },
   { name: "get_goal", interfaceName: "EmptyParams", schema: EmptyParamsSchema },
   { name: "create_goal", interfaceName: "CreateGoalParams", schema: CreateGoalParamsSchema },
   { name: "update_goal", interfaceName: "UpdateGoalParams", schema: UpdateGoalParamsSchema },
@@ -441,7 +387,7 @@ const validators = new Map<string, Validator>(
 
 export const toolNames = toolParamSchemas.map((contract) => contract.name);
 
-export type ParsedToolParams = Record<string, unknown>;
+export type ParsedToolParams = object;
 
 export type ParseToolParamsResult =
   | { readonly ok: true; readonly params: ParsedToolParams }
@@ -482,8 +428,21 @@ export type ToolContract = {
   readonly description: string;
   readonly promptSnippet: string;
   readonly promptGuidelines?: readonly string[];
-  readonly parameters: Record<string, unknown>;
+  readonly parameters: object;
 };
+
+type JsonSchemaObject = {
+  [key: string]: unknown;
+  type?: unknown;
+  enum?: unknown;
+  anyOf?: unknown;
+};
+
+function schemaObject(value: unknown): JsonSchemaObject | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as JsonSchemaObject
+    : undefined;
+}
 
 const schemaMetaKeys = new Set([
   "$schema",
@@ -509,16 +468,17 @@ function primitiveType(value: unknown): string | undefined {
   }
 }
 
-function collapseAnyOfEnum(anyOf: unknown): Record<string, unknown> | undefined {
+function collapseAnyOfEnum(anyOf: unknown): { type: string; enum: unknown[] } | undefined {
   if (!Array.isArray(anyOf) || anyOf.length === 0) return undefined;
   const values: unknown[] = [];
   const types = new Set<string>();
   for (const item of anyOf) {
-    if (!isRecord(item) || !Array.isArray(item["enum"]) || item["enum"].length !== 1) {
+    const schema = schemaObject(item);
+    if (schema === undefined || !Array.isArray(schema.enum) || schema.enum.length !== 1) {
       return undefined;
     }
-    const value = item["enum"][0];
-    const type = typeof item["type"] === "string" ? item["type"] : primitiveType(value);
+    const value = schema.enum[0];
+    const type = typeof schema.type === "string" ? schema.type : primitiveType(value);
     if (type === undefined) return undefined;
     values.push(value);
     types.add(type);
@@ -531,10 +491,11 @@ function modelToolSchema(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map((item) => modelToolSchema(item));
   }
-  if (isRecord(value)) {
-    const result: Record<string, unknown> = {};
-    const constValue = value["const"];
-    for (const [key, item] of Object.entries(value)) {
+  const schema = schemaObject(value);
+  if (schema !== undefined) {
+    const result: JsonSchemaObject = {};
+    const constValue = schema["const"];
+    for (const [key, item] of Object.entries(schema)) {
       if (schemaMetaKeys.has(key) || key === "const") continue;
       result[key] = modelToolSchema(item);
     }
@@ -556,8 +517,9 @@ function modelToolSchema(value: unknown): unknown {
   return value;
 }
 
-function toolParameters(schema: Record<string, unknown>): Record<string, unknown> {
-  return modelToolSchema(schema) as Record<string, unknown>;
+function toolParameters(schema: unknown): object {
+  const modeled = modelToolSchema(schema);
+  return typeof modeled === "object" && modeled !== null ? modeled : {};
 }
 
 export const toolContracts: readonly ToolContract[] = [
@@ -633,48 +595,6 @@ export const toolContracts: readonly ToolContract[] = [
       "Keep edits[].oldText as small as possible while still being unique in the file. Do not pad with large unchanged regions.",
     ],
     parameters: toolParameters(EditParamsSchema),
-  },
-  {
-    name: "agent_spawn",
-    label: "agent.spawn",
-    description: "Create a durable Taumel agent identity from a profile and start one asynchronous run.",
-    promptSnippet: "",
-    parameters: toolParameters(AgentSpawnParamsSchema),
-  },
-  {
-    name: "agent_send",
-    label: "agent.send",
-    description: "Send a message to an existing open Taumel agent, or interrupt it when interrupt is true.",
-    promptSnippet: "",
-    parameters: toolParameters(AgentSendParamsSchema),
-  },
-  {
-    name: "agent_wait",
-    label: "agent.wait",
-    description: "Wait for active Taumel agent runs or poll their current status.",
-    promptSnippet: "",
-    parameters: toolParameters(AgentWaitParamsSchema),
-  },
-  {
-    name: "agent_list",
-    label: "agent.list",
-    description: "List Taumel agent identities owned by the current parent session and their latest state.",
-    promptSnippet: "",
-    parameters: toolParameters(AgentListParamsSchema),
-  },
-  {
-    name: "agent_close",
-    label: "agent.close",
-    description: "Permanently close Taumel agent identities, cancelling active work when needed.",
-    promptSnippet: "",
-    parameters: toolParameters(AgentCloseParamsSchema),
-  },
-  {
-    name: "agent_profiles",
-    label: "agent.profiles",
-    description: "Return the valid Taumel agent profile catalog and per-session enabled state.",
-    promptSnippet: "",
-    parameters: toolParameters(EmptyParamsSchema),
   },
   {
     name: "get_goal",

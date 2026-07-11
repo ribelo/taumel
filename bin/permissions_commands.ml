@@ -6,7 +6,7 @@ let apply_state (next : Taumel.Permissions.state) =
   active_profile_state := next.Taumel.Permissions.profile;
   active_network_mode := next.Taumel.Permissions.sandbox.network_mode;
   active_no_sandbox := next.Taumel.Permissions.sandbox.no_sandbox;
-  active_subagent := next.Taumel.Permissions.sandbox.subagent;
+  active_isolated_child := next.Taumel.Permissions.sandbox.isolated_child;
   state.filesystem_mode <-
     Taumel.Capability_profile.sandbox_to_string
       next.Taumel.Permissions.profile.sandbox_preset
@@ -52,7 +52,7 @@ let network_prompt_result permissions =
 let build_permissions () =
   let workspace_roots = if state.cwd = "" then [] else [ state.cwd ] in
   Taumel.Permissions.create ~workspace_roots ~network_mode:!active_network_mode
-    ~no_sandbox:!active_no_sandbox ~subagent:!active_subagent (active_profile ())
+    ~no_sandbox:!active_no_sandbox ~isolated_child:!active_isolated_child (active_profile ())
 
 let command_result message =
   ok_obj [ ("action", js_string "command_result"); ("message", js_string message) ]
@@ -87,7 +87,7 @@ let handle_network args ctx =
 let apply_menu_value value ctx =
   run ~parser:Taumel.Permissions.parse ~on_empty:prompt_result value ctx
 
-let finish_prompt prompt selection ctx =
+let finish_prompt_impl prompt selection ctx =
   match get_string selection "status" with
   | "cancelled" ->
       ok_obj
@@ -118,7 +118,7 @@ let finish_prompt prompt selection ctx =
             |]
       | Some value -> apply_menu_value value ctx
 
-let plan_prompt prompt facts =
+let plan_prompt_impl prompt facts =
   let options =
     get_object_array prompt "options" |> List.map menu_option_from_js
   in
@@ -132,7 +132,7 @@ let plan_prompt prompt facts =
         [
           ("action", js_string "result");
           ( "result",
-            finish_prompt prompt
+            finish_prompt_impl prompt
               (Unsafe.obj [| ("status", js_string "unavailable") |])
               (Unsafe.obj [||]) );
         ]
@@ -143,3 +143,41 @@ let plan_prompt prompt facts =
           ("title", js_string plan.title);
           ("labels", js_array (List.map js_string plan.labels));
         ]
+
+let plan_prompt raw_facts =
+  let facts = Tool_contracts.PermissionsPromptFacts.t_of_js (ojs_of_js raw_facts) in
+  let prompt = Tool_contracts.PermissionsPromptFacts.get_prompt facts
+    |> Tool_contracts.PermissionsPrompt.t_to_js |> Obj.magic
+  in
+  let host_facts = Unsafe.obj [| ("uiAvailable", js_bool (Tool_contracts.PermissionsPromptFacts.get_uiAvailable facts)) |] in
+  let plan = plan_prompt_impl prompt host_facts in
+  if get_string plan "action" = "select" then
+    Tool_contracts.PermissionsPromptSelect.create ~kind:"select"
+      ~title:(get_string plan "title") ~labels:(get_string_array plan "labels") ()
+    |> Tool_contracts.PermissionsPromptSelect.t_to_js |> inject
+  else
+    let result = Unsafe.get plan "result" in
+    Tool_contracts.PermissionsPromptResult.create ~kind:"result"
+      ~result:(Tool_contracts.PermissionsCommandResult.t_of_js (ojs_of_js result)) ()
+    |> Tool_contracts.PermissionsPromptResult.t_to_js |> inject
+
+let finish_prompt raw_facts =
+  let facts = Tool_contracts.PermissionsPromptFinishFacts.t_of_js (ojs_of_js raw_facts) in
+  let prompt = Tool_contracts.PermissionsPromptFinishFacts.get_prompt facts
+    |> Tool_contracts.PermissionsPrompt.t_to_js |> Obj.magic
+  in
+  let selection = Tool_contracts.PermissionsPromptFinishFacts.get_selection facts
+    |> Tool_contracts.PermissionsSelection.t_to_js |> Obj.magic
+  in
+  let ctx = Tool_contracts.PermissionsPromptFinishFacts.get_ctx facts
+    |> Ts2ocaml.unknown_to_js |> Obj.magic
+  in
+  let output = finish_prompt_impl prompt selection ctx in
+  if get_string output "action" = "command_result" then
+    output |> ojs_of_js |> Tool_contracts.PermissionsCommandResult.t_of_js
+    |> Tool_contracts.PermissionsCommandResult.t_to_js |> inject
+  else
+    let message = get_string output "error" in
+    Tool_contracts.PermissionsCommandResult.create ~ok:false ~action:"command_result"
+      ~message ~error:message ()
+    |> Tool_contracts.PermissionsCommandResult.t_to_js |> inject

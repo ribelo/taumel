@@ -22,11 +22,12 @@ let error_result message =
 (* read_file: resolve the path against the session cwd, stat it (reject missing
    / directories), read it as UTF-8, and hand the content to the pure formatter.
    NUL/binary content and out-of-range offsets become actionable errors. *)
-let read_file prepared runtime =
-  let path = get_string prepared "path" in
-  let cwd = get_string runtime "defaultCwd" in
-  let offset = int_field prepared "offset" in
-  let limit = int_field prepared "limit" in
+let read_file raw_facts =
+  let facts = Tool_contracts.ReadFileFacts.t_of_js (ojs_of_js raw_facts) in
+  let path = Tool_contracts.ReadFileFacts.get_path facts in
+  let cwd = Tool_contracts.ReadFileFacts.get_defaultCwd facts in
+  let offset = Tool_contracts.ReadFileFacts.get_offset facts |> Option.map int_of_float in
+  let limit = Tool_contracts.ReadFileFacts.get_limit facts |> Option.map int_of_float in
   if String.trim path = "" then error_result "read requires a non-empty path"
   else
     let resolved = resolve_path cwd path in

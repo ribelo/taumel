@@ -20,7 +20,6 @@ delivery via `pi.sendMessage`, goal creation, session-entry persistence, and the
 
 kimi-code is the architectural reference, with three deliberate divergences for
 Taumel's single-user, local, Pi-hosted model: cron runs on the **main agent**
-rather than a subagent (Pi does not surface subagent I/O, persist a subagent
 session, or let the user talk to one, so interactive and context-accumulating
 crons require the main session); jitter is **dropped** (there is no shared fleet
 to de-synchronize); and the 7-day stale auto-expiry is **dropped** in favor of a
@@ -82,7 +81,6 @@ holds.
 
 ### Modes
 
-- **cron-md01** (ubiquitous): The system shall give each task a mode that is `message` by default or `goal` when explicitly chosen, mirroring `agent_spawn`'s create-goal flag.
 - **cron-md02** (event-driven): When a `message`-mode task is delivered, the system shall inject its prompt as a message into the main session.
 - **cron-md03** (event-driven): When a `goal`-mode task is delivered and the main goal slot is free (no goal, or a complete goal), the system shall create the main-session goal from the task prompt and arm automation.
 - **cron-md04** (state-driven): While the main goal slot holds a non-complete goal, the system shall keep a `goal`-mode fire pending and create no goal, which also prevents a recurring `goal`-mode task from starting a second goal while its prior goal still runs.

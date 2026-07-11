@@ -50,11 +50,24 @@ export type ToolDefinition = {
   readonly description: string;
   readonly promptSnippet: string;
   readonly promptGuidelines?: readonly string[];
-  readonly parameters: Record<string, unknown>;
+  readonly parameters: unknown;
   readonly execute: (...args: unknown[]) => Promise<unknown>;
   readonly renderCall?: (...args: unknown[]) => unknown;
   readonly renderResult?: (...args: unknown[]) => unknown;
   readonly renderShell?: "default" | "self";
+};
+
+export type MessageDeliveryOptions = {
+  readonly triggerTurn?: boolean;
+  readonly deliverAs?: string;
+};
+
+export type AgentSessionOptions = {
+  readonly cwd?: string;
+  readonly sessionManager?: unknown;
+  readonly model?: unknown;
+  readonly thinkingLevel?: string;
+  readonly tools?: readonly string[];
 };
 
 export type CommandDefinition = {
@@ -99,7 +112,7 @@ export type PiLike = {
   ) => Promise<unknown>;
   readonly sendUserMessage?: (
     content: string,
-    options?: Record<string, unknown>,
+    options?: MessageDeliveryOptions,
   ) => Promise<unknown> | unknown;
   readonly sendMessage?: (
     message: {
@@ -108,11 +121,11 @@ export type PiLike = {
       readonly display?: boolean;
       readonly details?: unknown;
     },
-    options?: Record<string, unknown>,
+    options?: MessageDeliveryOptions,
   ) => Promise<unknown> | unknown;
   readonly modelRegistry?: unknown;
   readonly isIdle?: () => boolean;
-  readonly createAgentSession?: (options?: Record<string, unknown>) => Promise<{ readonly session?: unknown }>;
+  readonly createAgentSession?: (options?: AgentSessionOptions) => Promise<{ readonly session?: unknown }>;
 };
 
 export type SessionInfo = {
@@ -133,7 +146,7 @@ export type ChildSessionBridge = SessionInfo & {
   readonly modelApplied?: boolean;
   readonly thinkingLevel?: string;
   readonly thinkingApplied?: boolean;
-  readonly sendUserMessage?: (content: string, options?: Record<string, unknown>) => Promise<unknown>;
+  readonly sendUserMessage?: (content: string, options?: MessageDeliveryOptions) => Promise<unknown>;
   readonly stop?: (reason: string) => Promise<void>;
   readonly close?: (reason: string) => Promise<void>;
 };
@@ -145,7 +158,6 @@ export type ComposerController = {
       readonly composer: {
         readonly enabled: boolean;
       };
-      readonly agents: Record<string, unknown>;
     };
   };
   latestTui?: unknown;

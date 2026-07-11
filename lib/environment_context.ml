@@ -9,7 +9,7 @@ type snapshot = {
   network_access : network_access;
   writable_roots : string list;
   no_sandbox : bool;
-  subagent : bool;
+  isolated_child : bool;
   shell : string;
 }
 
@@ -20,7 +20,7 @@ type t = {
   network_access : network_access option;
   writable_roots : string list option;
   no_sandbox : bool option;
-  subagent : bool option;
+  isolated_child : bool option;
   shell : string option;
 }
 
@@ -41,7 +41,7 @@ let snapshot ~cwd ~shell (sandbox : Sandbox.config) : snapshot =
     network_access = network_access_of_mode sandbox.network_mode;
     writable_roots = writable_roots_for_context sandbox;
     no_sandbox = sandbox.no_sandbox;
-    subagent = sandbox.subagent;
+    isolated_child = sandbox.isolated_child;
     shell;
   }
 
@@ -54,7 +54,7 @@ let full (snapshot : snapshot) : t =
     writable_roots =
       (match snapshot.writable_roots with [] -> None | roots -> Some roots);
     no_sandbox = Some snapshot.no_sandbox;
-    subagent = Some snapshot.subagent;
+    isolated_child = Some snapshot.isolated_child;
     shell =
       (match String.trim snapshot.shell with "" -> None | value -> Some value);
   }
@@ -63,7 +63,7 @@ let empty context =
   context.cwd = None && context.approval_policy = None
   && context.sandbox_mode = None && context.network_access = None
   && context.writable_roots = None && context.no_sandbox = None
-  && context.subagent = None && context.shell = None
+  && context.isolated_child = None && context.shell = None
 
 let diff (before : snapshot) (after : snapshot) =
   let context =
@@ -85,8 +85,8 @@ let diff (before : snapshot) (after : snapshot) =
       no_sandbox =
         (if before.no_sandbox = after.no_sandbox then None
          else Some after.no_sandbox);
-      subagent =
-        (if before.subagent = after.subagent then None else Some after.subagent);
+      isolated_child =
+        (if before.isolated_child = after.isolated_child then None else Some after.isolated_child);
       shell = None;
     }
   in
@@ -171,10 +171,10 @@ let serialize context =
           ]
   in
   let lines =
-    match context.subagent with
+    match context.isolated_child with
     | None -> lines
-    | Some subagent ->
-        lines @ [ "  <subagent>" ^ bool_to_string subagent ^ "</subagent>" ]
+    | Some isolated_child ->
+        lines @ [ "  <isolated_child>" ^ bool_to_string isolated_child ^ "</isolated_child>" ]
   in
   let lines =
     match context.shell with

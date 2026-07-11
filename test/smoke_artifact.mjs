@@ -16,12 +16,15 @@ if (JSON.stringify(exportedKeys) !== JSON.stringify(["call", "init"])) {
   throw new Error(`unexpected Taumel artifact exports: ${JSON.stringify(exportedKeys)}`);
 }
 
+const policyNames = core.call("toolPolicyNames", []);
+const allowedNames = core.call("allowedToolNames", []);
+const commandSpecs = core.call("commandSpecs", []);
 if (
-  !Array.isArray(core.call("toolPolicyNames", [])) ||
-  !Array.isArray(core.call("allowedToolNames", [])) ||
-  !Array.isArray(core.call("commandSpecs", []))
+  !Array.isArray(policyNames?.names) ||
+  !Array.isArray(allowedNames?.names) ||
+  !Array.isArray(commandSpecs?.specs)
 ) {
-  throw new Error("Taumel artifact specs did not return arrays");
+  throw new Error("Taumel artifact specs did not return typed result objects");
 }
 
 const handlers = new Map();
@@ -139,7 +142,7 @@ const childCtx = {
     getEntries: () => [{
       type: "custom",
       customType: "taumel.childSession",
-      data: { kind: "agent", subagent: true },
+      data: { kind: "agent", isolated_child: true },
     }],
     getBranch: () => [],
   },
@@ -152,10 +155,10 @@ for (const handler of handlers.get("model_select") ?? []) {
 }
 const childLines = component.render(120);
 if (!childLines[0].includes("gpt-test") || childLines[0].includes("amazon-bedrock")) {
-  throw new Error(`subagent context overwrote parent footer model: ${JSON.stringify(childLines)}`);
+  throw new Error(`isolated_child context overwrote parent footer model: ${JSON.stringify(childLines)}`);
 }
 if (footerInstallSessionIds.includes("artifact-child-session")) {
-  throw new Error(`subagent session_start reinstalled the parent footer: ${JSON.stringify(footerInstallSessionIds)}`);
+  throw new Error(`isolated_child session_start reinstalled the parent footer: ${JSON.stringify(footerInstallSessionIds)}`);
 }
 
 const firstReadsAfterStart = firstCostReads;

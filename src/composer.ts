@@ -11,12 +11,19 @@ import {
 import type { ComposerController, CoreBridge, PiLike } from "./types.ts";
 import {
   defaultTaumelGlobalSettings,
-  requireTaumelGlobalSettings,
   readTaumelGlobalSettings,
   taumelGlobalSettingsPath,
   writeTaumelComposerEnabled,
 } from "./global-settings.ts";
-import { coreCallOptionalRecord, coreCallRecord, isRecord, maybeCall, stringField } from "./util.ts";
+import { maybeCall } from "./util.ts";
+import { decodeComposerCommandResult } from "./bridge-contracts.ts";
+import { decodeSkillListResult } from "./bridge-contracts.ts";
+
+type ComposerUi = {
+  setEditorComponent?: (...args: unknown[]) => unknown;
+  requestRender?: () => unknown;
+};
+type ComposerContext = { hasUI?: unknown; ui?: unknown; cwd?: unknown };
 
 const EVERFOREST_BG1 = "\x1b[48;2;46;56;60m";
 const ANSI_PATTERN = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
@@ -220,9 +227,11 @@ class TaumelComposerEditor extends CustomEditor {
   }
 }
 
-function uiFromContext(ctx: unknown): Record<string, unknown> | undefined {
-  if (!isRecord(ctx) || ctx["hasUI"] !== true || !isRecord(ctx["ui"])) return undefined;
-  return ctx["ui"];
+function uiFromContext(ctx: unknown): ComposerUi | undefined {
+  if (typeof ctx !== "object" || ctx === null) return undefined;
+  const context = ctx as ComposerContext;
+  if (context.hasUI !== true || typeof context.ui !== "object" || context.ui === null) return undefined;
+  return context.ui as ComposerUi;
 }
 
 function requestRender(controller: ComposerController, ctx: unknown): void {
@@ -230,20 +239,12 @@ function requestRender(controller: ComposerController, ctx: unknown): void {
   maybeCall(uiFromContext(ctx), "requestRender");
 }
 
-function parseSkillEntries(value: unknown): SkillAutocompleteEntry[] {
-  if (!isRecord(value) || !Array.isArray(value["skills"])) return [];
-  return value["skills"].filter(isRecord).flatMap((skill) => {
-    const name = typeof skill["name"] === "string" ? skill["name"] : "";
-    if (name === "") return [];
-    const description = typeof skill["description"] === "string" ? skill["description"] : undefined;
-    const location = typeof skill["location"] === "string" ? skill["location"] : undefined;
-    return [{ name, description, location }];
-  });
-}
-
 function listSkills(core: CoreBridge, controller: ComposerController): SkillAutocompleteEntry[] {
-  const result = coreCallOptionalRecord(core, "listSkills", [{ cwd: controller.latestCwd ?? process.cwd() }]);
-  return parseSkillEntries(result);
+  const result = decodeSkillListResult(core.call("listSkills", [{
+    cwd: controller.latestCwd ?? process.cwd(),
+    includeDisabled: false,
+  }]));
+  return result.skills.map(({ name, description, location }) => ({ name, description, location }));
 }
 
 export function installSkillAutocomplete(pi: PiLike, core: CoreBridge, controller: ComposerController): void {
@@ -251,10 +252,11 @@ export function installSkillAutocomplete(pi: PiLike, core: CoreBridge, controlle
 }
 
 function installComposerForContext(controller: ComposerController, ctx: unknown): void {
-  if (isRecord(ctx) && typeof ctx["cwd"] === "string" && ctx["cwd"] !== "") controller.latestCwd = ctx["cwd"];
+  const context = typeof ctx === "object" && ctx !== null ? ctx as ComposerContext : undefined;
+  if (typeof context?.cwd === "string" && context.cwd !== "") controller.latestCwd = context.cwd;
   const ui = uiFromContext(ctx);
   if (!ui) return;
-  const setEditorComponent = ui["setEditorComponent"];
+  const setEditorComponent = ui.setEditorComponent;
   if (typeof setEditorComponent !== "function") return;
   setTimeout(() => {
     setEditorComponent.call(
@@ -287,19 +289,15 @@ export async function executeComposerCommand(
   if (!controller) {
     controller = { path: taumelGlobalSettingsPath(), settings: defaultTaumelGlobalSettings };
   }
-  const result = coreCallRecord(core, "handleComposerCommand", [
-    args,
-    { path: controller.path, settings: controller.settings },
-  ], "composer command result");
-  if (result["ok"] !== true) return result;
-  if (result["ok"] === true && result["writeSettings"] === true) {
-    const nextSettings = requireTaumelGlobalSettings(result["settings"]);
+  const result = decodeComposerCommandResult(core.call("handleComposerCommand", [{
+    args, path: controller.path, settings: controller.settings,
+  }]));
+  if (result.kind === "error") return { ok: false, action: "command_result", message: result.message, error: result.message };
+  if (result.writeSettings) {
+    const nextSettings = result.settings;
     controller.settings = nextSettings;
     await writeTaumelComposerEnabled(controller.path, nextSettings.taumel.composer.enabled);
     requestRender(controller, ctx);
   }
-  if (stringField(result, "action") !== "command_result") {
-    throw new Error("Invalid Taumel composer command result");
-  }
-  return result;
+  return { ok: true, action: "command_result", message: result.message };
 }

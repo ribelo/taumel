@@ -25,7 +25,7 @@ let test_active_policy () =
     (fallback_profile.sandbox_preset = Capability.Workspace_write);
   let sandbox =
     Runtime.active_sandbox ~cwd:"/repo" ~network_mode:Sandbox.Network_enabled
-      ~no_sandbox:true ~subagent:false Capability.default
+      ~no_sandbox:true ~isolated_child:false Capability.default
   in
   assert_bool "sandbox fallback disables no-sandbox" (not sandbox.no_sandbox);
   assert_bool "sandbox fallback keeps workspace root"
@@ -42,7 +42,7 @@ let test_gateway_authorization () =
       network_mode = Sandbox.Network_disabled;
       approval_policy = Sandbox.Never;
       no_sandbox = false;
-      subagent = false;
+      isolated_child = false;
     }
   in
   (match Runtime.gateway_authorized ~profile ~sandbox "write" with
@@ -59,11 +59,9 @@ let test_gateway_authorization () =
   | Error error ->
       fail "profile auth"
         ("unexpected error: " ^ Runtime.gateway_error_message error));
-  let no_agents = { profile with agents = Capability.None_allowed } in
-  (match Runtime.authorize_ralph_start ~profile:no_agents ~sandbox with
-  | Error "agent denied by capability profile: ralph" -> ()
-  | Error message -> fail "ralph auth" ("unexpected error: " ^ message)
-  | Ok () -> fail "ralph auth" "expected denial")
+  (match Runtime.authorize_ralph_start ~profile ~sandbox with
+  | Ok () -> ()
+  | Error message -> fail "ralph auth" message)
 
 let () =
   test_active_policy ();

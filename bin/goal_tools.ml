@@ -83,36 +83,41 @@ let latest_assistant_stop_reason event =
   in
   loop (List.rev messages)
 
-let continuation_facts facts event ctx =
+let continuation_facts facts =
   {
     Taumel.Goal.goal = !current_goal;
     automation = !goal_automation;
-    host_idle = get_bool facts "hostIdle";
-    has_pending_messages = get_bool facts "hasPendingMessages";
-    retrying = get_bool facts "retrying";
-    compacting = get_bool facts "compacting";
-    latest_assistant_stop_reason = latest_assistant_stop_reason event;
+    host_idle = Tool_contracts.GoalContinuationFacts.get_hostIdle facts;
+    has_pending_messages = Tool_contracts.GoalContinuationFacts.get_hasPendingMessages facts;
+    retrying = Tool_contracts.GoalContinuationFacts.get_retrying facts;
+    compacting = Tool_contracts.GoalContinuationFacts.get_compacting facts;
+    latest_assistant_stop_reason = Tool_contracts.GoalContinuationFacts.get_latestAssistantStopReason facts;
   }
 
-let plan_continuation initial facts event ctx =
+let plan_continuation raw_facts =
+  let facts = Tool_contracts.GoalContinuationFacts.t_of_js (ojs_of_js raw_facts) in
+  let ctx =
+    Tool_contracts.GoalContinuationFacts.get_ctx facts
+    |> Option.map (fun value -> Ts2ocaml.unknown_to_js value |> Obj.magic)
+    |> Option.value ~default:(Unsafe.obj [||])
+  in
+  let initial = Tool_contracts.GoalContinuationFacts.get_initial facts in
   if not (Session_sync.try_sync_session_from_host ~scope:"goal continuation" ctx) then
-    ok_obj [ ("action", js_string "none") ]
+    Tool_contracts.GoalContinuationNone.create ~kind:"none" ()
+    |> Tool_contracts.GoalContinuationNone.t_to_js |> inject
   else
     match
       Taumel.Goal.plan_continuation ~initial
-        (continuation_facts facts event ctx)
+        (continuation_facts facts)
     with
     | Taumel.Goal.Send_continuation plan ->
-        ok_obj
-          [
-            ("action", js_string "send_goal_continuation");
-            ("customType", js_string plan.custom_type);
-            ("content", js_string plan.content);
-            ("display", js_bool plan.display);
-            ("triggerTurn", js_bool plan.trigger_turn);
-            ("deliverAs", js_string plan.deliver_as);
-          ]
-    | Taumel.Goal.No_continuation -> ok_obj [ ("action", js_string "none") ]
+        Tool_contracts.GoalContinuationSend.create ~kind:"send"
+          ~customType:plan.custom_type ~content:plan.content ~display:plan.display
+          ~triggerTurn:plan.trigger_turn ~deliverAs:plan.deliver_as ()
+        |> Tool_contracts.GoalContinuationSend.t_to_js |> inject
+    | Taumel.Goal.No_continuation ->
+        Tool_contracts.GoalContinuationNone.create ~kind:"none" ()
+        |> Tool_contracts.GoalContinuationNone.t_to_js |> inject
 
 let goal_store_of_js value =
   match json_from_js value with
@@ -195,6 +200,19 @@ let prepare_create params ctx =
           Session_sync.save_goal_automation_state ctx;
           tool_result (Some goal) "Goal created.")
 
+let create_from_cron raw_facts =
+  let facts = Tool_contracts.CronGoalCreationFacts.t_of_js (ojs_of_js raw_facts) in
+  let objective = Tool_contracts.CronGoalCreationFacts.get_objective facts in
+  let ctx = Tool_contracts.CronGoalCreationFacts.get_ctx facts
+    |> Ts2ocaml.unknown_to_js |> Obj.magic
+  in
+  let params = Tool_contracts.CreateGoalParams.create ~objective ()
+    |> Tool_contracts.CreateGoalParams.t_to_js |> Obj.magic
+  in
+  let result = prepare_create params ctx in
+  Tool_contracts.CronGoalCreationResult.create ~created:(get_bool result "ok") ()
+  |> Tool_contracts.CronGoalCreationResult.t_to_js |> inject
+
 let prepare_update params ctx =
   with_gateway_authorized "update_goal" (fun _ ->
       let params = Tool_contracts.UpdateGoalParams.t_of_js (ojs_of_js params) in
@@ -271,10 +289,14 @@ let handle_command args ctx =
       command_result ~followup:(plan.followup && not starts_goal)
         ?start_objective ?rollback plan.goal plan.message
 
-let rollback_goal_command snapshot ctx =
+let rollback_goal_command raw_facts =
+  let facts = Tool_contracts.GoalRollbackFacts.t_of_js (ojs_of_js raw_facts) in
+  let snapshot = Tool_contracts.GoalRollbackFacts.get_snapshot facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
+  let ctx = Tool_contracts.GoalRollbackFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
   current_goal := goal_store_of_js (Unsafe.get snapshot "goal");
   goal_automation := automation_of_js (Unsafe.get snapshot "automation");
   pending_goal_terminal_status := None;
   Session_sync.save_goal_state ctx;
   Session_sync.save_goal_automation_state ctx;
-  ok_obj [ ("action", js_string "goal_rollback_complete") ]
+  Tool_contracts.GoalRollbackResult.create ~completed:true ()
+  |> Tool_contracts.GoalRollbackResult.t_to_js |> inject

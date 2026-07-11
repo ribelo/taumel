@@ -9,7 +9,30 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import type { CoreBridge, PiLike } from "./types.ts";
-import { coreCallOptionalRecord, coreCallRecord, isRecord, sessionInfoFromContext, stringField, writeFileAtomically } from "./util.ts";
+import { sessionInfoFromContext, writeFileAtomically } from "./util.ts";
+import { decodeCompactionCommandPlan, decodeCompactionSessionPlan } from "./bridge-contracts.ts";
+
+type SettingsObject = { [key: string]: unknown };
+type CompactionContext = {
+  readonly isProjectTrusted?: () => unknown; readonly cwd?: unknown; readonly ui?: unknown;
+  readonly thinkingLevel?: unknown; readonly sessionManager?: unknown; readonly modelRegistry?: unknown;
+};
+type CompactionUi = { readonly notify?: (message: string, level: "warning") => unknown; readonly custom?: (...args: unknown[]) => unknown };
+type ThinkingSessionManager = { readonly thinkingLevel?: unknown; readonly getThinkingLevel?: () => unknown };
+type ModelRegistry = { readonly find: (provider: string, model: string) => unknown; readonly getApiKeyAndHeaders: (model: unknown) => Promise<unknown> };
+type ModelDescriptor = { readonly provider?: unknown; readonly id?: unknown };
+type ModelAuth = { readonly ok?: unknown; readonly error?: unknown; readonly apiKey?: unknown; readonly headers?: unknown; readonly env?: unknown };
+type CompactEvent = { readonly preparation?: unknown; readonly customInstructions?: unknown; readonly signal?: unknown };
+type TreePreparation = { readonly userWantsSummary?: unknown; readonly entriesToSummarize?: unknown; readonly customInstructions?: unknown; readonly replaceInstructions?: unknown };
+type TreeEvent = { readonly preparation?: unknown; readonly signal?: unknown };
+type CompactionCommandResult = { readonly ok: boolean; readonly action: "command_result"; readonly message: string; readonly error?: string };
+
+function settingsObject(value: unknown): SettingsObject | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as SettingsObject : undefined;
+}
+function compactionContext(value: unknown): Partial<CompactionContext> | undefined {
+  return typeof value === "object" && value !== null ? value as Partial<CompactionContext> : undefined;
+}
 
 function splitProviderModelId(modelId: string | undefined): { readonly provider: string; readonly model: string } | undefined {
   if (modelId === undefined) return undefined;
@@ -23,8 +46,9 @@ function stringFromUnknown(value: unknown): string | undefined {
 }
 
 function stringRecordFromUnknown(value: unknown): Record<string, string> | undefined {
-  if (!isRecord(value)) return undefined;
-  const entries = Object.entries(value);
+  const object = settingsObject(value);
+  if (object === undefined) return undefined;
+  const entries = Object.entries(object);
   if (!entries.every((entry): entry is [string, string] => typeof entry[1] === "string")) return undefined;
   return Object.fromEntries(entries);
 }
@@ -38,8 +62,7 @@ function projectSettingsPath(cwd: string): string {
 }
 
 function isProjectTrusted(ctx: unknown): boolean {
-  if (!isRecord(ctx)) return false;
-  const trusted = ctx["isProjectTrusted"];
+  const trusted = compactionContext(ctx)?.isProjectTrusted;
   return typeof trusted === "function" ? trusted.call(ctx) === true : false;
 }
 
@@ -52,18 +75,18 @@ function sessionKey(ctx: unknown): string {
   return sessionInfoFromContext(ctx).sessionId ?? "current";
 }
 
-async function readSettingsJson(path: string): Promise<Record<string, unknown>> {
+async function readSettingsJson(path: string): Promise<SettingsObject> {
   try {
     const raw = JSON.parse(await readFile(path, "utf8")) as unknown;
-    return isRecord(raw) ? raw : {};
+    return settingsObject(raw) ?? {};
   } catch {
     return {};
   }
 }
 
-function readCompactionModelFromSettings(settings: Record<string, unknown>): string | undefined {
-  const taumel = isRecord(settings["taumel"]) ? settings["taumel"] : {};
-  const compaction = isRecord(taumel["compaction"]) ? taumel["compaction"] : {};
+function readCompactionModelFromSettings(settings: SettingsObject): string | undefined {
+  const taumel = settingsObject(settings["taumel"]) ?? {};
+  const compaction = settingsObject(taumel["compaction"]) ?? {};
   return stringFromUnknown(compaction["model"]);
 }
 
@@ -78,18 +101,18 @@ async function readProjectCompactionModel(cwd: string): Promise<string | undefin
 async function writeProjectCompactionModel(cwd: string, model: string | undefined): Promise<void> {
   const path = projectSettingsPath(cwd);
   const settings = await readSettingsJson(path);
-  const taumel = isRecord(settings["taumel"]) ? { ...settings["taumel"] } : {};
-  const compaction = isRecord(taumel["compaction"]) ? { ...taumel["compaction"] } : {};
+  const taumel = { ...(settingsObject(settings["taumel"]) ?? {}) };
+  const compaction = { ...(settingsObject(taumel["compaction"]) ?? {}) };
   if (model === undefined) {
     delete compaction["model"];
   } else {
     compaction["model"] = model;
   }
-  const nextTaumel = { ...taumel, compaction };
+  const nextTaumel: SettingsObject = { ...taumel, compaction };
   if (Object.keys(compaction).length === 0) {
     delete nextTaumel["compaction"];
   }
-  const next = { ...settings, taumel: nextTaumel };
+  const next: SettingsObject = { ...settings, taumel: nextTaumel };
   if (Object.keys(nextTaumel).length === 0) {
     delete next["taumel"];
   }
@@ -97,12 +120,14 @@ async function writeProjectCompactionModel(cwd: string, model: string | undefine
 }
 
 function cwdFromContext(ctx: unknown): string {
-  return isRecord(ctx) && typeof ctx["cwd"] === "string" && ctx["cwd"] !== "" ? ctx["cwd"] : process.cwd();
+  const cwd = compactionContext(ctx)?.cwd;
+  return typeof cwd === "string" && cwd !== "" ? cwd : process.cwd();
 }
 
 function notifyWarning(ctx: unknown, message: string): void {
-  const ui = isRecord(ctx) && isRecord(ctx["ui"]) ? ctx["ui"] : undefined;
-  const notify = isRecord(ui) ? ui["notify"] : undefined;
+  const rawUi = compactionContext(ctx)?.ui;
+  const ui = typeof rawUi === "object" && rawUi !== null ? rawUi as CompactionUi : undefined;
+  const notify = ui?.notify;
   if (typeof notify === "function") {
     notify.call(ui, message, "warning");
   }
@@ -114,29 +139,36 @@ function cancelWithWarning(ctx: unknown, message: string): { readonly cancel: tr
 }
 
 function currentThinkingLevelFromContext(ctx: unknown): string | undefined {
-  if (!isRecord(ctx)) return undefined;
-  if (typeof ctx["thinkingLevel"] === "string" && ctx["thinkingLevel"] !== "") return ctx["thinkingLevel"];
-  const sessionManager = ctx["sessionManager"];
-  if (!isRecord(sessionManager)) return undefined;
-  const value = sessionManager["thinkingLevel"] ?? sessionManager["getThinkingLevel"]?.call(sessionManager);
+  const context = compactionContext(ctx);
+  if (typeof context?.thinkingLevel === "string" && context.thinkingLevel !== "") return context.thinkingLevel;
+  const rawSessionManager = context?.sessionManager;
+  if (typeof rawSessionManager !== "object" || rawSessionManager === null) return undefined;
+  const sessionManager = rawSessionManager as ThinkingSessionManager;
+  const getThinkingLevel = sessionManager.getThinkingLevel;
+  const value = sessionManager.thinkingLevel ??
+    (typeof getThinkingLevel === "function" ? getThinkingLevel.call(sessionManager) : undefined);
   return typeof value === "string" && value !== "" ? value : undefined;
 }
 
 function modelRegistryFromContext(pi: PiLike, ctx: unknown): unknown {
-  if (isRecord(ctx) && ctx["modelRegistry"] !== undefined) return ctx["modelRegistry"];
+  const registry = compactionContext(ctx)?.modelRegistry;
+  if (registry !== undefined) return registry;
   return pi.modelRegistry;
 }
 
 function findModelByProviderModelId(registry: unknown, modelId: string): ModelSelectorCurrentModel {
   const requested = splitProviderModelId(modelId);
-  if (requested === undefined || !isRecord(registry) || typeof registry["find"] !== "function") return undefined;
-  return registry["find"].call(registry, requested.provider, requested.model) as ModelSelectorCurrentModel;
+  if (requested === undefined || typeof registry !== "object" || registry === null) return undefined;
+  const find = (registry as Partial<ModelRegistry>).find;
+  if (typeof find !== "function") return undefined;
+  return find.call(registry, requested.provider, requested.model) as ModelSelectorCurrentModel;
 }
 
 function providerModelIdFromModel(model: unknown): string | undefined {
-  if (!isRecord(model)) return undefined;
-  const provider = stringFromUnknown(model["provider"]);
-  const id = stringFromUnknown(model["id"]);
+  if (typeof model !== "object" || model === null) return undefined;
+  const descriptor = model as ModelDescriptor;
+  const provider = stringFromUnknown(descriptor.provider);
+  const id = stringFromUnknown(descriptor.id);
   return provider === undefined || id === undefined ? undefined : `${provider}/${id}`;
 }
 
@@ -175,13 +207,13 @@ async function resolveConfiguredModel(
 > {
   const settings = await compactionSettingsForContext(ctx);
   const configured = hasConfiguredCompactionModel(settings);
-  let plan: Record<string, unknown> | undefined;
+  let plan;
   try {
-    plan = coreCallOptionalRecord(core, "planSessionBeforeCompact", [{
+    plan = decodeCompactionSessionPlan(core.call("planSessionBeforeCompact", [{
       session: settings.session ?? "",
       global: settings.global ?? "",
       project: settings.project ?? "",
-    }]);
+    }]));
   } catch (error) {
     return configured
       ? {
@@ -190,41 +222,40 @@ async function resolveConfiguredModel(
         }
       : { ok: true, value: undefined };
   }
-  if (plan === undefined) {
-    return configured
-      ? { ok: false, result: cancelWithWarning(ctx, "Taumel compaction model planning returned no plan.") }
-      : { ok: true, value: undefined };
-  }
-  const action = typeof plan["action"] === "string" ? plan["action"] : "";
-  if (action !== "compact") {
+  if (plan.kind !== "compact") {
     return configured
       ? { ok: false, result: cancelWithWarning(ctx, "Taumel compaction model planning returned no compact action.") }
       : { ok: true, value: undefined };
   }
-  const modelId = typeof plan["model"] === "string" ? plan["model"] : "";
+  const modelId = plan.model;
   const requested = splitProviderModelId(modelId);
   if (requested === undefined) {
     return { ok: false, result: cancelWithWarning(ctx, `Taumel compaction model is invalid: ${modelId}`) };
   }
   const registry = modelRegistryFromContext(pi, ctx);
-  if (!isRecord(registry) || typeof registry["find"] !== "function" || typeof registry["getApiKeyAndHeaders"] !== "function") {
+  if (typeof registry !== "object" || registry === null) {
     return { ok: false, result: cancelWithWarning(ctx, "Taumel compaction model cannot resolve the model registry.") };
   }
-  const model = registry["find"].call(registry, requested.provider, requested.model);
+  const modelRegistry = registry as Partial<ModelRegistry>;
+  if (typeof modelRegistry.find !== "function" || typeof modelRegistry.getApiKeyAndHeaders !== "function") {
+    return { ok: false, result: cancelWithWarning(ctx, "Taumel compaction model cannot resolve the model registry.") };
+  }
+  const model = modelRegistry.find.call(registry, requested.provider, requested.model);
   if (model === undefined || model === null) {
     return { ok: false, result: cancelWithWarning(ctx, `Taumel compaction model is not available: ${modelId}`) };
   }
   let auth: unknown;
   try {
-    auth = await registry["getApiKeyAndHeaders"].call(registry, model);
+    auth = await modelRegistry.getApiKeyAndHeaders.call(registry, model);
   } catch (error) {
     return {
       ok: false,
       result: cancelWithWarning(ctx, `Taumel compaction model auth failed for ${modelId}: ${error instanceof Error ? error.message : String(error)}`),
     };
   }
-  if (!isRecord(auth) || auth["ok"] !== true) {
-    const detail = isRecord(auth) && typeof auth["error"] === "string" && auth["error"] !== "" ? `: ${auth["error"]}` : "";
+  const modelAuth = typeof auth === "object" && auth !== null ? auth as ModelAuth : undefined;
+  if (modelAuth?.ok !== true) {
+    const detail = typeof modelAuth?.error === "string" && modelAuth.error !== "" ? `: ${modelAuth.error}` : "";
     return { ok: false, result: cancelWithWarning(ctx, `Taumel compaction model lacks auth: ${modelId}${detail}`) };
   }
   return {
@@ -232,9 +263,9 @@ async function resolveConfiguredModel(
     value: {
       modelId,
       model,
-      apiKey: typeof auth["apiKey"] === "string" ? auth["apiKey"] : undefined,
-      headers: stringRecordFromUnknown(auth["headers"]),
-      env: stringRecordFromUnknown(auth["env"]),
+      apiKey: typeof modelAuth.apiKey === "string" ? modelAuth.apiKey : undefined,
+      headers: stringRecordFromUnknown(modelAuth.headers),
+      env: stringRecordFromUnknown(modelAuth.env),
     },
   };
 }
@@ -246,23 +277,24 @@ export function installCompactionModelHookWithCompact(
   branchSummaryRunner: BranchSummaryRunner = generateBranchSummary,
 ): void {
   pi.on("session_before_compact", async (event, ctx) => {
-    if (!isRecord(event)) return undefined;
+    if (typeof event !== "object" || event === null) return undefined;
+    const compactEvent = event as CompactEvent;
     const resolved = await resolveConfiguredModel(pi, core, ctx);
     if (!resolved.ok) return resolved.result;
     if (resolved.value === undefined) return undefined;
-    const preparation = event["preparation"];
+    const preparation = compactEvent.preparation as Parameters<CompactionRunner>[0] | undefined | null;
     if (preparation === undefined || preparation === null) {
       return cancelWithWarning(ctx, "Taumel compaction hook received no preparation.");
     }
     try {
       const result = await compactRunner(
         preparation,
-        resolved.value.model,
+        resolved.value.model as Parameters<CompactionRunner>[1],
         resolved.value.apiKey,
         resolved.value.headers,
-        event["customInstructions"],
-        event["signal"],
-        currentThinkingLevelFromContext(ctx),
+        stringFromUnknown(compactEvent.customInstructions),
+        compactEvent.signal instanceof AbortSignal ? compactEvent.signal : undefined,
+        currentThinkingLevelFromContext(ctx) as Parameters<CompactionRunner>[6],
         undefined,
         resolved.value.env,
       );
@@ -273,10 +305,12 @@ export function installCompactionModelHookWithCompact(
   });
 
   pi.on("session_before_tree", async (event, ctx) => {
-    if (!isRecord(event) || !isRecord(event["preparation"])) return undefined;
-    const preparation = event["preparation"];
-    if (preparation["userWantsSummary"] !== true) return undefined;
-    const entries = Array.isArray(preparation["entriesToSummarize"]) ? preparation["entriesToSummarize"] : [];
+    if (typeof event !== "object" || event === null) return undefined;
+    const treeEvent = event as TreeEvent;
+    if (typeof treeEvent.preparation !== "object" || treeEvent.preparation === null) return undefined;
+    const preparation = treeEvent.preparation as TreePreparation;
+    if (preparation.userWantsSummary !== true) return undefined;
+    const entries = Array.isArray(preparation.entriesToSummarize) ? preparation.entriesToSummarize : [];
     if (entries.length === 0) return undefined;
     const resolved = await resolveConfiguredModel(pi, core, ctx);
     if (!resolved.ok) return resolved.result;
@@ -287,10 +321,10 @@ export function installCompactionModelHookWithCompact(
         apiKey: resolved.value.apiKey,
         headers: resolved.value.headers,
         env: resolved.value.env,
-        signal: event["signal"] instanceof AbortSignal ? event["signal"] : undefined,
-        customInstructions: stringFromUnknown(preparation["customInstructions"]),
-        replaceInstructions: preparation["replaceInstructions"] === true,
-      });
+        signal: treeEvent.signal instanceof AbortSignal ? treeEvent.signal : undefined,
+        customInstructions: stringFromUnknown(preparation.customInstructions),
+        replaceInstructions: preparation.replaceInstructions === true,
+      } as Parameters<BranchSummaryRunner>[1]);
       if (result.aborted) return { cancel: true };
       if (result.error) return cancelWithWarning(ctx, `Taumel branch summary failed: ${result.error}`);
       return {
@@ -316,9 +350,10 @@ async function openCompactionModelPicker(
   pi: PiLike,
   currentModelId: string,
   ctx: unknown,
-): Promise<Record<string, unknown>> {
-  const ui = isRecord(ctx) && isRecord(ctx["ui"]) ? ctx["ui"] : undefined;
-  const custom = isRecord(ui) ? ui["custom"] : undefined;
+): Promise<CompactionCommandResult> {
+  const rawUi = compactionContext(ctx)?.ui;
+  const ui = typeof rawUi === "object" && rawUi !== null ? rawUi as CompactionUi : undefined;
+  const custom = ui?.custom;
   if (typeof custom !== "function") {
     return { ok: false, action: "command_result", message: "Picker is not available.", error: "Picker is not available." };
   }
@@ -329,7 +364,7 @@ async function openCompactionModelPicker(
       ui,
       (tui: unknown, _theme: unknown, _keybindings: unknown, done: (value: unknown) => void) => {
         return new ModelSelectorComponent(
-          tui,
+          tui as ConstructorParameters<typeof ModelSelectorComponent>[0],
           currentModel,
           SettingsManager.inMemory(),
           registry as ModelSelectorRegistry,
@@ -351,7 +386,7 @@ async function openCompactionModelPicker(
   return setSessionCompactionModel(ctx, modelId);
 }
 
-async function setSessionCompactionModel(ctx: unknown, modelId: string): Promise<Record<string, unknown>> {
+async function setSessionCompactionModel(ctx: unknown, modelId: string): Promise<CompactionCommandResult> {
   sessionCompactionModels.set(sessionKey(ctx), modelId);
   if (isProjectTrusted(ctx)) {
     await writeProjectCompactionModel(cwdFromContext(ctx), modelId);
@@ -361,7 +396,7 @@ async function setSessionCompactionModel(ctx: unknown, modelId: string): Promise
   return { ok: true, action: "command_result", message: `Compaction model set to ${modelId} (session only; project persistence skipped because the project is untrusted).` };
 }
 
-async function clearSessionCompactionModel(ctx: unknown): Promise<Record<string, unknown>> {
+async function clearSessionCompactionModel(ctx: unknown): Promise<CompactionCommandResult> {
   sessionCompactionModels.delete(sessionKey(ctx));
   if (isProjectTrusted(ctx)) {
     await writeProjectCompactionModel(cwdFromContext(ctx), undefined);
@@ -376,28 +411,26 @@ export async function executeCompactionModelCommand(
   core: CoreBridge,
   args: string,
   ctx: unknown,
-): Promise<Record<string, unknown>> {
+): Promise<CompactionCommandResult> {
   const { session, global, project } = await compactionSettingsForContext(ctx);
-  const plan = coreCallRecord(core, "planCompactionModelCommand", [
-    args,
-    { session: session ?? "", global: global ?? "", project: project ?? "" },
-  ], "compaction-model command plan");
-  const action = stringField(plan, "action");
-  if (action === "show") {
-    const model = stringField(plan, "model");
-    const source = stringField(plan, "source");
+  const plan = decodeCompactionCommandPlan(core.call("planCompactionModelCommand", [{
+    args, settings: { session: session ?? "", global: global ?? "", project: project ?? "" },
+  }]));
+  if (plan.kind === "error") return { ok: false, action: "command_result", message: plan.message, error: plan.message };
+  if (plan.kind === "show") {
+    const model = plan.model;
+    const source = plan.source;
     const message = model === "" ? `Compaction model: ${source}` : `Compaction model: ${model} (${source})`;
     return { ok: true, action: "command_result", message };
   }
-  if (action === "set_project") {
-    const model = stringField(plan, "model");
-    return setSessionCompactionModel(ctx, model);
+  if (plan.kind === "set_project") {
+    return setSessionCompactionModel(ctx, plan.model);
   }
-  if (action === "clear_project") {
+  if (plan.kind === "clear_project") {
     return clearSessionCompactionModel(ctx);
   }
-  if (action === "open_picker") {
-    return openCompactionModelPicker(pi, stringField(plan, "current"), ctx);
+  if (plan.kind === "open_picker") {
+    return openCompactionModelPicker(pi, plan.current, ctx);
   }
   throw new Error("Invalid Taumel compaction-model command plan");
 }

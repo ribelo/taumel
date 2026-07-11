@@ -293,7 +293,7 @@ let test_exec_policy_prompt_under_never_allows_but_boundaries_deny () =
       network_mode = Sandbox.Network_disabled;
       approval_policy = Sandbox.Never;
       no_sandbox = false;
-      subagent = false;
+      isolated_child = false;
     }
   in
   (match
@@ -309,7 +309,7 @@ let test_exec_policy_prompt_under_never_allows_but_boundaries_deny () =
 let test_fresh_full_access_dangerous_prompts () =
   let active =
     Permissions.resolve_active ~host_sandbox_preset:None ~host_network_mode:None
-      ~host_no_sandbox:None ~session_subagent:false Permissions.Missing
+      ~host_no_sandbox:None ~session_isolated_child:false Permissions.Missing
   in
   assert_bool "fresh session is on-request full access"
     (active.profile.sandbox_preset = Capability.Danger_full_access

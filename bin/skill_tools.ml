@@ -151,25 +151,15 @@ let source_paths cwd =
   @ (json_file project_settings |> Option.map (fun json -> settings_paths json (dirname project_settings)) |> Option.value ~default:[])
   @ argv_skill_paths cwd
 
-let warning message = Unsafe.obj [| ("message", js_string message) |]
+let warning message = Tool_contracts.BridgeWarning.create ~message ()
 
 let block_payload (skill : skill) content =
-  Unsafe.obj
-    [|
-      ("name", js_string skill.name);
-      ("location", js_string skill.path);
-      ("baseDir", js_string skill.base_dir);
-      ("content", js_string content);
-    |]
+  Tool_contracts.SkillBlock.create ~name:skill.name ~location:skill.path
+    ~baseDir:skill.base_dir ~content ()
 
 let skill_payload (skill : skill) =
-  Unsafe.obj
-    [|
-      ("name", js_string skill.name);
-      ("location", js_string skill.path);
-      ("baseDir", js_string skill.base_dir);
-      ("description", js_string skill.description);
-    |]
+  Tool_contracts.SkillInfo.create ~name:skill.name ~location:skill.path
+    ~baseDir:skill.base_dir ~description:skill.description ()
 
 let discover_skills cwd =
   let table = Hashtbl.create 32 in
@@ -181,26 +171,34 @@ let skill_enabled name =
   Taumel.Visibility.is_enabled !visibility_state Taumel.Visibility.Skills name
 
 let list_skills params =
-  let cwd = match optional_string_field params "cwd" with Some cwd when cwd <> "" -> cwd | _ -> "." in
-  let include_disabled = get_bool params "includeDisabled" in
-  Unsafe.obj
-    [|
-      ( "skills",
-        discover_skills cwd
-        |> List.filter (fun skill -> include_disabled || skill_enabled skill.name)
-        |> List.map skill_payload |> Array.of_list |> Js.array
-        |> Unsafe.inject );
-    |]
+  let params = Tool_contracts.SkillListFacts.t_of_js (ojs_of_js params) in
+  let cwd = Tool_contracts.SkillListFacts.get_cwd params in
+  let include_disabled =
+    Option.value (Tool_contracts.SkillListFacts.get_includeDisabled params)
+      ~default:false
+  in
+  let skills =
+    discover_skills cwd
+    |> List.filter (fun skill -> include_disabled || skill_enabled skill.name)
+    |> List.map skill_payload
+  in
+  let result = Tool_contracts.SkillListResult.create ~skills () in
+  Tool_contracts.SkillListResult.t_to_js result |> inject
 
 let resolve_mentions params =
-  (match optional_field params "ctx" with
+  let params = Tool_contracts.SkillResolveFacts.t_of_js (ojs_of_js params) in
+  (match Tool_contracts.SkillResolveFacts.get_ctx params with
   | None -> ()
-  | Some ctx -> Session_sync.sync_persisted_session ctx);
-  let prompt = get_string params "prompt" in
+  | Some ctx ->
+      Session_sync.sync_persisted_session
+        (Ts2ocaml.unknown_to_js ctx |> Obj.magic));
+  let prompt = Tool_contracts.SkillResolveFacts.get_prompt params in
   let names = Taumel.Skill_resolver.mentions prompt in
-  if names = [] then Unsafe.obj [| ("blocks", Unsafe.inject (Js.array [||])); ("warnings", Unsafe.inject (Js.array [||])) |]
+  if names = [] then
+    let result = Tool_contracts.SkillResolveResult.create ~blocks:[] ~warnings:[] () in
+    Tool_contracts.SkillResolveResult.t_to_js result |> inject
   else
-    let cwd = match optional_string_field params "cwd" with Some cwd when cwd <> "" -> cwd | _ -> "." in
+    let cwd = Tool_contracts.SkillResolveFacts.get_cwd params in
     let table = Hashtbl.create 32 in
     List.iter (fun skill -> add_skill table skill) (discover_skills cwd);
     let blocks = ref [] in
@@ -218,8 +216,8 @@ let resolve_mentions params =
                 let block = Taumel.Skill_resolver.skill_block ~name:skill.name ~location:skill.path ~base_dir:skill.base_dir ~body in
                 blocks := block_payload skill block :: !blocks))
       names;
-    Unsafe.obj
-      [|
-        ("blocks", !blocks |> List.rev |> Array.of_list |> Js.array |> Unsafe.inject);
-        ("warnings", !warnings |> List.rev |> Array.of_list |> Js.array |> Unsafe.inject);
-      |]
+    let result =
+      Tool_contracts.SkillResolveResult.create ~blocks:(List.rev !blocks)
+        ~warnings:(List.rev !warnings) ()
+    in
+    Tool_contracts.SkillResolveResult.t_to_js result |> inject

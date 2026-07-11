@@ -38,28 +38,15 @@ let goal_compacting = ref false
 let active_profile_state = ref Taumel.Capability_profile.default
 let active_network_mode = ref Taumel.Sandbox.Network_disabled
 let active_no_sandbox = ref false
-let active_subagent = ref false
+let active_isolated_child = ref false
 let host_sandbox_preset : Taumel.Capability_profile.sandbox_preset option ref = ref None
 let host_network_mode : Taumel.Sandbox.network_mode option ref = ref None
 let host_no_sandbox : bool option ref = ref None
 let ralph_tasks : Taumel.Ralph_loop.task list ref = ref []
-let workers : Taumel.Subagents.worker list ref = ref []
 let exec_policy : Taumel.Exec_policy.compiled ref = ref Taumel.Exec_policy.empty
-let agent_state : Taumel.Agent_runs.session_state ref =
-  ref Taumel.Agent_runs.empty_session_state
-type retained_agent_output = {
-  retained_owner_id : string;
-  retained_run_id : string;
-  retained_final_output : string;
-}
-
-let retained_agent_outputs : retained_agent_output list ref = ref []
-
 let visibility_state : Taumel.Visibility.t ref = ref Taumel.Visibility.empty
 let visibility_warning_flags : Taumel.Visibility.warning_flags ref =
   ref Taumel.Visibility.empty_warning_flags
-let agent_catalog : Taumel.Agent_profiles.profile_catalog ref =
-  ref Taumel.Agent_profiles.default_profile_catalog
 let loaded_session_id : string option ref = ref None
 let last_goal_accounting_key : string option ref = ref None
 let footer_event = "taumel:footer:changed"

@@ -1,15 +1,6 @@
 type composer = { enabled : bool }
 
-type agent_builtin_override = {
-  provider : string;
-  model : string;
-  thinking : string;
-}
-
-type taumel = {
-  composer : composer;
-  agents : (string * agent_builtin_override) list;
-}
+type taumel = { composer : composer }
 
 type t = { taumel : taumel }
 
@@ -24,20 +15,8 @@ type composer_command =
   | Set_enabled of bool
   | Toggle
 
-let builtin_profile_names =
-  [ "smart"; "deep"; "rush"; "finder"; "librarian"; "oracle"; "painter"; "review" ]
-
-let inherit_override =
-  { provider = "inherit"; model = "inherit"; thinking = "inherit" }
-
-let default_builtin_overrides =
-  List.map (fun name -> (name, inherit_override)) builtin_profile_names
-
 let default =
-  {
-    taumel =
-      { composer = { enabled = true }; agents = default_builtin_overrides };
-  }
+  { taumel = { composer = { enabled = true } } }
 
 let parse_words input =
   input |> String.split_on_char ' ' |> List.map String.trim
@@ -59,14 +38,11 @@ let message ~path settings =
 let apply_composer_command settings = function
   | Show -> (settings, false)
   | Set_enabled enabled ->
-      ({ taumel = { settings.taumel with composer = { enabled } } }, true)
+      ({ taumel = { composer = { enabled } } }, true)
   | Toggle ->
       ( {
           taumel =
-            {
-              settings.taumel with
-              composer = { enabled = not settings.taumel.composer.enabled };
-            };
+            { composer = { enabled = not settings.taumel.composer.enabled } };
         },
         true )
 
@@ -85,17 +61,5 @@ let to_json settings =
           [
             ( "composer",
               Shared.Object [ ("enabled", Shared.Bool settings.taumel.composer.enabled) ] );
-            ( "agents",
-              Shared.Object
-                (List.map
-                   (fun (name, override) ->
-                     ( name,
-                       Shared.Object
-                         [
-                           ("provider", Shared.String override.provider);
-                           ("model", Shared.String override.model);
-                           ("thinking", Shared.String override.thinking);
-                         ] ))
-                   settings.taumel.agents) );
           ] );
     ]

@@ -6,7 +6,6 @@ module Permissions = Taumel.Permissions
 module Ralph = Taumel.Ralph_loop
 module Sandbox = Taumel.Sandbox
 module Shared = Taumel.Shared
-module Subagents = Taumel.Subagents
 module Threads = Taumel.Thread_tools
 module Tool_catalog = Taumel.Tool_catalog
 module Usage = Taumel.Usage
@@ -35,43 +34,6 @@ let expect_ok_any label = function
 let expect_error label = function
   | Ok _ -> fail label "expected an error"
   | Error _ -> ()
-
-let test_capability_child_profile () =
-  let parent =
-    {
-      Capability.default with
-      sandbox_preset = Capability.Danger_full_access;
-      tools = Capability.of_list [ "exec_command"; "get_goal" ];
-      agents = Capability.of_list [ "worker" ];
-      no_sandbox_allowed = true;
-    }
-  in
-  let definition =
-    {
-      Capability.name = "worker";
-      enabled = true;
-      model_id = None;
-      thinking_level = Some "low";
-      sandbox_preset = Some Capability.Read_only;
-      approval_policy = None;
-      tools = Some (Capability.of_list [ "exec_command"; "usage" ]);
-      agents = Some Capability.None_allowed;
-      allow_no_sandbox = true;
-    }
-  in
-  let child = expect_ok "child profile" (Capability.child_profile parent definition) in
-  assert_bool "sandbox clamp" (child.sandbox_preset = Capability.Read_only);
-  assert_bool "allowed inherited tool survives" (Capability.allow_tool child "exec_command");
-  assert_bool "explicit child tool survives parent restriction"
-    (Capability.allow_tool child "usage");
-  assert_bool "child cannot enable no sandbox" (not child.no_sandbox_allowed);
-  let inherited =
-    expect_ok "child inherits parent tools"
-      (Capability.child_profile parent { definition with Capability.tools = None })
-  in
-  assert_bool "inherited child tools use parent profile"
-    (Capability.allow_tool inherited "get_goal"
-    && not (Capability.allow_tool inherited "usage"))
 
 let test_gateway_enforces_profile_and_sandbox () =
   let spec =
@@ -108,7 +70,7 @@ let sandbox_config =
     network_mode = Sandbox.Network_disabled;
     approval_policy = Sandbox.Never;
     no_sandbox = false;
-    subagent = false;
+    isolated_child = false;
   }
 
 let test_sandbox_patch_policy () =
@@ -276,64 +238,6 @@ let test_sandbox_workspace_metadata_protection () =
   | Sandbox.Approval_prompt_confirm _ ->
       fail "approval prompt unavailable" "expected unavailable plan")
 
-let test_subagent_spawn_rejects_full_access_sandbox () =
-  let parent = { Capability.default with sandbox_preset = Capability.Danger_full_access } in
-  let explicit_full_access_profile =
-    {
-      Capability.name = "worker";
-      enabled = true;
-      model_id = None;
-      thinking_level = None;
-      sandbox_preset = Some Capability.Danger_full_access;
-      approval_policy = None;
-      tools = None;
-      agents = None;
-      allow_no_sandbox = true;
-    }
-  in
-  let definition = Subagents.create_definition ~max_depth:2 explicit_full_access_profile in
-  let spawn definition id =
-    Subagents.spawn parent
-      {
-        id;
-        parent_id = Some "root";
-        parent_is_subagent = false;
-        parent_depth = 0;
-        workspace_roots = [ "/repo" ];
-        definition;
-      }
-  in
-  (match spawn definition "w1" with
-  | Error "danger-full-access is not allowed for subagents" -> ()
-  | Error message -> fail "explicit full access" ("unexpected error: " ^ message)
-  | Ok _ -> fail "explicit full access" "expected rejection");
-  let inherited_full_access_profile =
-    { explicit_full_access_profile with Capability.name = "inherited"; sandbox_preset = None }
-  in
-  let inherited_definition =
-    Subagents.create_definition ~max_depth:2 inherited_full_access_profile
-  in
-  let inherited_worker =
-    expect_ok "inherited full access clamps" (spawn inherited_definition "w2")
-  in
-  assert_bool "inherited full access clamps to workspace-write"
-    (inherited_worker.sandbox.filesystem_mode = Sandbox.Workspace_write);
-  let workspace_profile =
-    {
-      explicit_full_access_profile with
-      Capability.name = "workspace";
-      sandbox_preset = Some Capability.Workspace_write;
-    }
-  in
-  let workspace_worker =
-    expect_ok "spawn workspace worker"
-      (spawn (Subagents.create_definition ~max_depth:2 workspace_profile) "w3")
-  in
-  assert_bool "workspace worker is sandboxed" (not workspace_worker.sandbox.no_sandbox);
-  assert_bool "workspace worker config is subagent" workspace_worker.sandbox.subagent;
-  assert_bool "workspace worker config filesystem"
-    (workspace_worker.sandbox.filesystem_mode = Sandbox.Workspace_write)
-
 let test_child_session_setup_entries () =
   let metadata =
     Shared.Object
@@ -345,7 +249,7 @@ let test_child_session_setup_entries () =
         ("activeTools", Shared.Array [ Shared.String "exec_command" ]);
         ("capabilityProfile", Capability.to_json Capability.default);
         ("noSandbox", Shared.Bool true);
-        ("subagent", Shared.Bool true);
+        ("isolated_child", Shared.Bool true);
       ]
   in
   let entries =
@@ -370,7 +274,7 @@ let test_child_session_setup_entries () =
   let parent_profile =
     {
       Capability.default with
-      tools = Capability.of_list [ "exec_command"; "ralph_continue"; "agent_spawn" ];
+      tools = Capability.of_list [ "exec_command"; "ralph_continue" ];
       no_sandbox_allowed = true;
     }
   in
@@ -408,7 +312,7 @@ let test_child_session_setup_entries () =
             (Capability.allow_tool profile "exec_command"
             && Capability.allow_tool profile "ralph_continue"
             && not (Capability.allow_tool profile "ralph_finish")
-            && not (Capability.allow_tool profile "agent_spawn"))
+            )
       | _ -> fail "ralph metadata" "expected active tools and profile")
   | _ -> fail "ralph metadata" "expected object metadata");
   assert_int "child start setup entry count" 2 (List.length plan.setup_entries);
@@ -431,8 +335,8 @@ let test_child_session_setup_entries () =
         | _ -> false);
       assert_bool "permissions carries no-sandbox flag"
         (List.assoc_opt "noSandbox" fields = Some (Shared.Bool true));
-      assert_bool "permissions carries subagent flag"
-        (List.assoc_opt "subagent" fields = Some (Shared.Bool true))
+      assert_bool "permissions carries isolated_child flag"
+        (List.assoc_opt "isolated_child" fields = Some (Shared.Bool true))
   | _ -> fail "permissions entry" "expected object data")
   ;
   let bridge =
@@ -716,12 +620,6 @@ let test_tool_catalog_scope () =
       "exec_command";
       "write_stdin";
       "apply_patch";
-      "agent_spawn";
-      "agent_send";
-      "agent_wait";
-      "agent_list";
-      "agent_close";
-      "agent_profiles";
       "get_goal";
       "create_goal";
       "update_goal";
@@ -939,19 +837,17 @@ let test_permissions_state () =
       fail "permissions unavailable prompt plan" "expected unavailable")
   ;
   let child_state =
-    expect_ok "create subagent permissions"
-      (Permissions.create ~subagent:true Capability.default)
+    expect_ok "create isolated_child permissions"
+      (Permissions.create ~isolated_child:true Capability.default)
   in
-  expect_error "subagent cannot enable no-sandbox"
+  expect_error "isolated_child cannot enable no-sandbox"
     (Permissions.apply_update child_state (Permissions.Set_no_sandbox true))
 
 
 let () =
-  test_capability_child_profile ();
   test_gateway_enforces_profile_and_sandbox ();
   test_sandbox_patch_policy ();
   test_sandbox_workspace_metadata_protection ();
-  test_subagent_spawn_rejects_full_access_sandbox ();
   test_child_session_setup_entries ();
   test_goal_state_machine ();
   test_ralph_ownership ();

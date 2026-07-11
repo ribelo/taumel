@@ -11,7 +11,6 @@ import {
 import { buildDomainResult } from "./tool-renderer-domains.ts";
 import {
   boolFieldOrUndefined,
-  isRecord,
   numberFieldOrUndefined,
   recordArrayFieldOrEmpty,
   recordFieldOrUndefined,
@@ -19,12 +18,17 @@ import {
   stringFieldOrUndefined,
 } from "./util.ts";
 
+type ToolRenderFields = { readonly [key: string]: unknown };
+function isToolRenderFields(value: unknown): value is ToolRenderFields {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Theme helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
 function themeFg(theme: unknown, color: string, value: string): string {
-  if (!isRecord(theme)) return value;
+  if (!isToolRenderFields(theme)) return value;
   const fg = theme["fg"];
   if (typeof fg !== "function") return value;
   const rendered = fg.call(theme, color, value);
@@ -59,27 +63,27 @@ function domainOf(url: string): string {
 }
 
 function textContent(result: unknown): string {
-  if (!isRecord(result) || !Array.isArray(result["content"])) return "";
+  if (!isToolRenderFields(result) || !Array.isArray(result["content"])) return "";
   const parts: string[] = [];
   for (const item of result["content"]) {
-    if (isRecord(item) && item["type"] === "text" && typeof item["text"] === "string") {
+    if (isToolRenderFields(item) && item["type"] === "text" && typeof item["text"] === "string") {
       parts.push(item["text"]);
     }
   }
   return parts.join("\n");
 }
 
-function detailsRecord(result: unknown): Record<string, unknown> {
-  if (!isRecord(result)) return {};
-  return isRecord(result["details"]) ? result["details"] : {};
+function detailsRecord(result: unknown): ToolRenderFields {
+  if (!isToolRenderFields(result)) return {};
+  return isToolRenderFields(result["details"]) ? result["details"] : {};
 }
 
-function argsFromContext(context: unknown): Record<string, unknown> {
-  return isRecord(context) && isRecord(context["args"]) ? context["args"] : {};
+function argsFromContext(context: unknown): ToolRenderFields {
+  return isToolRenderFields(context) && isToolRenderFields(context["args"]) ? context["args"] : {};
 }
 
 function expandedFromOptions(options: unknown): boolean {
-  return isRecord(options) && options["expanded"] === true;
+  return isToolRenderFields(options) && options["expanded"] === true;
 }
 
 function compactJson(value: unknown): string {
@@ -126,7 +130,7 @@ function moreLine(count: number, theme: unknown, unit: "more" | "more lines"): s
 // State → dot color
 // ─────────────────────────────────────────────────────────────────────────────
 
-function dotFromDetails(details: Record<string, unknown>): string {
+function dotFromDetails(details: ToolRenderFields): string {
   const code = numberFieldOrUndefined(details, "exitCode") ?? numberFieldOrUndefined(details, "code");
   if (code !== undefined) return code === 0 ? "success" : "error";
   if (boolFieldOrUndefined(details, "ok") === false) return "error";
@@ -137,11 +141,11 @@ function dotFromDetails(details: Record<string, unknown>): string {
 // Subjects (one-line identity of the call), derived from args
 // ─────────────────────────────────────────────────────────────────────────────
 
-function quotedQuery(args: Record<string, unknown>): string {
+function quotedQuery(args: ToolRenderFields): string {
   return `"${oneLine(stringFieldOrUndefined(args, "query") ?? "")}"`;
 }
 
-function subjectFromArgs(name: string, args: Record<string, unknown>): string {
+function subjectFromArgs(name: string, args: ToolRenderFields): string {
   switch (name) {
     case "exec_command":
       return oneLine(stringFieldOrUndefined(args, "cmd") ?? "exec_command");
@@ -159,30 +163,6 @@ function subjectFromArgs(name: string, args: Record<string, unknown>): string {
       return stringFieldOrUndefined(args, "path") ?? "";
     case "apply_patch":
       return oneLine(stringFieldOrUndefined(args, "input") ?? stringFieldOrUndefined(args, "patch") ?? "patch");
-    case "agent_spawn":
-      return stringFieldOrUndefined(args, "profile") ?? "";
-    case "agent_send":
-      return stringFieldOrUndefined(args, "agent_id") ?? "";
-    case "agent_wait": {
-      const agentIds = Array.isArray(args["agent_ids"]) ? args["agent_ids"].length : 0;
-      const runIds = Array.isArray(args["run_ids"]) ? args["run_ids"].length : 0;
-      const timeout = numberFieldOrUndefined(args, "timeout_seconds");
-      const waitMode =
-        timeout === undefined ? "until completion" :
-        timeout === 0 ? "poll now" :
-        `up to ${timeout}s`;
-      const selector =
-        runIds > 0 ? `${runIds} run${runIds === 1 ? "" : "s"}` :
-        agentIds > 0 ? `${agentIds} agent${agentIds === 1 ? "" : "s"}` :
-        "active runs";
-      return `${selector} · ${waitMode}`;
-    }
-    case "agent_list":
-      return args["include_closed"] === true ? "including closed" : "open agents";
-    case "agent_close":
-      return args["all"] === true ? "all" : `${Array.isArray(args["agent_ids"]) ? args["agent_ids"].length : 0} agent(s)`;
-    case "agent_profiles":
-      return "profiles";
     case "create_goal":
       return oneLine(stringFieldOrUndefined(args, "objective") ?? "");
     case "update_goal":
@@ -193,7 +173,7 @@ function subjectFromArgs(name: string, args: Record<string, unknown>): string {
     case "exa_agent_create_run":
       return quotedQuery(args);
     case "read_thread": {
-      const locator = recordFieldOrUndefined(args, "locator");
+      const locator = recordFieldOrUndefined<ToolRenderFields>(args, "locator");
       const threadID = stringFieldOrUndefined(args, "threadID") ?? (locator !== undefined ? stringFieldOrUndefined(locator, "threadID") : undefined) ?? "";
       const mode = stringFieldOrUndefined(args, "mode") ?? "overview";
       return `${threadID} (${mode})`;
@@ -318,7 +298,7 @@ export function fullTextEntries(text: string, theme: unknown): Entry[] {
   return cleaned.split(/\r?\n/).map((line) => ({ text: themeFg(theme, "toolOutput", line) }));
 }
 
-function buildShell(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
+function buildShell(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
   const subject = subjectFromArgs(name, args);
@@ -360,7 +340,7 @@ function buildShell(name: string, result: unknown, options: unknown, theme: unkn
   return { header, body: { mode: "rail", entries: tailEntries(output, expanded, theme, 5, 100000) } };
 }
 
-function buildRead(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
+function buildRead(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
   const path = stringFieldOrUndefined(details, "path") ?? stringFieldOrUndefined(args, "path") ?? "";
@@ -382,7 +362,7 @@ function buildRead(name: string, result: unknown, options: unknown, theme: unkno
   return { header, body: { mode: "rail", entries } };
 }
 
-function buildViewMedia(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
+function buildViewMedia(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
   const path = stringFieldOrUndefined(details, "path") ?? stringFieldOrUndefined(args, "path") ?? "";
@@ -416,7 +396,7 @@ function buildViewMedia(name: string, result: unknown, options: unknown, theme: 
   return { header, body: { mode: "rail", entries } };
 }
 
-function buildWrite(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
+function buildWrite(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
   const path = stringFieldOrUndefined(details, "displayPath") ?? stringFieldOrUndefined(details, "path") ?? stringFieldOrUndefined(args, "path") ?? "";
@@ -433,7 +413,7 @@ function buildWrite(name: string, result: unknown, options: unknown, theme: unkn
   return { header, body: { mode: "rail", entries } };
 }
 
-function buildEdit(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
+function buildEdit(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
   const path = stringFieldOrUndefined(details, "displayPath") ?? stringFieldOrUndefined(details, "path") ?? stringFieldOrUndefined(args, "path") ?? "";
@@ -464,15 +444,20 @@ function buildEdit(name: string, result: unknown, options: unknown, theme: unkno
   return { header, body: { mode: "flush", clip: true, entries } };
 }
 
-function buildApplyPatch(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
+function buildApplyPatch(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
-  const writes = recordArrayFieldOrEmpty(details, "writes").map((write) => ({
+  const writes = recordArrayFieldOrEmpty<ToolRenderFields>(details, "writes").map((write) => ({
     path: stringFieldOrUndefined(write, "path") ?? "",
     before: stringFieldOrUndefined(write, "before") ?? "",
     after: stringFieldOrUndefined(write, "contents") ?? stringFieldOrUndefined(write, "after") ?? "",
   }));
   const deletes = stringArrayFieldOrEmpty(details, "deletes");
+  const deletedFiles = recordArrayFieldOrEmpty<ToolRenderFields>(details, "deletedFiles").map((file) => ({
+    path: stringFieldOrUndefined(file, "path") ?? "",
+    before: stringFieldOrUndefined(file, "before") ?? "",
+    after: "",
+  }));
   const dotColor = dotFromDetails(details);
 
   if (boolFieldOrUndefined(details, "ok") === false && writes.length === 0 && deletes.length === 0) {
@@ -490,17 +475,23 @@ function buildApplyPatch(name: string, result: unknown, options: unknown, theme:
     return { header: headerSpec(name, subjectFromArgs(name, args), dotColor, theme), body: undefined };
   }
 
-  const perFile = writes.map((write) => {
-    const { added, removed } = diffCounts(write.before, write.after);
-    return { ...write, added, removed };
+  const deletedPathsWithContents = new Set(deletedFiles.map((file) => file.path));
+  const files = [
+    ...writes,
+    ...deletedFiles,
+    ...deletes.filter((path) => !deletedPathsWithContents.has(path)).map((path) => ({ path, before: "", after: "" })),
+  ];
+  const perFile = files.map((file) => {
+    const { added, removed } = diffCounts(file.before, file.after);
+    return { ...file, added, removed };
   });
   const totalAdded = perFile.reduce((sum, file) => sum + file.added, 0);
   const totalRemoved = perFile.reduce((sum, file) => sum + file.removed, 0);
-  const fileCount = writes.length + deletes.length;
+  const fileCount = perFile.length;
   const header = headerSpec(name, `${fileCount} file${fileCount === 1 ? "" : "s"}`, dotColor, theme, themeFg(theme, "dim", `(+${totalAdded} -${totalRemoved})`));
 
   if (!expanded) {
-    if (writes.length === 1 && deletes.length === 0) {
+    if (perFile.length === 1) {
       const file = perFile[0];
       const diff = renderDiff(file.before, file.after, false, theme);
       const singleHeader = pathHeaderSpec(name, file.path, dotColor, theme, themeFg(theme, "dim", `(+${diff.added} -${diff.removed})`));
@@ -518,28 +509,30 @@ function buildApplyPatch(name: string, result: unknown, options: unknown, theme:
       return { header: singleHeader, body: { mode: "flush", clip: true, entries } };
     }
 
-    const rows = [
-      ...perFile.map((file) => ({ text: `${themeFg(theme, "toolTitle", file.path)} ${themeFg(theme, "dim", `(+${file.added} -${file.removed})`)}` })),
-      ...deletes.map((path) => ({ text: `${themeFg(theme, "toolTitle", path)} ${themeFg(theme, "dim", "(deleted)")}` })),
-    ];
-    const entries: Entry[] = rows.slice(0, 3);
-    if (rows.length > 3) entries.push({ text: moreLine(rows.length - 3, theme, "more"), exempt: true });
-    return { header, body: { mode: "rail", entries } };
+    const entries: Entry[] = [];
+    perFile.forEach((file, index) => {
+      if (index > 0) entries.push({ text: "", exempt: true });
+      entries.push({ text: `${themeFg(theme, "dim", "  └ ")}${themeFg(theme, "toolOutput", file.path)} ${themeFg(theme, "dim", `(+${file.added} -${file.removed})`)}` });
+      const diff = renderDiff(file.before, file.after, false, theme);
+      entries.push(...diff.lines.slice(0, 6).map((text) => ({ text })));
+      if (diff.lines.length > 6) {
+        entries.push({ text: `  ${moreLine(diff.lines.length - 6, theme, "more lines")}`, exempt: true });
+      }
+    });
+    return { header, body: { mode: "flush", clip: true, entries } };
   }
 
   const entries: Entry[] = [];
-  for (const file of perFile) {
-    entries.push({ text: `${themeFg(theme, "toolTitle", file.path)} ${themeFg(theme, "dim", `(+${file.added} -${file.removed})`)}` });
+  perFile.forEach((file, index) => {
+    if (index > 0) entries.push({ text: "", exempt: true });
+    entries.push({ text: `${themeFg(theme, "dim", "  └ ")}${themeFg(theme, "toolOutput", file.path)} ${themeFg(theme, "dim", `(+${file.added} -${file.removed})`)}` });
     const diff = renderDiff(file.before, file.after, true, theme);
     entries.push(...diff.lines.map((text) => ({ text })));
-  }
-  for (const path of deletes) {
-    entries.push({ text: `${themeFg(theme, "toolTitle", path)} ${themeFg(theme, "dim", "(deleted)")}` });
-  }
+  });
   return { header, body: { mode: "flush", clip: true, entries } };
 }
 
-function buildGeneric(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
+function buildGeneric(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
   const text = textContent(result);
@@ -549,7 +542,7 @@ function buildGeneric(name: string, result: unknown, options: unknown, theme: un
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// notification message renderer (subagent + exec completion availability)
+// notification message renderer
 // ─────────────────────────────────────────────────────────────────────────────
 
 function attrValue(content: string, pattern: RegExp): string | undefined {
@@ -583,7 +576,7 @@ function parseSkillBlocks(content: string): { name: string; location: string; bo
 
 export function skillMessageRenderer() {
   return (message: unknown, options: unknown, theme: unknown) => {
-    const content = isRecord(message) ? stringFieldOrUndefined(message, "content") ?? "" : "";
+    const content = isToolRenderFields(message) ? stringFieldOrUndefined(message, "content") ?? "" : "";
     const parsed = parseSkillBlock(content);
     if (parsed !== null) {
       try {
@@ -619,17 +612,12 @@ export function skillMessageRenderer() {
 }
 
 function buildNotificationBlock(message: unknown, options: unknown, theme: unknown): Block | undefined {
-  const content = isRecord(message) ? stringFieldOrUndefined(message, "content") ?? "" : "";
+  const content = isToolRenderFields(message) ? stringFieldOrUndefined(message, "content") ?? "" : "";
   if (content === "") return undefined;
   const expanded = expandedFromOptions(options);
   const execMatch = /^Command session ([0-9]+) has finished\./.exec(content);
-  const agentMatch = /^Agent run \S+ for (\S+)(?: \(([^)]*)\))? has finished\./.exec(content);
-  const name = execMatch !== null ? "exec_completion" : agentMatch !== null ? "agent_completion" : "notification";
-  const subject = execMatch !== null
-    ? `session ${execMatch[1]} ready`
-    : agentMatch !== null
-    ? `${agentMatch[1]} ready`
-    : "ready";
+  const name = execMatch !== null ? "exec_completion" : "notification";
+  const subject = execMatch !== null ? `session ${execMatch[1]} ready` : "ready";
 
   return {
     header: headerSpec(name, subject, "muted", theme),
@@ -650,13 +638,13 @@ export function notificationMessageRenderer() {
 
 function buildCronFireBlock(message: unknown, options: unknown, theme: unknown): Block | undefined {
   const expanded = expandedFromOptions(options);
-  const details = isRecord(message) ? detailsRecord(message) : {};
+  const details = isToolRenderFields(message) ? detailsRecord(message) : {};
   const id = stringFieldOrUndefined(details, "id") ?? "";
   const schedule = stringFieldOrUndefined(details, "schedule") ?? "";
   const coalesced = numberFieldOrUndefined(details, "coalesced") ?? 1;
   const prompt =
     stringFieldOrUndefined(details, "prompt") ??
-    (isRecord(message) ? stringFieldOrUndefined(message, "content") : undefined) ??
+    (isToolRenderFields(message) ? stringFieldOrUndefined(message, "content") : undefined) ??
     "";
   if (id === "" && prompt === "") return undefined;
 
@@ -700,11 +688,10 @@ function progressText(name: string): string {
   if (name === "read_thread") return "reading thread";
   if (name === "read") return "reading";
   if (name === "view_media") return "viewing image";
-  if (name === "agent_wait") return "waiting";
   return "running";
 }
 
-function buildResult(name: string, result: unknown, options: unknown, theme: unknown, args: Record<string, unknown>): Block {
+function buildResult(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
   if (name === "exec_command" || name === "write_stdin") return buildShell(name, result, options, theme, args);
   if (name === "read") return buildRead(name, result, options, theme, args);
   if (name === "view_media") return buildViewMedia(name, result, options, theme, args);
@@ -719,21 +706,21 @@ function buildResult(name: string, result: unknown, options: unknown, theme: unk
 export function renderersForTool(name: string) {
   return {
     renderCall(args: unknown, theme: unknown, context: unknown) {
-      if (isRecord(context) && context["isPartial"] === false) return emptyComponent();
-      const callArgs = isRecord(args) ? args : {};
+      if (isToolRenderFields(context) && context["isPartial"] === false) return emptyComponent();
+      const callArgs = isToolRenderFields(args) ? args : {};
       // In-flight call: yellow dot header + dim (progress), header-only, clipped to one line.
       const header = headerSpec(name, subjectFromArgs(name, callArgs), "warning", theme, themeFg(theme, "dim", `(${progressText(name)})`));
       return renderBlock({ header, body: undefined }, false);
     },
     renderResult(result: unknown, options: unknown, theme: unknown, context: unknown) {
       const expanded = expandedFromOptions(options);
-      if (isRecord(options) && options["isPartial"] === true) {
+      if (isToolRenderFields(options) && options["isPartial"] === true) {
         const args = argsFromContext(context);
         const header = headerSpec(name, subjectFromArgs(name, args), "warning", theme, themeFg(theme, "dim", `(${progressText(name)})`));
         return renderBlock({ header, body: undefined }, false);
       }
       const args = argsFromContext(context);
-      const renderedResult = isRecord(context) && context["isError"] === true && isRecord(result)
+      const renderedResult = isToolRenderFields(context) && context["isError"] === true && isToolRenderFields(result)
         ? { ...result, details: { ...detailsRecord(result), ok: false } }
         : result;
       return renderBlock(buildResult(name, renderedResult, options, theme, args), expanded);
