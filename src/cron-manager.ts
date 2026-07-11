@@ -67,11 +67,7 @@ function stateDetails(state: CronState): CronStateDetails {
 }
 
 function loadCronState(core: CoreBridge, ctx: unknown): CronState {
-  const result = decodeCronListResult(core.call("prepareTool", [{ name: "cron_list", params: {}, ctx }]));
-  return {
-    enabled: result.details.enabled,
-    tasks: result.details.tasks.map((task) => ({ ...task, mode: task.mode })),
-  };
+  return decodeCronListResult(core.call("prepareTool", [{ name: "cron_list", params: {}, ctx }])).details;
 }
 
 function taskTableRow(
