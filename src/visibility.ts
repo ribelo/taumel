@@ -94,14 +94,6 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item !== "") : [];
 }
 
-function uniqueStrings(values: readonly string[]): string[] {
-  const result: string[] = [];
-  for (const value of values) {
-    if (value !== "" && !result.includes(value)) result.push(value);
-  }
-  return result;
-}
-
 function visibilityFromSettings(settings: unknown): Partial<{ tools: string[]; skills: string[] }> {
   const root = settingsObject(settings);
   const taumel = settingsObject(root?.["taumel"]);

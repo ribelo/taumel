@@ -72,13 +72,6 @@ function statusColor(status: string): "success" | "warning" | "error" {
   return "success";
 }
 
-function aggregateStatusColor(statuses: string[], fallback: "success" | "warning" | "error" = "success"): "success" | "warning" | "error" {
-  if (statuses.length === 0) return fallback;
-  if (statuses.some((status) => statusColor(status) === "error")) return "error";
-  if (statuses.some((status) => statusColor(status) === "warning")) return "warning";
-  return "success";
-}
-
 function fullTextEntries(text: string, theme: unknown): Entry[] {
   const cleaned = text.trimEnd();
   return cleaned === "" ? [] : cleaned.split(/\r?\n/).map((line) => ({ text: themeFg(theme, "toolOutput", line) }));

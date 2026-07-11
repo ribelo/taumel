@@ -544,17 +544,6 @@ async function validatePreparedMutationPath(
   return undefined;
 }
 
-function readInvocation(args: unknown[]) {
-  const params =
-    typeof args[0] === "string" && args.length > 1 ? args[1] : args[0];
-  const signal = args.find((arg): arg is AbortSignal => arg instanceof AbortSignal);
-  const ctx =
-    args.length >= 5
-      ? args[4]
-      : args.find((arg) => typeof arg === "object" && arg !== null && ("cwd" in arg || "sessionManager" in arg));
-  return { params, signal, ctx: ctx ?? {} };
-}
-
 async function runThreadTool(core: CoreBridge, name: string, prepared: Extract<PreparedSuccess, { action: "query_threads" | "read_thread" }>, ctx: unknown) {
   if (name !== "query_threads" && name !== "read_thread") throw new Error(`Invalid thread tool: ${name}`);
   return decodeToolResultEnvelope(core.call("runThreadTool", [{

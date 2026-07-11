@@ -282,16 +282,6 @@ function tailEntries(text: string, expanded: boolean, theme: unknown, cap: numbe
   return [{ text: moreLine(all.length - limit, theme, "more lines"), exempt: true }, ...visible.map((line) => ({ text: themeFg(theme, "toolOutput", line) }))];
 }
 
-function headEntries(text: string, expanded: boolean, theme: unknown, cap: number, expandedCap: number): Entry[] {
-  const cleaned = (text ?? "").trimEnd();
-  if (cleaned === "") return [{ text: themeFg(theme, "dim", "(no output)") }];
-  const all = cleaned.split(/\r?\n/);
-  const limit = expanded ? expandedCap : cap;
-  if (all.length <= limit) return all.map((line) => ({ text: themeFg(theme, "toolOutput", line) }));
-  const visible = all.slice(0, limit);
-  return [...all.slice(0, limit).map((line) => ({ text: themeFg(theme, "toolOutput", line) })), { text: moreLine(all.length - limit, theme, "more lines"), exempt: true }];
-}
-
 export function fullTextEntries(text: string, theme: unknown): Entry[] {
   const cleaned = (text ?? "").trimEnd();
   if (cleaned === "") return [];
