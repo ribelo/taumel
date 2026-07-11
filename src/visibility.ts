@@ -462,11 +462,14 @@ function toolNameFromUnknown(value: unknown): string | undefined {
 }
 
 function liveToolNames(pi: PiLike): string[] {
-  const fromRegistry =
-    typeof pi.getAllTools === "function"
-      ? pi.getAllTools().map(toolNameFromUnknown).filter((name): name is string => name !== undefined)
-      : [];
-  return [...new Set([...toolNames, ...fromRegistry])];
+  const names = new Set<string>(toolNames);
+  if (typeof pi.getAllTools === "function") {
+    for (const tool of pi.getAllTools()) {
+      const name = toolNameFromUnknown(tool);
+      if (name !== undefined) names.add(name);
+    }
+  }
+  return [...names];
 }
 
 function listSkillNames(core: CoreBridge, ctx: unknown): string[] {
