@@ -345,7 +345,10 @@ export async function executeGatewayCommand(
     return result;
   }
 
-  const contextOverrides = Object.fromEntries(plan.contextOverrides.map(({ name, value }) => [name, value]));
+  const contextOverrides: { [name: string]: unknown } = {};
+  for (const override of plan.contextOverrides) {
+    contextOverrides[override.name] = override.value;
+  }
   let commandCtx = contextWithOverrides(ctx, contextOverrides);
   const currentActiveToolNames = typeof pi.getActiveTools === "function" ? pi.getActiveTools() : undefined;
   const childSessionPlan = decodeCommandChildSessionPlan(core.call("planCommandChildSession", [{
