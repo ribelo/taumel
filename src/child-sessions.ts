@@ -271,7 +271,14 @@ function completionFromAgentEndEvent(event: unknown): ChildDispatchCompletion | 
     return undefined;
   }
   const messages = agentEnd.messages;
-  const assistant = [...messages].reverse().find((message) => hostObject<AgentMessage>(message)?.role === "assistant");
+  let assistant: unknown;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (hostObject<AgentMessage>(message)?.role === "assistant") {
+      assistant = message;
+      break;
+    }
+  }
   const finalOutput = assistantTextFromMessage(assistant);
   const assistantMessage = hostObject<AgentMessage>(assistant);
   const stopReason = typeof assistantMessage?.stopReason === "string" ? assistantMessage.stopReason : "";
