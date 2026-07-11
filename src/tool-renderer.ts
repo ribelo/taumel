@@ -319,13 +319,17 @@ function buildViewMedia(name: string, result: unknown, options: unknown, theme: 
     numberFieldOrUndefined(details, "encodedBytes");
   const entries: Entry[] = [
     { text: `${themeFg(theme, "dim", "Path:")} ${themeFg(theme, "toolOutput", path)}` },
-    ...(mime === undefined ? [] : [{ text: `${themeFg(theme, "dim", "Type:")} ${themeFg(theme, "toolOutput", mime)}` }]),
-    ...(originalWidth !== undefined && originalHeight !== undefined ? [{ text: `${themeFg(theme, "dim", "Original:")} ${themeFg(theme, "toolOutput", `${originalWidth}x${originalHeight}`)}` }] : []),
-    ...(width !== undefined && height !== undefined ? [{ text: `${themeFg(theme, "dim", "Processed:")} ${themeFg(theme, "toolOutput", `${width}x${height}`)}` }] : []),
-    { text: `${themeFg(theme, "dim", "Resized:")} ${themeFg(theme, "toolOutput", wasResized ? "yes" : "no")}` },
-    ...(payloadBytes === undefined ? [] : [{ text: `${themeFg(theme, "dim", "Payload:")} ${themeFg(theme, "toolOutput", `${payloadBytes} bytes`)}` }]),
-    ...fullTextEntries(textContent(result), theme),
   ];
+  if (mime !== undefined) entries.push({ text: `${themeFg(theme, "dim", "Type:")} ${themeFg(theme, "toolOutput", mime)}` });
+  if (originalWidth !== undefined && originalHeight !== undefined) {
+    entries.push({ text: `${themeFg(theme, "dim", "Original:")} ${themeFg(theme, "toolOutput", `${originalWidth}x${originalHeight}`)}` });
+  }
+  if (width !== undefined && height !== undefined) {
+    entries.push({ text: `${themeFg(theme, "dim", "Processed:")} ${themeFg(theme, "toolOutput", `${width}x${height}`)}` });
+  }
+  entries.push({ text: `${themeFg(theme, "dim", "Resized:")} ${themeFg(theme, "toolOutput", wasResized ? "yes" : "no")}` });
+  if (payloadBytes !== undefined) entries.push({ text: `${themeFg(theme, "dim", "Payload:")} ${themeFg(theme, "toolOutput", `${payloadBytes} bytes`)}` });
+  for (const entry of fullTextEntries(textContent(result), theme)) entries.push(entry);
   return { header, body: { mode: "rail", entries } };
 }
 
