@@ -48,9 +48,13 @@ function stringFromUnknown(value: unknown): string | undefined {
 function stringRecordFromUnknown(value: unknown): Record<string, string> | undefined {
   const object = settingsObject(value);
   if (object === undefined) return undefined;
-  const entries = Object.entries(object);
-  if (!entries.every((entry): entry is [string, string] => typeof entry[1] === "string")) return undefined;
-  return Object.fromEntries(entries);
+  const result: Record<string, string> = {};
+  for (const key of Object.keys(object)) {
+    const entry = object[key];
+    if (typeof entry !== "string") return undefined;
+    result[key] = entry;
+  }
+  return result;
 }
 
 function globalSettingsPath(): string {
