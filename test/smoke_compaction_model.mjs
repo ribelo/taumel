@@ -399,4 +399,34 @@ function makeCommandHarness(plans) {
   assert.equal(result.error, "Picker is not available.", "picker should explain not available");
 }
 
+// Open picker uses the promise returned by ui.custom.
+{
+  const selected = { provider: "openai", id: "gpt-4o" };
+  const registry = { find: () => undefined };
+  const ctx = {
+    cwd: process.cwd(),
+    isProjectTrusted: () => false,
+    modelRegistry: registry,
+    sessionManager: { getSessionId: () => "picker-test" },
+    ui: {
+      custom: async () => selected,
+      notify: () => undefined,
+    },
+  };
+  const pi = { modelRegistry: registry };
+  const core = {
+    call(name) {
+      assert.equal(name, "planCompactionModelCommand");
+      return { kind: "open_picker", current: "" };
+    },
+  };
+  const result = await Promise.race([
+    executeCompactionModelCommand(pi, core, "", ctx),
+    new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), 100)),
+  ]);
+  assert.equal(result.timeout, undefined, "picker should resolve with ui.custom");
+  assert.equal(result.ok, true);
+  assert.match(result.message, /openai\/gpt-4o/);
+}
+
 console.log("compaction model smoke: all assertions passed");

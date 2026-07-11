@@ -17,7 +17,7 @@ type CompactionContext = {
   readonly isProjectTrusted?: () => unknown; readonly cwd?: unknown; readonly ui?: unknown;
   readonly thinkingLevel?: unknown; readonly sessionManager?: unknown; readonly modelRegistry?: unknown;
 };
-type CompactionUi = { readonly notify?: (message: string, level: "warning") => unknown; readonly custom?: (...args: unknown[]) => unknown };
+type CompactionUi = { readonly notify?: (message: string, level: "warning") => unknown; readonly custom?: (...args: unknown[]) => Promise<unknown> };
 type ThinkingSessionManager = { readonly thinkingLevel?: unknown; readonly getThinkingLevel?: () => unknown };
 type ModelRegistry = { readonly find: (provider: string, model: string) => unknown; readonly getApiKeyAndHeaders: (model: unknown) => Promise<unknown> };
 type ModelDescriptor = { readonly provider?: unknown; readonly id?: unknown };
@@ -359,23 +359,20 @@ async function openCompactionModelPicker(
   }
   const registry = modelRegistryFromContext(pi, ctx);
   const currentModel = currentModelId === "" ? undefined : findModelByProviderModelId(registry, currentModelId);
-  const model = await new Promise<unknown>((resolve) => {
-    custom.call(
-      ui,
-      (tui: unknown, _theme: unknown, _keybindings: unknown, done: (value: unknown) => void) => {
-        return new ModelSelectorComponent(
-          tui as ConstructorParameters<typeof ModelSelectorComponent>[0],
-          currentModel,
-          SettingsManager.inMemory(),
-          registry as ModelSelectorRegistry,
-          [],
-          (selected) => done(selected),
-          () => done(undefined),
-        );
-      },
-      { title: "Choose compaction model" },
-    );
-  });
+  const model = await custom.call(
+    ui,
+    (tui: unknown, _theme: unknown, _keybindings: unknown, done: (value: unknown) => void) =>
+      new ModelSelectorComponent(
+        tui as ConstructorParameters<typeof ModelSelectorComponent>[0],
+        currentModel,
+        SettingsManager.inMemory(),
+        registry as ModelSelectorRegistry,
+        [],
+        (selected) => done(selected),
+        () => done(undefined),
+      ),
+    { title: "Choose compaction model" },
+  );
   if (model === undefined || model === null) {
     return { ok: true, action: "command_result", message: "Compaction model selection cancelled." };
   }
