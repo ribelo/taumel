@@ -380,7 +380,7 @@ export async function saveProjectVisibility(
 
 async function saveFromCore(core: CoreBridge, category: Category, ctx: unknown) {
   const plan = decodeVisibilitySavePlan(core.call("visibilitySaveProjectPlan", [{ category, ctx }]));
-  return saveProjectVisibility(category, [...plan.disabled], plan.details, ctx);
+  return saveProjectVisibility(category, plan.disabled, plan.details, ctx);
 }
 
 export async function executeVisibilityManager(

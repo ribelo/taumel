@@ -253,7 +253,7 @@ async function executeCommandAction(
     case "visibility_prompt":
       return executeVisibilityPrompt(pi, core, result, ctx);
     case "visibility_save_project": {
-      return saveProjectVisibility(result.category, [...result.disabled], result.details, ctx);
+      return saveProjectVisibility(result.category, result.disabled, result.details, ctx);
     }
     case "openai_usage_fetch":
       return commandResultFromToolResult(core, await executeOpenAiUsageWithHostAuth(pi, core, { ...result }, ctx));
