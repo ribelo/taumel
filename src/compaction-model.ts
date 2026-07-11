@@ -1,5 +1,4 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import {
   compact,
   generateBranchSummary,
@@ -9,7 +8,7 @@ import {
 
 import type { CoreBridge, PiLike } from "./types.ts";
 import { taumelGlobalSettingsPath } from "./global-settings.ts";
-import { cwdFromContext, isProjectTrusted, modelRegistryFrom, sessionInfoFromContext, splitProviderModelId, writeFileAtomically } from "./util.ts";
+import { cwdFromContext, isProjectTrusted, modelRegistryFrom, projectSettingsPath, sessionInfoFromContext, splitProviderModelId, writeFileAtomically } from "./util.ts";
 import { decodeCompactionCommandPlan, decodeCompactionSessionPlan } from "./bridge-contracts.ts";
 
 type SettingsObject = { [key: string]: unknown };
@@ -47,10 +46,6 @@ function stringRecordFromUnknown(value: unknown): Record<string, string> | undef
     result[key] = entry;
   }
   return result;
-}
-
-function projectSettingsPath(cwd: string): string {
-  return join(cwd, ".pi", "settings.json");
 }
 
 const sessionCompactionModels = new Map<string, string>();

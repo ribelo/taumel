@@ -174,6 +174,10 @@ export function cwdFromContext(ctx: unknown): string {
   return typeof cwd === "string" && cwd !== "" ? cwd : process.cwd();
 }
 
+export function projectSettingsPath(cwd: string): string {
+  return join(cwd, ".pi", "settings.json");
+}
+
 export function isProjectTrusted(ctx: unknown): boolean {
   const context = objectValue(ctx) as { readonly isProjectTrusted?: () => unknown } | undefined;
   const trusted = context?.isProjectTrusted;

@@ -1,10 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { type Focusable, fuzzyFilter, Input, Key, truncateToWidth } from "@earendil-works/pi-tui";
 
 import type { CoreBridge, PiLike } from "./types.ts";
 import { taumelGlobalSettingsPath } from "./global-settings.ts";
-import { cwdFromContext, isProjectTrusted, liveToolNames, writeFileAtomically } from "./util.ts";
+import { cwdFromContext, isProjectTrusted, liveToolNames, projectSettingsPath, writeFileAtomically } from "./util.ts";
 import { decodeSkillListResult } from "./bridge-contracts.ts";
 import { decodeVisibilityListResult, decodeVisibilityRowsResult, decodeVisibilitySavePlan, decodeVisibilityToggleResult, decodeVisibilityWarningsResult, type VisibilityPrompt, type VisibilityRowsResult } from "./bridge-contracts.ts";
 import { toolNames } from "./tool-contracts.ts";
@@ -75,9 +74,6 @@ type ManagerCallbacks = {
   readonly requestRender: () => void;
 };
 
-function projectSettingsPath(ctx: unknown): string {
-  return join(cwdFromContext(ctx), ".pi", "settings.json");
-}
 
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item !== "") : [];
@@ -105,7 +101,7 @@ function readVisibilityFile(path: string): Partial<{ tools: string[]; skills: st
 
 function readConfigVisibilityDefaults(ctx: unknown): { tools: string[]; skills: string[] } {
   const global = readVisibilityFile(taumelGlobalSettingsPath());
-  const project = isProjectTrusted(ctx) ? readVisibilityFile(projectSettingsPath(ctx)) : {};
+  const project = isProjectTrusted(ctx) ? readVisibilityFile(projectSettingsPath(cwdFromContext(ctx))) : {};
   return {
     tools: project.tools ?? global.tools ?? [],
     skills: project.skills ?? global.skills ?? [],
@@ -361,7 +357,7 @@ export async function saveProjectVisibility(
     const message = `Cannot save ${category} visibility: project is not trusted.`;
     return commandResult(false, message, { ...state, category });
   }
-  const path = projectSettingsPath(ctx);
+  const path = projectSettingsPath(cwdFromContext(ctx));
   let root: VisibilitySettings = {};
   if (existsSync(path)) {
     try {
