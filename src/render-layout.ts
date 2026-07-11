@@ -104,18 +104,20 @@ function clampLine(line: string, width: number): string {
   return visibleWidth(line) > width ? truncateToWidth(line, width, ELLIPSIS) : line;
 }
 
-function railEntryPhysical(entry: Entry, expanded: boolean, contentWidth: number): string[] {
-  if (entry.exempt) return [entry.text];
-  if (expanded) return wrapTextWithAnsi(entry.text, contentWidth);
-  return entry.text.split(/\r?\n/).map((line) => truncateToWidth(line, contentWidth, ELLIPSIS));
-}
-
 function layoutRail(entries: readonly Entry[], expanded: boolean, width: number): string[] {
   const contentWidth = Math.max(1, width - visibleWidth(RAIL_FIRST));
   const lines: string[] = [];
   for (const entry of entries) {
-    for (const line of railEntryPhysical(entry, expanded, contentWidth)) {
-      lines.push((lines.length === 0 ? RAIL_FIRST : RAIL_CONT) + line);
+    if (entry.exempt) {
+      lines.push((lines.length === 0 ? RAIL_FIRST : RAIL_CONT) + entry.text);
+    } else if (expanded) {
+      for (const line of wrapTextWithAnsi(entry.text, contentWidth)) {
+        lines.push((lines.length === 0 ? RAIL_FIRST : RAIL_CONT) + line);
+      }
+    } else {
+      for (const line of entry.text.split(/\r?\n/)) {
+        lines.push((lines.length === 0 ? RAIL_FIRST : RAIL_CONT) + truncateToWidth(line, contentWidth, ELLIPSIS));
+      }
     }
   }
   return lines;
