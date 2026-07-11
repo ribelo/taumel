@@ -77,6 +77,12 @@ function moreLine(count: number, theme: unknown, unit: "more" | "more lines"): s
   return themeFg(theme, "dim", `… ${count} ${unit}`);
 }
 
+function appendDiffLines(entries: Entry[], lines: readonly string[], limit = lines.length): void {
+  for (let index = 0; index < Math.min(lines.length, limit); index += 1) {
+    entries.push({ text: lines[index] });
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // State → dot color
 // ─────────────────────────────────────────────────────────────────────────────
@@ -353,18 +359,18 @@ function buildEdit(result: unknown, options: unknown, theme: unknown, args: Tool
   }
   const diff = renderDiff(before, after, expanded, theme);
   const header = pathHeaderSpec("edit", path, dotFromDetails(details), theme, themeFg(theme, "dim", `(+${diff.added} -${diff.removed})`));
-  const entries: Entry[] = diff.lines.map((text) => ({ text }));
   // Collapsed: cap to ~6 changed lines; advertise the rest with an exempt hint.
   if (!expanded && diff.lines.length > 6) {
+    const entries: Entry[] = [];
+    appendDiffLines(entries, diff.lines, 6);
+    entries.push({ text: `  ${moreLine(diff.lines.length - 6, theme, "more lines")}`, exempt: true });
     return {
       header,
-      body: {
-        mode: "flush",
-        clip: true,
-        entries: [...diff.lines.slice(0, 6).map((text) => ({ text })), { text: `  ${moreLine(diff.lines.length - 6, theme, "more lines")}`, exempt: true }],
-      },
+      body: { mode: "flush", clip: true, entries },
     };
   }
+  const entries: Entry[] = [];
+  appendDiffLines(entries, diff.lines);
   return { header, body: { mode: "flush", clip: true, entries } };
 }
 
@@ -421,17 +427,16 @@ function buildApplyPatch(name: string, result: unknown, options: unknown, theme:
       const file = perFile[0];
       const diff = renderDiff(file.before, file.after, false, theme);
       const singleHeader = pathHeaderSpec(name, file.path, dotColor, theme, themeFg(theme, "dim", `(+${diff.added} -${diff.removed})`));
-      const entries: Entry[] = diff.lines.map((text) => ({ text }));
+      const entries: Entry[] = [];
       if (diff.lines.length > 6) {
+        appendDiffLines(entries, diff.lines, 6);
+        entries.push({ text: `  ${moreLine(diff.lines.length - 6, theme, "more lines")}`, exempt: true });
         return {
           header: singleHeader,
-          body: {
-            mode: "flush",
-            clip: true,
-            entries: [...diff.lines.slice(0, 6).map((text) => ({ text })), { text: `  ${moreLine(diff.lines.length - 6, theme, "more lines")}`, exempt: true }],
-          },
+          body: { mode: "flush", clip: true, entries },
         };
       }
+      appendDiffLines(entries, diff.lines);
       return { header: singleHeader, body: { mode: "flush", clip: true, entries } };
     }
 
@@ -440,7 +445,7 @@ function buildApplyPatch(name: string, result: unknown, options: unknown, theme:
       if (index > 0) entries.push({ text: "", exempt: true });
       entries.push({ text: `${themeFg(theme, "dim", "  └ ")}${themeFg(theme, "toolOutput", file.path)} ${themeFg(theme, "dim", `(+${file.added} -${file.removed})`)}` });
       const diff = renderDiff(file.before, file.after, false, theme);
-      entries.push(...diff.lines.slice(0, 6).map((text) => ({ text })));
+      appendDiffLines(entries, diff.lines, 6);
       if (diff.lines.length > 6) {
         entries.push({ text: `  ${moreLine(diff.lines.length - 6, theme, "more lines")}`, exempt: true });
       }
@@ -453,7 +458,7 @@ function buildApplyPatch(name: string, result: unknown, options: unknown, theme:
     if (index > 0) entries.push({ text: "", exempt: true });
     entries.push({ text: `${themeFg(theme, "dim", "  └ ")}${themeFg(theme, "toolOutput", file.path)} ${themeFg(theme, "dim", `(+${file.added} -${file.removed})`)}` });
     const diff = renderDiff(file.before, file.after, true, theme);
-    entries.push(...diff.lines.map((text) => ({ text })));
+    appendDiffLines(entries, diff.lines);
   });
   return { header, body: { mode: "flush", clip: true, entries } };
 }
