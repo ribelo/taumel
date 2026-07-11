@@ -269,6 +269,19 @@ export function existingPaths(paths: readonly string[]): string[] {
   });
 }
 
+function existingRealPaths(paths: readonly string[]): string[] {
+  const result: string[] = [];
+  for (const path of paths) {
+    const resolved = realpathOrSelf(path);
+    try {
+      if (existsSync(resolved)) result.push(resolved);
+    } catch {
+      // Ignore invalid or inaccessible host paths, matching existingPaths.
+    }
+  }
+  return result;
+}
+
 export function sandboxStringArrayField(sandbox: unknown, name: string): string[] {
   const config = objectValue(sandbox);
   if (config === undefined) throw new Error("Invalid Taumel sandbox config");
@@ -313,13 +326,13 @@ export function execHostFacts(
 ): ExecHostFacts {
   const sandbox = prepared.sandbox;
   const hostPathPlan = sandboxHostPathPlan(core);
-  const workspaceRoots = existingPaths(sandboxStringArrayField(sandbox, "workspaceRoots").map(realpathOrSelf));
+  const workspaceRoots = existingRealPaths(sandboxStringArrayField(sandbox, "workspaceRoots"));
   const home = realpathOrSelf(homedir());
   const homeParent = dirname(home);
   const homeMount = homeParent !== "/" && existsSync(homeParent) ? homeParent : home;
   return {
     platform: process.platform,
-    tempRoots: existingPaths(hostPathPlan.tempRootCandidates.map(realpathOrSelf)),
+    tempRoots: existingRealPaths(hostPathPlan.tempRootCandidates),
     systemRoPaths: existingPaths(hostPathPlan.systemRoPathCandidates),
     homeMount,
     workspaceRoots,
