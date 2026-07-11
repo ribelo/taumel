@@ -174,6 +174,12 @@ export function cwdFromContext(ctx: unknown): string {
   return typeof cwd === "string" && cwd !== "" ? cwd : process.cwd();
 }
 
+export function isProjectTrusted(ctx: unknown): boolean {
+  const context = objectValue(ctx) as { readonly isProjectTrusted?: () => unknown } | undefined;
+  const trusted = context?.isProjectTrusted;
+  return typeof trusted === "function" && trusted.call(ctx) === true;
+}
+
 export function childBridgeFacts(bridge: ChildSessionBridge | undefined) {
   if (!bridge) return { available: false };
   return {

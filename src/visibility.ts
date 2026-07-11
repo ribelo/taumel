@@ -4,7 +4,7 @@ import { type Focusable, fuzzyFilter, Input, Key, truncateToWidth } from "@earen
 
 import type { CoreBridge, PiLike } from "./types.ts";
 import { taumelGlobalSettingsPath } from "./global-settings.ts";
-import { cwdFromContext, liveToolNames, writeFileAtomically } from "./util.ts";
+import { cwdFromContext, isProjectTrusted, liveToolNames, writeFileAtomically } from "./util.ts";
 import { decodeSkillListResult } from "./bridge-contracts.ts";
 import { decodeVisibilityListResult, decodeVisibilityRowsResult, decodeVisibilitySavePlan, decodeVisibilityToggleResult, decodeVisibilityWarningsResult, type VisibilityPrompt, type VisibilityRowsResult } from "./bridge-contracts.ts";
 import { toolNames } from "./tool-contracts.ts";
@@ -74,11 +74,6 @@ type ManagerCallbacks = {
   readonly onSave: () => Promise<MutationOutcome>;
   readonly requestRender: () => void;
 };
-
-function isProjectTrusted(ctx: unknown): boolean {
-  const trusted = objectAdapter<VisibilityContext>(ctx)?.isProjectTrusted;
-  return typeof trusted === "function" ? trusted.call(ctx) === true : false;
-}
 
 function projectSettingsPath(ctx: unknown): string {
   return join(cwdFromContext(ctx), ".pi", "settings.json");

@@ -15,6 +15,7 @@ import { installSkillResolver } from "./skills.ts";
 import { installThinkingFooterRefresh, registerThinkingShortcuts } from "./thinking-shortcuts.ts";
 import { cronFireMessageRenderer, skillMessageRenderer } from "./tool-renderer.ts";
 import { installVisibilityLifecycle } from "./visibility.ts";
+import { isProjectTrusted } from "./util.ts";
 import { decodeActiveToolsPlan } from "./bridge-contracts.ts";
 import {
   decodeEnvironmentContextPlan,
@@ -24,7 +25,7 @@ import {
 
 type SettingsRoot = { taumel?: unknown };
 type TaumelSettingsBlock = { execPolicy?: unknown };
-type ExtensionContext = { isProjectTrusted?: () => unknown; cwd?: unknown; ui?: unknown };
+type ExtensionContext = { cwd?: unknown; ui?: unknown };
 type WarningUi = { notify?: (message: string, level: "warning") => unknown };
 type ContextEvent = { messages?: unknown };
 type ChatMessage = { role?: unknown };
@@ -89,11 +90,6 @@ function readExecPolicyScope(scope: string, path: string): ExecPolicyScope | und
   } catch (error) {
     return { scope, execPolicy: `malformed settings: ${error instanceof Error ? error.message : String(error)}` };
   }
-}
-
-function isProjectTrusted(ctx: unknown): boolean {
-  const trusted = objectAdapter<ExtensionContext>(ctx)?.isProjectTrusted;
-  return typeof trusted === "function" ? trusted.call(ctx) === true : false;
 }
 
 function notifyExecPolicyErrors(errors: readonly string[], ctx?: unknown): void {

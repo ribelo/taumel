@@ -9,7 +9,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import type { CoreBridge, PiLike } from "./types.ts";
-import { cwdFromContext, sessionInfoFromContext, writeFileAtomically } from "./util.ts";
+import { cwdFromContext, isProjectTrusted, sessionInfoFromContext, writeFileAtomically } from "./util.ts";
 import { decodeCompactionCommandPlan, decodeCompactionSessionPlan } from "./bridge-contracts.ts";
 
 type SettingsObject = { [key: string]: unknown };
@@ -63,11 +63,6 @@ function globalSettingsPath(): string {
 
 function projectSettingsPath(cwd: string): string {
   return join(cwd, ".pi", "settings.json");
-}
-
-function isProjectTrusted(ctx: unknown): boolean {
-  const trusted = compactionContext(ctx)?.isProjectTrusted;
-  return typeof trusted === "function" ? trusted.call(ctx) === true : false;
 }
 
 const sessionCompactionModels = new Map<string, string>();
