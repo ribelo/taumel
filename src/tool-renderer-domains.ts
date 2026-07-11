@@ -280,7 +280,8 @@ function buildExaAgent(name: string, result: unknown, options: unknown, theme: u
   const details = detailsRecord(result);
   const response = responseObject(details);
   if (name === "exa_agent_list_runs" || name === "exa_agent_list_events") {
-    const items = recordArrayFieldOrEmpty<ToolRenderFields>(response, "data").length > 0 ? recordArrayFieldOrEmpty<ToolRenderFields>(response, "data") : recordArrayFieldOrEmpty<ToolRenderFields>(response, "results");
+    const data = recordArrayFieldOrEmpty<ToolRenderFields>(response, "data");
+    const items = data.length > 0 ? data : recordArrayFieldOrEmpty<ToolRenderFields>(response, "results");
     const subject = name === "exa_agent_list_events" ? `${stringFieldOrUndefined(args, "id") ?? "run"} (${items.length} event${items.length === 1 ? "" : "s"})` : `recent runs (${items.length})`;
     const header = headerSpec(name, subject, dotFromDetails(details), theme);
     if (!expanded) return { header, body: undefined };
