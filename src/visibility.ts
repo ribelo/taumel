@@ -4,7 +4,7 @@ import { type Focusable, fuzzyFilter, Input, Key, truncateToWidth } from "@earen
 
 import type { CoreBridge, PiLike } from "./types.ts";
 import { taumelGlobalSettingsPath } from "./global-settings.ts";
-import { writeFileAtomically } from "./util.ts";
+import { liveToolNames, writeFileAtomically } from "./util.ts";
 import { decodeSkillListResult } from "./bridge-contracts.ts";
 import { decodeVisibilityListResult, decodeVisibilityRowsResult, decodeVisibilitySavePlan, decodeVisibilityToggleResult, decodeVisibilityWarningsResult, type VisibilityPrompt, type VisibilityRowsResult } from "./bridge-contracts.ts";
 import { toolNames } from "./tool-contracts.ts";
@@ -454,24 +454,6 @@ export async function executeVisibilityManager(
   return commandResult(true, "Visibility manager closed.", { ...state, category });
 }
 
-function toolNameFromUnknown(value: unknown): string | undefined {
-  if (typeof value === "string" && value !== "") return value;
-  const name = objectAdapter<{ name?: unknown }>(value)?.name;
-  if (typeof name === "string" && name !== "") return name;
-  return undefined;
-}
-
-function liveToolNames(pi: PiLike): string[] {
-  const names = new Set<string>(toolNames);
-  if (typeof pi.getAllTools === "function") {
-    for (const tool of pi.getAllTools()) {
-      const name = toolNameFromUnknown(tool);
-      if (name !== undefined) names.add(name);
-    }
-  }
-  return [...names];
-}
-
 function listSkillNames(core: CoreBridge, ctx: unknown): string[] {
   return decodeSkillListResult(core.call("listSkills", [{
     cwd: cwdFromContext(ctx),
@@ -481,7 +463,7 @@ function listSkillNames(core: CoreBridge, ctx: unknown): string[] {
 
 function notifyVisibilityWarnings(pi: PiLike, core: CoreBridge, ctx: unknown): void {
   const result = decodeVisibilityWarningsResult(core.call("visibilityWarnings", [{
-    tools: liveToolNames(pi),
+    tools: liveToolNames(pi, toolNames),
     skills: listSkillNames(core, ctx),
   }]));
   const messages = result.messages;

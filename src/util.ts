@@ -200,6 +200,22 @@ export function modelRegistryFrom(pi: PiLike, ctx: unknown): unknown {
   return pi.modelRegistry;
 }
 
+export function liveToolNames(pi: PiLike, builtins: readonly string[]): string[] {
+  const names = new Set<string>(builtins);
+  if (typeof pi.getAllTools === "function") {
+    for (const tool of pi.getAllTools()) {
+      if (typeof tool === "string" && tool !== "") {
+        names.add(tool);
+        continue;
+      }
+      const value = objectValue(tool);
+      const name = value === undefined ? undefined : property(value, "name");
+      if (typeof name === "string" && name !== "") names.add(name);
+    }
+  }
+  return [...names];
+}
+
 export function openAiCredentialRaw(registry: unknown, credentialKey: string): unknown {
   const target = objectValue(registry);
   if (target === undefined) return undefined;

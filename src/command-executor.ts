@@ -25,6 +25,7 @@ import {
   contextWithOverrides,
   extensionRuntimeIsLive,
   isStaleContextError,
+  liveToolNames,
 } from "./util.ts";
 import { toolNames } from "./tool-contracts.ts";
 import { decodeActiveToolsPlan, decodeCommandChildSessionPlan, decodeCommandExecutionPlan, decodeCommandNotificationPlan, decodeCommandSpecsResult } from "./bridge-contracts.ts";
@@ -35,7 +36,6 @@ type CommandUi = {
   readonly notify?: (message: string, level: string) => unknown;
   readonly select?: (title: string, labels: readonly string[]) => unknown;
 };
-type NamedTool = { readonly name?: unknown };
 type AssistantMessage = { readonly role?: unknown; readonly stopReason?: unknown };
 type AssistantEvent = { readonly messages?: unknown; readonly willRetry?: unknown };
 type CommandResultLike = {
@@ -70,28 +70,10 @@ function hostIdle(_ctx: unknown): boolean {
   return true;
 }
 
-function toolNameFromUnknown(value: unknown): string | undefined {
-  if (typeof value === "string" && value !== "") return value;
-  const name = typeof value === "object" && value !== null ? (value as NamedTool).name : undefined;
-  if (typeof name === "string" && name !== "") return name;
-  return undefined;
-}
-
-function liveToolNames(pi: PiLike): string[] {
-  const names = new Set<string>(toolNames);
-  if (typeof pi.getAllTools === "function") {
-    for (const tool of pi.getAllTools()) {
-      const name = toolNameFromUnknown(tool);
-      if (name !== undefined) names.add(name);
-    }
-  }
-  return [...names];
-}
-
 function syncActiveTools(pi: PiLike, core: CoreBridge, ctx: unknown, enabledName?: string): void {
   if (typeof pi.getActiveTools !== "function" || typeof pi.setActiveTools !== "function") return;
   let current = [...pi.getActiveTools()];
-  if (enabledName !== undefined && enabledName !== "" && !current.includes(enabledName) && liveToolNames(pi).includes(enabledName)) {
+  if (enabledName !== undefined && enabledName !== "" && !current.includes(enabledName) && liveToolNames(pi, toolNames).includes(enabledName)) {
     current = [...current, enabledName];
     pi.setActiveTools(current);
   }
