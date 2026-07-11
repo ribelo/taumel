@@ -370,7 +370,7 @@ export async function saveProjectVisibility(
   }
   const taumel = settingsObject(root["taumel"]) ?? {};
   const block = settingsObject(taumel[category]) ?? {};
-  block["disabled"] = [...disabled];
+  block["disabled"] = disabled;
   taumel[category] = block;
   root["taumel"] = taumel;
   await writeFileAtomically(path, `${JSON.stringify(root, null, 2)}\n`);
