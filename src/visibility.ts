@@ -165,8 +165,7 @@ function isCtrlS(data: string): boolean {
 }
 
 function loadVisibilityState(core: CoreBridge, category: Category, ctx: unknown): VisibilityState {
-  const result = decodeVisibilityRowsResult(core.call("visibilityRows", [{ category, ctx }]));
-  return { ...result, rows: [...result.rows], disabled: [...result.disabled], unavailable: [...result.unavailable] };
+  return decodeVisibilityRowsResult(core.call("visibilityRows", [{ category, ctx }]));
 }
 
 const MAX_VISIBLE_ROWS = 10;
@@ -302,10 +301,9 @@ class VisibilityManagerComponent implements Focusable {
     return fg(this.theme, "dim", text);
   }
 
-  private filteredRows(): Row[] {
+  private filteredRows(): readonly Row[] {
     const query = this.searchInput.getValue().trim();
-    const rows = [...this.state.rows];
-    return query === "" ? rows : fuzzyFilter(rows, query, rowSearchText);
+    return query === "" ? this.state.rows : fuzzyFilter([...this.state.rows], query, rowSearchText);
   }
 
   private moveSelection(delta: number): void {
