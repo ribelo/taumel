@@ -482,7 +482,7 @@ async function restorePatchFile(path: string, snapshot: PatchFileSnapshot): Prom
 
 async function rollbackPatchFiles(
   snapshots: Map<string, PatchFileSnapshot>,
-  createdParentDirs: readonly string[],
+  createdParentDirs: string[],
 ): Promise<void> {
   for (const [path, snapshot] of snapshots) {
     try {
@@ -491,7 +491,7 @@ async function rollbackPatchFiles(
       // Keep rollback best-effort so the original filesystem error remains visible.
     }
   }
-  for (const dir of [...createdParentDirs].sort((left, right) => right.length - left.length)) {
+  for (const dir of createdParentDirs.sort((left, right) => right.length - left.length)) {
     try {
       await rmdir(dir);
     } catch {
