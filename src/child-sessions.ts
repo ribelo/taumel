@@ -16,6 +16,7 @@ import {
   applyChildActiveTools,
   childBridgeFacts,
   childSessionStartPlan,
+  cwdFromContext,
   modelRegistryFrom,
   sessionInfoFromContext,
   sessionInfoFromManager,
@@ -68,11 +69,6 @@ async function callOptionalAsync(receiver: unknown, names: readonly string[], ar
     return name;
   }
   return undefined;
-}
-
-function cwdFromContext(ctx: unknown): string {
-  const cwd = hostObject<ChildContext>(ctx)?.cwd;
-  return typeof cwd === "string" && cwd !== "" ? cwd : process.cwd();
 }
 
 function currentModelFromContext(ctx: unknown): unknown {

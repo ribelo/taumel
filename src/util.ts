@@ -168,6 +168,12 @@ export function sessionInfoFromContext(ctx: unknown): SessionInfo {
   return context === undefined ? {} : sessionInfoFromManager(property(context, "sessionManager"));
 }
 
+export function cwdFromContext(ctx: unknown): string {
+  const context = objectValue(ctx);
+  const cwd = context === undefined ? undefined : property(context, "cwd");
+  return typeof cwd === "string" && cwd !== "" ? cwd : process.cwd();
+}
+
 export function childBridgeFacts(bridge: ChildSessionBridge | undefined) {
   if (!bridge) return { available: false };
   return {

@@ -9,7 +9,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import type { CoreBridge, PiLike } from "./types.ts";
-import { sessionInfoFromContext, writeFileAtomically } from "./util.ts";
+import { cwdFromContext, sessionInfoFromContext, writeFileAtomically } from "./util.ts";
 import { decodeCompactionCommandPlan, decodeCompactionSessionPlan } from "./bridge-contracts.ts";
 
 type SettingsObject = { [key: string]: unknown };
@@ -123,11 +123,6 @@ async function writeProjectCompactionModel(cwd: string, model: string | undefine
     settings["taumel"] = taumel;
   }
   await writeFileAtomically(path, `${JSON.stringify(settings, null, 2)}\n`);
-}
-
-function cwdFromContext(ctx: unknown): string {
-  const cwd = compactionContext(ctx)?.cwd;
-  return typeof cwd === "string" && cwd !== "" ? cwd : process.cwd();
 }
 
 function notifyWarning(ctx: unknown, message: string): void {

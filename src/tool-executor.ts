@@ -18,6 +18,7 @@ import {
 
 import {
   execHostFacts,
+  cwdFromContext,
   modelRegistryFrom,
   openAiCredentialRaw,
   openAiUsageTokenRaw,
@@ -368,11 +369,6 @@ async function runPreparedExec(
   return result;
 }
 
-function defaultCwdFromContext(ctx: unknown): string {
-  const cwd = toolContext(ctx)?.cwd;
-  return typeof cwd === "string" && cwd !== "" ? cwd : process.cwd();
-}
-
 async function runPreparedRead(
   core: CoreBridge,
   prepared: Extract<PreparedSuccess, { action: "read" }>,
@@ -380,7 +376,7 @@ async function runPreparedRead(
 ) {
   const { offset, limit } = prepared;
   return decodeToolResultEnvelope(await core.call("readFile", [{
-    path: prepared.path, defaultCwd: defaultCwdFromContext(ctx),
+    path: prepared.path, defaultCwd: cwdFromContext(ctx),
     ...(offset === undefined ? {} : { offset }), ...(limit === undefined ? {} : { limit }),
   }]));
 }
@@ -391,7 +387,7 @@ async function runPreparedViewMedia(
   ctx: unknown,
 ) {
   return decodeViewMediaResultEnvelope(await core.call("viewMedia", [{
-    path: prepared.path, defaultCwd: defaultCwdFromContext(ctx),
+    path: prepared.path, defaultCwd: cwdFromContext(ctx),
   }]));
 }
 
