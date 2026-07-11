@@ -74,20 +74,30 @@ export async function readTaumelGlobalConfigDiagnostics(path = taumelGlobalSetti
   read.diagnostics.push(...parseTaumelGlobalSettings(read.root, path).diagnostics);
   return read.diagnostics;
 }
-function result(ok: boolean, message: string, path: string, initialized: string[], missing: string[], diagnostics: TaumelConfigDiagnostic[]): TaumelInitResult { return { ok, action: "command_result", message, details: { path, initialized, missing, diagnostics } }; }
+function result(ok: boolean, message: string, path: string, initialized: string[], missing: string[], diagnostics: TaumelConfigDiagnostic[]): TaumelInitResult {
+  return { ok, action: "command_result", message, details: { path, initialized, missing, diagnostics } };
+}
 export async function initializeTaumelGlobalConfig(path = taumelGlobalSettingsPath()): Promise<TaumelInitResult> {
   const read = await readRoot(path);
   const diagnostics = read.diagnostics;
   diagnostics.push(...nestedDiagnostics(read.root, path));
-  if (diagnostics.length) return result(false, `Taumel global config is malformed: ${path}`, path, [], [], diagnostics);
+  if (diagnostics.length > 0) {
+    return result(false, `Taumel global config is malformed: ${path}`, path, [], [], diagnostics);
+  }
   const root = read.root;
   const initialized: string[] = [];
   const taumel = settingsObject(root["taumel"]) ? root["taumel"] : (root["taumel"] = {} as SettingsObject);
   const composer = settingsObject(taumel["composer"]) ? taumel["composer"] : (taumel["composer"] = {} as SettingsObject);
-  if (composer["enabled"] === undefined) { composer["enabled"] = true; initialized.push("taumel.composer.enabled"); }
+  if (composer["enabled"] === undefined) {
+    composer["enabled"] = true;
+    initialized.push("taumel.composer.enabled");
+  }
   for (const name of visibilityBlocks) {
     const block = settingsObject(taumel[name]) ? taumel[name] : (taumel[name] = {} as SettingsObject);
-    if (block["disabled"] === undefined) { block["disabled"] = []; initialized.push(`taumel.${name}.disabled`); }
+    if (block["disabled"] === undefined) {
+      block["disabled"] = [];
+      initialized.push(`taumel.${name}.disabled`);
+    }
   }
   await writeFileAtomically(path, `${JSON.stringify(root, null, 2)}\n`);
   return result(true, initialized.length ? `Initialized Taumel global config: ${path}` : `Taumel global config already initialized: ${path}`, path, initialized, [], []);
@@ -100,11 +110,24 @@ export async function writeTaumelComposerEnabled(path: string, enabled: boolean)
   const root = read.root;
   const taumel = settingsObject(root["taumel"]) ? root["taumel"] : (root["taumel"] = {} as SettingsObject);
   const composer = settingsObject(taumel["composer"]) ? taumel["composer"] : (taumel["composer"] = {} as SettingsObject);
-  composer["enabled"] = enabled; await writeFileAtomically(path, `${JSON.stringify(root, null, 2)}\n`);
+  composer["enabled"] = enabled;
+  await writeFileAtomically(path, `${JSON.stringify(root, null, 2)}\n`);
 }
 export async function taumelStatus(path = taumelGlobalSettingsPath()): Promise<TaumelInitResult> {
-  const read = await readRoot(path); const missing: string[] = []; const taumel = settingsObject(read.root["taumel"]) ? read.root["taumel"] : {};
-  if (!settingsObject(taumel["composer"]) || taumel["composer"]["enabled"] === undefined) missing.push("taumel.composer.enabled");
-  for (const name of visibilityBlocks) if (!settingsObject(taumel[name]) || taumel[name]["disabled"] === undefined) missing.push(`taumel.${name}.disabled`);
-  return result(read.diagnostics.length === 0, [`Taumel global config: ${read.exists ? path : `${path} (missing)`}`, `Missing defaults: ${missing.length}`, `Diagnostics: ${read.diagnostics.length}`, "Commands: taumel, composer, tools, skills, cron, compaction-model, execpolicy"].join("\n"), path, [], missing, read.diagnostics);
+  const read = await readRoot(path);
+  const missing: string[] = [];
+  const taumel = settingsObject(read.root["taumel"]) ? read.root["taumel"] : {};
+  const composer = settingsObject(taumel["composer"]) ? taumel["composer"] : undefined;
+  if (composer?.["enabled"] === undefined) missing.push("taumel.composer.enabled");
+  for (const name of visibilityBlocks) {
+    const block = settingsObject(taumel[name]) ? taumel[name] : undefined;
+    if (block?.["disabled"] === undefined) missing.push(`taumel.${name}.disabled`);
+  }
+  const message = [
+    `Taumel global config: ${read.exists ? path : `${path} (missing)`}`,
+    `Missing defaults: ${missing.length}`,
+    `Diagnostics: ${read.diagnostics.length}`,
+    "Commands: taumel, composer, tools, skills, cron, compaction-model, execpolicy",
+  ].join("\n");
+  return result(read.diagnostics.length === 0, message, path, [], missing, read.diagnostics);
 }
