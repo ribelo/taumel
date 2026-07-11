@@ -380,15 +380,15 @@ export async function createChildSession(
     return { error: "identity_snapshot_incomplete" };
   }
   if (typeof pi.getAllTools === "function") {
-    const liveNames = new Set(
-      pi.getAllTools()
-        .map((tool) => {
-          if (typeof tool === "string") return tool;
-          const name = hostObject<NamedTool>(tool)?.name;
-          return typeof name === "string" ? name : undefined;
-        })
-        .filter((name): name is string => name !== undefined),
-    );
+    const liveNames = new Set<string>();
+    for (const tool of pi.getAllTools()) {
+      if (typeof tool === "string") {
+        liveNames.add(tool);
+        continue;
+      }
+      const name = hostObject<NamedTool>(tool)?.name;
+      if (typeof name === "string") liveNames.add(name);
+    }
     const missing = activeTools.filter((name) => !liveNames.has(name));
     if (missing.length > 0) {
       return { error: `tool_surface_unavailable: ${missing.join(", ")}` };
