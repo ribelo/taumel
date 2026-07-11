@@ -76,7 +76,6 @@ type PreparedExaAction = Extract<PreparedSuccess, { action: "exa_fetch" | "exa_a
 type PreparedOpenAiAction = Extract<PreparedSuccess, { action: "openai_usage_fetch" }>;
 type PreparedApprovalAction = Extract<PreparedSuccess, { action: "exec_command_approval" | "write_approval" | "edit_approval" | "apply_patch_approval" | "exa_agent_create_run_approval" }>;
 type PreparedMutationAction = Extract<PreparedSuccess, { action: "write" | "write_approval" | "edit" | "edit_approval" | "apply_patch" | "apply_patch_approval" }>;
-type PreparedDirectMutation = Extract<PreparedSuccess, { action: "write" | "edit" | "apply_patch" }>;
 
 function settingsObject(value: unknown): SettingsObject | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value as SettingsObject : undefined;
