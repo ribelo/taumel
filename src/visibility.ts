@@ -379,15 +379,13 @@ export async function saveProjectVisibility(
     try {
       const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
       const parsedRoot = settingsObject(parsed);
-      root = parsedRoot === undefined ? {} : { ...parsedRoot };
+      root = parsedRoot ?? {};
     } catch {
       root = {};
     }
   }
-  const currentTaumel = settingsObject(root["taumel"]);
-  const taumel: VisibilitySettings = currentTaumel === undefined ? {} : { ...currentTaumel };
-  const currentBlock = settingsObject(taumel[category]);
-  const block: VisibilitySettings = currentBlock === undefined ? {} : { ...currentBlock };
+  const taumel = settingsObject(root["taumel"]) ?? {};
+  const block = settingsObject(taumel[category]) ?? {};
   block["disabled"] = [...disabled];
   taumel[category] = block;
   root["taumel"] = taumel;
