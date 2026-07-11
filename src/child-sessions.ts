@@ -135,14 +135,14 @@ function hasCustomEntry(sessionManager: unknown, customType: string): boolean {
   if (typeof manager?.getEntries !== "function") return false;
   try {
     const entries = manager.getEntries.call(sessionManager);
-    return Array.isArray(entries) && entries.some((entry) =>
-      hostObject<CustomEntry>(entry) !== undefined &&
-      (
-        hostObject<CustomEntry>(entry)?.customType === customType ||
-        hostObject<CustomEntry>(entry)?.type === customType ||
-        (hostObject<CustomEntry>(entry)?.type === "custom" && hostObject<CustomEntry>(entry)?.customType === customType)
-      )
-    );
+    return Array.isArray(entries) && entries.some((entry) => {
+      const value = hostObject<CustomEntry>(entry);
+      return value !== undefined && (
+        value.customType === customType ||
+        value.type === customType ||
+        (value.type === "custom" && value.customType === customType)
+      );
+    });
   } catch {
     return false;
   }
