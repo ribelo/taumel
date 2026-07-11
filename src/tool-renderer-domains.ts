@@ -4,7 +4,6 @@ import {
   numberFieldOrUndefined,
   recordArrayFieldOrEmpty,
   recordFieldOrUndefined,
-  stringArrayFieldOrEmpty,
   stringFieldOrUndefined,
 } from "./util.ts";
 
@@ -63,12 +62,6 @@ function dotFromDetails(details: ToolRenderFields): string {
   const code = numberFieldOrUndefined(details, "exitCode") ?? numberFieldOrUndefined(details, "code");
   if (code !== undefined) return code === 0 ? "success" : "error";
   if (boolFieldOrUndefined(details, "ok") === false) return "error";
-  return "success";
-}
-
-function statusColor(status: string): "success" | "warning" | "error" {
-  if (["failed", "cancelled", "timed_out", "lost"].includes(status)) return "error";
-  if (["running", "queued", "suspended"].includes(status)) return "warning";
   return "success";
 }
 

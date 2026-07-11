@@ -54,14 +54,6 @@ function sentCharsSubject(value: string): string {
   return oneLine(escaped) || JSON.stringify(value);
 }
 
-function domainOf(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return url;
-  }
-}
-
 function textContent(result: unknown): string {
   if (!isToolRenderFields(result) || !Array.isArray(result["content"])) return "";
   const parts: string[] = [];

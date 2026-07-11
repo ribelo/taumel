@@ -21,7 +21,6 @@ import {
   resultMessage,
   type KeybindingsLike,
   type ThemeLike,
-  type UiLike,
   uiFromContext,
 } from "./manager-kit.ts";
 

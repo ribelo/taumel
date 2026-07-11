@@ -17,9 +17,7 @@ import {
 } from "./tool-contracts.ts";
 
 import {
-  childBridgeFacts,
   execHostFacts,
-  isStaleContextError,
   modelRegistryFrom,
   openAiCredentialRaw,
   openAiUsageTokenRaw,
@@ -33,8 +31,6 @@ import {
 import { notificationMessageRenderer, renderersForTool } from "./tool-renderer.ts";
 import {
   applyChildSessionUpdate,
-  applyChildSessionUpdatesFromDetails,
-  childSessionCacheKey,
   childSessionCacheKeyScopeFromContext,
   createChildSession,
   refreshOwnedChildPermissions,
