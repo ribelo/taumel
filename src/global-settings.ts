@@ -16,6 +16,8 @@ export type TaumelGlobalSettings = { readonly taumel: { readonly composer: { rea
 export type TaumelConfigDiagnostic = { readonly path: string; readonly key: string; readonly message: string };
 export type TaumelInitResult = { readonly ok: boolean; readonly action: "command_result"; readonly message: string; readonly details: { readonly path: string; readonly initialized: readonly string[]; readonly missing: readonly string[]; readonly diagnostics: readonly TaumelConfigDiagnostic[] } };
 export const defaultTaumelGlobalSettings: TaumelGlobalSettings = { taumel: { composer: { enabled: true } } };
+const settingsBlocks = ["composer", "tools", "skills"] as const;
+const visibilityBlocks = ["tools", "skills"] as const;
 export function taumelGlobalSettingsPath(): string { return join(getAgentDir(), "settings.json"); }
 function diagnostic(path: string, key: string, message: string): TaumelConfigDiagnostic { return { path, key, message }; }
 
@@ -26,7 +28,7 @@ function nestedDiagnostics(root: SettingsObject, path: string): TaumelConfigDiag
     return [diagnostic(path, "taumel", "taumel must be an object")];
   }
   if (!settingsObject(taumel)) return diagnostics;
-  for (const name of ["composer", "tools", "skills"]) {
+  for (const name of settingsBlocks) {
     const value = taumel[name];
     if (value !== undefined && !settingsObject(value)) {
       diagnostics.push(diagnostic(path, `taumel.${name}`, `taumel.${name} must be an object`));
@@ -36,7 +38,7 @@ function nestedDiagnostics(root: SettingsObject, path: string): TaumelConfigDiag
   if (composer?.["enabled"] !== undefined && typeof composer["enabled"] !== "boolean") {
     diagnostics.push(diagnostic(path, "taumel.composer.enabled", "composer enabled must be a boolean"));
   }
-  for (const name of ["tools", "skills"]) {
+  for (const name of visibilityBlocks) {
     const block = settingsObject(taumel[name]) ? taumel[name] : undefined;
     const disabled = block?.["disabled"];
     if (disabled !== undefined && (!Array.isArray(disabled) || !disabled.every((item) => typeof item === "string"))) {
@@ -83,7 +85,7 @@ export async function initializeTaumelGlobalConfig(path = taumelGlobalSettingsPa
   const taumel = settingsObject(root["taumel"]) ? root["taumel"] : (root["taumel"] = {} as SettingsObject);
   const composer = settingsObject(taumel["composer"]) ? taumel["composer"] : (taumel["composer"] = {} as SettingsObject);
   if (composer["enabled"] === undefined) { composer["enabled"] = true; initialized.push("taumel.composer.enabled"); }
-  for (const name of ["tools", "skills"]) {
+  for (const name of visibilityBlocks) {
     const block = settingsObject(taumel[name]) ? taumel[name] : (taumel[name] = {} as SettingsObject);
     if (block["disabled"] === undefined) { block["disabled"] = []; initialized.push(`taumel.${name}.disabled`); }
   }
@@ -103,6 +105,6 @@ export async function writeTaumelComposerEnabled(path: string, enabled: boolean)
 export async function taumelStatus(path = taumelGlobalSettingsPath()): Promise<TaumelInitResult> {
   const read = await readRoot(path); const missing: string[] = []; const taumel = settingsObject(read.root["taumel"]) ? read.root["taumel"] : {};
   if (!settingsObject(taumel["composer"]) || taumel["composer"]["enabled"] === undefined) missing.push("taumel.composer.enabled");
-  for (const name of ["tools", "skills"]) if (!settingsObject(taumel[name]) || taumel[name]["disabled"] === undefined) missing.push(`taumel.${name}.disabled`);
+  for (const name of visibilityBlocks) if (!settingsObject(taumel[name]) || taumel[name]["disabled"] === undefined) missing.push(`taumel.${name}.disabled`);
   return result(read.diagnostics.length === 0, [`Taumel global config: ${read.exists ? path : `${path} (missing)`}`, `Missing defaults: ${missing.length}`, `Diagnostics: ${read.diagnostics.length}`, "Commands: taumel, composer, tools, skills, cron, compaction-model, execpolicy"].join("\n"), path, [], missing, read.diagnostics);
 }
