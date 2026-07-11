@@ -88,6 +88,12 @@ function skillItems(skills: readonly SkillAutocompleteEntry[], prefix: string): 
   return items;
 }
 
+function skillTriggerCharacters(current: AutocompleteProvider): string[] {
+  const characters = new Set(current.triggerCharacters ?? []);
+  characters.add("$");
+  return [...characters];
+}
+
 export function renderComposerInput(width: number, next: (width: number) => string[], enabled: boolean): string[] {
   if (!enabled) return next(width);
 
@@ -140,12 +146,12 @@ export class SkillAutocompleteProvider implements AutocompleteProvider {
     private current: AutocompleteProvider,
     private readonly skills: () => readonly SkillAutocompleteEntry[],
   ) {
-    this.triggerCharacters = [...new Set([...(current.triggerCharacters ?? []), "$"])];
+    this.triggerCharacters = skillTriggerCharacters(current);
   }
 
   setBase(current: AutocompleteProvider): void {
     this.current = current;
-    this.triggerCharacters = [...new Set([...(current.triggerCharacters ?? []), "$"])];
+    this.triggerCharacters = skillTriggerCharacters(current);
   }
 
   async getSuggestions(
