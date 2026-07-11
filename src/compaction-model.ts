@@ -3,12 +3,12 @@ import { join } from "node:path";
 import {
   compact,
   generateBranchSummary,
-  getAgentDir,
   ModelSelectorComponent,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 
 import type { CoreBridge, PiLike } from "./types.ts";
+import { taumelGlobalSettingsPath } from "./global-settings.ts";
 import { cwdFromContext, isProjectTrusted, modelRegistryFrom, sessionInfoFromContext, writeFileAtomically } from "./util.ts";
 import { decodeCompactionCommandPlan, decodeCompactionSessionPlan } from "./bridge-contracts.ts";
 
@@ -56,10 +56,6 @@ function stringRecordFromUnknown(value: unknown): Record<string, string> | undef
   return result;
 }
 
-function globalSettingsPath(): string {
-  return join(getAgentDir(), "settings.json");
-}
-
 function projectSettingsPath(cwd: string): string {
   return join(cwd, ".pi", "settings.json");
 }
@@ -89,7 +85,7 @@ function readCompactionModelFromSettings(settings: SettingsObject): string | und
 }
 
 async function readGlobalCompactionModel(): Promise<string | undefined> {
-  return readCompactionModelFromSettings(await readSettingsJson(globalSettingsPath()));
+  return readCompactionModelFromSettings(await readSettingsJson(taumelGlobalSettingsPath()));
 }
 
 async function readProjectCompactionModel(cwd: string): Promise<string | undefined> {
