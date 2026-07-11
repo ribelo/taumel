@@ -123,16 +123,17 @@ async function appendExecPolicyAllowRule(core: CoreBridge, tokens: readonly stri
   } catch {
     settings = {};
   }
-  const root: SettingsObject = { ...(settingsObject(settings) ?? {}) };
-  const taumel: SettingsObject = { ...(settingsObject(root["taumel"]) ?? {}) };
-  const execPolicy: SettingsObject = { ...(settingsObject(taumel["execPolicy"]) ?? {}) };
-  const rules = Array.isArray(execPolicy["rules"]) ? [...execPolicy["rules"]] : [];
-  rules.push({ pattern: [...tokens], decision: "allow", match: [[...tokens]] });
+  const root = settingsObject(settings) ?? {};
+  const taumel = settingsObject(root["taumel"]) ?? {};
+  const execPolicy = settingsObject(taumel["execPolicy"]) ?? {};
+  const rules = Array.isArray(execPolicy["rules"]) ? execPolicy["rules"] : [];
+  const pattern = [...tokens];
+  rules.push({ pattern, decision: "allow", match: [pattern] });
   execPolicy["rules"] = rules;
   taumel["execPolicy"] = execPolicy;
   root["taumel"] = taumel;
   await writeFileAtomically(settingsPath, `${JSON.stringify(root, null, 2)}\n`);
-  decodeExecPolicyAllowRuleResult(core.call("appendExecPolicyAllowRule", [{ tokens: [...tokens] }]));
+  decodeExecPolicyAllowRuleResult(core.call("appendExecPolicyAllowRule", [{ tokens: pattern }]));
 }
 
 function mutationApprovalDenied(core: CoreBridge, action: string, outcome: ApprovalOutcome): ToolResultEnvelope {
