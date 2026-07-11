@@ -64,12 +64,6 @@ function hasPendingMessages(ctx: unknown): boolean {
   return hasPending.call(ctx) === true;
 }
 
-function hostIdle(_ctx: unknown): boolean {
-  // Pi emits agent_end before some host surfaces report idle; this lifecycle event
-  // is Taumel's idle boundary for goal continuation gating.
-  return true;
-}
-
 function syncActiveTools(pi: PiLike, core: CoreBridge, ctx: unknown, enabledName?: string): void {
   if (typeof pi.getActiveTools !== "function" || typeof pi.setActiveTools !== "function") return;
   const current = [...pi.getActiveTools()];
@@ -450,7 +444,9 @@ export function installGoalContinuationLoop(pi: PiLike, core: CoreBridge): void 
         core.call("interruptGoalAutomation", [ctx]);
       }
       await sendGoalContinuation(pi, core, ctx, false, {
-        hostIdle: hostIdle(ctx),
+        // Pi emits agent_end before some host surfaces report idle; this event is
+        // Taumel's idle boundary for goal continuation gating.
+        hostIdle: true,
         hasPendingMessages: hasPendingMessages(ctx),
         retrying: retrying || (typeof event === "object" && event !== null && (event as SessionLifecycleEvent).willRetry === true),
         compacting,
