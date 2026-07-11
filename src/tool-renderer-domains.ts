@@ -1,4 +1,4 @@
-import type { Block, Entry, HeaderSpec } from "./render-layout.ts";
+import type { Block, Entry } from "./render-layout.ts";
 import {
   boolFieldOrUndefined,
   numberFieldOrUndefined,
@@ -6,23 +6,10 @@ import {
   recordFieldOrUndefined,
   stringFieldOrUndefined,
 } from "./util.ts";
-
-type ToolRenderFields = { readonly [key: string]: unknown };
-function isToolRenderFields(value: unknown): value is ToolRenderFields {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function themeFg(theme: unknown, color: string, value: string): string {
-  if (!isToolRenderFields(theme)) return value;
-  const fg = theme["fg"];
-  if (typeof fg !== "function") return value;
-  const rendered = fg.call(theme, color, value);
-  return typeof rendered === "string" ? rendered : value;
-}
-
-function oneLine(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
-}
+import {
+  detailsRecord, dotFromDetails, expandedFromOptions, fullTextEntries, headerSpec,
+  oneLine, quotedQuery, textContent, themeFg, type ToolRenderFields,
+} from "./tool-renderer-kit.ts";
 
 function domainOf(url: string): string {
   try {
@@ -30,44 +17,6 @@ function domainOf(url: string): string {
   } catch {
     return url;
   }
-}
-
-function textContent(result: unknown): string {
-  if (!isToolRenderFields(result) || !Array.isArray(result["content"])) return "";
-  const parts: string[] = [];
-  for (const item of result["content"]) {
-    if (isToolRenderFields(item) && item["type"] === "text" && typeof item["text"] === "string") parts.push(item["text"]);
-  }
-  return parts.join("\n");
-}
-
-function detailsRecord(result: unknown): ToolRenderFields {
-  return isToolRenderFields(result) && isToolRenderFields(result["details"]) ? result["details"] : {};
-}
-
-function expandedFromOptions(options: unknown): boolean {
-  return isToolRenderFields(options) && options["expanded"] === true;
-}
-
-function dot(theme: unknown, color: string): string {
-  return themeFg(theme, color, "•");
-}
-
-function headerSpec(name: string, subject: string, dotColor: string, theme: unknown, trailing = ""): HeaderSpec {
-  const lead = `${dot(theme, dotColor)} ${themeFg(theme, "toolTitle", name)} ${themeFg(theme, "dim", "·")} `;
-  return { lead, subject, trailing };
-}
-
-function dotFromDetails(details: ToolRenderFields): string {
-  const code = numberFieldOrUndefined(details, "exitCode") ?? numberFieldOrUndefined(details, "code");
-  if (code !== undefined) return code === 0 ? "success" : "error";
-  if (boolFieldOrUndefined(details, "ok") === false) return "error";
-  return "success";
-}
-
-function fullTextEntries(text: string, theme: unknown): Entry[] {
-  const cleaned = text.trimEnd();
-  return cleaned === "" ? [] : cleaned.split(/\r?\n/).map((line) => ({ text: themeFg(theme, "toolOutput", line) }));
 }
 
 function labeled(label: string, value: string | undefined, theme: unknown): Entry[] {
@@ -78,10 +27,6 @@ function labeled(label: string, value: string | undefined, theme: unknown): Entr
 function boolState(value: boolean | undefined, trueText: string, falseText: string): string | undefined {
   if (value === undefined) return undefined;
   return value ? trueText : falseText;
-}
-
-function quotedQuery(args: ToolRenderFields): string {
-  return `"${oneLine(stringFieldOrUndefined(args, "query") ?? "")}"`;
 }
 
 function resultDescription(item: ToolRenderFields): string | undefined {

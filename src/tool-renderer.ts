@@ -10,6 +10,11 @@ import {
 } from "./render-layout.ts";
 import { buildDomainResult } from "./tool-renderer-domains.ts";
 import {
+  detailsRecord, dotFromDetails, expandedFromOptions, fullTextEntries, headerSpec,
+  isToolRenderFields, oneLine, quotedQuery, textContent, themeFg, type ToolRenderFields,
+} from "./tool-renderer-kit.ts";
+export { fullTextEntries } from "./tool-renderer-kit.ts";
+import {
   boolFieldOrUndefined,
   numberFieldOrUndefined,
   recordArrayFieldOrEmpty,
@@ -18,30 +23,13 @@ import {
   stringFieldOrUndefined,
 } from "./util.ts";
 
-type ToolRenderFields = { readonly [key: string]: unknown };
-function isToolRenderFields(value: unknown): value is ToolRenderFields {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Theme helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-function themeFg(theme: unknown, color: string, value: string): string {
-  if (!isToolRenderFields(theme)) return value;
-  const fg = theme["fg"];
-  if (typeof fg !== "function") return value;
-  const rendered = fg.call(theme, color, value);
-  return typeof rendered === "string" ? rendered : value;
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Text helpers
 // ─────────────────────────────────────────────────────────────────────────────
-
-function oneLine(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
-}
 
 function sentCharsSubject(value: string): string {
   let escaped = "";
@@ -54,28 +42,8 @@ function sentCharsSubject(value: string): string {
   return oneLine(escaped) || JSON.stringify(value);
 }
 
-function textContent(result: unknown): string {
-  if (!isToolRenderFields(result) || !Array.isArray(result["content"])) return "";
-  const parts: string[] = [];
-  for (const item of result["content"]) {
-    if (isToolRenderFields(item) && item["type"] === "text" && typeof item["text"] === "string") {
-      parts.push(item["text"]);
-    }
-  }
-  return parts.join("\n");
-}
-
-function detailsRecord(result: unknown): ToolRenderFields {
-  if (!isToolRenderFields(result)) return {};
-  return isToolRenderFields(result["details"]) ? result["details"] : {};
-}
-
 function argsFromContext(context: unknown): ToolRenderFields {
   return isToolRenderFields(context) && isToolRenderFields(context["args"]) ? context["args"] : {};
-}
-
-function expandedFromOptions(options: unknown): boolean {
-  return isToolRenderFields(options) && options["expanded"] === true;
 }
 
 function compactJson(value: unknown): string {
@@ -101,15 +69,6 @@ function compactJson(value: unknown): string {
 // Grammar primitives
 // ─────────────────────────────────────────────────────────────────────────────
 
-function dot(theme: unknown, color: string): string {
-  return themeFg(theme, color, "•");
-}
-
-function headerSpec(name: string, subject: string, dotColor: string, theme: unknown, trailing = ""): HeaderSpec {
-  const lead = `${dot(theme, dotColor)} ${themeFg(theme, "toolTitle", name)} ${themeFg(theme, "dim", "·")} `;
-  return { lead, subject, trailing };
-}
-
 function pathHeaderSpec(name: string, subject: string, dotColor: string, theme: unknown, trailing = ""): HeaderSpec {
   return { ...headerSpec(name, subject, dotColor, theme, trailing), subjectClip: "middle" };
 }
@@ -122,20 +81,9 @@ function moreLine(count: number, theme: unknown, unit: "more" | "more lines"): s
 // State → dot color
 // ─────────────────────────────────────────────────────────────────────────────
 
-function dotFromDetails(details: ToolRenderFields): string {
-  const code = numberFieldOrUndefined(details, "exitCode") ?? numberFieldOrUndefined(details, "code");
-  if (code !== undefined) return code === 0 ? "success" : "error";
-  if (boolFieldOrUndefined(details, "ok") === false) return "error";
-  return "success";
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Subjects (one-line identity of the call), derived from args
 // ─────────────────────────────────────────────────────────────────────────────
-
-function quotedQuery(args: ToolRenderFields): string {
-  return `"${oneLine(stringFieldOrUndefined(args, "query") ?? "")}"`;
-}
 
 function subjectFromArgs(name: string, args: ToolRenderFields): string {
   switch (name) {
@@ -272,12 +220,6 @@ function tailEntries(text: string, expanded: boolean, theme: unknown, cap: numbe
   if (all.length <= limit) return all.map((line) => ({ text: themeFg(theme, "toolOutput", line) }));
   const visible = all.slice(-limit);
   return [{ text: moreLine(all.length - limit, theme, "more lines"), exempt: true }, ...visible.map((line) => ({ text: themeFg(theme, "toolOutput", line) }))];
-}
-
-export function fullTextEntries(text: string, theme: unknown): Entry[] {
-  const cleaned = (text ?? "").trimEnd();
-  if (cleaned === "") return [];
-  return cleaned.split(/\r?\n/).map((line) => ({ text: themeFg(theme, "toolOutput", line) }));
 }
 
 function buildShell(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
