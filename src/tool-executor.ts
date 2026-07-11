@@ -638,7 +638,7 @@ async function executeApplyPatch(
     params: rawParams, files, ctx, filesystemApproval: prepared.filesystemApproval === true,
   }]));
   if (application.kind === "error") return errorToolResult(core, application.message, { ...application });
-  const deletes = [...application.deletes];
+  const deletes = application.deletes;
   const writes = application.writes;
   // Attach the pre-patch file contents so the renderer can compute a real
   // unified diff per file (apply_patch details already carry the new contents).
@@ -752,7 +752,7 @@ function sorted(values: readonly string[]): string[] {
 }
 
 function assertToolCatalogMatchesCore(core: CoreBridge): void {
-  const coreToolNames = [...decodeToolNamesResult(core.call("toolPolicyNames", [])).names];
+  const coreToolNames = decodeToolNamesResult(core.call("toolPolicyNames", [])).names;
   const expected = sorted(toolNames);
   const actual = sorted(coreToolNames);
   if (expected.length !== actual.length || expected.some((name, index) => name !== actual[index])) {

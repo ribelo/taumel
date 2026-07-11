@@ -501,8 +501,8 @@ async function rollbackPatchFiles(
 }
 
 export async function writePatchFiles(application: PatchApplication): Promise<void> {
-  const deletes = [...application.deletes];
-  const parsedWrites = [...application.writes];
+  const deletes = application.deletes;
+  const parsedWrites = application.writes;
   if (deletes.some((path) => typeof path !== "string") || parsedWrites.some((write) =>
     typeof write !== "object" || write === null || typeof write.path !== "string" || write.path === "" || typeof write.contents !== "string"
   )) throw new Error("Invalid Taumel apply_patch result");
