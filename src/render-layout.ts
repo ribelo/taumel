@@ -34,13 +34,17 @@ function normalizeTabs(value: string): string {
 }
 
 function normalizeBlockTabs(block: Block): Block {
-  const header = {
-    ...block.header,
-    lead: normalizeTabs(block.header.lead),
-    subject: normalizeTabs(block.header.subject),
-    trailing: normalizeTabs(block.header.trailing),
-  };
-  if (block.body === undefined) return { header, body: undefined };
+  const lead = normalizeTabs(block.header.lead);
+  const subject = normalizeTabs(block.header.subject);
+  const trailing = normalizeTabs(block.header.trailing);
+  const header = lead === block.header.lead && subject === block.header.subject && trailing === block.header.trailing
+    ? block.header
+    : { ...block.header, lead, subject, trailing };
+  if (block.body === undefined) return header === block.header ? block : { header, body: undefined };
+  const needsEntryNormalization = block.body.entries.some((entry) => entry.text.includes("\t"));
+  if (!needsEntryNormalization) {
+    return header === block.header ? block : { header, body: block.body };
+  }
   const entries = block.body.entries.map((entry) => ({ ...entry, text: normalizeTabs(entry.text) }));
   const body = block.body.mode === "rail"
     ? { mode: "rail" as const, entries }
