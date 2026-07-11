@@ -9,7 +9,7 @@ import {
 
 import type { CoreBridge, PiLike } from "./types.ts";
 import { taumelGlobalSettingsPath } from "./global-settings.ts";
-import { cwdFromContext, isProjectTrusted, modelRegistryFrom, sessionInfoFromContext, writeFileAtomically } from "./util.ts";
+import { cwdFromContext, isProjectTrusted, modelRegistryFrom, sessionInfoFromContext, splitProviderModelId, writeFileAtomically } from "./util.ts";
 import { decodeCompactionCommandPlan, decodeCompactionSessionPlan } from "./bridge-contracts.ts";
 
 type SettingsObject = { [key: string]: unknown };
@@ -31,13 +31,6 @@ function settingsObject(value: unknown): SettingsObject | undefined {
 }
 function compactionContext(value: unknown): Partial<CompactionContext> | undefined {
   return typeof value === "object" && value !== null ? value as Partial<CompactionContext> : undefined;
-}
-
-function splitProviderModelId(modelId: string | undefined): { readonly provider: string; readonly model: string } | undefined {
-  if (modelId === undefined) return undefined;
-  const separator = modelId.indexOf("/");
-  if (separator <= 0 || separator >= modelId.length - 1) return undefined;
-  return { provider: modelId.slice(0, separator), model: modelId.slice(separator + 1) };
 }
 
 function stringFromUnknown(value: unknown): string | undefined {

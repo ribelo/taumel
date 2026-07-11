@@ -180,6 +180,13 @@ export function isProjectTrusted(ctx: unknown): boolean {
   return typeof trusted === "function" && trusted.call(ctx) === true;
 }
 
+export function splitProviderModelId(modelId: string | undefined): { readonly provider: string; readonly model: string } | undefined {
+  if (modelId === undefined) return undefined;
+  const separator = modelId.indexOf("/");
+  if (separator <= 0 || separator >= modelId.length - 1) return undefined;
+  return { provider: modelId.slice(0, separator), model: modelId.slice(separator + 1) };
+}
+
 export function childBridgeFacts(bridge: ChildSessionBridge | undefined) {
   if (!bridge) return { available: false };
   return {

@@ -20,6 +20,7 @@ import {
   modelRegistryFrom,
   sessionInfoFromContext,
   sessionInfoFromManager,
+  splitProviderModelId,
 } from "./util.ts";
 
 type HostMethods = { [name: string]: unknown };
@@ -92,13 +93,6 @@ function modelIdOf(model: unknown): string | undefined {
   const provider = typeof descriptor.provider === "string" ? descriptor.provider.trim() : "";
   const id = typeof descriptor.id === "string" ? descriptor.id.trim() : "";
   return provider !== "" && id !== "" ? `${provider}/${id}` : undefined;
-}
-
-function splitProviderModelId(modelId: string | undefined): { readonly provider: string; readonly model: string } | undefined {
-  if (modelId === undefined) return undefined;
-  const separator = modelId.indexOf("/");
-  if (separator <= 0 || separator >= modelId.length - 1) return undefined;
-  return { provider: modelId.slice(0, separator), model: modelId.slice(separator + 1) };
 }
 
 function normalizeChildModelId(modelId: string | undefined): string | undefined {
