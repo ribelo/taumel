@@ -405,12 +405,15 @@ function buildApplyPatch(name: string, result: unknown, options: unknown, theme:
     return { header: headerSpec(name, subjectFromArgs(name, args), dotColor, theme), body: undefined };
   }
 
-  const deletedPathsWithContents = new Set(deletedFiles.map((file) => file.path));
-  const files = [
-    ...writes,
-    ...deletedFiles,
-    ...deletes.filter((path) => !deletedPathsWithContents.has(path)).map((path) => ({ path, before: "", after: "" })),
-  ];
+  const files = [...writes];
+  const deletedPathsWithContents = new Set<string>();
+  for (const file of deletedFiles) {
+    deletedPathsWithContents.add(file.path);
+    files.push(file);
+  }
+  for (const path of deletes) {
+    if (!deletedPathsWithContents.has(path)) files.push({ path, before: "", after: "" });
+  }
   let totalAdded = 0;
   let totalRemoved = 0;
   const perFile = files.map((file) => {
