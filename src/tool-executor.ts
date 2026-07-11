@@ -22,14 +22,12 @@ import {
   isStaleContextError,
   modelRegistryFrom,
   numberField,
-  optionalNumberField,
   optionalStringField,
   openAiCredentialRaw,
   openAiUsageTokenRaw,
   requiredError,
   sessionInfoFromContext,
   stringArrayFromUnknown,
-  stringField,
   threadSources,
   validateWorkspaceMutationPaths,
   writeFileAtomically,
@@ -438,9 +436,9 @@ async function confirmExecApproval(
   const ui = typeof rawUi === "object" && rawUi !== null ? rawUi as ToolUi : undefined;
   const confirm = ui?.confirm;
   const plan = decodeExecApprovalPromptPlan(core.call("planExecApprovalPrompt", [{
-    approvalTitle: stringField(prepared, "approvalTitle"),
-    approvalPrompt: stringField(prepared, "approvalPrompt"),
-    approvalTimeoutMs: optionalNumberField(prepared, "approvalTimeoutMs") ?? 0,
+    approvalTitle: prepared.approvalTitle,
+    approvalPrompt: prepared.approvalPrompt,
+    approvalTimeoutMs: prepared.approvalTimeoutMs,
     uiAvailable: typeof confirm === "function",
   }]));
   if (plan.kind === "unavailable") {
@@ -574,10 +572,9 @@ async function executeLegacyWrite(
   core: CoreBridge,
   prepared: Extract<PreparedSuccess, { action: "write" }>,
 ): Promise<ToolResultEnvelope> {
-  const path = stringField(prepared, "path");
-  const displayPath = stringField(prepared, "displayPath") || path;
-  const contents = stringField(prepared, "contents");
-  const mode = stringField(prepared, "mode") === "append" ? "append" : "overwrite";
+  const { path, contents } = prepared;
+  const displayPath = prepared.displayPath || path;
+  const mode = prepared.mode === "append" ? "append" : "overwrite";
   if (path === "") throw new Error("Invalid Taumel write plan");
   const validationError = await validatePreparedMutationPath(core, prepared, [path]);
   if (validationError !== undefined) {
@@ -603,8 +600,8 @@ async function executeLegacyEdit(
   core: CoreBridge,
   prepared: Extract<PreparedSuccess, { action: "edit" }>,
 ): Promise<ToolResultEnvelope> {
-  const path = stringField(prepared, "path");
-  const displayPath = stringField(prepared, "displayPath") || path;
+  const { path } = prepared;
+  const displayPath = prepared.displayPath || path;
   if (path === "") throw new Error("Invalid Taumel edit plan");
   const validationError = await validatePreparedMutationPath(core, prepared, [path]);
   if (validationError !== undefined) {
