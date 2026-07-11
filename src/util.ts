@@ -45,35 +45,13 @@ function property(source: object, name: string): unknown {
   return Reflect.get(source, name);
 }
 
-export function stringField(source: object, name: string): string {
-  const value = property(source, name);
-  if (typeof value !== "string") throw new Error(`Invalid Taumel string field: ${name}`);
-  return value;
-}
 export function stringFieldOrUndefined(source: object, name: string): string | undefined {
   const value = property(source, name);
   return typeof value === "string" ? value : undefined;
 }
-export function optionalStringField(source: object, name: string): string | undefined {
-  const value = property(source, name);
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "string") throw new Error(`Invalid Taumel string field: ${name}`);
-  return value;
-}
-export function numberField(source: object, name: string): number {
-  const value = property(source, name);
-  if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`Invalid Taumel number field: ${name}`);
-  return value;
-}
 export function numberFieldOrUndefined(source: object, name: string): number | undefined {
   const value = property(source, name);
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-export function optionalNumberField(source: object, name: string): number | undefined {
-  const value = property(source, name);
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`Invalid Taumel number field: ${name}`);
-  return value;
 }
 export function boolFieldOrUndefined(source: object, name: string): boolean | undefined {
   const value = property(source, name);
@@ -81,10 +59,6 @@ export function boolFieldOrUndefined(source: object, name: string): boolean | un
 }
 export function recordFieldOrUndefined<T extends object = object>(source: object, name: string): T | undefined {
   return objectValue(property(source, name)) as T | undefined;
-}
-export function stringArrayFromUnknown(value: unknown): string[] | undefined {
-  if (!Array.isArray(value) || !value.every((item): item is string => typeof item === "string" && item !== "")) return undefined;
-  return value;
 }
 export function stringArrayFieldOrUndefined(source: object, name: string): string[] | undefined {
   const value = property(source, name);
@@ -104,16 +78,6 @@ export function recordArrayFieldOrUndefined<T extends object = object>(source: o
 }
 export function recordArrayFieldOrEmpty<T extends object = object>(source: object, name: string): T[] {
   return recordArrayFieldOrUndefined<T>(source, name) ?? [];
-}
-export function recordArrayField<T extends object = object>(source: object, name: string): T[] {
-  const value = property(source, name);
-  if (!Array.isArray(value) || !value.every((item) => objectValue(item) !== undefined)) throw new Error(`Invalid Taumel record array field: ${name}`);
-  return value as T[];
-}
-export function requiredError(source: object, label: string): string {
-  const error = stringField(source, "error");
-  if (error === "") throw new Error(`Invalid Taumel ${label} error`);
-  return error;
 }
 export function contextWithOverrides(ctx: unknown, overrides: object): object {
   const context = objectValue(ctx);
@@ -344,36 +308,6 @@ export function applyChildActiveTools(ctx: unknown, toolNames: readonly string[]
   const context = objectValue(ctx);
   if (context !== undefined && setActiveToolsOn(property(context, "sessionManager"), toolNames)) return true;
   return false;
-}
-
-export function applyValueOn(receiver: unknown, methodNames: readonly string[], value: string | undefined): boolean {
-  const target = objectValue(receiver);
-  if (target === undefined || value === undefined) return false;
-  for (const methodName of methodNames) {
-    const method = property(target, methodName);
-    if (typeof method !== "function") continue;
-    method.call(receiver, value);
-    return true;
-  }
-  return false;
-}
-
-export function applyChildModelThinking(
-  ctx: unknown,
-  modelId: string | undefined,
-  thinkingLevel: string | undefined,
-): { readonly modelApplied: boolean; readonly thinkingApplied: boolean } {
-  const modelMethods = ["setModelById", "setModel", "selectModel"];
-  const thinkingMethods = ["setThinkingLevel", "setThinking"];
-  const context = objectValue(ctx);
-  const sessionManager = context === undefined ? undefined : property(context, "sessionManager");
-  return {
-    modelApplied:
-      applyValueOn(ctx, modelMethods, modelId) || applyValueOn(sessionManager, modelMethods, modelId),
-    thinkingApplied:
-      applyValueOn(ctx, thinkingMethods, thinkingLevel) ||
-      applyValueOn(sessionManager, thinkingMethods, thinkingLevel),
-  };
 }
 
 export async function discoverCatalogFiles(scan: ThreadCatalogScan): Promise<string[]> {
