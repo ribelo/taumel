@@ -30,6 +30,7 @@ if (
 const handlers = new Map();
 let footerFactory;
 const footerInstallSessionIds = [];
+const footerFactories = new Map();
 let renderRequests = 0;
 let firstCostReads = 0;
 let tailCostReads = 0;
@@ -83,7 +84,9 @@ core.init({
   exec: async () => ({ code: 0, stdout: "", stderr: "" }),
   setFooter: (_ctx, factory) => {
     footerFactory = factory;
-    footerInstallSessionIds.push(_ctx.sessionManager.getSessionId());
+    const sessionId = _ctx.sessionManager.getSessionId();
+    footerInstallSessionIds.push(sessionId);
+    footerFactories.set(sessionId, factory);
   },
   sessionSnapshot: (snapshotCtx) => {
     const model = snapshotCtx?.model ?? {};
@@ -167,6 +170,26 @@ for (const handler of handlers.get("session_switch") ?? []) {
 }
 if (firstCostReads !== firstReadsAfterStart) {
   throw new Error(`same-length session sync rescanned old branch costs: ${firstCostReads}`);
+}
+const switchedCtx = {
+  ...ctx,
+  sessionManager: {
+    getSessionId: () => "switched-session",
+    getEntries: () => [],
+    getBranch: () => [],
+  },
+};
+for (const handler of handlers.get("session_switch") ?? []) {
+  handler({ type: "session_switch" }, switchedCtx);
+}
+if (!footerFactories.has("switched-session")) {
+  throw new Error(`session_switch did not rebind footer: ${JSON.stringify(footerInstallSessionIds)}`);
+}
+for (const handler of handlers.get("session_resume") ?? []) {
+  handler({ type: "session_resume" }, ctx);
+}
+if (footerInstallSessionIds.filter((id) => id === "artifact-session").length < 2) {
+  throw new Error(`session_resume did not rebind footer: ${JSON.stringify(footerInstallSessionIds)}`);
 }
 
 branch.push(

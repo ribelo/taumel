@@ -6,6 +6,8 @@ type state = {
   mutable cwd : string;
   mutable filesystem_mode : string;
   mutable git_delta : Model.git_delta;
+  mutable git_repo : bool;
+  mutable git_error : bool;
   mutable provider : string;
   mutable model : string;
   mutable thinking : string;
@@ -19,6 +21,8 @@ let state =
     cwd = "";
     filesystem_mode = "workspace-write";
     git_delta = Model.empty_git_delta;
+    git_repo = false;
+    git_error = false;
     provider = "";
     model = "no-model";
     thinking = "off";

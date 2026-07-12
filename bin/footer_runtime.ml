@@ -59,6 +59,10 @@ let start_refresh_loop host =
 let ensure_refresh_loop host =
   match !runtime with Some _ -> () | None -> start_refresh_loop host
 
+let refresh_git_now host =
+  let rt = Runtime.create () in
+  Runtime.run rt (Footer_bridge.refresh_footer_hygiene host) ~on_result:(fun _ -> ())
+
 let ignore_stale scope run =
   try run () with error -> Session_sync.report_session_sync_error scope error
 
@@ -66,6 +70,7 @@ let register_handlers host =
   let update_handler install_footer =
     Js.wrap_callback (fun _event ctx ->
         ignore_stale "footer session lifecycle" (fun () ->
+            let previous_cwd = state.cwd in
             match
               Session_sync.try_sync_session_from_host_with
                 ~scope:"footer session sync" ~clear_retained_outputs:true host ctx
@@ -75,13 +80,19 @@ let register_handlers host =
                 let isolated_child =
                   Session_sync.persisted_session_snapshot_is_isolated_child snapshot
                 in
+                if state.cwd <> previous_cwd then (
+                  state.git_delta <- Model.empty_git_delta;
+                  state.git_repo <- false;
+                  state.git_error <- false;
+                  emit_changed host;
+                  refresh_git_now host);
                 if install_footer && not isolated_child then install host ctx;
                 ensure_refresh_loop host;
                 emit_changed host))
   in
   ignore (call2 host "on" (js_string "session_start") (inject (update_handler true)));
-  ignore (call2 host "on" (js_string "session_resume") (inject (update_handler false)));
-  ignore (call2 host "on" (js_string "session_switch") (inject (update_handler false)));
+  ignore (call2 host "on" (js_string "session_resume") (inject (update_handler true)));
+  ignore (call2 host "on" (js_string "session_switch") (inject (update_handler true)));
   ignore (call2 host "on" (js_string "model_select") (inject (update_handler false)));
   ignore
     (call2 host "on" (js_string "turn_start")

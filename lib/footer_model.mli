@@ -8,8 +8,11 @@ type snapshot = {
   branch : string;
   filesystem_mode : string;
   network_mode : string;
+  approval_policy : string;
   no_sandbox : bool;
   git_delta : git_delta;
+  git_repo : bool;
+  git_error : bool;
   provider : string;
   model : string;
   thinking : string;

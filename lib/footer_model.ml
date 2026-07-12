@@ -8,8 +8,11 @@ type snapshot = {
   branch : string;
   filesystem_mode : string;
   network_mode : string;
+  approval_policy : string;
   no_sandbox : bool;
   git_delta : git_delta;
+  git_repo : bool;
+  git_error : bool;
   provider : string;
   model : string;
   thinking : string;
@@ -128,21 +131,38 @@ let basename path =
     | None -> String.sub path 0 (last + 1)
     | Some slash -> String.sub path (slash + 1) (last - slash)
 
-let sandbox_dot_color = function
+let sandbox_dot_token = function
   | "danger-full-access" -> "error"
   | "read-only" -> "success"
   | _ -> "warning"
 
-let sandbox_label snapshot =
-  if snapshot.no_sandbox then "no-sandbox"
+let network_dot_token = function
+  | "enabled" -> "error"
+  | _ -> "success"
+
+let approval_dot_token = function
+  | "untrusted" -> "success"
+  | "on-request" -> "accent"
+  | "on-failure" -> "warning"
+  | "never" -> "error"
+  | _ -> "dim"
+
+let permission_dot_tokens snapshot =
+  if snapshot.no_sandbox then [ "text"; "text"; "text" ]
   else
-    let base =
-      match snapshot.filesystem_mode with
-      | "read-only" -> "read-only"
-      | "danger-full-access" -> "danger-full-access"
-      | _ -> "workspace-write"
-    in
-    if snapshot.network_mode = "enabled" then base ^ "+net" else base
+    [
+      sandbox_dot_token snapshot.filesystem_mode;
+      network_dot_token snapshot.network_mode;
+      approval_dot_token snapshot.approval_policy;
+    ]
+
+let render_permission_indicator ~colorize snapshot =
+  let dot = "•" in
+  permission_dot_tokens snapshot
+  |> List.map (fun token -> colorize token dot)
+  |> String.concat ""
+
+let permission_indicator_width = 3
 
 let context_text percent window =
   if Float.is_finite window && window > 0.0 then
@@ -163,18 +183,18 @@ let render_line ~colorize ~width snapshot =
   else
     let dot = "•" in
     let repo_name = basename snapshot.cwd in
-    let repo_line =
-      if snapshot.branch = "" then repo_name else repo_name ^ ":" ^ snapshot.branch
+    let repo_line = if snapshot.git_repo && snapshot.branch <> "" then repo_name ^ ":" ^ snapshot.branch else repo_name in
+    let git_suffix =
+      if snapshot.git_error then " git error"
+      else if snapshot.git_repo then Printf.sprintf " Δ+%d/-%d" snapshot.git_delta.added snapshot.git_delta.removed
+      else ""
     in
-    let git_delta =
-      Printf.sprintf "Δ+%d/-%d" snapshot.git_delta.added snapshot.git_delta.removed
-    in
-    let sandbox = sandbox_label snapshot in
-    let left_raw = dot ^ " " ^ sandbox ^ "  " ^ repo_line ^ " " ^ git_delta in
-    let dot_rendered = colorize (sandbox_dot_color snapshot.filesystem_mode) dot in
+    let indicator = render_permission_indicator ~colorize snapshot in
+    let repo_part = repo_line ^ git_suffix in
+    let left_raw = String.concat "" (List.init permission_indicator_width (fun _ -> dot)) ^ "  " ^ repo_part in
     let left_rendered =
-      dot_rendered ^ " " ^ colorize "dim" sandbox ^ "  " ^ colorize "dim" repo_line ^ " "
-      ^ colorize "dim" git_delta
+      indicator ^ "  " ^ colorize "dim" repo_line
+      ^ colorize (if snapshot.git_error then "error" else "dim") git_suffix
     in
     let provider = provider_label snapshot.provider in
     let model = display_default ~default:"no-model" snapshot.model in
@@ -224,8 +244,13 @@ let render_line ~colorize ~width snapshot =
         let right_gap = min_gap + ((free + 1) / 2) in
         render_full rendered_middle left_gap right_gap
       else
-        let raw = left_raw ^ " " ^ right_raw in
-        colorize "dim" (take_width width raw)
+        let gap = if width > permission_indicator_width then 1 else 0 in
+        let rest_budget = width - permission_indicator_width - gap in
+        if rest_budget <= 0 then take_width width indicator
+        else
+          let rest_raw = repo_part ^ " " ^ right_raw in
+          indicator ^ String.make gap ' '
+          ^ colorize "dim" (take_width rest_budget rest_raw)
 
 let goal_status_label = function
   | Goal.Active -> "Goal active"
