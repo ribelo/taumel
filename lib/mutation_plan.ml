@@ -12,6 +12,7 @@ type exec_request = {
   default_workdir : string;
   sandbox_permissions : Sandbox.sandbox_permissions;
   yield_time_ms : float option;
+  max_output_tokens : int option;
   tty : bool;
 }
 
@@ -20,6 +21,7 @@ type exec_plan = {
   cmd : string;
   workdir : string;
   yield_time_ms : float option;
+  max_output_tokens : int option;
   tty : bool;
   approval : approval option;
 }
@@ -28,6 +30,7 @@ type write_stdin_request = {
   session_id : int;
   chars : string;
   yield_time_ms : float option;
+  max_output_tokens : int option;
   output_mode : string;
 }
 
@@ -35,6 +38,7 @@ type write_stdin_plan = {
   session_id : int;
   chars : string;
   yield_time_ms : float option;
+  max_output_tokens : int option;
   output_mode : string;
 }
 
@@ -109,6 +113,7 @@ let plan_exec ?policy_decision ?policy_message (sandbox : Sandbox.config) (reque
         cmd;
         workdir;
         yield_time_ms = request.yield_time_ms;
+        max_output_tokens = request.max_output_tokens;
         tty = request.tty;
         approval;
       }
@@ -132,17 +137,18 @@ let plan_write_stdin (request : write_stdin_request) =
         session_id = request.session_id;
         chars = request.chars;
         yield_time_ms = request.yield_time_ms;
+        max_output_tokens = request.max_output_tokens;
         output_mode = request.output_mode;
       }
 
-let resolved_mutation_plan ?contents ?(edits = []) ?approval action path
+let resolved_mutation_plan ?contents ?(edits = []) ?approval ?auth_path action path
     (sandbox : Sandbox.config) =
   {
     action;
     workspace_roots = sandbox.Sandbox.workspace_roots;
     validate_workspace_paths =
       Sandbox.requires_resolved_workspace_mutation_validation sandbox;
-    path = Sandbox.resolve_workspace_path sandbox path;
+    path = Sandbox.resolve_mutation_path ?auth_path sandbox path;
     display_path = path;
     contents;
     edits;
@@ -152,41 +158,48 @@ let resolved_mutation_plan ?contents ?(edits = []) ?approval action path
 let filesystem_approval action path =
   Sandbox.filesystem_approval_prompt ~tool:action ~path |> approval action
 
-let plan_write (sandbox : Sandbox.config) (request : write_request) =
+let plan_write ?auth_path ?auth_roots (sandbox : Sandbox.config)
+    (request : write_request) =
   let path = request.path in
   let contents = request.contents in
-  let resolved = Sandbox.resolve_workspace_path sandbox path in
-  match Sandbox.authorize_mutation_path sandbox Sandbox.Write resolved with
-  | Allow -> Ok (resolved_mutation_plan ~contents "write" path sandbox)
+  match Sandbox.authorize_mutation_path ?auth_path ?auth_roots sandbox Sandbox.Write path with
+  | Allow -> Ok (resolved_mutation_plan ~contents ?auth_path "write" path sandbox)
   | Requires_approval _ ->
       Ok
-        (resolved_mutation_plan ~contents
+        (resolved_mutation_plan ~contents ?auth_path
            ~approval:(filesystem_approval "write" path)
            "write_approval" path sandbox)
   | Deny message -> Error message
 
-let plan_edit (sandbox : Sandbox.config) (request : edit_request) =
+let plan_edit ?auth_path ?auth_roots (sandbox : Sandbox.config)
+    (request : edit_request) =
   let path = request.path in
-  let resolved = Sandbox.resolve_workspace_path sandbox path in
-  match Sandbox.authorize_mutation_path sandbox Sandbox.Write resolved with
-  | Allow -> Ok (resolved_mutation_plan ~edits:request.edits "edit" path sandbox)
+  match Sandbox.authorize_mutation_path ?auth_path ?auth_roots sandbox Sandbox.Write path with
+  | Allow ->
+      Ok (resolved_mutation_plan ~edits:request.edits ?auth_path "edit" path sandbox)
   | Requires_approval _ ->
       Ok
-        (resolved_mutation_plan ~edits:request.edits
+        (resolved_mutation_plan ~edits:request.edits ?auth_path
            ~approval:(filesystem_approval "edit" path)
            "edit_approval" path sandbox)
   | Deny message -> Error message
 
-let resolved_patch_paths (sandbox : Sandbox.config) parsed =
+let authorization_path auth_paths path =
+  List.assoc_opt path auth_paths
+
+let resolved_patch_paths ?(auth_paths = []) (sandbox : Sandbox.config) parsed =
   Sandbox.Patch.affected_paths parsed
   |> List.sort_uniq String.compare
-  |> List.map (Sandbox.resolve_workspace_path sandbox)
+  |> List.map (fun path ->
+         Sandbox.resolve_mutation_path
+           ?auth_path:(authorization_path auth_paths path)
+           sandbox path)
 
-let plan_apply_patch (sandbox : Sandbox.config) request =
+let plan_apply_patch ?(auth_paths = []) ?auth_roots (sandbox : Sandbox.config) request =
   match Sandbox.Patch.parse request.patch with
   | Error _ as error -> error
   | Ok parsed -> (
-      match Sandbox.authorize_patch sandbox parsed with
+      match Sandbox.authorize_patch ~auth_paths ?auth_roots sandbox parsed with
       | Allow ->
           Ok
             {
@@ -194,7 +207,7 @@ let plan_apply_patch (sandbox : Sandbox.config) request =
               workspace_roots = sandbox.workspace_roots;
               validate_workspace_paths =
                 Sandbox.requires_resolved_workspace_mutation_validation sandbox;
-              affected_paths = resolved_patch_paths sandbox parsed;
+              affected_paths = resolved_patch_paths ~auth_paths sandbox parsed;
               approval = None;
             }
       | Requires_approval _ ->
@@ -208,21 +221,34 @@ let plan_apply_patch (sandbox : Sandbox.config) request =
               validate_workspace_paths =
                 Sandbox.requires_resolved_workspace_mutation_validation sandbox;
               affected_paths =
-                List.map (Sandbox.resolve_workspace_path sandbox) paths;
+                List.map
+                  (fun path ->
+                    Sandbox.resolve_mutation_path
+                      ?auth_path:(authorization_path auth_paths path)
+                      sandbox path)
+                  paths;
               approval =
                 Some
                   (filesystem_approval "apply_patch" (String.concat "\n" paths));
             }
       | Deny message -> Error message)
 
-let remap_files_to_original_paths (sandbox : Sandbox.config) parsed files =
+let remap_files_to_original_paths ?(auth_paths = []) (sandbox : Sandbox.config)
+    parsed files =
   Sandbox.Patch.affected_paths parsed
   |> List.fold_left
        (fun acc original ->
-         let resolved = Sandbox.resolve_workspace_path sandbox original in
+         let resolved =
+           Sandbox.resolve_mutation_path
+             ?auth_path:(authorization_path auth_paths original)
+             sandbox original
+         in
          match Shared.String_map.find_opt resolved files with
          | Some contents -> Shared.String_map.add original contents acc
-         | None -> acc)
+         | None -> (
+             match Shared.String_map.find_opt (Sandbox.resolve_workspace_path sandbox original) files with
+             | Some contents -> Shared.String_map.add original contents acc
+             | None -> acc))
        Shared.String_map.empty
 
 let action_paths actions =
@@ -232,19 +258,24 @@ let action_paths actions =
        | Sandbox.Patch.Delete_path path -> path)
   |> List.sort_uniq String.compare
 
-let apply_patch_to_files ~approved (sandbox : Sandbox.config) request files =
+let apply_patch_to_files ~approved ?(auth_paths = []) ?auth_roots
+    (sandbox : Sandbox.config) request files =
   match Sandbox.Patch.parse request.patch with
   | Error _ as error -> error
   | Ok parsed -> (
-      match Sandbox.authorize_patch ~approved sandbox parsed with
+      match Sandbox.authorize_patch ~approved ~auth_paths ?auth_roots sandbox parsed with
       | Requires_approval message -> Error ("approval required: " ^ message)
       | Deny message -> Error message
       | Allow -> (
-          let input = remap_files_to_original_paths sandbox parsed files in
+          let input = remap_files_to_original_paths ~auth_paths sandbox parsed files in
           match Sandbox.Patch.apply_to_map input parsed with
           | Error _ as error -> error
           | Ok output ->
-              let resolve = Sandbox.resolve_workspace_path sandbox in
+              let resolve path =
+                Sandbox.resolve_mutation_path
+                  ?auth_path:(authorization_path auth_paths path)
+                  sandbox path
+              in
               let actions = Sandbox.Patch.affected_actions parsed in
               let deletes =
                 actions

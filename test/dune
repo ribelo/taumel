@@ -14,7 +14,7 @@
  (name test_core_regressions)
  (modules test_core_regressions)
  (package taumel)
- (libraries taumel))
+ (libraries taumel unix))
 
 (test
  (name test_thread_tools)

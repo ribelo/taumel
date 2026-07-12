@@ -1,5 +1,5 @@
 import type { ExtensionHost, PiLike } from "./types.ts";
-import { stringFlag } from "./util.ts";
+import { resolveAuthorizationPath, stringFlag } from "./util.ts";
 
 type HostUi = { setFooter?: (factory: unknown) => unknown };
 type HostModel = { provider?: unknown; id?: unknown };
@@ -21,6 +21,7 @@ function hostObject<T extends object>(value: unknown): Partial<T> | undefined {
 
 export function makeHost(pi: PiLike): ExtensionHost {
   return {
+    resolveAuthorizationPath,
     on: (event, handler) => {
       pi.on(event, handler);
     },

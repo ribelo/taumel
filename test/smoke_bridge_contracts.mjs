@@ -779,13 +779,18 @@ const preparedExec = decodePreparedToolAction({
   ok: true, action: "exec_command", cmd: "pwd", workdir: "", tty: false,
   sandbox: { filesystemMode: "workspace-write", networkMode: "disabled", workspaceRoots: ["/workspace"], noSandbox: false, isolated_child: false },
 });
-if (!("action" in preparedRead) || preparedRead.action !== "read" || !("action" in preparedExec)) {
+const preparedExecWithYield = decodePreparedToolAction({
+  ok: true, action: "exec_command", cmd: "pwd", workdir: "", yieldTimeMs: 250, tty: false,
+  sandbox: { filesystemMode: "workspace-write", networkMode: "disabled", workspaceRoots: ["/workspace"], noSandbox: false, isolated_child: false },
+});
+if (!("action" in preparedRead) || preparedRead.action !== "read" || !("action" in preparedExec) || !("action" in preparedExecWithYield)) {
   throw new Error("prepared tool action did not decode");
 }
 for (const invalid of [
   { ok: true, action: "read", path: "", extra: true },
   { ok: true, action: "write_stdin", sessionId: 0, chars: "", outputMode: "delta" },
   { ok: true, action: "exec_command", cmd: "pwd", workdir: "", tty: false, sandbox: { filesystemMode: "workspace-write" } },
+  { ok: true, action: "exec_command", cmd: "pwd", workdir: "", yieldTimeMs: null, tty: false, sandbox: { filesystemMode: "workspace-write", networkMode: "disabled", workspaceRoots: ["/workspace"], noSandbox: false, isolated_child: false } },
   { ok: true, action: "unregistered" },
 ]) {
   let rejected = false;

@@ -109,7 +109,9 @@ let plan_exec_host_call config host (options : exec_host_options)
   |> Result.map (fun invocation ->
          {
            invocation;
-           cwd = options.cwd;
+           (* Run against the authorization path so a workdir reached through a
+              symlink is usable even when only workspace roots are mounted. *)
+           cwd = host.authorization_cwd;
            timeout_ms = options.timeout_ms;
            yield_time_ms = options.yield_time_ms;
            tty = options.tty;

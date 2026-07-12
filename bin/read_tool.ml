@@ -19,6 +19,14 @@ let error_result message =
   text_tool_result message
     (Unsafe.obj [| ("ok", js_bool false); ("error", js_string message) |])
 
+let is_symbolic_link fs path =
+  try
+    let stat =
+      Unsafe.fun_call (Unsafe.get fs "lstatSync") [| js_string path |]
+    in
+    Js.to_bool (Unsafe.coerce (Unsafe.meth_call stat "isSymbolicLink" [||]))
+  with _ -> false
+
 (* read_file: resolve the path against the session cwd, stat it (reject missing
    / directories), read it as UTF-8, and hand the content to the pure formatter.
    NUL/binary content and out-of-range offsets become actionable errors. *)
@@ -37,7 +45,14 @@ let read_file raw_facts =
       with _ -> None
     in
     match stat with
-    | None -> error_result (Printf.sprintf "\"%s\" does not exist." path)
+    | None ->
+        if is_symbolic_link fs resolved then
+          error_result
+            (Printf.sprintf
+               "\"%s\" is a symbolic link whose target does not exist or cannot \
+                be accessed."
+               path)
+        else error_result (Printf.sprintf "\"%s\" does not exist." path)
     | Some stat ->
         let is_dir =
           Js.to_bool (Unsafe.coerce (Unsafe.meth_call stat "isDirectory" [||]))

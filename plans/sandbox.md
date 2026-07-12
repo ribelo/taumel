@@ -47,18 +47,24 @@ patch parsing stay separate from each other and from execution.
 
 - **sandbox-pa01** (state-driven): While the filesystem mode is `danger-full-access`, the system shall allow read, write, and delete on any path.
 - **sandbox-pa02** (state-driven): While the filesystem mode is `read-only`, the system shall allow reads and deny writes and deletes.
-- **sandbox-pa03** (state-driven): While the filesystem mode is `workspace-write`, the system shall allow reads everywhere and allow writes and deletes only within the workspace roots.
-- **sandbox-pa04** (unwanted): If a write or delete targets a protected workspace metadata directory (`.git`, `.hg`, `.svn`), then the system shall deny it in `read-only` and `workspace-write` modes.
-- **sandbox-pa05** (event-driven): When a write or delete falls outside the workspace roots under a policy that permits approval, the system shall request approval before allowing it.
-- **sandbox-pa06** (event-driven): When `workspace-write` mutation runs, the system shall validate each path against the workspace roots after realpath resolution and reject any path that escapes the workspace or enters protected metadata.
+- **sandbox-pa03** (state-driven): While the filesystem mode is `workspace-write`, the system shall allow reads everywhere and allow writes and deletes only when their authorization paths are within the authorization paths of the workspace roots.
+- **sandbox-pa04** (unwanted): If a write or delete's authorization path targets a protected workspace metadata directory (`.git`, `.hg`, `.svn`), then the system shall deny it in `read-only` and `workspace-write` modes.
+- **sandbox-pa05** (event-driven): When a write or delete's authorization path falls outside the authorization paths of the workspace roots under a policy that permits approval, the system shall request approval before allowing it.
+- **sandbox-pa06** (event-driven): Before a `workspace-write` mutation reaches any host effect, the system shall validate each authorization path against the authorization paths of the workspace roots and reject any path that escapes the workspace or enters protected metadata.
 - **sandbox-pa07** (ubiquitous): The system shall resolve a relative mutation path against the first workspace root before authorizing it.
+- **sandbox-pa08** (ubiquitous): For every path-based policy decision, the system shall derive the authorization path by resolving existing path components and symbolic links to their canonical filesystem location; it shall apply the same canonicalization to workspace roots before comparing them.
+- **sandbox-pa09** (ubiquitous): Two requested paths that resolve to the same authorization path shall receive the same path-policy decision, including when one reaches an allowed location through a symbolic-link directory.
+- **sandbox-pa10** (event-driven): When the final destination or one or more trailing components do not exist, the system shall canonicalize the nearest existing ancestor, normalize the unresolved suffix, and derive the authorization path beneath that ancestor so dot segments or separator forms cannot change the intended ancestor relationship.
+- **sandbox-pa11** (ubiquitous): The system shall retain the requested path for approval evidence, result rendering, and diagnostics while using only the authorization path for workspace containment and protected-metadata decisions.
+- **sandbox-pa12** (unwanted): A planner shall not deny a path as outside a workspace root from lexical containment alone when canonical filesystem facts can establish its authorization path; authorization shall fail closed if the required canonical filesystem facts cannot be obtained.
+- **sandbox-pa13** (state-driven): While approval policy is `never`, the system shall apply the same authorization-path rules as every other approval policy, allowing operations already inside the permission envelope without prompting and denying canonical boundary crossings that would otherwise require approval.
 
 ### Exec authorization and escalation
 
-- **sandbox-ex01** (event-driven): When a command runs with default permissions and a working directory, the system shall authorize read access to that working directory before execution.
+- **sandbox-ex01** (event-driven): When a command runs with default permissions and a working directory, the system shall authorize read access to that working directory by its authorization path before execution.
 - **sandbox-ex02** (event-driven): When a command requests escalation while the approval policy is `on-request`, the system shall request approval using the supplied justification.
 - **sandbox-ex03** (unwanted): If a command requests escalation while the approval policy is not `on-request`, then the system shall deny the command and report that escalation cannot be requested under the current policy.
-- **sandbox-ex04** (event-driven): When the approval policy is `never`, the system shall deny a sandbox-boundary decision that would otherwise require approval — a read-only write, or a write or delete outside the workspace roots — while letting exec-policy `prompt` classifications run without asking.
+- **sandbox-ex04** (event-driven): When the approval policy is `never`, the system shall deny a sandbox-boundary decision that would otherwise require approval — a read-only write, or a write or delete whose authorization path is outside the authorization paths of the workspace roots — while letting exec-policy `prompt` classifications run without asking.
 - **sandbox-ex05** (event-driven): When the approval policy is `on-request`, `on-failure`, or `untrusted`, the system shall surface a decision that requires approval as an approval request.
 - **sandbox-ex06** (unwanted): If a child owned by an unloaded parent session reaches a decision that requires approval, then the system shall deny that decision with reason `approval_unavailable` without opening an approval prompt in the currently loaded session.
 - **sandbox-ex07** (ubiquitous): An approval-unavailable denial shall be terminal for that tool call and model-visible, and shall not suspend the child pending a later parent-session reload.
@@ -73,6 +79,7 @@ patch parsing stay separate from each other and from execution.
 - **sandbox-bw04** (state-driven): While the filesystem mode is `workspace-write`, the system shall bind workspace roots read-write, bind temp roots, and bind protected workspace metadata children read-only.
 - **sandbox-bw05** (event-driven): When the filesystem mode is `danger-full-access` with network `enabled`, or `--no-sandbox` is active, or the effect is escalated, the system shall run the command unsandboxed.
 - **sandbox-bw06** (unwanted): If sandboxed execution is requested on a non-Linux platform, then the system shall report that sandboxed execution is supported only on Linux and point to `/permissions`.
+- **sandbox-bw07** (event-driven): When a command's requested working directory reaches an authorized directory through a symbolic link, the sandbox invocation shall make that working directory usable by the command rather than fail solely because its requested path differs from its authorization path.
 
 ### Failure diagnostics
 

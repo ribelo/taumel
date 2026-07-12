@@ -45,6 +45,54 @@ let sandbox_config =
     isolated_child = false;
   }
 
+let with_temp_dir label f =
+  let path =
+    Filename.concat
+      (Filename.get_temp_dir_name ())
+      (Printf.sprintf "taumel-auth-%s-%d" label (Random.bits ()))
+  in
+  Unix.mkdir path 0o755;
+  Fun.protect
+    ~finally:(fun () ->
+      let rec rm path =
+        match Unix.lstat path with
+        | { st_kind = S_DIR; _ } ->
+            Sys.readdir path
+            |> Array.iter (fun name -> rm (Filename.concat path name));
+            Unix.rmdir path
+        | _ -> Unix.unlink path
+        | exception Unix.Unix_error (Unix.ENOENT, _, _) -> ()
+      in
+      rm path)
+    (fun () -> f path)
+
+let write_file path contents =
+  let oc = open_out_bin path in
+  output_string oc contents;
+  close_out oc
+
+let decision_name = function
+  | Sandbox.Allow -> "allow"
+  | Requires_approval message -> "requires_approval:" ^ message
+  | Deny message -> "deny:" ^ message
+
+let assert_decision label expected actual =
+  if expected <> actual then
+    failwith
+      (Printf.sprintf "%s: expected %s, got %s" label (decision_name expected)
+         (decision_name actual))
+
+let assert_decision_kind label expected actual =
+  let kind = function
+    | Sandbox.Allow -> "allow"
+    | Requires_approval _ -> "requires_approval"
+    | Deny _ -> "deny"
+  in
+  if kind expected <> kind actual then
+    failwith
+      (Printf.sprintf "%s: expected %s, got %s" label (kind expected)
+         (decision_name actual))
+
 let test_component_codecs () =
   let profile =
     {
@@ -153,6 +201,7 @@ let test_bwrap_keeps_dev_mount_after_root_bind () =
       system_ro_paths = [];
       home_mount = "";
       workspace_roots = [ "/repo" ];
+      authorization_cwd = "/repo";
       workspace_metadata_listings = [];
     }
   in
@@ -811,7 +860,101 @@ let test_ralph_command_planning () =
   | Ok _ -> fail "ralph command denied" "expected error")
 
 
+let test_authorization_path_symlink_equivalence () =
+  with_temp_dir "symlink" (fun root ->
+      (* Workspace root is the real target directory. Access through a sibling
+         alias symlink must be equivalent; escapes through final symlinks must
+         still be denied. *)
+      let allowed = Filename.concat root "allowed" in
+      let alias = Filename.concat root "alias" in
+      let secret = Filename.concat root "secret.txt" in
+      let inside_file = Filename.concat allowed "inside.txt" in
+      let escape_link = Filename.concat allowed "escape.txt" in
+      let metadata_file = Filename.concat allowed ".git/config" in
+      let metadata_link = Filename.concat allowed "git-config" in
+      Unix.mkdir allowed 0o755;
+      Unix.mkdir (Filename.concat allowed ".git") 0o755;
+      Unix.symlink allowed alias;
+      write_file inside_file "inside\n";
+      write_file secret "secret\n";
+      write_file metadata_file "git\n";
+      Unix.symlink secret escape_link;
+      Unix.symlink metadata_file metadata_link;
+      let never =
+        {
+          Sandbox.filesystem_mode = Sandbox.Workspace_write;
+          workspace_roots = [ allowed ];
+          network_mode = Sandbox.Network_disabled;
+          approval_policy = Sandbox.Never;
+          no_sandbox = false;
+          isolated_child = false;
+        }
+      in
+      let on_request = { never with approval_policy = Sandbox.On_request } in
+      let through_link = Filename.concat alias "inside.txt" in
+      let missing_through_link =
+        Filename.concat alias "created-through-link.txt"
+      in
+      let auth_roots = [ Unix.realpath allowed ] in
+      let auth path = Unix.realpath path in
+      let missing_auth = Filename.concat (Unix.realpath allowed) "created-through-link.txt" in
+      assert_decision "direct write allowed" Sandbox.Allow
+        (Sandbox.authorize_mutation_path ~auth_path:(auth inside_file)
+           ~auth_roots never Sandbox.Write inside_file);
+      assert_decision "symlink write allowed" Sandbox.Allow
+        (Sandbox.authorize_mutation_path ~auth_path:(auth through_link)
+           ~auth_roots never Sandbox.Write through_link);
+      assert_decision "missing under symlink allowed" Sandbox.Allow
+        (Sandbox.authorize_mutation_path ~auth_path:missing_auth ~auth_roots never
+           Sandbox.Write missing_through_link);
+      assert_decision "symlink workdir readable" Sandbox.Allow
+        (Sandbox.authorize_path ~auth_path:(auth alias) ~auth_roots never
+           Sandbox.Read alias);
+      assert_decision_kind "escape symlink denied under never"
+        (Sandbox.Deny "")
+        (Sandbox.authorize_mutation_path ~auth_path:(auth escape_link)
+           ~auth_roots never Sandbox.Write escape_link);
+      assert_decision_kind "escape symlink requires approval"
+        (Sandbox.Requires_approval "")
+        (Sandbox.authorize_mutation_path ~auth_path:(auth escape_link)
+           ~auth_roots on_request Sandbox.Write escape_link);
+      assert_decision_kind "metadata symlink denied" (Sandbox.Deny "")
+        (Sandbox.authorize_mutation_path ~auth_path:(auth metadata_link)
+           ~auth_roots never Sandbox.Write metadata_link);
+      let resolved =
+        Sandbox.resolve_mutation_path ~auth_path:(auth through_link) never
+          through_link
+      in
+      assert_equal "mutation path follows symlink" (Unix.realpath inside_file)
+        resolved;
+      let patch =
+        String.concat "\n"
+          [
+            "*** Begin Patch";
+            "*** Update File: " ^ through_link;
+            "@@";
+            "-inside";
+            "+updated";
+            "*** End Patch";
+          ]
+      in
+      let parsed =
+        match Sandbox.Patch.parse patch with
+        | Ok value -> value
+        | Error message -> fail "parse symlink patch" message
+      in
+      match
+        Sandbox.authorize_patch
+          ~auth_paths:[ (through_link, auth through_link) ]
+          ~auth_roots never parsed
+      with
+      | Allow -> ()
+      | decision ->
+          fail "symlink patch authorize"
+            ("expected allow, got " ^ decision_name decision))
+
 let () =
+  Random.self_init ();
   test_component_codecs ();
   test_read_only_allows_execution ();
   test_bwrap_keeps_dev_mount_after_root_bind ();
@@ -820,6 +963,7 @@ let () =
   test_sandbox_patch_relative_paths ();
   test_sandbox_patch_tolerant_tau_cases ();
   test_sandbox_edit_application ();
+  test_authorization_path_symlink_equivalence ();
   test_gateway_wraps_legacy_mutation_tools ();
   test_goal_turn_accounting ();
   test_permissions_active_resolution ();

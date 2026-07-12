@@ -4,6 +4,18 @@ let sandbox_network_to_string = function
   | Taumel.Sandbox.Network_enabled -> "enabled"
   | Taumel.Sandbox.Network_disabled -> "disabled"
 
+let approval_policy_to_string = function
+  | Taumel.Sandbox.Never -> "never"
+  | Taumel.Sandbox.On_request -> "on-request"
+  | Taumel.Sandbox.On_failure -> "on-failure"
+  | Taumel.Sandbox.Untrusted -> "untrusted"
+
+let approval_policy_of_string = function
+  | "never" -> Taumel.Sandbox.Never
+  | "on-failure" -> Taumel.Sandbox.On_failure
+  | "untrusted" -> Taumel.Sandbox.Untrusted
+  | _ -> Taumel.Sandbox.On_request
+
 let js_sandbox_config (sandbox : Taumel.Sandbox.config) =
   Unsafe.obj
     [|
@@ -13,6 +25,7 @@ let js_sandbox_config (sandbox : Taumel.Sandbox.config) =
       ("workspaceRoots", js_array (List.map js_string sandbox.workspace_roots));
       ("noSandbox", js_bool sandbox.no_sandbox);
       ("isolated_child", js_bool sandbox.isolated_child);
+      ("approvalPolicy", js_string (approval_policy_to_string sandbox.approval_policy));
     |]
 
 let sandbox_config_from_js sandbox =
@@ -28,7 +41,7 @@ let sandbox_config_from_js sandbox =
     Taumel.Sandbox.filesystem_mode;
     workspace_roots = get_string_array sandbox "workspaceRoots";
     network_mode;
-    approval_policy = Taumel.Sandbox.On_request;
+    approval_policy = approval_policy_of_string (get_string sandbox "approvalPolicy");
     no_sandbox = get_bool sandbox "noSandbox";
     isolated_child = get_bool sandbox "isolated_child";
   }
@@ -49,6 +62,7 @@ let exec_host_facts_from_js obj =
     system_ro_paths = get_string_array obj "systemRoPaths";
     home_mount = get_string obj "homeMount";
     workspace_roots = get_string_array obj "workspaceRoots";
+    authorization_cwd = get_string obj "authorizationCwd";
     workspace_metadata_listings =
       get_object_array obj "workspaceMetadataListings"
       |> List.map exec_workspace_metadata_listing_from_js;

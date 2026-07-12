@@ -3,28 +3,77 @@ open Sandbox_bridge
 open App_state
 open Runtime_access
 
-let js_optional_number = function
-  | None -> Unsafe.inject Js.null
-  | Some value -> js_number value
+let js_optional_number_field name = function
+  | None -> []
+  | Some value -> [ (name, js_number value) ]
 
 let opt_string_default default = function Some value -> value | None -> default
 let opt_bool_default default = function Some value -> value | None -> default
 
+let resolve_authorization_path path =
+  try
+    match
+      string_value
+        (call1 (active_host_or_empty ()) "resolveAuthorizationPath" (js_string path))
+    with
+    | Some resolved when String.trim resolved <> "" -> Ok resolved
+    | Some _ | None ->
+        Error
+          ("path authorization failed for " ^ path
+         ^ ": host returned an empty path")
+  with error ->
+    Error
+      ("path authorization failed for " ^ path ^ ": "
+      ^ Printexc.to_string error)
+
+let authorization_roots (sandbox : Taumel.Sandbox.config) =
+  let rec loop acc = function
+    | [] -> Ok (List.rev acc)
+    | root :: rest -> (
+        match resolve_authorization_path root with
+        | Ok resolved -> loop (resolved :: acc) rest
+        | Error _ as error -> error)
+  in
+  loop [] sandbox.workspace_roots
+
+let path_authorization (sandbox : Taumel.Sandbox.config) path =
+  let requested = Taumel.Sandbox.resolve_workspace_path sandbox path in
+  match (resolve_authorization_path requested, authorization_roots sandbox) with
+  | Ok auth_path, Ok auth_roots -> Ok (auth_path, auth_roots)
+  | Error _ as error, _ | _, (Error _ as error) -> error
+
+let patch_authorization (sandbox : Taumel.Sandbox.config) patch =
+  match Taumel.Sandbox.Patch.parse patch with
+  | Error _ as error -> error
+  | Ok parsed -> (
+      let paths =
+        Taumel.Sandbox.Patch.affected_paths parsed
+        |> List.sort_uniq String.compare
+      in
+      let rec resolve acc = function
+        | [] -> Ok (List.rev acc)
+        | path :: rest -> (
+            let requested =
+              Taumel.Sandbox.resolve_workspace_path sandbox path
+            in
+            match resolve_authorization_path requested with
+            | Ok auth_path -> resolve ((path, auth_path) :: acc) rest
+            | Error _ as error -> error)
+      in
+      match (resolve [] paths, authorization_roots sandbox) with
+      | Ok auth_paths, Ok auth_roots -> Ok (auth_paths, auth_roots)
+      | Error _ as error, _ | _, (Error _ as error) -> error)
+
 let exec_request_from_params params =
   let params = Tool_contracts.ExecCommandParams.t_of_js (ojs_of_js params) in
   let sandbox_permissions =
-    match Tool_contracts.ExecCommandParams.get_sandbox_permissions params with
-    | Some "require_escalated" ->
+    match Tool_contracts.ExecCommandParams.get_with_escalated_permissions params with
+    | Some true ->
         let justification =
           opt_string_default "command requested escalation"
             (Tool_contracts.ExecCommandParams.get_justification params)
         in
-        let prefix_rule =
-          match Tool_contracts.ExecCommandParams.get_prefix_rule params with
-          | Some (_ :: _ as values) -> Some values
-          | Some [] | None -> None
-        in
-        Taumel.Sandbox.Require_escalated { justification; prefix_rule }
+        Taumel.Sandbox.Require_escalated { justification; prefix_rule = None }
     | _ -> Taumel.Sandbox.Use_default
   in
   ({
@@ -36,8 +85,10 @@ let exec_request_from_params params =
      default_workdir = state.cwd;
      sandbox_permissions;
      yield_time_ms = Tool_contracts.ExecCommandParams.get_yield_time_ms params;
-     tty =
-       opt_bool_default false (Tool_contracts.ExecCommandParams.get_tty params);
+     max_output_tokens =
+       Option.map int_of_float
+         (Tool_contracts.ExecCommandParams.get_max_output_tokens params);
+     tty = true;
    }
     : Taumel.Mutation_plan.exec_request)
 
@@ -49,6 +100,9 @@ let write_stdin_request_from_params params =
      chars =
        opt_string_default "" (Tool_contracts.WriteStdinParams.get_chars params);
      yield_time_ms = Tool_contracts.WriteStdinParams.get_yield_time_ms params;
+     max_output_tokens =
+       Option.map int_of_float
+         (Tool_contracts.WriteStdinParams.get_max_output_tokens params);
      output_mode =
        (match Tool_contracts.WriteStdinParams.get_output_mode params with
         | Some "status" -> "status"
@@ -111,10 +165,13 @@ let prepare_exec_command params =
               ("action", js_string plan.action);
               ("cmd", js_string plan.cmd);
               ("workdir", js_string plan.workdir);
-              ("yieldTimeMs", js_optional_number plan.yield_time_ms);
               ("tty", js_bool plan.tty);
               ("sandbox", inject (js_sandbox_config sandbox));
             ]
+            @ js_optional_number_field "yieldTimeMs" plan.yield_time_ms
+            @ (match plan.max_output_tokens with
+              | None -> []
+              | Some value -> [ ("maxOutputTokens", js_number (float_of_int value)) ])
           in
           let fields =
             match plan.approval with
@@ -150,13 +207,16 @@ let prepare_write_stdin params =
       | Error message -> error_obj message
       | Ok plan ->
           ok_obj
-            [
-              ("action", js_string "write_stdin");
-              ("sessionId", js_number (float_of_int plan.session_id));
-              ("chars", js_string plan.chars);
-              ("yieldTimeMs", js_optional_number plan.yield_time_ms);
-              ("outputMode", js_string plan.output_mode);
-            ])
+            ([
+               ("action", js_string "write_stdin");
+               ("sessionId", js_number (float_of_int plan.session_id));
+               ("chars", js_string plan.chars);
+               ("outputMode", js_string plan.output_mode);
+             ]
+            @ js_optional_number_field "yieldTimeMs" plan.yield_time_ms
+            @ (match plan.max_output_tokens with
+              | None -> []
+              | Some value -> [ ("maxOutputTokens", js_number (float_of_int value)) ])))
 
 let js_edit_replacement (edit : Taumel.Sandbox.edit_replacement) =
   Unsafe.obj
@@ -191,15 +251,21 @@ let render_mutation_plan (plan : Taumel.Mutation_plan.mutation_plan) fields =
 let prepare_write params =
   with_gateway_profile_authorized "write" (fun sandbox ->
       let request = write_request_from_params params in
-      match Taumel.Mutation_plan.plan_write sandbox request with
+      match path_authorization sandbox request.path with
       | Error message -> error_obj message
-      | Ok plan ->
-          render_mutation_plan plan
-            [
-              ( "contents",
-                js_string (Option.value plan.contents ~default:"") );
-              ("mode", js_string request.mode);
-            ])
+      | Ok (auth_path, auth_roots) -> (
+          match
+            Taumel.Mutation_plan.plan_write ~auth_path ~auth_roots sandbox
+              request
+          with
+          | Error message -> error_obj message
+          | Ok plan ->
+              render_mutation_plan plan
+                [
+                  ( "contents",
+                    js_string (Option.value plan.contents ~default:"") );
+                  ("mode", js_string request.mode);
+                ]))
 
 let prepare_read params =
   with_gateway_authorized "read" (fun _sandbox ->
@@ -224,11 +290,16 @@ let prepare_read params =
 let prepare_edit params =
   with_gateway_profile_authorized "edit" (fun sandbox ->
       let request = edit_request_from_params params in
-      match Taumel.Mutation_plan.plan_edit sandbox request with
+      match path_authorization sandbox request.path with
       | Error message -> error_obj message
-      | Ok plan ->
-          render_mutation_plan plan
-            [ ("edits", js_array (List.map js_edit_replacement plan.edits)) ])
+      | Ok (auth_path, auth_roots) -> (
+          match
+            Taumel.Mutation_plan.plan_edit ~auth_path ~auth_roots sandbox request
+          with
+          | Error message -> error_obj message
+          | Ok plan ->
+              render_mutation_plan plan
+                [ ("edits", js_array (List.map js_edit_replacement plan.edits)) ]))
 
 let apply_edit_to_file raw_facts =
   let facts = Tool_contracts.EditApplicationFacts.t_of_js (ojs_of_js raw_facts) in
@@ -255,21 +326,30 @@ let prepare_apply_patch params =
       match patch_request_from_params params with
       | Error message -> error_obj message
       | Ok request -> (
-          match Taumel.Mutation_plan.plan_apply_patch sandbox request with
+          match patch_authorization sandbox request.patch with
           | Error message -> error_obj message
-          | Ok plan ->
-              ok_obj
-                ([
-                   ("workspaceRoots", js_array (List.map js_string plan.workspace_roots));
-                   ("validateWorkspacePaths", js_bool plan.validate_workspace_paths);
-                   ("action", js_string plan.action);
-                   ("affectedPaths", js_array (List.map js_string plan.affected_paths));
-                   ("patch", js_string request.patch);
-                 ]
-                @
-                match plan.approval with
-                | None -> []
-                | Some approval -> js_approval_fields approval)))
+          | Ok (auth_paths, auth_roots) -> (
+              match
+                Taumel.Mutation_plan.plan_apply_patch ~auth_paths ~auth_roots
+                  sandbox request
+              with
+              | Error message -> error_obj message
+              | Ok plan ->
+                  ok_obj
+                    ([
+                       ( "workspaceRoots",
+                         js_array (List.map js_string plan.workspace_roots) );
+                       ( "validateWorkspacePaths",
+                         js_bool plan.validate_workspace_paths );
+                       ("action", js_string plan.action);
+                       ( "affectedPaths",
+                         js_array (List.map js_string plan.affected_paths) );
+                       ("patch", js_string request.patch);
+                     ]
+                    @
+                    match plan.approval with
+                    | None -> []
+                    | Some approval -> js_approval_fields approval))))
 
 let files_map_from_js obj =
   object_keys obj
@@ -294,19 +374,25 @@ let apply_patch_to_files raw_facts =
           Tool_contracts.MutationError.create ~kind:"error" ~message ()
           |> Tool_contracts.MutationError.t_to_js |> inject
       | Ok request -> (
-          match
-            Taumel.Mutation_plan.apply_patch_to_files ~approved sandbox request
-              (files_map_from_js files)
-          with
+          match patch_authorization sandbox request.patch with
           | Error message ->
               Tool_contracts.MutationError.create ~kind:"error" ~message ()
               |> Tool_contracts.MutationError.t_to_js |> inject
-          | Ok output ->
-              let write_objects =
-                output.writes
-                |> List.map (fun (path, contents) ->
-                       Tool_contracts.PatchWrite.create ~path ~contents ())
-              in
-              Tool_contracts.PatchApplied.create ~kind:"applied" ~deletes:output.deletes
-                ~writes:write_objects ~affectedPaths:output.affected_paths ()
-              |> Tool_contracts.PatchApplied.t_to_js |> inject))
+          | Ok (auth_paths, auth_roots) -> (
+              match
+                Taumel.Mutation_plan.apply_patch_to_files ~approved ~auth_paths
+                  ~auth_roots sandbox request (files_map_from_js files)
+              with
+              | Error message ->
+                  Tool_contracts.MutationError.create ~kind:"error" ~message ()
+                  |> Tool_contracts.MutationError.t_to_js |> inject
+              | Ok output ->
+                  let write_objects =
+                    output.writes
+                    |> List.map (fun (path, contents) ->
+                           Tool_contracts.PatchWrite.create ~path ~contents ())
+                  in
+                  Tool_contracts.PatchApplied.create ~kind:"applied"
+                    ~deletes:output.deletes ~writes:write_objects
+                    ~affectedPaths:output.affected_paths ()
+                  |> Tool_contracts.PatchApplied.t_to_js |> inject)))

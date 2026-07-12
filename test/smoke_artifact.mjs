@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const artifact = new URL("../dist/taumel.cjs", import.meta.url);
@@ -78,6 +79,7 @@ const ctx = {
 };
 
 core.init({
+  resolveAuthorizationPath: realpathSync,
   on: pushHandler,
   eventsOn: () => () => undefined,
   emit: () => undefined,
@@ -110,6 +112,15 @@ core.init({
   },
   themeFg: (_theme, _color, value) => value,
 });
+
+const preparedWrite = core.call("prepareTool", [{
+  name: "write",
+  params: { path: "README.md", content: "artifact authorization smoke" },
+  ctx,
+}]);
+if (preparedWrite?.ok !== true || preparedWrite.path !== realpathSync("README.md")) {
+  throw new Error(`jsoo mutation preparation did not use the host authorization path: ${JSON.stringify(preparedWrite)}`);
+}
 
 for (const handler of handlers.get("session_start") ?? []) {
   handler({ type: "session_start" }, ctx);

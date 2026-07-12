@@ -20,6 +20,11 @@ Behavior supplied and owned by Pi that Taumel uses without duplicating,
 policing, or replacing it.
 _Avoid_: Taumel requirement, host compatibility requirement
 
+**Model-facing tool contract**:
+The tool name, description, parameter schema, and result text presented to the
+agent model, independent of hidden result details and user-facing rendering.
+_Avoid_: Tool rendering, tool implementation, structured details
+
 **Loaded session state**:
 The single in-memory projection of Taumel component state for Pi's currently
 active main session.
@@ -34,6 +39,16 @@ _Avoid_: Background global, detached task
 The side-effect authority within which tools execute, including sandbox,
 approval, network, and no-sandbox constraints.
 _Avoid_: Tool surface, active tools
+
+**Requested path**:
+The pathname supplied by a tool caller, retained for user-facing evidence and
+diagnostics even when it names a filesystem location through an alias.
+_Avoid_: Authorized path, canonical target
+
+**Authorization path**:
+The filesystem location against which path policy is decided, independent of
+which equivalent pathname a tool caller used to reach it.
+_Avoid_: Requested path, display path
 
 **Owner permission state**:
 The latest permission envelope of the parent session, carried by a live owned
@@ -54,6 +69,11 @@ _Avoid_: Goal prompt, goal continuation
 A user-requested view of Pi's current effective system prompt that does not
 contact the agent or become part of the conversation.
 _Avoid_: Prompt capture, system prompt message
+
+**Usage inspection**:
+A user-requested, transient view of current OpenAI Codex account quota that does
+not contact the agent or become part of the conversation.
+_Avoid_: Usage message, provider status
 
 **Goal objective submission**:
 The visible user-authored message that starts work on a newly created goal.

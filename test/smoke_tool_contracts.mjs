@@ -40,5 +40,10 @@ for (const tool of toolContracts) {
 }
 
 assert(parseToolParams("exec_command", { cmd: "printf ok" }).ok, "exec_command should accept a non-empty command");
+assert(parseToolParams("exec_command", { cmd: "printf ok", max_output_tokens: 10000, with_escalated_permissions: true, justification: "Needs host access." }).ok, "exec_command should accept Codex-compatible options");
 assert(!parseToolParams("exec_command", { cmd: "" }).ok, "exec_command should reject an empty command");
 assert(!parseToolParams("exec_command", { cmd: " \t\n" }).ok, "exec_command should reject a whitespace-only command");
+for (const removed of ["tty", "sandbox_permissions", "prefix_rule", "shell", "login"]) {
+  assert(!parseToolParams("exec_command", { cmd: "printf ok", [removed]: removed === "tty" ? true : "x" }).ok, `exec_command should reject removed parameter ${removed}`);
+}
+assert(parseToolParams("write_stdin", { session_id: 1, max_output_tokens: 10000 }).ok, "write_stdin should accept max_output_tokens");

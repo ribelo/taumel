@@ -149,6 +149,7 @@ let test_sandbox_workspace_metadata_protection () =
       system_ro_paths = [];
       home_mount = "";
       workspace_roots = [ "/repo" ];
+      authorization_cwd = "/repo";
       workspace_metadata_listings =
         [
           {

@@ -29,7 +29,7 @@ import {
 type WorkspaceMetadataListing = { readonly metadataDir: string; readonly path: string; readonly children?: string[] };
 type ExecHostFacts = {
   readonly platform: string; readonly tempRoots: string[]; readonly systemRoPaths: string[];
-  readonly homeMount: string; readonly workspaceRoots: string[];
+  readonly homeMount: string; readonly workspaceRoots: string[]; readonly authorizationCwd: string;
   readonly workspaceMetadataListings: WorkspaceMetadataListing[];
 };
 type ThreadSource =
@@ -259,6 +259,18 @@ export function realpathOrSelf(path: string): string {
   }
 }
 
+export function resolveAuthorizationPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch (error) {
+    const code = typeof error === "object" && error !== null ? (error as NodeError).code : undefined;
+    if (code !== "ENOENT") throw error;
+    const parent = dirname(path);
+    if (parent === path) return path;
+    return join(resolveAuthorizationPath(parent), basename(path));
+  }
+}
+
 export function existingPaths(paths: readonly string[]): string[] {
   return paths.filter((path) => {
     try {
@@ -336,6 +348,7 @@ export function execHostFacts(
     systemRoPaths: existingPaths(hostPathPlan.systemRoPathCandidates),
     homeMount,
     workspaceRoots,
+    authorizationCwd: resolveAuthorizationPath(prepared.workdir),
     workspaceMetadataListings: workspaceMetadataListings(core, workspaceRoots),
   };
 }
@@ -448,16 +461,29 @@ async function syncDirectory(path: string): Promise<void> {
   }
 }
 
+async function writeTargetPath(path: string): Promise<string> {
+  try {
+    const stats = await lstat(path);
+    if (stats.isSymbolicLink()) return await realpath(path);
+  } catch (error) {
+    const code = typeof error === "object" && error !== null ? (error as NodeError).code : undefined;
+    if (code !== "ENOENT") throw error;
+  }
+  return path;
+}
+
 export async function appendToFile(path: string, contents: string): Promise<void> {
-  const parent = dirname(path);
+  const target = await writeTargetPath(path);
+  const parent = dirname(target);
   await mkdir(parent, { recursive: true });
-  await appendFile(path, contents, "utf8");
+  await appendFile(target, contents, "utf8");
 }
 
 async function writeDataAtomically(path: string, contents: string | Uint8Array): Promise<void> {
-  const parent = dirname(path);
+  const target = await writeTargetPath(path);
+  const parent = dirname(target);
   await mkdir(parent, { recursive: true });
-  const tempPath = join(parent, `.${basename(path)}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`);
+  const tempPath = join(parent, `.${basename(target)}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`);
   let handle: FileHandle | undefined;
   try {
     handle = await open(tempPath, "w");
@@ -465,7 +491,7 @@ async function writeDataAtomically(path: string, contents: string | Uint8Array):
     await handle.sync();
     await handle.close();
     handle = undefined;
-    await rename(tempPath, path);
+    await rename(tempPath, target);
     await syncDirectory(parent);
   } catch (error) {
     await handle?.close();
@@ -561,7 +587,8 @@ export async function writePatchFiles(application: PatchApplication): Promise<vo
 
   const snapshots = new Map<string, PatchFileSnapshot>();
   for (const write of parsedWrites) {
-    if (!snapshots.has(write.path)) snapshots.set(write.path, await snapshotPatchFile(write.path));
+    const target = await writeTargetPath(write.path);
+    if (!snapshots.has(target)) snapshots.set(target, await snapshotPatchFile(target));
   }
   for (const path of deletes) {
     if (!snapshots.has(path)) snapshots.set(path, await snapshotPatchFile(path));
@@ -569,7 +596,8 @@ export async function writePatchFiles(application: PatchApplication): Promise<vo
   const createdParentDirs: string[] = [];
   const seenParentDirs = new Set<string>();
   for (const write of parsedWrites) {
-    for (const dir of missingParentDirs(write.path)) {
+    const target = await writeTargetPath(write.path);
+    for (const dir of missingParentDirs(target)) {
       if (seenParentDirs.has(dir)) continue;
       seenParentDirs.add(dir);
       createdParentDirs.push(dir);

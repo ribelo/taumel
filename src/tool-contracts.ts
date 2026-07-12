@@ -81,14 +81,13 @@ const ExecCommandParamsSchema = Type.Object(
         description: "How long to wait (in milliseconds) for output before yielding.",
       }),
     ),
-    tty: Type.Optional(Type.Boolean({ description: "Allocate a terminal session for interactive commands." })),
-    sandbox_permissions: Type.Optional(
-      Type.Literal("require_escalated", {
-        description: "Request approval to run outside the default sandbox.",
+    max_output_tokens: Type.Optional(Type.Integer({ minimum: 0, description: "Maximum approximate tokens to return. Excess output will be truncated." })),
+    with_escalated_permissions: Type.Optional(
+      Type.Boolean({
+        description: "Whether to request escalated permissions. Set to true if command needs to be run without sandbox restrictions",
       }),
     ),
-    justification: Type.Optional(Type.String()),
-    prefix_rule: Type.Optional(stringArray),
+    justification: Type.Optional(Type.String({ description: "Only set if with_escalated_permissions is true. 1-sentence explanation of why we want to run this command." })),
   },
   { $id: "ExecCommandParams", additionalProperties: false },
 );
@@ -98,6 +97,7 @@ const WriteStdinParamsSchema = Type.Object(
     session_id: Type.Integer(),
     chars: Type.Optional(Type.String()),
     yield_time_ms: Type.Optional(Type.Number()),
+    max_output_tokens: Type.Optional(Type.Integer({ minimum: 0, description: "Maximum approximate tokens to return. Excess output will be truncated." })),
     output_mode: Type.Optional(
       Type.Union([Type.Literal("delta"), Type.Literal("status")], {
         description:
@@ -534,8 +534,9 @@ export const toolContracts: readonly ToolContract[] = [
     promptSnippet: "Run shell commands, returning output or a session ID for ongoing interaction.",
     promptGuidelines: [
       "Use exec_command for file operations like ls, rg, find, builds, tests, and development commands.",
-      "Use tty=true for interactive commands or commands that need terminal behavior, then use write_stdin to send input.",
-      "Use write_stdin with empty chars to poll or wait for an active session.",
+      "Call write_stdin only when exec_command returns `Process running with session ID N`, and use that exact ID.",
+      "If exec_command returns `Process exited with code N`, the command is complete; do not call write_stdin for it.",
+      "Use write_stdin output_mode=status for quiet passive waits; use delta only to inspect output or send input.",
     ],
     parameters: toolParameters(ExecCommandParamsSchema),
   },
@@ -543,7 +544,7 @@ export const toolContracts: readonly ToolContract[] = [
     name: "write_stdin",
     label: "write_stdin",
     description:
-      "Writes characters to an existing exec session or waits for it. Use output_mode=status for passive waits that should not add process output to model context; use delta only to inspect progress or interact.",
+      "Writes characters to an existing unified exec session and returns recent output. Use output_mode=status for passive waits that should not add process output to model context; use delta only to inspect progress or interact.",
     promptSnippet: "Send input to or poll an active shell session.",
     parameters: toolParameters(WriteStdinParamsSchema),
   },

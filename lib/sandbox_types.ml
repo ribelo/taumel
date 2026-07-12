@@ -104,6 +104,7 @@ type exec_host_facts = {
   system_ro_paths : string list;
   home_mount : string;
   workspace_roots : string list;
+  authorization_cwd : string;
   workspace_metadata_listings : workspace_metadata_listing list;
 }
 

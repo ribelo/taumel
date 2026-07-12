@@ -358,6 +358,24 @@ async function runPreparedExec(
     signal ?? null,
     forceUnsandboxed,
   ]));
+  if (!forceUnsandboxed && shouldOfferSandboxRetry(prepared, result)) {
+    const rawUi = toolContext(ctx)?.ui;
+    const ui = typeof rawUi === "object" && rawUi !== null ? rawUi as ToolUi : undefined;
+    if (typeof ui?.confirm === "function") {
+      const approved = await withGoalClockPaused(core, async () =>
+        await ui.confirm?.call(
+          ui,
+          "Command requires approval",
+          `command failed; retry without sandbox?\n\n${prepared.cmd}`,
+          { signal },
+        )
+      );
+      if (approved === true) {
+        return runPreparedExec(pi, core, prepared, ctx, signal, true);
+      }
+      throw new Error("rejected by user");
+    }
+  }
   // The command outlived the first yield window and is now a background session.
   // Start a detached waiter that delivers its completion if the parent is idle
   // when it exits (the exec analogue of isolated_child onCompletion); turn_end/idle
@@ -367,6 +385,25 @@ async function runPreparedExec(
     void startExecCompletionWaiter(pi, core, ctx, sessionId);
   }
   return result;
+}
+
+const networkSandboxEvidence = [
+  "temporary failure", "could not resolve", "name resolution", "network is unreachable",
+  "no route to host", "failed to connect", "connection timed out", "dns",
+];
+const filesystemSandboxEvidence = [
+  "permission denied", "operation not permitted", "read-only file system", "erofs", "eacces", "eperm",
+];
+
+function shouldOfferSandboxRetry(
+  prepared: Extract<PreparedSuccess, { action: "exec_command" }>,
+  result: ReturnType<typeof decodeExecToolResult>,
+): boolean {
+  if (prepared.sandbox.approvalPolicy !== "on-failure" && prepared.sandbox.approvalPolicy !== "untrusted") return false;
+  if (result.details.sandboxed !== true || result.details.escalated === true || result.details.exitCode === undefined || result.details.exitCode === 0) return false;
+  const output = result.details.output.toLowerCase();
+  if (prepared.sandbox.networkMode !== "enabled" && networkSandboxEvidence.some((value) => output.includes(value))) return true;
+  return prepared.sandbox.filesystemMode !== "danger-full-access" && filesystemSandboxEvidence.some((value) => output.includes(value));
 }
 
 async function runPreparedRead(
@@ -404,12 +441,13 @@ async function writePreparedStdin(
   ctx: unknown,
   signal?: AbortSignal,
 ) {
-  const { sessionId, outputMode, yieldTimeMs } = prepared;
+  const { sessionId, outputMode, yieldTimeMs, maxOutputTokens } = prepared;
   return decodeExecToolResult(await core.call("writeExecStdin", [{
     sessionId, chars: prepared.chars,
     ownerId: sessionInfoFromContext(ctx).sessionId ?? "current",
     ...(outputMode === undefined ? {} : { outputMode }),
     ...(yieldTimeMs === undefined ? {} : { yieldTimeMs }),
+    ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
     ...(signal === undefined ? {} : { signal }),
   }]));
 }

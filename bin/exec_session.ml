@@ -49,6 +49,8 @@ type truncation = {
 }
 
 type run_result = {
+  chunk_id : string;
+  original_token_count : int;
   output : string;
   truncation : truncation;
   wall_time_ms : float;
@@ -71,6 +73,12 @@ let max_empty_write_stdin_yield_time_ms = 300_000.
 let sessions : (int, session) Hashtbl.t = Hashtbl.create 16
 let retained_sessions : (int, retained_session) Hashtbl.t = Hashtbl.create 16
 let next_session_id = ref 1
+let next_chunk_id = ref 0
+
+let generate_chunk_id () =
+  let value = !next_chunk_id land 0xffffff in
+  next_chunk_id := (!next_chunk_id + 1) land 0xffffff;
+  Printf.sprintf "%06x" value
 
 let now_ms () =
   let date = Unsafe.get Unsafe.global "Date" in
@@ -85,25 +93,29 @@ let normalize_exec_yield_ms = function
       clamp (Float.round value) min_yield_time_ms max_yield_time_ms
   | _ -> exec_default_yield_time_ms
 
-let normalize_write_yield_ms value input_is_empty =
+let normalize_write_yield_ms value input_is_empty output_mode =
   let normalized =
     match value with
     | Some value when value >= 0. -> Float.round value
-    | _ -> write_stdin_default_yield_time_ms
+    | _ ->
+        if output_mode = "status" then min_empty_write_stdin_yield_time_ms
+        else write_stdin_default_yield_time_ms
   in
   let responsive = max normalized min_yield_time_ms in
-  if input_is_empty then
+  if input_is_empty && output_mode = "status" then
     clamp responsive min_empty_write_stdin_yield_time_ms
       max_empty_write_stdin_yield_time_ms
   else min responsive max_yield_time_ms
 
 let max_display_lines = 2000
 let max_display_bytes = 50 * 1024
+let default_max_output_tokens = 10_000
+let approximate_bytes_per_token = 4
 let total_output_limit_bytes = 16 * 1024 * 1024
 
 (* In-memory bound for the unread (pending) buffer. The full output always lives
    in the temp file, so trimming the oldest unread bytes never loses data. *)
-let pending_cap = 1024 * 1024
+let pending_cap = total_output_limit_bytes
 
 let count_newlines s =
   let n = ref 0 in
@@ -299,9 +311,13 @@ let kill_pid pid =
        [| js_number (float_of_int pid); js_string "SIGTERM" |])
 
 let kill_session (session : session) =
-  match process_pid session with
-  | None -> ()
-  | Some pid -> kill_pid pid
+  match session.child with
+  | Some child when session.tty -> (
+      try ignore (Unsafe.meth_call child "kill" [||]) with _ -> ())
+  | _ -> (
+      match process_pid session with
+      | None -> ()
+      | Some pid -> kill_pid pid)
 
 let timer_set callback delay_ms =
   Unsafe.fun_call (Unsafe.get Unsafe.global "setTimeout")
@@ -373,7 +389,8 @@ let close_temp (session : session) =
   session.temp_fd <- None
 
 let make_truncation ?full_output_path ?(last_line_partial = false)
-    ?(first_line_exceeds_limit = false) ~truncated ~truncated_by ~total_lines
+    ?(first_line_exceeds_limit = false) ?(max_lines = max_display_lines)
+    ?(max_bytes = max_display_bytes) ~truncated ~truncated_by ~total_lines
     ~total_bytes ~output_lines ~output_bytes () =
   {
     trunc_truncated = truncated;
@@ -382,8 +399,8 @@ let make_truncation ?full_output_path ?(last_line_partial = false)
     trunc_total_bytes = total_bytes;
     trunc_output_lines = output_lines;
     trunc_output_bytes = output_bytes;
-    trunc_max_lines = max_display_lines;
-    trunc_max_bytes = max_display_bytes;
+    trunc_max_lines = max_lines;
+    trunc_max_bytes = max_bytes;
     trunc_last_line_partial = last_line_partial;
     trunc_first_line_exceeds_limit = first_line_exceeds_limit;
     trunc_full_output_path = full_output_path;
@@ -502,10 +519,43 @@ let display_output (session : session) =
         in
         (output, truncation)
 
+let codex_display_output session max_output_tokens =
+  let source = Buffer.contents session.pending in
+  let total_bytes = String.length source in
+  let total_lines = line_count source in
+  let budget = max 0 max_output_tokens * approximate_bytes_per_token in
+  if total_bytes <= budget then
+    ( source,
+      make_truncation ?full_output_path:session.temp_path ~truncated:false
+        ~truncated_by:"none" ~total_lines ~total_bytes ~output_lines:total_lines
+        ~output_bytes:total_bytes ~max_lines:max_int ~max_bytes:budget () )
+  else
+    let left_budget = budget / 2 in
+    let right_budget = budget - left_budget in
+    let left = safe_prefix left_budget source in
+    let right = safe_suffix right_budget source in
+    let removed_bytes = max 0 (total_bytes - String.length left - String.length right) in
+    let removed_tokens =
+      (removed_bytes + approximate_bytes_per_token - 1) / approximate_bytes_per_token
+    in
+    let marker = Printf.sprintf "…%d tokens truncated…" removed_tokens in
+    let path_notice =
+      match session.temp_path with
+      | None -> ""
+      | Some path -> "\n\n[Output truncated. Full output: " ^ path ^ "]"
+    in
+    let output = left ^ marker ^ right ^ path_notice in
+    ( output,
+      make_truncation ?full_output_path:session.temp_path ~truncated:true
+        ~truncated_by:"tokens" ~total_lines ~total_bytes
+        ~output_lines:(line_count output) ~output_bytes:(String.length output)
+        ~max_lines:max_int ~max_bytes:budget () )
+
 (* Drain the unread chunk for display and reset accounting so the next call
    returns only new output. *)
-let make_result ?(output_mode = "delta") (session : session) =
-  let delta_output, delta_truncation = display_output session in
+let make_result ?(output_mode = "delta") ?(max_output_tokens = default_max_output_tokens)
+    (session : session) =
+  let delta_output, delta_truncation = codex_display_output session max_output_tokens in
   let suppressed_lines =
     session.chunk_lines
     + if session.chunk_bytes > 0 && not session.chunk_ends_with_newline then 1 else 0
@@ -527,6 +577,10 @@ let make_result ?(output_mode = "delta") (session : session) =
   session.chunk_trimmed <- false;
   let base =
     {
+      chunk_id = generate_chunk_id ();
+      original_token_count =
+        (delta_truncation.trunc_total_bytes + approximate_bytes_per_token - 1)
+        / approximate_bytes_per_token;
       output;
       truncation;
       wall_time_ms = now_ms () -. session.started_at;
@@ -546,11 +600,7 @@ let make_result ?(output_mode = "delta") (session : session) =
     { base with session_id = Some session.id })
 
 let shell_result_text result =
-  let body =
-    if result.output = "" then
-      match result.session_id with Some _ -> "" | None -> "(no output)"
-    else result.output
-  in
+  let body = result.output in
   let append status = if body = "" then status else body ^ "\n\n" ^ status in
   let suppression =
     Printf.sprintf "suppressed %d lines / %d bytes"
@@ -572,13 +622,17 @@ let shell_result_text result =
     | Some id, _ -> Printf.sprintf "Session %d still running; %s — end the turn to get notified via exec_completion when it finishes" id suppression
     | None, Some code -> Printf.sprintf "Command completed with code %d; %s" code suppression
     | _ -> "Command completed; " ^ suppression)
-  else match (result.session_id, result.exit_code) with
-  | Some id, _ ->
-      append
-        (Printf.sprintf "[Running - session %d; intermediate output is optional — use write_stdin with chars=\"\",output_mode=\"status\" for a quiet wait, or end the turn to get notified via exec_completion when it finishes]" id)
-  | None, Some code when code <> 0 ->
-      append (Printf.sprintf "Command exited with code %d" code)
-  | _ -> body
+  else
+    let lifecycle =
+      match (result.session_id, result.exit_code) with
+      | Some id, _ -> Printf.sprintf "Process running with session ID %d" id
+      | None, Some code -> Printf.sprintf "Process exited with code %d" code
+      | _ -> "Process exited with code 0"
+    in
+    Printf.sprintf
+      "Chunk ID: %s\nWall time: %.4f seconds\n%s\nOriginal token count: %d\nOutput:\n%s"
+      result.chunk_id (result.wall_time_ms /. 1000.) lifecycle
+      result.original_token_count body
 
 let js_truncation truncation =
   let fields =
@@ -607,8 +661,7 @@ let shell_result_details result extra =
     [
       ( "ok",
         js_bool
-          ((not result.output_limit_exceeded)
-          && match result.exit_code with None -> true | Some code -> code = 0)
+          (not result.output_limit_exceeded)
       );
       ("output", js_string result.output);
       ("stdout", js_string result.output);
@@ -737,44 +790,34 @@ let spawn_session session ~file ~args ~cwd =
   let exists = Unsafe.fun_call (Unsafe.get fs "existsSync") [| js_string cwd |] in
   if not (Js.to_bool (Unsafe.coerce exists)) then
     failwith ("Working directory does not exist: " ^ cwd);
-  let child_process = js_require "node:child_process" in
-  let child =
-    Unsafe.fun_call (Unsafe.get child_process "spawn")
+  let node_pty = js_require "node-pty" in
+  let options =
+    Unsafe.obj
       [|
-        js_string file;
-        js_array (List.map js_string args);
-        inject (spawn_options cwd session.tty ~shell:file);
+        ("name", js_string "xterm-256color");
+        ("cols", js_number 120.);
+        ("rows", js_number 30.);
+        ("cwd", js_string cwd);
+        ("env", node_env true ~shell:file);
       |]
   in
+  let child =
+    Unsafe.fun_call (Unsafe.get node_pty "spawn")
+      [| js_string file; js_array (List.map js_string args); inject options |]
+  in
   session.child <- Some child;
-  wire_stream session child "stdout";
-  wire_stream session child "stderr";
   ignore
-    (Unsafe.meth_call child "on"
-       [|
-         js_string "close";
-         inject
-           (Js.wrap_callback (fun code ->
-                session.exited <- true;
-                session.exit_code <- Some (int_from_js_default code 1);
-                notify session));
-       |]);
+    (Unsafe.meth_call child "onData"
+       [| inject (Js.wrap_callback (fun data ->
+            let crossed = add_output session (data_to_string data) in
+            if crossed then kill_session session;
+            notify session)) |]);
   ignore
-    (Unsafe.meth_call child "on"
-       [|
-         js_string "error";
-         inject
-           (Js.wrap_callback (fun error ->
-                let message =
-                  match optional_string_field error "message" with
-                  | Some message when message <> "" -> message
-                  | _ -> js_error_to_string error
-                in
-                ignore (add_output session (message ^ "\n"));
-                session.exited <- true;
-                session.exit_code <- Some 1;
-                notify session));
-       |])
+    (Unsafe.meth_call child "onExit"
+       [| inject (Js.wrap_callback (fun event ->
+            session.exited <- true;
+            session.exit_code <- Some (int_field_default event "exitCode" 1);
+            notify session)) |])
 
 let new_session owner_id tty =
   let id = !next_session_id in
@@ -832,8 +875,8 @@ let retain_completed_session session =
     };
   prune_retained_sessions session.owner_id
 
-let finish_session ?(output_mode = "delta") session extra resolve =
-  let result = make_result ~output_mode session in
+let finish_session ?(output_mode = "delta") ?max_output_tokens session extra resolve =
+  let result = make_result ~output_mode ?max_output_tokens session in
   if session.exited then (
     session.terminal_consumed <- true;
     close_temp session;
@@ -858,7 +901,7 @@ let resolved_promise value =
 
 let promise_of_session session yield_ms ?timeout_ms
     ?(abort_disposition = `Kill_session) ?(write_stdin_waiter = false)
-    ?(output_mode = "delta") signal
+    ?(output_mode = "delta") ?max_output_tokens signal
     extra =
   Unsafe.new_obj (Unsafe.get Unsafe.global "Promise")
     [|
@@ -880,7 +923,7 @@ let promise_of_session session yield_ms ?timeout_ms
                  settled := true;
                  cleanup ();
                  clear_write_stdin_waiter ();
-                 finish_session ~output_mode session extra resolve)
+                 finish_session ~output_mode ?max_output_tokens session extra resolve)
              in
              let reject_once ?(kill = false) message =
                if not !settled then (
@@ -896,7 +939,7 @@ let promise_of_session session yield_ms ?timeout_ms
              let on_abort () =
                match abort_disposition with
                | `Kill_session ->
-                   let body = (make_result session).output in
+                   let body = (make_result ?max_output_tokens session).output in
                    let message =
                      if body = "" then "Command aborted"
                      else body ^ "\n\nCommand aborted"
@@ -939,7 +982,8 @@ let run_exec_command prepared host runtime owner_id signal force_unsandboxed =
       in
       promise_of_session session
         (normalize_exec_yield_ms call.yield_time_ms)
-        ?timeout_ms:call.timeout_ms signal extra
+        ?timeout_ms:call.timeout_ms
+        ?max_output_tokens:(int_field prepared "maxOutputTokens") signal extra
 
 let write_stdin raw_facts =
   let facts = Tool_contracts.WriteStdinFacts.t_of_js (ojs_of_js raw_facts) in
@@ -964,6 +1008,8 @@ let write_stdin raw_facts =
           else
             let result =
               {
+                chunk_id = generate_chunk_id ();
+                original_token_count = 0;
                 output =
                   Printf.sprintf
                     "(session %d already completed; no new output)" session_id;
@@ -1004,13 +1050,13 @@ let write_stdin raw_facts =
                session_id)
         else if chars = "" then None
         else
-          match (session.tty, Option.bind session.child (fun child -> property child "stdin")) with
-          | true, Some stdin when get_bool stdin "writable" ->
-              ignore (Unsafe.meth_call stdin "write" [| js_string chars |]);
+          match session.child with
+          | Some child when session.tty ->
+              ignore (Unsafe.meth_call child "write" [| js_string chars |]);
               None
           | _ ->
               Some
-                "stdin is closed for this session; rerun exec_command with tty=true to keep stdin open"
+                "stdin is closed for this session"
       in
       (match stdin_error with
       | Some message -> rejected_promise message
@@ -1024,9 +1070,12 @@ let write_stdin raw_facts =
           promise_of_session session
             (normalize_write_yield_ms
                (Tool_contracts.WriteStdinFacts.get_yieldTimeMs facts)
-               (chars = ""))
-            ~abort_disposition:`Keep_session ~write_stdin_waiter:true ~output_mode signal
-            extra)
+               (chars = "") output_mode)
+            ~abort_disposition:`Keep_session ~write_stdin_waiter:true ~output_mode
+            ?max_output_tokens:
+              (Option.map int_of_float
+                 (Tool_contracts.WriteStdinFacts.get_maxOutputTokens facts))
+            signal extra)
 
 let shutdown_owner owner_id =
   Hashtbl.filter_map_inplace

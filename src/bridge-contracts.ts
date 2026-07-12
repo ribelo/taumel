@@ -542,6 +542,7 @@ export const WriteStdinFactsSchema = Type.Object(
     sessionId: Type.Integer({ minimum: 1 }), chars: Type.String(),
     outputMode: Type.Optional(Type.Union([Type.Literal("delta"), Type.Literal("status")])),
     yieldTimeMs: Type.Optional(Type.Number({ minimum: 0 })),
+    maxOutputTokens: Type.Optional(Type.Integer({ minimum: 0 })),
     ownerId: Type.String({ minLength: 1 }), signal: Type.Optional(Type.Unknown()),
   },
   { $id: "WriteStdinFacts", additionalProperties: false },
@@ -1048,7 +1049,7 @@ export const SandboxConfigSchema = Type.Object(
   {
     filesystemMode: Type.String({ minLength: 1 }), networkMode: Type.String({ minLength: 1 }),
     workspaceRoots: Type.Array(Type.String({ minLength: 1 })), noSandbox: Type.Boolean(),
-    isolated_child: Type.Boolean(),
+    isolated_child: Type.Boolean(), approvalPolicy: Type.Optional(Type.String({ minLength: 1 })),
   },
   { $id: "SandboxConfig", additionalProperties: false },
 );
@@ -1065,13 +1066,13 @@ export const PreparedViewMediaSchema = Type.Object(
   { $id: "PreparedViewMedia", additionalProperties: false },
 );
 export const PreparedWriteStdinSchema = Type.Object(
-  { ok: Type.Literal(true), action: Type.Literal("write_stdin"), sessionId: Type.Integer({ minimum: 1 }), chars: Type.String(), yieldTimeMs: Type.Optional(Type.Number({ minimum: 0 })), outputMode: Type.Union([Type.Literal("delta"), Type.Literal("status")]) },
+  { ok: Type.Literal(true), action: Type.Literal("write_stdin"), sessionId: Type.Integer({ minimum: 1 }), chars: Type.String(), yieldTimeMs: Type.Optional(Type.Number({ minimum: 0 })), maxOutputTokens: Type.Optional(Type.Integer({ minimum: 0 })), outputMode: Type.Union([Type.Literal("delta"), Type.Literal("status")]) },
   { $id: "PreparedWriteStdin", additionalProperties: false },
 );
 export const PreparedExecSchema = Type.Object(
   {
     ok: Type.Literal(true), action: Type.Literal("exec_command"), cmd: Type.String({ minLength: 1 }),
-    workdir: Type.String(), yieldTimeMs: Type.Optional(Type.Number({ minimum: 0 })), tty: Type.Boolean(),
+    workdir: Type.String(), yieldTimeMs: Type.Optional(Type.Number({ minimum: 0 })), maxOutputTokens: Type.Optional(Type.Integer({ minimum: 0 })), tty: Type.Boolean(),
     sandbox: SandboxConfigSchema,
   },
   { $id: "PreparedExec", additionalProperties: false },
@@ -1079,7 +1080,7 @@ export const PreparedExecSchema = Type.Object(
 export const PreparedExecApprovalSchema = Type.Object(
   {
     ok: Type.Literal(true), action: Type.Literal("exec_command_approval"), cmd: Type.String({ minLength: 1 }),
-    workdir: Type.String(), yieldTimeMs: Type.Optional(Type.Number({ minimum: 0 })), tty: Type.Boolean(),
+    workdir: Type.String(), yieldTimeMs: Type.Optional(Type.Number({ minimum: 0 })), maxOutputTokens: Type.Optional(Type.Integer({ minimum: 0 })), tty: Type.Boolean(),
     sandbox: SandboxConfigSchema, approvalMessage: Type.String(), ...approvalFields,
     execPolicyAllowAlwaysTokens: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
   },

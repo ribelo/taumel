@@ -46,6 +46,7 @@ let test_exec_plan () =
          default_workdir = "/repo";
          sandbox_permissions = Sandbox.Use_default;
          yield_time_ms = None;
+         max_output_tokens = None;
          tty = false;
        }
    with
@@ -63,6 +64,7 @@ let test_exec_plan () =
             Sandbox.Require_escalated
               { justification = "need host"; prefix_rule = None };
           yield_time_ms = Some 250.;
+          max_output_tokens = Some 10000;
           tty = true;
         }
     with
@@ -89,6 +91,7 @@ let test_exec_plan () =
              Sandbox.Require_escalated
                { justification = "need host"; prefix_rule = None };
            yield_time_ms = None;
+           max_output_tokens = None;
            tty = false;
          })
   in
@@ -127,6 +130,7 @@ let test_write_stdin_plan () =
            session_id = 7;
            chars = "";
            yield_time_ms = Some 30_000.;
+           max_output_tokens = Some 10000;
            output_mode = "status";
          })
   in
@@ -138,6 +142,7 @@ let test_write_stdin_plan () =
          session_id = 7;
          chars = "x";
          yield_time_ms = None;
+         max_output_tokens = None;
          output_mode = "status";
        })
 

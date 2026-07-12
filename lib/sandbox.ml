@@ -84,31 +84,53 @@ let requires_resolved_workspace_mutation_validation (config : config) =
   | Workspace_write -> true
   | Read_only | Danger_full_access -> false
 
+let policy_path (config : config) ?auth_path path =
+  match auth_path with
+  | Some value when String.trim value <> "" -> Ok value
+  | Some _ -> Error "authorization path is empty"
+  | None -> Ok (resolve_workspace_path config path)
+
+let policy_roots (config : config) ?auth_roots () =
+  match auth_roots with
+  | Some (_ :: _ as roots) -> roots
+  | Some [] | None -> config.workspace_roots
+
+let workspace_contains_roots ~roots path =
+  List.exists (fun root -> path_within ~root path) roots
+
+let is_protected_path_under ~roots path =
+  List.exists
+    (fun root ->
+      List.exists
+        (fun dir_name ->
+          path_starts_with_dir ~dir:(join_path root dir_name) path)
+        protected_workspace_dir_names)
+    roots
+
+let authorization_resolution_denied path message =
+  Deny
+    ("path authorization failed for " ^ path ^ ": " ^ message)
+
+let authorization_path_message reason ~requested ~resolved =
+  reason ^ " (requested path: " ^ requested ^ "; resolved target: " ^ resolved
+  ^ ")"
+
 (* This is the post-realpath mutation guard for workspace-write mode. Keep its
    caller-side enablement through [requires_resolved_workspace_mutation_validation]
    adjacent so the flag and validator do not drift. *)
 let validate_resolved_workspace_mutation_paths ~workspace_roots paths =
-  let workspace_roots = List.filter_map Shared.trim_non_empty workspace_roots in
-  let config =
-    {
-      filesystem_mode = Workspace_write;
-      workspace_roots;
-      network_mode = Network_disabled;
-      approval_policy = Never;
-      no_sandbox = false;
-      isolated_child = false;
-    }
+  let roots =
+    workspace_roots
+    |> List.filter_map Shared.trim_non_empty
   in
   let rec loop = function
     | [] -> Ok ()
     | path :: rest ->
-        if not (workspace_contains config path.resolved_path) then
+        if not (workspace_contains_roots ~roots path.resolved_path) then
           Error
             ("Sandbox: apply_patch path escapes workspace: "
             ^ path.requested_path)
-        else if
-          is_protected_workspace_metadata_path config path.resolved_path
-        then
+        else if is_protected_path_under ~roots path.resolved_path then
           Error
             ("Sandbox: path is inside protected workspace metadata: "
             ^ path.requested_path)
@@ -116,30 +138,45 @@ let validate_resolved_workspace_mutation_paths ~workspace_roots paths =
   in
   loop paths
 
-let authorize_path (config : config) access path =
+let authorize_path ?auth_path ?auth_roots (config : config) access path =
   if config.no_sandbox then Allow
   else
-    let resolved = resolve_workspace_path config path in
+    let roots = policy_roots config ?auth_roots () in
     match (config.filesystem_mode, access) with
     | Danger_full_access, _ -> Allow
     | Read_only, Read -> Allow
     | Read_only, (Write | Delete) -> Deny "filesystem is read-only"
     | Workspace_write, Read -> Allow
-    | Workspace_write, (Write | Delete) ->
-        if is_protected_workspace_metadata_path config resolved then
-          Deny ("path is inside protected workspace metadata: " ^ path)
-        else if workspace_contains config resolved then Allow
-        else Deny ("path is outside workspace roots: " ^ path)
+    | Workspace_write, (Write | Delete) -> (
+        match policy_path config ?auth_path path with
+        | Error message -> authorization_resolution_denied path message
+        | Ok auth ->
+            if is_protected_path_under ~roots auth then
+              Deny
+                (authorization_path_message
+                   "path is inside protected workspace metadata"
+                   ~requested:path ~resolved:auth)
+            else if workspace_contains_roots ~roots auth then Allow
+            else
+              Deny
+                (authorization_path_message "path is outside workspace roots"
+                   ~requested:path ~resolved:auth))
 
-let authorize_paths (config : config) access paths =
-  let rec loop = function
+let authorize_paths ?auth_paths ?auth_roots (config : config) access paths =
+  let rec loop paths auth_paths =
+    match paths with
     | [] -> Allow
     | path :: rest -> (
-        match authorize_path config access path with
-        | Allow -> loop rest
+        let auth_path, auth_paths =
+          match auth_paths with
+          | value :: rest_auth -> (Some value, rest_auth)
+          | [] -> (None, [])
+        in
+        match authorize_path ?auth_path ?auth_roots config access path with
+        | Allow -> loop rest auth_paths
         | decision -> decision)
   in
-  loop paths
+  loop paths (Option.value auth_paths ~default:[])
 
 let approval_decision (config : config) message =
   match config.approval_policy with
@@ -158,21 +195,36 @@ let reject_exec_escalation_message policy =
     "approval policy is %s; reject command — you cannot ask for escalated permissions if the approval policy is %s"
     policy policy
 
-let authorize_mutation_path ?(approved = false) (config : config) access path =
+let authorize_mutation_path ?(approved = false) ?auth_path ?auth_roots
+    (config : config) access path =
   if config.no_sandbox then Allow
   else
-    let resolved = resolve_workspace_path config path in
+    let roots = policy_roots config ?auth_roots () in
     match (config.filesystem_mode, access) with
     | Danger_full_access, _ -> Allow
     | _, Read -> Allow
-    | _, (Write | Delete) when is_protected_workspace_metadata_path config resolved ->
-        Deny ("path is inside protected workspace metadata: " ^ path)
     | Read_only, (Write | Delete) ->
         if approved then Allow else approval_decision config "filesystem is read-only"
-    | Workspace_write, (Write | Delete) ->
-        if workspace_contains config resolved then Allow
-        else if approved then Allow
-        else approval_decision config ("path is outside workspace roots: " ^ path)
+    | Workspace_write, (Write | Delete) -> (
+        match policy_path config ?auth_path path with
+        | Error message -> authorization_resolution_denied path message
+        | Ok auth ->
+            if is_protected_path_under ~roots auth then
+              Deny
+                (authorization_path_message
+                   "path is inside protected workspace metadata"
+                   ~requested:path ~resolved:auth)
+            else if workspace_contains_roots ~roots auth then Allow
+            else if approved then Allow
+            else
+              approval_decision config
+                (authorization_path_message "path is outside workspace roots"
+                   ~requested:path ~resolved:auth))
+
+let resolve_mutation_path ?auth_path (config : config) path =
+  match auth_path with
+  | Some value when String.trim value <> "" -> value
+  | Some _ | None -> resolve_workspace_path config path
 
 let authorize_effect (config : config) = function
   | Tool_gateway.Pure | Tool_gateway.Ask_user -> Ok ()
@@ -308,7 +360,7 @@ let failure_diagnostic ~filesystem_mode ~network_mode ~sandboxed ~exit_code
           {
             kind = Network_failure;
             message =
-              "Network access is blocked by the sandbox. Retry the same command with sandbox_permissions=\"require_escalated\" if this command requires network.";
+              "Network access is blocked by the sandbox. Retry the same command with with_escalated_permissions=true if this command requires network.";
             evidence;
             filesystem_mode;
             network_mode;
@@ -331,7 +383,7 @@ let failure_diagnostic ~filesystem_mode ~network_mode ~sandboxed ~exit_code
               {
                 kind = Filesystem_failure;
                 message =
-                  "Filesystem access is restricted by the sandbox. Retry the same command with sandbox_permissions=\"require_escalated\" if this command needs host filesystem access.";
+                  "Filesystem access is restricted by the sandbox. Retry the same command with with_escalated_permissions=true if this command needs host filesystem access.";
                 evidence;
                 filesystem_mode;
                 network_mode;
@@ -479,16 +531,17 @@ let filesystem_approval_prompt ~tool ~path =
 
 module Patch = Sandbox_patch
 
-let authorize_patch ?(approved = false) config patch =
+let authorize_patch ?(approved = false) ?(auth_paths = []) ?auth_roots config patch =
   let actions = Patch.affected_actions patch in
+  let auth_path path = List.assoc_opt path auth_paths in
   let rec loop = function
     | [] -> Allow
     | Patch.Write_file path :: rest -> (
-        match authorize_mutation_path ~approved config Write path with
+        match authorize_mutation_path ~approved ?auth_path:(auth_path path) ?auth_roots config Write path with
         | Allow -> loop rest
         | decision -> decision)
     | Patch.Delete_path path :: rest -> (
-        match authorize_mutation_path ~approved config Delete path with
+        match authorize_mutation_path ~approved ?auth_path:(auth_path path) ?auth_roots config Delete path with
         | Allow -> loop rest
         | decision -> decision)
   in
