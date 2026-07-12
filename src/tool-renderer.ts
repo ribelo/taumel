@@ -3,7 +3,6 @@ import { parseSkillBlock, SkillInvocationMessageComponent } from "@earendil-work
 import {
   emptyComponent,
   renderBlock,
-  withLeftGutter,
   type Block,
   type Entry,
   type HeaderSpec,
@@ -526,7 +525,7 @@ export function skillMessageRenderer() {
       try {
         const component = new SkillInvocationMessageComponent(parsed);
         if (typeof component.setExpanded === "function") component.setExpanded(expandedFromOptions(options));
-        return withLeftGutter(component);
+        return component;
       } catch {
         // Some non-TUI test contexts do not initialize Pi's global theme. Fall
         // through to the parity fallback below rather than leaking the XML block.

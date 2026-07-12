@@ -22,7 +22,6 @@ export type Body =
 
 const RAIL_FIRST = "  └ ";
 const RAIL_CONT = "    ";
-const LEFT_GUTTER = " ";
 const ELLIPSIS = "…";
 const RESET_TEXT_STYLE = "\x1b[22;23;24;25;27;28;29;39m";
 
@@ -153,16 +152,15 @@ export function renderBlock(block: Block, expanded: boolean): { render(width: nu
       if (cache !== undefined && cache.width === width) return cache.lines;
       const targetWidth = Math.max(1, width);
       const safeWidth = terminalSafeWidth(targetWidth);
-      const contentWidth = Math.max(1, safeWidth - visibleWidth(LEFT_GUTTER));
-      const lines = layoutHeader(normalizedBlock.header, expanded, contentWidth);
+      const lines = layoutHeader(normalizedBlock.header, expanded, safeWidth);
       if (normalizedBlock.body !== undefined) {
         if (normalizedBlock.body.mode === "rail") {
-          lines.push(...layoutRail(normalizedBlock.body.entries, expanded, contentWidth));
+          lines.push(...layoutRail(normalizedBlock.body.entries, expanded, safeWidth));
         } else {
-          lines.push(...layoutFlush(normalizedBlock.body.entries, normalizedBlock.body.clip, contentWidth));
+          lines.push(...layoutFlush(normalizedBlock.body.entries, normalizedBlock.body.clip, safeWidth));
         }
       }
-      const clamped = lines.map((line) => clampLine(`${LEFT_GUTTER}${line}`, safeWidth));
+      const clamped = lines.map((line) => clampLine(line, safeWidth));
       cache = { width, lines: clamped };
       return clamped;
     },
@@ -178,20 +176,5 @@ export function emptyComponent(): { render(_width: number): string[]; invalidate
       return [];
     },
     invalidate() {},
-  };
-}
-
-export function withLeftGutter(component: { render(width: number): string[]; invalidate(): void }): { render(width: number): string[]; invalidate(): void } {
-  return {
-    render(width: number): string[] {
-      const targetWidth = Math.max(1, width);
-      const safeWidth = terminalSafeWidth(targetWidth);
-      return component
-        .render(Math.max(1, safeWidth - visibleWidth(LEFT_GUTTER)))
-        .map((line) => clampLine(`${LEFT_GUTTER}${line}`, safeWidth));
-    },
-    invalidate() {
-      component.invalidate();
-    },
   };
 }

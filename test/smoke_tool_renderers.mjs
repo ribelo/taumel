@@ -14,10 +14,9 @@ const theme = {
 };
 
 const renderText = (value) => value.render(120).join("\n");
-const assertLeftGutter = (value, label) => {
+const assertDirectLayout = (value, label) => {
   const lines = value.split("\n");
-  assert(lines.every((line) => line.startsWith(" ")), `${label} should indent every rendered line by one cell: ${value}`);
-  assert(lines[0].startsWith(" •"), `${label} header dot should start at column 1: ${value}`);
+  assert(lines[0].startsWith("•"), `${label} header dot should start at column 0 before Pi adds its outer margin: ${value}`);
 };
 const renderInDefaultToolShell = (component, width) => {
   const shell = new Box(1, 1, (value) => value);
@@ -174,17 +173,17 @@ for (const name of toolNames) {
 
   const args = argsFor(name);
   const call = renderText(renderers.renderCall(args, theme, { isPartial: true }));
-  assertLeftGutter(call, `${name} call`);
-  assert(call.startsWith(" •"), `${name} call header should start with the • dot at column 1: ${call}`);
+  assertDirectLayout(call, `${name} call`);
+  assert(call.startsWith("•"), `${name} call header should start with the • dot before Pi adds its outer margin: ${call}`);
   assert(call.includes(name), `${name} call header should name the tool: ${call}`);
   assert(/\(running\)|\(searching threads\)|\(reading thread\)|\(reading\)|\(viewing image\)|\(waiting\)|\(waiting for Exa\)/.test(call), `${name} call header should carry a dim progress suffix: ${call}`);
 
   const result = resultFor(name);
   const compact = renderText(renderers.renderResult(result, { expanded: false, isPartial: false }, theme, { args }));
   const expanded = renderText(renderers.renderResult(result, { expanded: true, isPartial: false }, theme, { args }));
-  assertLeftGutter(compact, `${name} compact result`);
-  assertLeftGutter(expanded, `${name} expanded result`);
-  assert(compact.startsWith(" •"), `${name} compact header should start with the • dot at column 1: ${compact}`);
+  assertDirectLayout(compact, `${name} compact result`);
+  assertDirectLayout(expanded, `${name} expanded result`);
+  assert(compact.startsWith("•"), `${name} compact header should start with the • dot before Pi adds its outer margin: ${compact}`);
   assert(compact.includes(name), `${name} compact header should name the tool: ${compact}`);
   assert(expanded.length >= compact.length, `${name} expanded renderer should be at least as informative`);
 }
@@ -211,7 +210,7 @@ const shell = renderersForTool("exec_command");
 const shellArgs = argsFor("exec_command");
 const compactShell = renderText(shell.renderResult(resultFor("exec_command"), { expanded: false, isPartial: false }, theme, { args: shellArgs }));
 const expandedShell = renderText(shell.renderResult(resultFor("exec_command"), { expanded: true, isPartial: false }, theme, { args: shellArgs }));
-assert(compactShell.startsWith(" • exec_command · ls many-files"), `exec compact header wrong: ${compactShell}`);
+assert(compactShell.startsWith("• exec_command · ls many-files"), `exec compact header wrong: ${compactShell}`);
 assert(compactShell.includes("  └ "), `exec compact body should use the └ connector: ${compactShell}`);
 assert(compactShell.includes("… 19 more lines"), `exec tail body should show … N more lines at the top: ${compactShell}`);
 assert(!/(^|\n)\s*line-1\s*(\n|$)/.test(compactShell), `exec tail body should clip the head: ${compactShell}`);
@@ -220,7 +219,7 @@ assert(/(^|\n).*line-24\b/.test(expandedShell), `exec expanded body should inclu
 
 // Failed exec → red dot, no exit code repeated in the subject.
 const failedShell = renderText(shell.renderResult({ content: [], details: { ok: false, output: "boom", exitCode: 2 } }, { expanded: false, isPartial: false }, theme, { args: shellArgs }));
-assert(failedShell.startsWith(" • exec_command · ls many-files"), `failed exec header should keep the command subject: ${failedShell}`);
+assert(failedShell.startsWith("• exec_command · ls many-files"), `failed exec header should keep the command subject: ${failedShell}`);
 assert(!/exit 2/.test(failedShell), `failed exec should not repeat the exit code in the subject (red dot signals it): ${failedShell}`);
 
 // Running async session → yellow dot + `(session N)` in the subject, no body.
@@ -258,7 +257,7 @@ const failedCtrlC = renderText(renderersForTool("write_stdin").renderResult(
   { args: { session_id: 3, chars: "\u0003" }, isError: true },
 ));
 assert(failedCtrlC.includes("write_stdin · ^C"), `write_stdin should render Ctrl-C as ^C: ${failedCtrlC}`);
-assert(failedCtrlC.startsWith(" <error>•</error>"), `failed write_stdin should render a red dot from context.isError: ${failedCtrlC}`);
+assert(failedCtrlC.startsWith("<error>•</error>"), `failed write_stdin should render a red dot from context.isError: ${failedCtrlC}`);
 
 // Width-aware layout: a long command must clip to ONE physical header line when
 // collapsed (the original wrapping nitpick), and wrap under the subject-start
@@ -270,14 +269,14 @@ assert(failedCtrlC.startsWith(" <error>•</error>"), `failed write_stdin should
   for (const width of [64, 80, 120]) {
     const collapsed = renderersForTool("exec_command").renderResult(longRes, { expanded: false, isPartial: false }, theme, { args: { cmd: longCmd } }).render(width);
     assert(collapsed.length > 1 && visibleWidth(collapsed[0]) <= width && collapsed[0].includes("…"), `collapsed exec header must be one line clipped to width ${width}: ${JSON.stringify(collapsed[0])}`);
-    assert(collapsed[1].startsWith("   └ "), `collapsed exec body must start behind the left gutter with the └ rail: ${JSON.stringify(collapsed[1])}`);
+    assert(collapsed[1].startsWith("  └ "), `collapsed exec body must start with the semantic └ rail: ${JSON.stringify(collapsed[1])}`);
     const expanded = renderersForTool("exec_command").renderResult(longRes, { expanded: true, isPartial: false }, theme, { args: { cmd: longCmd } }).render(width);
     // Expanded header wraps the full command across several lines, continuation
     // indented to the subject-start column, before the body rail.
-    const subjectStart = visibleWidth(` • exec_command · `);
+    const subjectStart = visibleWidth(`• exec_command · `);
     const contIndent = expanded[1].match(/^ +/)?.[0].length ?? -1;
     assert(expanded.length > 3 && contIndent === subjectStart, `expanded exec header must wrap under the subject-start indent (${subjectStart}), got ${contIndent}: ${JSON.stringify(expanded.slice(0, 2))}`);
-    assert(expanded[expanded.length - 1].startsWith("     "), `expanded exec body continuation must use the outer gutter plus 4-space rail indent`);
+    assert(expanded[expanded.length - 1].startsWith("    "), `expanded exec body continuation must use the 4-space semantic rail indent`);
   }
 }
 
@@ -318,6 +317,13 @@ assert(failedCtrlC.startsWith(" <error>•</error>"), `failed write_stdin should
       }
     }
   }
+  const shellLines = renderInDefaultToolShell(
+    renderersForTool("exec_command").renderResult(resultFor("exec_command"), { expanded: false, isPartial: false }, theme, { args: argsFor("exec_command") }),
+    40,
+  );
+  const shellContentLine = shellLines.find((line) => line.includes("exec_command")) ?? "";
+  assert(shellContentLine.startsWith(" • exec_command"), `Pi's outer shell should provide exactly one margin: ${JSON.stringify(shellLines)}`);
+  assert(!shellContentLine.startsWith("  •"), `Taumel must not add a second outer margin: ${JSON.stringify(shellLines)}`);
 }
 
 // Literal tabs expand to terminal tab stops, not Pi TUI's fixed logical width.
@@ -552,9 +558,9 @@ const renderNotification = notificationMessageRenderer();
 const execNote = 'Command session 3 has finished. To read and consume the result, call write_stdin with session_id=3, chars="", yield_time_ms=5000.';
 const compactExecNote = renderText(renderNotification({ customType: "notification", content: execNote }, { expanded: false }, theme));
 const expandedExecNote = renderText(renderNotification({ customType: "notification", content: execNote }, { expanded: true }, theme));
-assertLeftGutter(compactExecNote, "compact exec notification");
-assertLeftGutter(expandedExecNote, "expanded exec notification");
-assert(compactExecNote.startsWith(" • exec_completion"), `exec notification should include custom-message left gutter: ${compactExecNote}`);
+assertDirectLayout(compactExecNote, "compact exec notification");
+assertDirectLayout(expandedExecNote, "expanded exec notification");
+assert(compactExecNote.startsWith("• exec_completion"), `exec notification should let Pi provide the outer margin: ${compactExecNote}`);
 assert(/• exec_completion · session 3 ready/.test(compactExecNote), `exec notification header wrong: ${compactExecNote}`);
 assert(!/exit|code|line-1/.test(compactExecNote), `exec notification should not include terminal status or output: ${compactExecNote}`);
 assert(!compactExecNote.includes("\n") && !compactExecNote.includes("write_stdin"), `exec compact notification should be one-line ready signal only: ${compactExecNote}`);
@@ -587,8 +593,15 @@ const skillBlock = [
 const skillMessage = { customType: "skill", content: skillBlock, details: { trigger: "$foo" } };
 const compactSkill = renderText(renderSkill(skillMessage, { expanded: false }, theme));
 const expandedSkill = renderText(renderSkill(skillMessage, { expanded: true }, theme));
-assertLeftGutter(compactSkill, "compact skill message");
-assertLeftGutter(expandedSkill, "expanded skill message");
+const compactSkillLines = renderSkill(skillMessage, { expanded: false }, theme).render(40);
+const expandedSkillLines = renderSkill(skillMessage, { expanded: true }, theme).render(40);
+if (compactSkillLines[0].startsWith(" [skill]")) {
+  assert(!compactSkillLines[0].startsWith("  [skill]"), `native skill renderer must not receive a second outer gutter: ${JSON.stringify(compactSkillLines[0])}`);
+  assert(compactSkillLines.every((line) => visibleWidth(line) === 40), `native skill Box should fill the supplied width: ${JSON.stringify(compactSkillLines)}`);
+  assert(expandedSkillLines.every((line) => visibleWidth(line) === 40), `expanded native skill Box should fill the supplied width: ${JSON.stringify(expandedSkillLines)}`);
+} else {
+  assert(compactSkillLines[0].startsWith("•"), `fallback skill renderer should not add an outer gutter: ${JSON.stringify(compactSkillLines[0])}`);
+}
 assert(/• skill: foo/.test(compactSkill), `skill renderer header wrong: ${compactSkill}`);
 assert(compactSkill.includes("auto from $foo") && compactSkill.includes("(expand)") && !compactSkill.includes("line-1"), `skill renderer should default collapsed: ${compactSkill}`);
 assert(expandedSkill.includes("because the user mentioned $foo"), `expanded skill renderer should show provenance: ${expandedSkill}`);
@@ -653,8 +666,8 @@ const cronFireMessage = {
 };
 const cronFireCompact = renderText(renderCronFire(cronFireMessage, { expanded: false }, theme));
 const cronFireExpanded = renderText(renderCronFire(cronFireMessage, { expanded: true }, theme));
-assertLeftGutter(cronFireCompact, "compact cron fire");
-assertLeftGutter(cronFireExpanded, "expanded cron fire");
+assertDirectLayout(cronFireCompact, "compact cron fire");
+assertDirectLayout(cronFireExpanded, "expanded cron fire");
 assert(
   cronFireCompact.includes("cron.fire") &&
   cronFireCompact.includes("deadbeef") &&
