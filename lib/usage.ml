@@ -2,6 +2,7 @@ type provider = Openai
 
 type rate_limit_window = {
   label : string;
+  duration_seconds : int option;
   percent_left : int option;
   resets_at : int option;
   burn_rate_per_hour : float option;
@@ -15,8 +16,7 @@ type account = {
   api_key_present : bool;
   account_label : string option;
   plan : string option;
-  quota_limit_usd : float option;
-  quota_used_usd : float option;
+  credits_balance : float option;
   not_configured : bool;
   error : string option;
   rate_limits : rate_limit_window list;
@@ -161,13 +161,6 @@ let fetch_state_from_fields fields =
       | None -> Fetch_error "OpenAI usage response did not include JSON payload")
   | _ -> Fetch_not_started
 
-let remaining_usd account =
-  match (account.quota_limit_usd, account.quota_used_usd) with
-  | Some limit, Some used -> Some (max 0.0 (limit -. used))
-  | _ -> None
-
-let format_money value = Printf.sprintf "$%.2f" value
-
 let format_plan_type value =
   let value = String.trim value in
   if value = "" then None
@@ -213,6 +206,11 @@ let openai_credential_from_json json =
 let json_number_field name json =
   match object_field name json with
   | Some (Shared.Number value) when Float.is_finite value -> Some value
+  | _ -> None
+
+let json_bool_field name json =
+  match object_field name json with
+  | Some (Shared.Bool value) -> Some value
   | _ -> None
 
 let json_int_field name json =
@@ -275,6 +273,7 @@ let map_window fetched_at_ms previous_state key_prefix window =
   in
   {
     label;
+    duration_seconds = seconds;
     percent_left;
     resets_at;
     burn_rate_per_hour;
@@ -300,13 +299,20 @@ let openai_payload_to_account ?previous_state ~fetched_at_ms ~api_key_present
                | Some window -> Some (map_window fetched_at_ms previous_state "openai:" window)
                | None -> None)
   in
+  let credits_balance =
+    match json_object_field "credits" payload with
+    | Some credits
+      when json_bool_field "has_credits" credits = Some true
+           && json_bool_field "unlimited" credits <> Some true ->
+        Option.bind (json_string_field "balance" credits) float_of_string_opt
+    | _ -> None
+  in
   {
     provider = Openai;
     api_key_present;
     account_label;
     plan;
-    quota_limit_usd = None;
-    quota_used_usd = None;
+    credits_balance;
     not_configured;
     error;
     rate_limits;
@@ -318,8 +324,7 @@ let fallback_account ~api_key_present ?account_label ?error ?(not_configured = f
     api_key_present;
     account_label;
     plan = None;
-    quota_limit_usd = None;
-    quota_used_usd = None;
+    credits_balance = None;
     not_configured;
     error;
     rate_limits = [];
@@ -351,6 +356,19 @@ let openai_host_result ?previous_state result =
 
 let result_details result =
   let account = result.account in
+  let option_field name value encode =
+    match value with None -> [] | Some value -> [ (name, encode value) ]
+  in
+  let rate_limit_json row =
+    Shared.Object
+      ([ ("label", Shared.String row.label); ("isDepleted", Shared.Bool row.is_depleted) ]
+      @ option_field "durationSeconds" row.duration_seconds (fun value -> Shared.Number (float_of_int value))
+      @ option_field "percentLeft" row.percent_left (fun value -> Shared.Number (float_of_int value))
+      @ option_field "resetsAt" row.resets_at (fun value -> Shared.Number (float_of_int value))
+      @ option_field "burnRatePerHour" row.burn_rate_per_hour (fun value -> Shared.Number value)
+      @ option_field "exhaustsAt" row.exhausts_at (fun value -> Shared.Number (float_of_int value))
+      @ option_field "exhaustsBeforeReset" row.exhausts_before_reset (fun value -> Shared.Bool value))
+  in
   Shared.Object
     ([
        ("provider", Shared.String (provider_to_string account.provider));
@@ -359,7 +377,12 @@ let result_details result =
        ("apiKeyPresent", Shared.Bool account.api_key_present);
        ("notConfigured", Shared.Bool account.not_configured);
        ("rateLimitCount", Shared.Number (float_of_int (List.length account.rate_limits)));
+       ("rateLimits", Shared.Array (List.map rate_limit_json account.rate_limits));
      ]
+    @ option_field "accountLabel" account.account_label (fun value -> Shared.String value)
+    @ option_field "plan" account.plan (fun value -> Shared.String value)
+    @ option_field "creditsBalance" account.credits_balance (fun value -> Shared.Number value)
+    @ option_field "error" account.error (fun value -> Shared.String value)
     @
     match result.account_id with
     | None -> []
@@ -400,9 +423,7 @@ let render account =
     ]
     @ (match account.account_label with None -> [] | Some value -> [ ("account", value) ])
     @ (match account.plan with None -> [] | Some value -> [ ("plan", value) ])
-    @ (match account.quota_used_usd with None -> [] | Some value -> [ ("used", format_money value) ])
-    @ (match account.quota_limit_usd with None -> [] | Some value -> [ ("limit", format_money value) ])
-    @ (match remaining_usd account with None -> [] | Some value -> [ ("remaining", format_money value) ])
+    @ (match account.credits_balance with None -> [] | Some value -> [ ("credits", Printf.sprintf "%.2f" value) ])
     @ (if account.not_configured then [ ("status", "not configured") ] else [])
     @ (match account.error with None -> [] | Some value -> [ ("error", value) ])
   in

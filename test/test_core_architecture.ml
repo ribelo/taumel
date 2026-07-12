@@ -549,8 +549,7 @@ let test_usage_openai_rendering () =
       api_key_present = true;
       account_label = Some "team";
       plan = Some "pro";
-      quota_limit_usd = Some 100.0;
-      quota_used_usd = Some 12.5;
+      credits_balance = Some 87.5;
       not_configured = false;
       error = None;
       rate_limits = [];
@@ -558,7 +557,7 @@ let test_usage_openai_rendering () =
   in
   let rendered = Usage.render account in
   assert_bool "openai provider" (String.contains rendered 'o');
-  assert_bool "remaining quota" (String.contains rendered '8');
+  assert_bool "credits balance" (String.contains rendered '8');
   let host_result ?(api_key_present = false) ?account_label ?account_id
       ?(fetched_at_ms = 1000) token_state fetch_state =
     Usage.openai_host_result
@@ -592,6 +591,13 @@ let test_usage_openai_rendering () =
     Shared.Object
       [
         ("plan_type", Shared.String "pro");
+        ( "credits",
+          Shared.Object
+            [
+              ("has_credits", Shared.Bool true);
+              ("unlimited", Shared.Bool false);
+              ("balance", Shared.String "990.563425");
+            ] );
         ( "rate_limit",
           Shared.Object
             [
@@ -612,7 +618,23 @@ let test_usage_openai_rendering () =
   assert_bool "successful usage is live" live.live;
   assert_equal "plan normalized" "Pro"
     (Option.value live.account.plan ~default:"");
-  assert_int "rate limit normalized" 1 (List.length live.account.rate_limits)
+  assert_bool "unitless credits parsed"
+    (live.account.credits_balance = Some 990.563425);
+  assert_int "rate limit normalized" 1 (List.length live.account.rate_limits);
+  let unlimited =
+    Usage.openai_payload_to_account ~fetched_at_ms:1000 ~api_key_present:true
+      (Shared.Object
+         [
+           ( "credits",
+             Shared.Object
+               [
+                 ("has_credits", Shared.Bool true);
+                 ("unlimited", Shared.Bool true);
+                 ("balance", Shared.String "990.563425");
+               ] );
+         ])
+  in
+  assert_bool "unlimited credits omitted" (unlimited.credits_balance = None)
 
 let test_tool_catalog_scope () =
   List.iter

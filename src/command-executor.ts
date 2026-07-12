@@ -11,6 +11,7 @@ import { executeCompactionModelCommand } from "./compaction-model.ts";
 import { executeCronManager } from "./cron-manager.ts";
 import { initializeTaumelGlobalConfig, taumelStatus } from "./global-settings.ts";
 import { executeVisibilityManager, saveProjectVisibility } from "./visibility.ts";
+import { showUsageInspection } from "./usage-inspection.ts";
 import {
   applyChildSessionUpdate,
   createChildSession,
@@ -40,6 +41,7 @@ type CommandUi = {
   readonly notify?: (message: string, level: string) => unknown;
   readonly select?: (title: string, labels: readonly string[]) => unknown;
   readonly custom?: (factory: unknown) => Promise<unknown>;
+  readonly setStatus?: (key: string, value: string | undefined) => unknown;
 };
 type AssistantMessage = { readonly role?: unknown; readonly stopReason?: unknown; readonly errorMessage?: unknown };
 type AssistantEvent = { readonly messages?: unknown; readonly willRetry?: unknown };
@@ -490,17 +492,37 @@ export function registerGatewayCommands(
     pi.registerCommand(name, {
       description: spec.description,
       handler: async (_args, ctx) => {
-        const result = await executeGatewayCommand(
-          pi,
-          core,
-          childSessions,
-          composer,
-          name,
-          _args,
-          ctx,
-        );
         const rawUi = commandContext(ctx)?.ui;
         const ui = typeof rawUi === "object" && rawUi !== null ? rawUi as CommandUi : undefined;
+        if (name === "usage" && typeof ui?.setStatus === "function") {
+          ui.setStatus.call(ui, "taumel:usage", "Fetching OpenAI Codex usage...");
+        }
+        let result: unknown;
+        try {
+          result = await executeGatewayCommand(
+            pi,
+            core,
+            childSessions,
+            composer,
+            name,
+            _args,
+            ctx,
+          );
+        } finally {
+          if (name === "usage" && typeof ui?.setStatus === "function") {
+            ui.setStatus.call(ui, "taumel:usage", undefined);
+          }
+        }
+        if (name === "usage") {
+          const usageResult = commandResult(result);
+          const usageDetails = usageResult?.details ?? {
+            error: typeof usageResult?.error === "string" ? usageResult.error : "OpenAI Codex usage fetch failed",
+            notConfigured: false,
+            rateLimits: [],
+          };
+          await showUsageInspection(usageDetails, ctx);
+          return result;
+        }
         const notify = ui?.notify;
         const currentResult = commandResult(result);
         const suppressGoalNotification = name === "goal" && (

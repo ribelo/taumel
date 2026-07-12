@@ -25,7 +25,7 @@ stays at the edge. Scope stays on account and quota rather than general status.
 - **usage-rn06** (state-driven): The system shall color remaining quota above 25 percent with `success`, from 11 through 25 percent with `warning`, from 0 through 10 percent with `error`, and unknown quota with `dim`.
 - **usage-rn07** (state-driven): The system shall omit unavailable optional account metadata and quota windows; if a successful response contains no quota windows, it shall explicitly report `No quota windows returned`.
 - **usage-rn08** (ubiquitous): The system shall order quota windows from shortest duration to longest duration, placing unknown-duration windows last.
-- **usage-rn09** (state-driven): When OpenAI reports a finite credits balance for a non-unlimited account, the system shall include that balance in the account metadata; otherwise it shall omit the credits row.
+- **usage-rn09** (state-driven): When OpenAI reports a finite credits balance for a non-unlimited account, the system shall include that unitless balance in the account metadata without assuming a currency; otherwise it shall omit the credits row.
 - **usage-rn10** (ubiquitous): The modal shall not show an `Updated` timestamp or freshness label.
 - **usage-rn11** (state-driven): Reset and estimated-exhaustion times shall combine a concise relative duration with adaptive local time: clock time for today, weekday and clock time within seven days, and day, abbreviated month, and clock time thereafter.
 - **usage-in02** (event-driven): The completed modal shall ignore unrelated input and close only on `Esc`, `q`, or `Enter`.
