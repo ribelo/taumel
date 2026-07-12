@@ -186,14 +186,16 @@ let property obj name =
   optional_field obj name
 
 let data_to_string data =
-  match function_field data "toString" with
-  | None -> ""
-  | Some _ ->
-    match
-      string_value (Unsafe.meth_call data "toString" [| js_string "utf8" |])
-    with
-    | Some value -> value
-    | None -> ""
+  match string_value data with
+  | Some value -> value
+  | None -> (
+      match function_field data "toString" with
+      | None -> ""
+      | Some _ ->
+          Option.value
+            (string_value
+               (Unsafe.meth_call data "toString" [| js_string "utf8" |]))
+            ~default:"")
 
 let int_from_js_default value default =
   match float_value value with
@@ -721,37 +723,28 @@ let shell_tool_result result extra =
          ("details", shell_result_details result extra);
        |])
 
-let node_env tty ~shell =
+let node_env _tty ~shell =
   let process = node_process () in
   let env = Unsafe.get process "env" in
-  let assign overrides =
-    Unsafe.fun_call (Unsafe.get (Unsafe.get Unsafe.global "Object") "assign")
-      [| inject (Unsafe.obj [||]); inject env; inject (Unsafe.obj overrides) |]
-  in
-  if tty then
-    let term =
-      match optional_string_field env "TERM" with
-      | Some value when value <> "" -> value
-      | _ -> "xterm-256color"
-    in
-    assign [| ("TERM", js_string term) |]
-  else
-    (* Non-interactive hygiene (improves on Pi): strip colour, disable pagers
-       and cursor-addressing, and make git fail fast instead of waiting on a
-       terminal. Honour an explicit ambient GIT_TERMINAL_PROMPT. SHELL points at
-       the resolved bash so child tools that spawn $SHELL get bash. *)
-    let git_prompt =
-      match optional_string_field env "GIT_TERMINAL_PROMPT" with
-      | Some value when value <> "" -> value
-      | _ -> "0"
-    in
-    assign
-      [|
-        ("NO_COLOR", js_string "1");
-        ("TERM", js_string "dumb");
-        ("GIT_TERMINAL_PROMPT", js_string git_prompt);
-        ("SHELL", js_string shell);
-      |]
+  Unsafe.fun_call (Unsafe.get (Unsafe.get Unsafe.global "Object") "assign")
+    [|
+      inject (Unsafe.obj [||]);
+      inject env;
+      inject
+        (Unsafe.obj
+           [|
+             ("NO_COLOR", js_string "1");
+             ("TERM", js_string "dumb");
+             ("LANG", js_string "C.UTF-8");
+             ("LC_CTYPE", js_string "C.UTF-8");
+             ("LC_ALL", js_string "C.UTF-8");
+             ("COLORTERM", js_string "");
+             ("PAGER", js_string "cat");
+             ("GIT_PAGER", js_string "cat");
+             ("GIT_TERMINAL_PROMPT", js_string "0");
+             ("SHELL", js_string shell);
+           |]);
+    |]
 
 let spawn_options cwd tty ~shell =
   let process = node_process () in
@@ -794,9 +787,9 @@ let spawn_session session ~file ~args ~cwd =
   let options =
     Unsafe.obj
       [|
-        ("name", js_string "xterm-256color");
-        ("cols", js_number 120.);
-        ("rows", js_number 30.);
+        ("name", js_string "dumb");
+        ("cols", js_number 80.);
+        ("rows", js_number 24.);
         ("cwd", js_string cwd);
         ("env", node_env true ~shell:file);
       |]

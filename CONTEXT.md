@@ -35,6 +35,12 @@ Taumel work that may remain live after its initiating call and therefore carries
 the identity of the parent session that may observe or control it.
 _Avoid_: Background global, detached task
 
+**Non-interactive PTY environment**:
+A command environment that retains PTY capabilities such as ordered combined
+output and stdin interaction while suppressing implicit pagers, terminal color,
+and cursor-control behavior.
+_Avoid_: Non-TTY execution, interactive shell environment
+
 **Permission envelope**:
 The side-effect authority within which tools execute, including sandbox,
 approval, network, and no-sandbox constraints.
