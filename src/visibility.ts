@@ -7,7 +7,7 @@ import { taumelGlobalSettingsPath } from "./global-settings.ts";
 import { cwdFromContext, isProjectTrusted, liveToolNames, projectSettingsPath, writeFileAtomically } from "./util.ts";
 import { decodeSkillListResult } from "./bridge-contracts.ts";
 import { decodeVisibilityListResult, decodeVisibilityRowsResult, decodeVisibilitySavePlan, decodeVisibilityToggleResult, decodeVisibilityWarningsResult, type VisibilityPrompt, type VisibilityRowsResult } from "./bridge-contracts.ts";
-import { toolNames } from "./tool-contracts.ts";
+import { toolContracts, toolNames } from "./tool-contracts.ts";
 import {
   bold,
   commandResult,
@@ -147,8 +147,21 @@ function isCtrlS(data: string): boolean {
   return data === "\x13";
 }
 
+const toolDescriptions = new Map(toolContracts.map((contract) => [contract.name, contract.description]));
+
+function withManagerDescriptions(state: VisibilityState): VisibilityState {
+  if (state.category !== "tools") return state;
+  return {
+    ...state,
+    rows: state.rows.map((row) => ({
+      ...row,
+      description: row.available ? toolDescriptions.get(row.name) ?? "" : "",
+    })),
+  };
+}
+
 function loadVisibilityState(core: CoreBridge, category: Category, ctx: unknown): VisibilityState {
-  return decodeVisibilityRowsResult(core.call("visibilityRows", [{ category, ctx }]));
+  return withManagerDescriptions(decodeVisibilityRowsResult(core.call("visibilityRows", [{ category, ctx }])));
 }
 
 const MAX_VISIBLE_ROWS = 10;

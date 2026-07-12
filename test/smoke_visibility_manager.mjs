@@ -7,14 +7,16 @@ initTheme();
 for (const category of ["tools", "skills"]) {
   let disabled = [];
   let rendered = [];
+  const name = category === "tools" ? "read" : "example";
+  const suppliedDescription = category === "tools" ? "pure" : "Example description";
   const rows = () => ({
     category,
     title: `${category} visibility`,
     rows: [{
-      name: "example",
-      state: disabled.includes("example") ? "disabled" : "enabled",
+      name,
+      state: disabled.includes(name) ? "disabled" : "enabled",
       available: true,
-      description: "Example description",
+      description: suppliedDescription,
     }],
     disabled,
     unavailable: [],
@@ -57,8 +59,13 @@ for (const category of ["tools", "skills"]) {
 
   const result = await executeVisibilityManager(core, { category }, ctx, () => undefined);
   assert.equal(result.ok, true);
-  assert.deepEqual(disabled, ["example"], `${category} manager should apply the selected visibility change`);
-  assert(rendered.some((line) => line.includes("example") && line.includes("enabled")));
-  assert(rendered.some((line) => line.includes("Example description")));
+  assert.deepEqual(disabled, [name], `${category} manager should apply the selected visibility change`);
+  assert(rendered.some((line) => line.includes(name) && line.includes("enabled")));
+  if (category === "tools") {
+    assert(rendered.some((line) => line.includes("Read a UTF-8 text file.")));
+    assert(!rendered.some((line) => line.includes("pure")));
+  } else {
+    assert(rendered.some((line) => line.includes("Example description")));
+  }
   assert(rendered.some((line) => line.includes("Ctrl+S save to project")));
 }

@@ -22,11 +22,11 @@ config with `Ctrl+S` or a command-form `save` action.
 
 ### Scope and precedence
 
-- **vis-sc01** (ubiquitous): The system shall treat tool and skill visibility as session-effective state, not as a hard authorization policy.
+- **vis-sc01** (ubiquitous): The system shall maintain tool and skill visibility as session-effective state. Visibility changes shall not grant or revoke tool authorization.
 - **vis-sc02** (ubiquitous): The system shall persist session-effective visibility in session custom entries and restore it when the same thread resumes.
 - **vis-sc03** (event-driven): When a new session starts and no session visibility state exists, the system shall seed session-effective visibility from global Pi config and trusted project Pi config according to the shared Taumel config precedence.
 - **vis-sc04** (ubiquitous): The session-effective state shall take precedence over config defaults for the lifetime of that session.
-- **vis-sc05** (ubiquitous): Visibility shall apply to the whole thread/session, not to individual conversation-tree branches.
+- **vis-sc05** (ubiquitous): One visibility state shall apply across every conversation-tree branch in a thread/session.
 - **vis-sc06** (event-driven): Visibility changes from managers or command forms shall apply immediately for the next model turn or skill-resolution pass.
 
 ### Config defaults
@@ -41,29 +41,29 @@ config with `Ctrl+S` or a command-form `save` action.
   }
   ```
 
-- **vis-cf03** (ubiquitous): The system shall resolve visibility defaults independently per category, so a trusted project `taumel.tools.disabled` replaces global `taumel.tools.disabled`, while missing project categories still inherit their global disabled lists.
+- **vis-cf03** (ubiquitous): The system shall resolve visibility defaults independently per category. A trusted project's category shall replace the corresponding global category. A category absent from trusted project config shall inherit the corresponding global category.
 - **vis-cf04** (event-driven): The system shall read project visibility defaults only when `ctx.isProjectTrusted()` is true.
-- **vis-cf05** (event-driven): When the user saves visibility to project config in an untrusted project, the system shall leave the file unchanged and show a clear warning.
-- **vis-cf07** (event-driven): Restore-time warnings for unavailable visibility names shall be emitted at most once per session per category, with managers/lists allowed to show the same warning again when explicitly opened.
+- **vis-cf05** (event-driven): When the user saves visibility to project config in an untrusted project, the system shall leave the file unchanged and warn that project trust is required.
+- **vis-cf07** (event-driven): The system shall emit restore-time warnings for unavailable visibility names at most once per session per category. Each explicit manager or list invocation shall show its unavailable names.
 - **vis-cf08** (event-driven): Project save shall write the current stored disabled set exactly, including unavailable names, and shall warn when unavailable names remain.
-- **vis-cf09** (ubiquitous): Visibility save actions shall write only trusted project Pi config and shall not write global Pi config.
+- **vis-cf09** (ubiquitous): Visibility save actions shall write trusted project Pi config and shall leave global Pi config unchanged.
 
 ### Tool visibility
 
-- **vis-tl01** (event-driven): When a tool is disabled for the session, the system shall remove it from Pi's active tool list so the model does not see or select it.
-- **vis-tl03** (ubiquitous): The system shall keep implementation simple and define no protected/non-hideable tool list.
-- **vis-tl04** (ubiquitous): Tool visibility shall not require dynamic unregistration from Pi; active-tool synchronization is the visibility mechanism.
+- **vis-tl01** (event-driven): When a tool is disabled for the session, the system shall remove it from Pi's active tool list.
+- **vis-tl03** (ubiquitous): Every registered Taumel tool shall be hideable.
+- **vis-tl04** (ubiquitous): The system shall apply tool visibility through Pi's active tool list and shall keep tool registrations unchanged.
 - **vis-tl05** (event-driven): `/tools disable <name>` and `/tools enable <name>` shall update session visibility, persist it to the session, and synchronize active tools immediately.
 - **vis-tl06** (event-driven): `/tools save` shall save the current session-effective disabled tool list to trusted project config.
 - **vis-tl07** (event-driven): `/tools list` shall list current session-effective tool visibility. In non-TUI modes, `/tools` with no arguments shall behave like `/tools list`.
-- **vis-tl08** (event-driven): When `/tools enable <name>` or `/tools disable <name>` names a tool that is not currently registered, the system shall leave visibility unchanged and return a warning instead of silently storing the unknown name.
-- **vis-tl09** (event-driven): When restoring session or trusted project tool visibility references tools that are no longer registered, the system shall warn the user rather than silently swallowing the mismatch.
+- **vis-tl08** (event-driven): When `/tools enable <name>` or `/tools disable <name>` names a tool that is not currently registered, the system shall leave visibility unchanged and warn that the tool is unknown.
+- **vis-tl09** (event-driven): When restored session or trusted project visibility references tools that are no longer registered, the system shall warn the user and retain those tool names in visibility state.
 
 ### Skill visibility
 
 - **vis-sk01** (event-driven): When a skill is disabled for the session, the system shall omit it from `$...` autocomplete suggestions.
 - **vis-sk02** (event-driven): When a prompt mentions a disabled skill with `$name`, the resolver shall ignore that mention without warning or error.
-- **vis-sk03** (ubiquitous): Skill visibility shall not try to block manually pasted `<skill ...>` blocks.
+- **vis-sk03** (ubiquitous): Manually pasted `<skill ...>` blocks shall remain resolvable independently of skill visibility.
 - **vis-sk04** (event-driven): `/skills disable <name>` and `/skills enable <name>` shall update session visibility and persist it to the session immediately.
 - **vis-sk05** (event-driven): `/skills save` shall save the current session-effective disabled skill list to trusted project config.
 - **vis-sk06** (event-driven): `/skills list` shall list discovered skills with current session-effective visibility. In non-TUI modes, `/skills` with no arguments shall behave like `/skills list`.
@@ -74,18 +74,18 @@ config with `Ctrl+S` or a command-form `save` action.
 
 ### Manager UI
 
-- **vis-ui01** (ubiquitous): In TUI mode, `/tools` and `/skills` shall present their entries with Pi's `SettingsList` and standard settings-list theme. `SettingsList` shall own search, selection, scrolling, value presentation, hints, and list keybindings; a surrounding command controller may own the title, status, persistence shortcut, and tool synchronization.
-- **vis-ui02** (ubiquitous): Each manager shall show the current session-effective state as `enabled` or `disabled`, plus the item name and a short description or path where useful; unavailable disabled names shall use the state `unavailable`.
+- **vis-ui01** (ubiquitous): In TUI mode, `/tools` and `/skills` shall use Pi's `SettingsList` with its standard theme and built-in search, selection, scrolling, value presentation, hints, and list keybindings.
+- **vis-ui02** (ubiquitous): Each manager shall show every item name and its current session-effective state as `enabled`, `disabled`, or `unavailable`.
 - **vis-ui03** (event-driven): Pressing enter on a selected row shall toggle that row and apply the change immediately.
 - **vis-ui04** (event-driven): Pressing `Ctrl+S` shall save the current session-effective disabled list to trusted project config.
-- **vis-ui05** (ubiquitous): Manager help text shall include `enter toggle • ctrl+s save to project • esc close` or equivalent concise wording.
-- **vis-ui06** (ubiquitous): Managers shall show unavailable disabled names as explicit rows, marked `unavailable`, so the user can see stale config instead of it being hidden.
-- **vis-ui07** (event-driven): Toggling an unavailable disabled row to enabled shall explicitly remove that name from the session disabled set because the user selected that cleanup action.
-- **vis-ui08** (ubiquitous): A manager row shall map the registered tool or skill name to the settings label, its session-effective state to the settings value, and its tool or skill description or path to the settings description.
-- **vis-ui09** (ubiquitous): Manager presentation and interaction shall follow Pi's standard settings-list behavior rather than defining separate table layout, filtering, selection, scrolling, value styling, or list hints.
+- **vis-ui05** (ubiquitous): Manager help text shall identify Enter as toggle, `Ctrl+S` as save to project, and Escape as close.
+- **vis-ui06** (ubiquitous): Managers shall show each unavailable disabled name as an explicit row with state `unavailable`.
+- **vis-ui07** (event-driven): When the user toggles an unavailable row to enabled, the system shall remove that name from the session disabled set.
+- **vis-ui08** (ubiquitous): Each available tool row shall show the tool's model-facing contract description. Each available skill row shall show the discovered skill description, falling back to its path. Each unavailable row shall show no description.
+- **vis-ui09** (ubiquitous): Manager table layout, filtering, selection, scrolling, value styling, and list hints shall follow Pi's `SettingsList` behavior.
 
 ### Architecture limits
 
-- **vis-ar01** (ubiquitous): The system shall avoid fighting Pi extension API limits; hiding through active tools, autocomplete filtering, and model-facing catalog filtering is sufficient.
-- **vis-ar02** (ubiquitous): Direct developer/test invocation of a hidden tool or stale profile name is outside the normal UX contract and need not be made silent.
-- **vis-ar03** (ubiquitous): The system shall not silently delete unknown names from session or project visibility state; the user owns cleanup.
+- **vis-ar01** (ubiquitous): The system shall apply tool visibility through Pi's active tool list and shall apply skill visibility through autocomplete and model-facing catalog filtering.
+- **vis-ar02** (ubiquitous): Direct developer and test invocations of hidden tools and stale profile names shall receive their underlying invocation results without visibility-specific suppression.
+- **vis-ar03** (ubiquitous): The system shall retain unknown names in session and project visibility state until the user removes them.
