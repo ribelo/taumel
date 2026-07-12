@@ -30,17 +30,34 @@ type automation =
   | Automation_enabled
   | Automation_interrupted
 
+type presentation = {
+  status : status;
+  automation : automation;
+  objective : string;
+  tokens_used : int;
+  time_used_seconds : int;
+  time_limit_seconds : int option;
+  goal_id : string;
+  session_id : string;
+}
+
+let present automation (goal : t) =
+  {
+    status = goal.status;
+    automation;
+    objective = goal.objective;
+    tokens_used = goal.tokens_used;
+    time_used_seconds = goal.time_used_seconds;
+    time_limit_seconds = goal.time_limit_seconds;
+    goal_id = goal.goal_id;
+    session_id = goal.thread_id;
+  }
+
 type turn_clock = {
   turn_started_at_ms : int option;
   pause_depth : int;
   current_pause_started_at_ms : int option;
   paused_accumulated_ms : int;
-}
-
-type set_request = {
-  objective : string option;
-  status : status option;
-  time_limit_seconds : int option option;
 }
 
 type continuation_facts = {
@@ -59,6 +76,14 @@ let status_to_string = function
   | Blocked -> "blocked"
   | Usage_limited -> "usage_limited"
   | Time_limited -> "time_limited"
+  | Complete -> "complete"
+
+let status_label = function
+  | Active -> "active"
+  | Paused -> "paused"
+  | Blocked -> "blocked"
+  | Usage_limited -> "usage limited"
+  | Time_limited -> "time limited"
   | Complete -> "complete"
 
 let status_of_string = function
@@ -86,8 +111,13 @@ let validate_time_limit = function
       Error "goal time limits must be positive when provided"
   | _ -> Ok ()
 
-let next_goal_id thread_id now =
-  Printf.sprintf "%s:%d" thread_id now
+let goal_id_sequence = ref 0
+let goal_id_rng = Random.State.make_self_init ()
+
+let next_goal_id session_id now =
+  incr goal_id_sequence;
+  Printf.sprintf "%s:%d:%d:%08x%08x" session_id now !goal_id_sequence
+    (Random.State.bits goal_id_rng) (Random.State.bits goal_id_rng)
 
 let create ?time_limit_seconds ~thread_id ~now objective (store : store) =
   match validate_objective objective with
@@ -97,11 +127,11 @@ let create ?time_limit_seconds ~thread_id ~now objective (store : store) =
       | Error _ as error -> error
       | Ok () -> (
           match store with
-          | Some goal when unfinished goal.status ->
+          | Some _ ->
               Error
-                "cannot create a new goal because this thread has an unfinished \
-                 goal; complete or clear the existing goal first"
-          | None | Some _ ->
+                "cannot create a new goal because this session already has a goal; \
+                 clear it first"
+          | None ->
               Ok
                 {
                   goal_id = next_goal_id thread_id now;
@@ -117,78 +147,38 @@ let create ?time_limit_seconds ~thread_id ~now objective (store : store) =
 
 let get store = store
 
+let rebind_for_fork ~session_id (goal : t) =
+  {
+    goal with
+    goal_id = next_goal_id session_id goal.created_at;
+    thread_id = session_id;
+  }
+
 let update_status ~now status (store : store) =
   match store with
-  | None -> Error "cannot update goal because this thread has no goal"
+  | None -> Error "cannot update goal because this session has no goal"
   | Some goal when not (List.mem status [ Complete; Blocked ]) ->
       Error
         "update_goal can only mark the existing goal complete or blocked; pause, \
          resume, usage-limited, and time-limited status changes are controlled \
          by the user or system"
+  | Some goal when goal.status <> Active ->
+      Error
+        "cannot update goal because only an active goal may be completed or blocked"
   | Some goal -> Ok { goal with status; updated_at = now }
 
 let user_set_status ~now status (store : store) =
   match store with
-  | None -> Error "cannot update goal because this thread has no goal"
+  | None -> Error "cannot update goal because this session has no goal"
   | Some goal -> Ok { goal with status; updated_at = now }
 
 let update_time_limit ~now time_limit_seconds (store : store) =
   match store with
-  | None -> Error "cannot update goal because this thread has no goal"
+  | None -> Error "cannot update goal because this session has no goal"
   | Some goal -> (
       match validate_time_limit time_limit_seconds with
       | Error _ as error -> error
       | Ok () -> Ok { goal with time_limit_seconds; updated_at = now })
-
-let set ~thread_id ~now (request : set_request) store =
-  let objective = Option.map String.trim request.objective in
-  let validation =
-    match objective with
-    | Some objective -> (
-        match validate_objective objective with
-        | Error _ as error -> error
-        | Ok _ -> Ok ())
-    | None -> Ok ()
-  in
-  match validation with
-  | Error _ as error -> error
-  | Ok () -> (
-      match request.time_limit_seconds with
-      | Some value -> validate_time_limit value
-      | None -> Ok ())
-    |> (function
-    | Error _ as error -> error
-    | Ok () -> (
-        match (objective, (store : store)) with
-        | Some objective, None ->
-            create
-              ?time_limit_seconds:
-                (Option.value request.time_limit_seconds ~default:None)
-              ~thread_id ~now objective None
-        | Some objective, Some goal ->
-            Ok
-              {
-                goal with
-                objective;
-                status = Option.value request.status ~default:goal.status;
-                time_limit_seconds =
-                  (match request.time_limit_seconds with
-                  | None -> goal.time_limit_seconds
-                  | Some value -> value);
-                updated_at = now;
-              }
-        | None, None -> Error "cannot update goal because this thread has no goal"
-        | None, Some goal ->
-            Ok
-              {
-                goal with
-                status = Option.value request.status ~default:goal.status;
-                time_limit_seconds =
-                  (match request.time_limit_seconds with
-                  | None -> goal.time_limit_seconds
-                  | Some value -> value);
-                updated_at = now;
-              }))
 
 let token_delta usage =
   max 0 (usage.input_tokens - usage.cached_input_tokens) + max 0 usage.output_tokens
@@ -524,12 +514,18 @@ let split_command input =
         in
         (command, rest)
 
-let command_plan ?automation ?(followup = false) ?(changed = false) goal =
-  { goal; automation; message = summary goal; followup; changed }
+let command_plan ?automation ?(followup = false) ?(changed = false) ?message goal =
+  {
+    goal;
+    automation;
+    message = Option.value message ~default:(summary goal);
+    followup;
+    changed;
+  }
 
 let command_usage =
-  "usage: /goal [show|status|pause|resume|complete|blocked|clear|<objective> \
-   [--time-limit 30m]]"
+  "usage: /goal [pause|resume [--time-limit 30m|--no-time-limit]|clear|\
+   <objective> [--time-limit 30m]]"
 
 let parse_duration value =
   let value = String.trim value in
@@ -545,9 +541,13 @@ let parse_duration value =
     in
     try
       let parsed = int_of_string (String.trim number) in
-      let seconds = parsed * multiplier in
-      if seconds <= 0 then Error "time limit must be positive"
-      else Ok seconds
+      if parsed <= 0 then Error "time limit must be positive"
+      else if parsed > 2_147_483_647 / multiplier then
+        Error "time limit is too large"
+      else
+        let seconds = parsed * multiplier in
+        if seconds <= 0 then Error "time limit must be positive"
+        else Ok seconds
     with Failure _ ->
       Error "time limit must be a duration like 90s, 30m, or 2h"
 
@@ -558,13 +558,21 @@ let parse_time_limit_args args =
   in
   let rec loop objective_parts time_limit = function
     | [] -> Ok (String.concat " " (List.rev objective_parts), time_limit)
+    | "--time-limit" :: _ :: _ when Option.is_some time_limit ->
+        Error "time limit may be specified only once"
     | "--time-limit" :: value :: rest -> (
         match parse_duration value with
         | Error _ as error -> error
         | Ok seconds -> loop objective_parts (Some (Some seconds)) rest)
     | [ "--time-limit" ] ->
         Error "time limit must be a duration like 90s, 30m, or 2h"
+    | "--no-time-limit" :: _ when Option.is_some time_limit ->
+        Error "time limit may be specified only once"
     | "--no-time-limit" :: rest -> loop objective_parts (Some None) rest
+    | flag :: _
+      when String.starts_with ~prefix:"--time-limit=" flag
+           && Option.is_some time_limit ->
+        Error "time limit may be specified only once"
     | flag :: rest when String.starts_with ~prefix:"--time-limit=" flag ->
         let value =
           String.sub flag 13 (String.length flag - 13)
@@ -579,8 +587,19 @@ let parse_time_limit_args args =
   loop [] None words
 
 let apply_command_create ~thread_id ~now args store =
-  match parse_time_limit_args args with
+  let has_limit_flag =
+    args |> String.split_on_char ' '
+    |> List.exists (fun word ->
+           word = "--no-time-limit" || word = "--time-limit"
+           || String.starts_with ~prefix:"--time-limit=" word)
+  in
+  let parsed =
+    if has_limit_flag then parse_time_limit_args args
+    else Ok (String.trim args, None)
+  in
+  match parsed with
   | Error _ as error -> error
+  | Ok (_, Some None) -> Error "--no-time-limit is valid only with /goal resume"
   | Ok (objective, time_limit) ->
       let objective = String.trim objective in
       if objective = "" then Error command_usage
@@ -597,14 +616,24 @@ let apply_command_status ~now status store =
   |> Result.map (fun goal -> command_plan ~changed:true (Some goal))
 
 let apply_command_pause ~now store =
-  user_set_status ~now Paused store
-  |> Result.map (fun goal ->
-         command_plan ~automation:Automation_enabled ~changed:true (Some goal))
+  match store with
+  | None -> Error "cannot pause goal because this session has no goal"
+  | Some (goal : t) when goal.status = Paused ->
+      Ok (command_plan ~message:"Goal already paused." store)
+  | Some (goal : t) when goal.status <> Active ->
+      Error "cannot pause goal because only an active goal may be paused"
+  | Some _ ->
+      user_set_status ~now Paused store
+      |> Result.map (fun goal ->
+             command_plan ~automation:Automation_enabled ~changed:true
+               ~message:"Goal paused." (Some goal))
 
-let apply_command_clear _store =
-  Ok (command_plan ~automation:Automation_enabled ~changed:true None)
+let apply_command_clear store =
+  let message = if store = None then "No goal to clear." else "Goal cleared." in
+  Ok
+    (command_plan ~automation:Automation_enabled ~changed:true ~message None)
 
-let apply_command_resume ~now args store =
+let apply_command_resume ~now ~automation args store =
   match parse_time_limit_args args with
   | Error _ as error -> error
   | Ok (extra, time_limit) ->
@@ -616,7 +645,10 @@ let apply_command_resume ~now args store =
           | Some value -> update_time_limit ~now value (Some goal)
         in
         match store with
-        | None -> Error "cannot resume goal because this thread has no goal"
+        | None -> Error "cannot resume goal because this session has no goal"
+        | Some (goal : t)
+          when goal.status = Active && automation = Automation_enabled ->
+            Ok (command_plan ~message:"Goal already active." store)
         | Some goal -> (
             match update_limit goal with
             | Error _ as error -> error
@@ -635,17 +667,20 @@ let apply_command_resume ~now args store =
                        ~changed:true
                        (Some { goal with status = Active; updated_at = now }))))
 
-let apply_command ~thread_id ~now args store =
-  let command, rest = split_command args in
-  match command with
-  | "" | "show" | "status" -> Ok (command_plan store)
-  | "complete" -> apply_command_status ~now Complete store
-  | "blocked" -> apply_command_status ~now Blocked store
-  | "pause" -> apply_command_pause ~now store
-  | "resume" -> apply_command_resume ~now rest store
-  | "clear" | "cancel" -> apply_command_clear store
-  | "set" | "start" | "create" -> apply_command_create ~thread_id ~now rest store
-  | _ -> apply_command_create ~thread_id ~now args store
+let apply_command ?(automation = Automation_enabled) ~thread_id ~now args store =
+  let input = String.trim args in
+  if input = "" then Ok (command_plan store)
+  else if input = "pause" then apply_command_pause ~now store
+  else if input = "clear" then apply_command_clear store
+  else
+    let command, rest = split_command input in
+    if command = "resume" then
+      match parse_time_limit_args rest with
+      | Ok (extra, _) when String.trim extra = "" ->
+          apply_command_resume ~now ~automation rest store
+      | Error _ as error -> error
+      | Ok _ -> apply_command_create ~thread_id ~now input store
+    else apply_command_create ~thread_id ~now input store
 
 type continuation = {
   custom_type : string;
@@ -712,7 +747,7 @@ let continuation_for_goal ~initial goal =
     content =
       (if initial then initial_followup_prompt goal
        else continuation_followup_prompt goal);
-    display = false;
+    display = true;
     trigger_turn = true;
     deliver_as = "followUp";
   }
@@ -815,11 +850,11 @@ let automation_details automation =
         Shared.Bool (automation_requires_user_input automation) );
     ]
 
-let to_json goal =
+let to_json (goal : t) =
   Shared.Object
     [
       ("goalId", Shared.String goal.goal_id);
-      ("threadId", Shared.String goal.thread_id);
+      ("sessionId", Shared.String goal.thread_id);
       ("objective", Shared.String goal.objective);
       ("status", Shared.String (status_to_string goal.status));
       ("tokensUsed", Shared.Number (float_of_int goal.tokens_used));
@@ -838,17 +873,23 @@ let of_json = function
         | _ -> Error (name ^ " must be a string")
       in
       let int_field name =
+        let max_safe_integer = 2_147_483_647. in
         match List.assoc_opt name fields with
-        | Some (Shared.Number value) when Float.is_finite value ->
+        | Some (Shared.Number value)
+          when Float.is_finite value && value = Float.round value
+               && Float.abs value <= max_safe_integer ->
             Ok (int_of_float value)
-        | _ -> Error (name ^ " must be a number")
+        | _ -> Error (name ^ " must be a representable integer")
       in
       let option_int_field name =
+        let max_safe_integer = 2_147_483_647. in
         match List.assoc_opt name fields with
         | None | Some Shared.Null -> Ok None
-        | Some (Shared.Number value) when Float.is_finite value ->
+        | Some (Shared.Number value)
+          when Float.is_finite value && value = Float.round value
+               && Float.abs value <= max_safe_integer ->
             Ok (Some (int_of_float value))
-        | _ -> Error (name ^ " must be null or a number")
+        | _ -> Error (name ^ " must be null or a representable integer")
       in
       let reject_legacy name =
         match List.assoc_opt name fields with
@@ -864,13 +905,39 @@ let of_json = function
         | Some value -> Ok value
       in
       let* goal_id = string_field "goalId" in
-      let* thread_id = string_field "threadId" in
+      let* thread_id = string_field "sessionId" in
       let* objective = string_field "objective" in
+      let* () =
+        if objective <> String.trim objective then
+          Error "objective must not have surrounding whitespace"
+        else Result.map (fun _ -> ()) (validate_objective objective)
+      in
+      let* () =
+        if String.trim goal_id = "" then Error "goalId must not be empty"
+        else if String.trim thread_id = "" then Error "sessionId must not be empty"
+        else Ok ()
+      in
       let* tokens_used = int_field "tokensUsed" in
       let* time_used_seconds = int_field "timeUsedSeconds" in
       let* time_limit_seconds = option_int_field "timeLimitSeconds" in
       let* created_at = int_field "createdAt" in
       let* updated_at = int_field "updatedAt" in
+      let* () =
+        if tokens_used < 0 then Error "tokensUsed must be non-negative"
+        else if time_used_seconds < 0 then Error "timeUsedSeconds must be non-negative"
+        else if created_at < 0 then Error "createdAt must be non-negative"
+        else if updated_at < 0 then Error "updatedAt must be non-negative"
+        else if updated_at < created_at then
+          Error "updatedAt must not precede createdAt"
+        else validate_time_limit time_limit_seconds
+      in
+      let* () =
+        match (status, time_limit_seconds) with
+        | Time_limited, Some limit when time_used_seconds >= limit -> Ok ()
+        | Time_limited, _ ->
+            Error "time_limited status requires a reached timeLimitSeconds"
+        | _ -> Ok ()
+      in
       Ok
         (Some
            {

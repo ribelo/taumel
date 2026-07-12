@@ -48,7 +48,7 @@ let test_render_line () =
         total_cost = 0.125;
         context_percent = 12.0;
         context_window = 200000.0;
-        goal_status = None;
+        goal = None;
       }
   in
   if not (String.contains line '$') then failwith "rendered line omits cost";
@@ -74,7 +74,7 @@ let test_render_workspace_sandbox_label () =
         total_cost = 0.0;
         context_percent = 0.0;
         context_window = 0.0;
-        goal_status = None;
+        goal = None;
       }
   in
   if not (contains_substring line "workspace-write") then
@@ -100,7 +100,7 @@ let test_render_missing_model_defaults () =
         total_cost = 0.0;
         context_percent = 0.0;
         context_window = 0.0;
-        goal_status = None;
+        goal = None;
       }
   in
   if not (contains_substring line "no-model • off") then
@@ -124,7 +124,7 @@ let test_render_no_sandbox () =
         total_cost = 0.0;
         context_percent = 0.0;
         context_window = 0.0;
-        goal_status = None;
+        goal = None;
       }
   in
   if not (contains_substring line "no-sandbox") then
@@ -132,7 +132,7 @@ let test_render_no_sandbox () =
 
 let test_render_goal_status () =
   let line =
-    Footer.render_line
+    String.concat "\n" (Footer.render_lines
       ~colorize:(fun _ text -> text)
       ~width:160
       {
@@ -148,10 +148,10 @@ let test_render_goal_status () =
         total_cost = 0.0;
         context_percent = 0.0;
         context_window = 0.0;
-        goal_status = Some "Pursuing goal (12m/30m)";
-      }
+        goal = Some { status = Taumel.Goal.Active; automation = Taumel.Goal.Automation_enabled; objective = "ship"; tokens_used = 0; time_used_seconds = 720; time_limit_seconds = Some 1800; goal_id = "g"; session_id = "s" };
+      })
   in
-  if not (contains_substring line "Pursuing goal (12m/30m)") then
+  if not (contains_substring line "Goal active · ship · 12m/30m") then
     failwith "rendered line omits goal status"
 
 let () =

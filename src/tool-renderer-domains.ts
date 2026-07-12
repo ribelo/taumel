@@ -41,18 +41,30 @@ function buildGoal(name: string, result: unknown, options: unknown, theme: unkno
   const details = detailsRecord(result);
   const goal = recordFieldOrUndefined<ToolRenderFields>(details, "goal");
   const objective = goal !== undefined ? stringFieldOrUndefined(goal, "objective") : undefined;
-  const status = goal !== undefined ? stringFieldOrUndefined(goal, "status") : undefined;
+  const status = goal !== undefined
+    ? stringFieldOrUndefined(goal, "statusLabel") ?? stringFieldOrUndefined(goal, "status")
+    : undefined;
   const subject = oneLine(objective ?? stringFieldOrUndefined(args, "objective") ?? stringFieldOrUndefined(args, "status") ?? name);
   const header = headerSpec(name, subject, dotFromDetails(details), theme, status !== undefined ? themeFg(theme, "dim", `(${status})`) : "");
   if (!expanded) return { header, body: undefined };
   const entries: Entry[] = [];
   entries.push(...labeled("Objective", objective, theme));
   entries.push(...labeled("Status", status, theme));
+  const automation = recordFieldOrUndefined<ToolRenderFields>(details, "automation");
+  entries.push(...labeled("Automation", automation !== undefined ? stringFieldOrUndefined(automation, "continuation") : undefined, theme));
   if (details["accountingPending"] === true) entries.push({ text: themeFg(theme, "dim", "Accounting: final accounting pending"), exempt: true });
   const tokens = goal !== undefined ? numberFieldOrUndefined(goal, "tokensUsed") : undefined;
   const seconds = goal !== undefined ? numberFieldOrUndefined(goal, "timeUsedSeconds") : undefined;
+  const timeUsage = goal !== undefined ? stringFieldOrUndefined(goal, "timeUsage") : undefined;
+  const timeLimit = goal !== undefined ? numberFieldOrUndefined(goal, "timeLimitSeconds") : undefined;
   if (tokens !== undefined) entries.push({ text: themeFg(theme, "dim", `Tokens: ${tokens}`), exempt: true });
-  if (seconds !== undefined) entries.push({ text: themeFg(theme, "dim", `Active time: ${seconds}s`), exempt: true });
+  if (timeUsage !== undefined) entries.push({ text: themeFg(theme, "dim", `Active time: ${timeUsage}`), exempt: true });
+  else if (seconds !== undefined) entries.push({ text: themeFg(theme, "dim", `Active time: ${seconds}s`), exempt: true });
+  if (timeLimit !== undefined) entries.push({ text: themeFg(theme, "dim", `Time limit: ${timeLimit}s`), exempt: true });
+  if (goal !== undefined) {
+    entries.push(...labeled("Goal ID", stringFieldOrUndefined(goal, "goalId"), theme));
+    entries.push(...labeled("Session ID", stringFieldOrUndefined(goal, "sessionId"), theme));
+  }
   entries.push(...fullTextEntries(textContent(result), theme));
   return { header, body: entries.length === 0 ? undefined : { mode: "rail", entries } };
 }

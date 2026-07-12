@@ -576,6 +576,25 @@ export function notificationMessageRenderer() {
   };
 }
 
+export function goalContinuationMessageRenderer() {
+  return (message: unknown, options: unknown, theme: unknown) => {
+    if (!isToolRenderFields(message)) return undefined;
+    const details = detailsRecord(message);
+    const goal = recordFieldOrUndefined<ToolRenderFields>(details, "goal");
+    const objective = goal === undefined ? "" : stringFieldOrUndefined(goal, "objective") ?? "";
+    const content = stringFieldOrUndefined(message, "content") ?? "";
+    if (objective === "" || content === "") return undefined;
+    const expanded = expandedFromOptions(options);
+    const block: Block = {
+      header: headerSpec("Goal continuation", objective, "muted", theme),
+      body: expanded
+        ? { mode: "rail", entries: fullTextEntries(content, theme) }
+        : undefined,
+    };
+    return renderBlock(block, expanded);
+  };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // taumel.cron.fire message renderer (live and replayed cron fires)
 // ─────────────────────────────────────────────────────────────────────────────

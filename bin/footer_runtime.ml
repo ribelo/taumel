@@ -9,13 +9,13 @@ let make_component host tui theme footer_data unsub_branch unsub_footer =
           | Some width -> int_of_float width
           | None -> 0
         in
-        let line =
-          Model.render_line
+        let lines =
+          Model.render_lines
             ~colorize:(Footer_bridge.colorize host theme)
             ~width
             (Footer_bridge.snapshot_for_render host footer_data)
         in
-        js_lines [ line ])
+        js_lines lines)
   in
   let dispose =
     Js.wrap_callback (fun () ->

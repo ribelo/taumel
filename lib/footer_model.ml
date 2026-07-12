@@ -16,7 +16,7 @@ type snapshot = {
   total_cost : float;
   context_percent : float;
   context_window : float;
-  goal_status : string option;
+  goal : Goal.presentation option;
 }
 
 let empty_git_delta = { added = 0; removed = 0 }
@@ -183,11 +183,6 @@ let render_line ~colorize ~width snapshot =
     let middle_raw =
       if provider = "" then model_and_meta else provider ^ " • " ^ model_and_meta
     in
-    let middle_raw =
-      match snapshot.goal_status with
-      | None -> middle_raw
-      | Some goal_status -> goal_status ^ " • " ^ middle_raw
-    in
     let cost = Printf.sprintf "$%.3f" snapshot.total_cost in
     let right_raw =
       match context_text snapshot.context_percent snapshot.context_window with
@@ -231,3 +226,36 @@ let render_line ~colorize ~width snapshot =
       else
         let raw = left_raw ^ " " ^ right_raw in
         colorize "dim" (take_width width raw)
+
+let goal_status_label = function
+  | Goal.Active -> "Goal active"
+  | Goal.Paused -> "Goal paused"
+  | Goal.Blocked -> "Goal blocked"
+  | Goal.Usage_limited -> "Goal usage limited"
+  | Goal.Time_limited -> "Goal time limited"
+  | Goal.Complete -> "Goal complete"
+
+let render_goal_line ~colorize ~width (goal : Goal.presentation) =
+  let status = goal_status_label goal.status in
+  let automation =
+    match goal.automation with
+    | Goal.Automation_enabled -> ""
+    | Goal.Automation_interrupted -> " · interrupted"
+  in
+  let time =
+    match goal.time_limit_seconds with
+    | None -> Goal.format_duration goal.time_used_seconds
+    | Some limit ->
+        Goal.format_duration goal.time_used_seconds ^ "/" ^ Goal.format_duration limit
+  in
+  let fixed = status ^ automation ^ " · " ^ time in
+  let objective_budget = width - visible_width fixed - 3 in
+  let objective = truncate_middle goal.objective (max 0 objective_budget) in
+  let raw = if objective = "" then fixed else status ^ automation ^ " · " ^ objective ^ " · " ^ time in
+  colorize "dim" (take_width width raw)
+
+let render_lines ~colorize ~width snapshot =
+  let primary = render_line ~colorize ~width snapshot in
+  match snapshot.goal with
+  | None -> [ primary ]
+  | Some goal -> [ primary; render_goal_line ~colorize ~width goal ]

@@ -99,6 +99,11 @@ let core_call name_js args_js =
   | "clearInterruptedGoalAutomation" ->
       Session_sync.clear_interrupted_goal_automation (arg 0);
       ok_obj []
+  | "finalizeGoalError" ->
+      let facts = arg 0 in
+      Goal_tools.finalize_error (get_string facts "status")
+        (Unsafe.get facts "ctx");
+      ok_obj []
   | "planCommandChildSession" -> Command_bridge.plan_child_session (arg 0)
   | "planCommandChildDispatch" -> Command_bridge.plan_child_dispatch (arg 0)
   | "finishCommandChildDispatch" -> Command_bridge.finish_child_dispatch (arg 0)

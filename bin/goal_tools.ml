@@ -10,11 +10,13 @@ let js_goal (goal : Taumel.Goal.t) =
   Unsafe.obj
     [|
       ("goalId", js_string goal.goal_id);
-      ("threadId", js_string goal.thread_id);
+      ("sessionId", js_string goal.thread_id);
       ("objective", js_string goal.objective);
       ("status", js_string (Taumel.Goal.status_to_string goal.status));
+      ("statusLabel", js_string (Taumel.Goal.status_label goal.status));
       ("tokensUsed", js_number (float_of_int goal.tokens_used));
       ("timeUsedSeconds", js_number (float_of_int goal.time_used_seconds));
+      ("timeUsage", js_string (Taumel.Goal.goal_usage goal));
       ("timeLimitSeconds", js_optional_int goal.time_limit_seconds);
       ("createdAt", js_number (float_of_int goal.created_at));
       ("updatedAt", js_number (float_of_int goal.updated_at));
@@ -53,7 +55,8 @@ let tool_result ?(accounting_pending = false) goal text =
         inject (details ~accounting_pending goal !goal_automation) );
     ]
 
-let command_result ?(followup = false) ?start_objective ?rollback goal message =
+let command_result ?(followup = false) ?(inspection = false) ?start_objective
+    ?rollback goal message =
   ok_obj
     ([
        ("action", js_string "command_result");
@@ -61,6 +64,7 @@ let command_result ?(followup = false) ?start_objective ?rollback goal message =
        ("details", inject (details goal !goal_automation));
      ]
     @ (if followup then [ ("goalFollowup", js_bool true) ] else [])
+    @ (if inspection then [ ("goalInspection", js_bool true) ] else [])
     @ (match start_objective with
       | None -> []
       | Some objective -> [ ("goalStartObjective", js_string objective) ])
@@ -68,7 +72,7 @@ let command_result ?(followup = false) ?start_objective ?rollback goal message =
       | None -> []
       | Some value -> [ ("goalRollback", inject value) ]))
 
-let thread_id () = if state.cwd = "" then "current" else state.cwd
+let session_id ctx = Session_store.session_id_from_ctx ctx
 
 let latest_assistant_stop_reason event =
   let messages = get_object_array event "messages" in
@@ -111,9 +115,11 @@ let plan_continuation raw_facts =
         (continuation_facts facts)
     with
     | Taumel.Goal.Send_continuation plan ->
+        let details = details !current_goal !goal_automation in
         Tool_contracts.GoalContinuationSend.create ~kind:"send"
           ~customType:plan.custom_type ~content:plan.content ~display:plan.display
-          ~triggerTurn:plan.trigger_turn ~deliverAs:plan.deliver_as ()
+          ~triggerTurn:plan.trigger_turn ~deliverAs:plan.deliver_as
+          ~details:(Obj.magic details) ()
         |> Tool_contracts.GoalContinuationSend.t_to_js |> inject
     | Taumel.Goal.No_continuation ->
         Tool_contracts.GoalContinuationNone.create ~kind:"none" ()
@@ -188,7 +194,7 @@ let prepare_create params ctx =
           (Tool_contracts.CreateGoalParams.get_time_limit_seconds params)
       in
       match
-        Taumel.Goal.create ?time_limit_seconds ~thread_id:(thread_id ())
+        Taumel.Goal.create ?time_limit_seconds ~thread_id:(session_id ctx)
           ~now:(now_seconds ()) objective !current_goal
       with
       | Error message -> error_obj message
@@ -223,32 +229,38 @@ let prepare_update params ctx =
         | "blocked" -> Taumel.Goal.Blocked
         | _ -> failwith "invalid parsed update_goal.status"
       in
-      let accounting_pending =
+      let was_active =
         match !current_goal with
         | Some goal when goal.status = Taumel.Goal.Active -> true
         | _ -> false
       in
+      if was_active then Session_sync.account_goal_turn_end ctx;
       match Taumel.Goal.update_status ~now:(now_seconds ()) status !current_goal with
       | Error message -> error_obj message
       | Ok goal ->
           current_goal := Some goal;
-          pending_goal_terminal_status :=
-            if accounting_pending then Some status else None;
+          pending_goal_terminal_status := None;
           Session_sync.save_goal_state ctx;
-          tool_result ~accounting_pending (Some goal) "Goal updated.")
+          tool_result (Some goal) "Goal updated.")
+
+let finalize_error status ctx =
+  let status =
+    if status = "usage_limited" then Taumel.Goal.Usage_limited
+    else Taumel.Goal.Blocked
+  in
+  match !current_goal with
+  | Some goal when goal.status = Taumel.Goal.Active -> (
+      let goal = { goal with status; updated_at = now_seconds () } in
+      current_goal := Some goal;
+      Session_sync.save_goal_state ctx)
+  | _ -> ()
 
 let handle_command args ctx =
-  (* Mirror update_goal: a user-driven terminal transition accounts the
-     in-flight turn before the goal leaves Active. *)
-  (let command, _ = Taumel.Goal.split_command args in
-   match String.lowercase_ascii command with
-   | "complete" | "blocked" -> Session_sync.account_goal_turn_end ctx
-   | _ -> ());
   let previous_goal = !current_goal in
   let previous_automation = !goal_automation in
   match
-    Taumel.Goal.apply_command ~thread_id:(thread_id ()) ~now:(now_seconds ()) args
-      !current_goal
+    Taumel.Goal.apply_command ~automation:!goal_automation
+      ~thread_id:(session_id ctx) ~now:(now_seconds ()) args !current_goal
   with
   | Error message -> error_obj message
   | Ok plan ->
@@ -287,6 +299,7 @@ let handle_command args ctx =
                |])
       in
       command_result ~followup:(plan.followup && not starts_goal)
+        ~inspection:(String.trim args = "")
         ?start_objective ?rollback plan.goal plan.message
 
 let rollback_goal_command raw_facts =

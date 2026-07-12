@@ -29,7 +29,7 @@ import {
   writePatchFiles,
   appendToFile,
 } from "./util.ts";
-import { notificationMessageRenderer, renderersForTool } from "./tool-renderer.ts";
+import { goalContinuationMessageRenderer, notificationMessageRenderer, renderersForTool } from "./tool-renderer.ts";
 import {
   applyChildSessionUpdate,
   childSessionCacheKeyScopeFromContext,
@@ -765,6 +765,7 @@ export function registerGatewayTools(
   if (typeof pi.registerTool !== "function") return;
   if (typeof pi.registerMessageRenderer === "function") {
     pi.registerMessageRenderer("notification", notificationMessageRenderer());
+    pi.registerMessageRenderer("taumel.goal.continue", goalContinuationMessageRenderer());
   }
   installExecNotificationLifecycle(pi, core);
   installIsolatedChildOwnershipLifecycle(pi, childSessions);

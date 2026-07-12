@@ -275,8 +275,8 @@ if (decodeGoalContinuationPlan({ kind: "none" }).kind !== "none") {
   throw new Error("empty goal continuation did not decode");
 }
 const continuation = decodeGoalContinuationPlan({
-  kind: "send", customType: "taumel.goal", content: "Continue", display: false,
-  triggerTurn: true, deliverAs: "followUp",
+  kind: "send", customType: "taumel.goal.continue", content: "Continue", display: true,
+  triggerTurn: true, deliverAs: "followUp", details: { goal: { objective: "ship" } },
 });
 if (continuation.kind !== "send" || continuation.content !== "Continue") {
   throw new Error("goal continuation did not decode");

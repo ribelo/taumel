@@ -54,33 +54,10 @@ let active_network_mode_string () =
   | Taumel.Sandbox.Network_enabled -> "enabled"
   | Taumel.Sandbox.Network_disabled -> "disabled"
 
-let time_usage (goal : Taumel.Goal.t) =
-  match goal.time_limit_seconds with
-  | None -> None
-  | Some limit ->
-      Some
-        (Taumel.Goal.format_duration goal.time_used_seconds ^ "/"
-       ^ Taumel.Goal.format_duration limit)
-
-let goal_status_text () =
-  match (!current_goal, !goal_automation) with
-  | Some _, Taumel.Goal.Automation_interrupted ->
-      Some "Goal interrupted"
-  | Some goal, _ -> (
-      match goal.status with
-      | Taumel.Goal.Active -> (
-          match time_usage goal with
-          | None -> Some "Pursuing goal"
-          | Some usage -> Some ("Pursuing goal (" ^ usage ^ ")"))
-      | Taumel.Goal.Paused -> Some "Goal paused (/goal resume)"
-      | Taumel.Goal.Blocked -> Some "Goal blocked (/goal resume)"
-      | Taumel.Goal.Usage_limited -> Some "Goal hit usage limits (/goal resume)"
-      | Taumel.Goal.Time_limited -> (
-          match time_usage goal with
-          | None -> Some "Goal time limit reached"
-          | Some usage -> Some ("Goal time limit reached (" ^ usage ^ ")"))
-      | Taumel.Goal.Complete -> Some "Goal complete")
-  | None, _ -> None
+let goal_presentation () =
+  Option.map
+    (Taumel.Goal.present !goal_automation)
+    !current_goal
 
 let snapshot_for_render host footer_data =
   let branch =
@@ -104,5 +81,5 @@ let snapshot_for_render host footer_data =
     total_cost = state.total_cost;
     context_percent = state.context_percent;
     context_window = state.context_window;
-    goal_status = goal_status_text ();
+    goal = goal_presentation ();
   }

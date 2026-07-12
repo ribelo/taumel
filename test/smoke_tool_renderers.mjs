@@ -1,5 +1,5 @@
 import { toolNames } from "../src/tool-contracts.ts";
-import { cronFireMessageRenderer, notificationMessageRenderer, renderersForTool, skillMessageRenderer } from "../src/tool-renderer.ts";
+import { cronFireMessageRenderer, goalContinuationMessageRenderer, notificationMessageRenderer, renderersForTool, skillMessageRenderer } from "../src/tool-renderer.ts";
 import { Box, visibleWidth } from "@earendil-works/pi-tui";
 
 const assert = (condition, message) => {
@@ -536,6 +536,18 @@ const listRunsCompact = renderText(renderersForTool("exa_agent_list_runs").rende
 assert(/• exa_agent_list_runs · recent runs \(12\)/.test(listRunsCompact) && !listRunsCompact.includes("Result 1"), `exa_agent_list_runs compact should be one-line count: ${listRunsCompact}`);
 
 // notification — opaque exec_completion + agent_completion ready signals.
+const renderGoalContinuation = goalContinuationMessageRenderer();
+const goalContinuationMessage = {
+  customType: "taumel.goal.continue",
+  content: "Continue working toward the active goal.\n\nFull exact prompt.",
+  details: { goal: { objective: "ship renderer coverage", status: "active" }, automation: { continuation: "enabled" } },
+};
+const compactGoalContinuation = renderText(renderGoalContinuation(goalContinuationMessage, { expanded: false }, theme));
+const expandedGoalContinuation = renderText(renderGoalContinuation(goalContinuationMessage, { expanded: true }, theme));
+assert(compactGoalContinuation.includes("Goal continuation") && compactGoalContinuation.includes("ship renderer coverage"), `goal continuation compact rendering wrong: ${compactGoalContinuation}`);
+assert(!compactGoalContinuation.includes("Full exact prompt"), `goal continuation compact rendering leaked prompt: ${compactGoalContinuation}`);
+assert(expandedGoalContinuation.includes("Full exact prompt"), `goal continuation expanded rendering omitted exact prompt: ${expandedGoalContinuation}`);
+
 const renderNotification = notificationMessageRenderer();
 const execNote = 'Command session 3 has finished. To read and consume the result, call write_stdin with session_id=3, chars="", yield_time_ms=5000.';
 const compactExecNote = renderText(renderNotification({ customType: "notification", content: execNote }, { expanded: false }, theme));

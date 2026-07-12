@@ -266,6 +266,7 @@ export const GoalContinuationSendSchema = Type.Object(
     kind: Type.Literal("send"), customType: Type.String({ minLength: 1 }),
     content: Type.String({ minLength: 1 }), display: Type.Boolean(),
     triggerTurn: Type.Boolean(), deliverAs: Type.String({ minLength: 1 }),
+    details: Type.Unknown(),
   },
   { $id: "GoalContinuationSend", additionalProperties: false },
 );
@@ -1017,7 +1018,7 @@ export const GatewayCommandResultSchema = Type.Object(
     ok: Type.Boolean(), action: Type.Literal("command_result"), message: Type.String(),
     error: Type.Optional(Type.String()), details: Type.Optional(Type.Unknown()),
     goalFollowup: Type.Optional(Type.Boolean()), goalStartObjective: Type.Optional(Type.String()),
-    goalRollback: Type.Optional(Type.Unknown()),
+    goalRollback: Type.Optional(Type.Unknown()), goalInspection: Type.Optional(Type.Boolean()),
   },
   { $id: "GatewayCommandResult", additionalProperties: false },
 );

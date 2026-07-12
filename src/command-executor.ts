@@ -35,17 +35,26 @@ type CommandContext = { readonly hasPendingMessages?: () => unknown; readonly ui
 type CommandUi = {
   readonly notify?: (message: string, level: string) => unknown;
   readonly select?: (title: string, labels: readonly string[]) => unknown;
+  readonly custom?: (factory: unknown) => Promise<unknown>;
 };
-type AssistantMessage = { readonly role?: unknown; readonly stopReason?: unknown };
+type AssistantMessage = { readonly role?: unknown; readonly stopReason?: unknown; readonly errorMessage?: unknown };
 type AssistantEvent = { readonly messages?: unknown; readonly willRetry?: unknown };
 type CommandResultLike = {
   readonly ok?: unknown; readonly action?: unknown; readonly message?: unknown; readonly error?: unknown;
   readonly details?: unknown; readonly goalStartObjective?: unknown; readonly goalRollback?: unknown;
   readonly goalFollowup?: unknown;
+  readonly goalInspection?: unknown;
 };
 type VisibilityCommandDetails = { readonly visibilityChanged?: unknown; readonly category?: unknown; readonly enabledName?: unknown };
 type ChildUpdateDetails = { readonly childSessionUpdates?: unknown };
+type GoalCommandDetails = { readonly goal?: unknown; readonly automation?: unknown };
+type GoalAutomationView = { readonly continuation?: unknown };
+type GoalView = {
+  readonly statusLabel?: unknown; readonly objective?: unknown; readonly timeUsage?: unknown;
+  readonly tokensUsed?: unknown; readonly timeUsedSeconds?: unknown; readonly timeLimitSeconds?: unknown;
+};
 type SessionLifecycleEvent = { readonly type?: unknown; readonly willRetry?: unknown };
+type InputEvent = { readonly source?: unknown };
 
 function commandContext(value: unknown): Partial<CommandContext> | undefined {
   return typeof value === "object" && value !== null ? value as Partial<CommandContext> : undefined;
@@ -95,15 +104,42 @@ function latestAssistantStopReason(event: unknown): string {
   return "";
 }
 
+function latestAssistantErrorMessage(event: unknown): string {
+  const messages = typeof event === "object" && event !== null ? (event as AssistantEvent).messages : undefined;
+  if (!Array.isArray(messages)) return "";
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const rawMessage = messages[index];
+    const message = typeof rawMessage === "object" && rawMessage !== null ? rawMessage as AssistantMessage : undefined;
+    if (message?.role !== "assistant") continue;
+    return typeof message.errorMessage === "string" ? message.errorMessage : "";
+  }
+  return "";
+}
+
+function isUsageLimitedError(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return [
+    "gousagelimiterror",
+    "freeusagelimiterror",
+    "monthly usage limit reached",
+    "available balance",
+    "insufficient_quota",
+    "out of budget",
+    "quota exceeded",
+    "billing",
+  ].some((marker) => normalized.includes(marker));
+}
+
 async function sendGoalMessage(
   pi: PiLike,
   customType: string,
   content: string,
   display: boolean,
   options: MessageDeliveryOptions,
+  details?: unknown,
 ): Promise<void> {
   if (typeof pi.sendMessage === "function") {
-    await pi.sendMessage({ customType, content, display }, options);
+    await pi.sendMessage({ customType, content, display, ...(details === undefined ? {} : { details }) }, options);
     return;
   }
   if (typeof pi.sendUserMessage === "function") {
@@ -111,16 +147,41 @@ async function sendGoalMessage(
   }
 }
 
-async function sendVisibleGoalResult(pi: PiLike, result: CommandResultLike): Promise<void> {
-  const message = typeof result.message === "string" ? result.message : "";
-  if (message === "") return;
-  await sendGoalMessage(
-    pi,
-    "taumel.goal.summary",
-    message,
-    true,
-    { triggerTurn: false },
-  );
+async function showGoalInspection(result: CommandResultLike, ctx: unknown): Promise<void> {
+  const rawUi = commandContext(ctx)?.ui;
+  const ui = typeof rawUi === "object" && rawUi !== null ? rawUi as CommandUi : undefined;
+  if (typeof ui?.custom !== "function") return;
+  const details = typeof result.details === "object" && result.details !== null ? result.details as GoalCommandDetails : {};
+  const goal = typeof details.goal === "object" && details.goal !== null ? details.goal as GoalView : undefined;
+  const automation = typeof details.automation === "object" && details.automation !== null
+    ? details.automation as GoalAutomationView
+    : undefined;
+  const status = typeof goal?.statusLabel === "string" ? goal.statusLabel : "none";
+  const objective = typeof goal?.objective === "string" ? goal.objective : "";
+  const time = typeof goal?.timeUsage === "string" ? goal.timeUsage : "";
+  const candidate = ["Goal", status, objective, time].filter((part) => part !== "").join(" · ");
+  let expanded = false;
+  await ui.custom((tui: unknown, theme: unknown, _keys: unknown, done: () => void) => ({
+    render: (width: number) => {
+      const rawLines = expanded && goal !== undefined
+        ? [candidate, `Objective: ${objective}`, `Status: ${status}`, `Automation: ${String(automation?.continuation ?? "enabled")}`, `Tokens: ${String(goal.tokensUsed ?? 0)}`, `Active time: ${time}`, `Time limit: ${goal.timeLimitSeconds == null ? "none" : String(goal.timeLimitSeconds)}`]
+        : [candidate];
+      const lines = rawLines.map((raw) => raw.length <= width ? raw : `${raw.slice(0, Math.max(0, width - 3))}...`);
+      const themed = typeof theme === "object" && theme !== null && typeof (theme as { fg?: unknown }).fg === "function"
+        ? lines.map((line) => (theme as { fg: (color: string, text: string) => string }).fg("customMessageLabel", line))
+        : lines;
+      return themed;
+    },
+    invalidate: () => undefined,
+    handleInput: (data: string) => {
+      if (data === "\x0f") {
+        expanded = !expanded;
+        if (typeof tui === "object" && tui !== null && typeof (tui as { requestRender?: unknown }).requestRender === "function") {
+          (tui as { requestRender: () => void }).requestRender();
+        }
+      } else done();
+    },
+  }));
 }
 
 async function sendGoalContinuation(
@@ -148,6 +209,7 @@ async function sendGoalContinuation(
         triggerTurn: plan.triggerTurn,
         deliverAs: plan.deliverAs,
       },
+      plan.details,
     );
   } catch (error) {
     if (isStaleContextError(error)) return;
@@ -182,7 +244,10 @@ async function executeGoalCommandSideEffects(
     }
     return;
   }
-  await sendVisibleGoalResult(pi, command);
+  if (command.goalInspection === true) {
+    await showGoalInspection(command, ctx);
+    return;
+  }
   if (command.goalFollowup === true) {
     await sendGoalContinuation(pi, core, ctx, true, {
       hostIdle: true,
@@ -387,6 +452,12 @@ export function registerGatewayCommands(
         const ui = typeof rawUi === "object" && rawUi !== null ? rawUi as CommandUi : undefined;
         const notify = ui?.notify;
         const currentResult = commandResult(result);
+        const suppressGoalNotification = name === "goal" && (
+          typeof currentResult?.goalStartObjective === "string"
+          || currentResult?.goalFollowup === true
+          || currentResult?.goalInspection === true
+        );
+        if (suppressGoalNotification) return result;
         const notification = decodeCommandNotificationPlan(core.call("planCommandNotification", [{
           commandName: name,
           ok: currentResult?.ok === true,
@@ -435,6 +506,13 @@ export function installGoalContinuationLoop(pi: PiLike, core: CoreBridge): void 
     pi.subscribe(observeSessionEvent);
   }
 
+  pi.on("input", (event, ctx) => {
+    const source = typeof event === "object" && event !== null
+      ? (event as InputEvent).source
+      : undefined;
+    if (source !== "extension") core.call("clearInterruptedGoalAutomation", [ctx]);
+  });
+
   pi.on("agent_end", async (event, ctx) => {
     try {
       observeSessionEvent(event);
@@ -442,6 +520,17 @@ export function installGoalContinuationLoop(pi: PiLike, core: CoreBridge): void 
       const stopReason = latestAssistantStopReason(event);
       if (stopReason === "aborted") {
         core.call("interruptGoalAutomation", [ctx]);
+      }
+      if (
+        stopReason === "error"
+        && typeof event === "object"
+        && event !== null
+        && (event as SessionLifecycleEvent).willRetry === false
+      ) {
+        const status = isUsageLimitedError(latestAssistantErrorMessage(event))
+          ? "usage_limited"
+          : "blocked";
+        core.call("finalizeGoalError", [{ status, ctx }]);
       }
       await sendGoalContinuation(pi, core, ctx, false, {
         // Pi emits agent_end before some host surfaces report idle; this event is

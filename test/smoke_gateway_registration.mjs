@@ -25,6 +25,9 @@ if (JSON.stringify(registered) !== JSON.stringify(["read"])) {
 if (!renderers.includes("notification")) {
   throw new Error("notification renderer was not registered");
 }
+if (!renderers.includes("taumel.goal.continue")) {
+  throw new Error("goal continuation renderer was not registered");
+}
 for (const event of ["session_start", "session_resume", "session_switch", "session_shutdown", "turn_end", "agent_end"]) {
   if ((handlers.get(event) ?? []).length === 0) throw new Error(`missing gateway lifecycle handler: ${event}`);
 }

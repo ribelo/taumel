@@ -10,7 +10,7 @@ depends_on: []
 
 A goal is a per-session objective that lets the agent continue useful work across
 turns. It tracks lifecycle status, active-time accounting, token telemetry, and
-an automation gate that decides whether the next hidden continuation may run.
+an automation gate that decides whether the next visible system-authored continuation may run.
 Goal state and the continuation predicate live in the OCaml core; TypeScript is
 the smallest possible Pi bridge. Codex goal is the architectural reference, and
 Pi owns retry and compaction. Taumel diverges from Codex on one point: interrupt

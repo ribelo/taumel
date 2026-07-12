@@ -697,7 +697,7 @@ let test_permissions_active_resolution () =
 let test_goal_command_planning () =
   let created =
     expect_ok "goal command create"
-      (Goal.apply_command ~thread_id:"thread" ~now:10 "start ship the thing"
+      (Goal.apply_command ~thread_id:"thread" ~now:10 "ship the thing"
          None)
   in
   assert_bool "goal command create followup" created.followup;
@@ -711,20 +711,13 @@ let test_goal_command_planning () =
   assert_equal "goal command create objective" "ship the thing" active.objective;
   let shown =
     expect_ok "goal command show"
-      (Goal.apply_command ~thread_id:"thread" ~now:11 "status" created.goal)
+      (Goal.apply_command ~thread_id:"thread" ~now:11 "" created.goal)
   in
   assert_bool "goal command show no followup" (not shown.followup);
   assert_equal "goal command show summary" "Goal active: ship the thing (0s)"
     shown.message;
-  let completed =
-    expect_ok "goal command complete"
-      (Goal.apply_command ~thread_id:"thread" ~now:12 "complete" shown.goal)
-  in
-  assert_bool "goal command complete no followup" (not completed.followup);
-  assert_equal "goal command complete summary" "Goal complete: ship the thing (0s)"
-    completed.message;
-  assert_bool "goal command complete no automation"
-    (completed.automation = None)
+  expect_error "goal command complete is not a user command"
+    (Goal.apply_command ~thread_id:"thread" ~now:12 "complete" shown.goal)
 
 let test_goal_continuation_planning () =
   let goal =

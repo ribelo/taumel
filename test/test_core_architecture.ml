@@ -407,8 +407,8 @@ let test_goal_state_machine () =
   in
   assert_int "tokens accounted" 11 goal.tokens_used;
   assert_bool "time limited" (goal.status = Goal.Time_limited);
-  let complete = expect_ok "complete goal" (Goal.update_status ~now:4 Goal.Complete (Some goal)) in
-  assert_bool "complete status" (complete.status = Goal.Complete)
+  expect_error "inactive goal cannot be completed"
+    (Goal.update_status ~now:4 Goal.Complete (Some goal))
 
 let test_ralph_ownership () =
   let task =

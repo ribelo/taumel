@@ -94,7 +94,8 @@ let facts ?(automation = Goal.Automation_enabled) ?(host_idle = true)
 let assert_continues label initial goal =
   match Goal.plan_continuation ~initial (facts goal) with
   | Goal.Send_continuation plan ->
-      assert_bool (label ^ ": trigger") plan.trigger_turn
+      assert_bool (label ^ ": trigger") plan.trigger_turn;
+      assert_bool (label ^ ": visible") plan.display
   | Goal.No_continuation -> failwith (label ^ ": expected continuation")
 
 let assert_no_continuation label facts =
@@ -178,6 +179,48 @@ let test_commands () =
         (resumed.automation = Some Goal.Automation_enabled)
   | None -> failwith "resume returned no goal"
 
+let test_model_cannot_replace_or_rewrite_inactive_goal () =
+  let goal =
+    expect_ok "create"
+      (Goal.create ~thread_id:"session" ~now:1 "ship" None)
+  in
+  let complete =
+    expect_ok "complete" (Goal.update_status ~now:2 Goal.Complete (Some goal))
+  in
+  expect_error "create over complete"
+    "cannot create a new goal because this session already has a goal; clear it first"
+    (Goal.create ~thread_id:"session" ~now:3 "replace" (Some complete));
+  expect_error "rewrite complete"
+    "cannot update goal because only an active goal may be completed or blocked"
+    (Goal.update_status ~now:4 Goal.Blocked (Some complete))
+
+let test_canonical_command_grammar () =
+  let created =
+    expect_ok "reserved objective"
+      (Goal.apply_command ~thread_id:"session" ~now:1
+         "pause deployment automation" None)
+  in
+  let goal = Option.get created.goal in
+  assert_bool "reserved word remains objective"
+    (goal.objective = "pause deployment automation");
+  expect_error "duplicate limits" "time limit may be specified only once"
+    (Goal.apply_command ~thread_id:"session" ~now:1
+       "ship --time-limit 1m --no-time-limit" None);
+  let paused =
+    expect_ok "pause"
+      (Goal.apply_command ~thread_id:"session" ~now:2 "pause" (Some goal))
+  in
+  let paused_again =
+    expect_ok "pause idempotent"
+      (Goal.apply_command ~thread_id:"session" ~now:3 "pause" paused.goal)
+  in
+  assert_bool "pause idempotent unchanged" (not paused_again.changed);
+  assert_bool "pause acknowledgement"
+    (paused_again.message = "Goal already paused.");
+  expect_error "removed complete command"
+    "cannot create a new goal because this session already has a goal; clear it first"
+    (Goal.apply_command ~thread_id:"session" ~now:4 "complete" paused.goal)
+
 let test_legacy_goal_rejected () =
   let legacy =
     Shared.Object
@@ -196,6 +239,62 @@ let test_legacy_goal_rejected () =
   expect_error "legacy" "incompatible saved Taumel goal entry"
     (Goal.codec.decode legacy)
 
+let persisted_goal ?(status = "active") ?(tokens = 0.) ?(time = 0.)
+    ?(limit = Shared.Null) ?(created = 1.) ?(updated = 1.) () =
+  Shared.Object
+    [
+      ("goalId", Shared.String "g");
+      ("sessionId", Shared.String "s");
+      ("objective", Shared.String "ship");
+      ("status", Shared.String status);
+      ("tokensUsed", Shared.Number tokens);
+      ("timeUsedSeconds", Shared.Number time);
+      ("timeLimitSeconds", limit);
+      ("createdAt", Shared.Number created);
+      ("updatedAt", Shared.Number updated);
+    ]
+
+let test_persisted_invariants () =
+  expect_error "negative tokens" "tokensUsed must be non-negative"
+    (Goal.codec.decode (persisted_goal ~tokens:(-1.) ()));
+  expect_error "timestamp order" "updatedAt must not precede createdAt"
+    (Goal.codec.decode (persisted_goal ~created:2. ~updated:1. ()));
+  expect_error "contradictory time limited"
+    "time_limited status requires a reached timeLimitSeconds"
+    (Goal.codec.decode (persisted_goal ~status:"time_limited" ()))
+
+let test_fork_rebinds_identity_only () =
+  let goal =
+    expect_ok "fork source"
+      (Goal.create ~thread_id:"parent" ~now:1 "ship" None)
+  in
+  let goal = { goal with tokens_used = 10; time_used_seconds = 4 } in
+  let forked = Goal.rebind_for_fork ~session_id:"fork" goal in
+  assert_bool "fork session identity" (forked.thread_id = "fork");
+  assert_bool "fork goal identity" (forked.goal_id <> goal.goal_id);
+  assert_bool "fork objective" (forked.objective = goal.objective);
+  assert_bool "fork telemetry"
+    (forked.tokens_used = 10 && forked.time_used_seconds = 4)
+
+let test_user_reopens_completed_goal () =
+  let active =
+    expect_ok "reopen source"
+      (Goal.create ~thread_id:"session" ~now:1 "ship" None)
+  in
+  let complete =
+    expect_ok "model completes"
+      (Goal.update_status ~now:2 Goal.Complete (Some active))
+  in
+  let resumed =
+    expect_ok "user resumes complete"
+      (Goal.apply_command ~thread_id:"session" ~now:3 "resume" (Some complete))
+  in
+  let reopened = Option.get resumed.goal in
+  assert_bool "reopen active" (reopened.status = Goal.Active);
+  assert_bool "reopen identity" (reopened.goal_id = complete.goal_id);
+  assert_bool "reopen objective" (reopened.objective = complete.objective);
+  assert_bool "reopen continuation" resumed.followup
+
 let () =
   test_time_limit_accounting ();
   test_turn_clock_excludes_pause_time ();
@@ -203,4 +302,9 @@ let () =
   test_continuation_gates ();
   test_automation_codec ();
   test_commands ();
-  test_legacy_goal_rejected ()
+  test_model_cannot_replace_or_rewrite_inactive_goal ();
+  test_canonical_command_grammar ();
+  test_legacy_goal_rejected ();
+  test_persisted_invariants ();
+  test_fork_rebinds_identity_only ();
+  test_user_reopens_completed_goal ()

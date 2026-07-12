@@ -16,7 +16,7 @@ type snapshot = {
   total_cost : float;
   context_percent : float;
   context_window : float;
-  goal_status : string option;
+  goal : Goal.presentation option;
 }
 
 val empty_git_delta : git_delta
@@ -25,3 +25,4 @@ val count_in_progress_issues : 'a list -> int
 val provider_label : string -> string
 val format_token_window : float -> string
 val render_line : colorize:(string -> string -> string) -> width:int -> snapshot -> string
+val render_lines : colorize:(string -> string -> string) -> width:int -> snapshot -> string list

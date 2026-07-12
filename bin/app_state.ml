@@ -49,6 +49,7 @@ let visibility_warning_flags : Taumel.Visibility.warning_flags ref =
   ref Taumel.Visibility.empty_warning_flags
 let loaded_session_id : string option ref = ref None
 let last_goal_accounting_key : string option ref = ref None
+let pending_goal_load_warning : string option ref = ref None
 let footer_event = "taumel:footer:changed"
 
 let active_host_or_empty () =
