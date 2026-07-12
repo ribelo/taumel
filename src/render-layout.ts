@@ -24,6 +24,7 @@ const RAIL_FIRST = "  └ ";
 const RAIL_CONT = "    ";
 const LEFT_GUTTER = " ";
 const ELLIPSIS = "…";
+const RESET_TEXT_STYLE = "\x1b[22;23;24;25;27;28;29;39m";
 
 export type Block = { readonly header: HeaderSpec; readonly body: Body | undefined };
 
@@ -105,7 +106,10 @@ function layoutHeader(header: HeaderSpec, expanded: boolean, width: number): str
 }
 
 function clampLine(line: string, width: number): string {
-  return visibleWidth(line) > width ? truncateToWidth(line, width, ELLIPSIS) : line;
+  const clamped = visibleWidth(line) > width ? truncateToWidth(line, width, ELLIPSIS) : line;
+  // Pi's default tool shell applies its background around this line. A full SGR
+  // reset from ANSI input or truncateToWidth would clear that outer background.
+  return clamped.replace(/\x1b\[(?:0)?m/g, RESET_TEXT_STYLE);
 }
 
 function layoutRail(entries: readonly Entry[], expanded: boolean, width: number): string[] {

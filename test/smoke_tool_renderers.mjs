@@ -281,30 +281,48 @@ assert(failedCtrlC.startsWith(" <error>•</error>"), `failed write_stdin should
   }
 }
 
-// Tool renderers must not write into the terminal's last column. A rendered line
-// with visible width exactly equal to the terminal width can still trigger
-// terminal auto-wrap; when that happens, ANSI/background state may smear after
-// the wrapped continuation fragment.
+// ANSI clipping must not reset the background supplied by Pi's default tool
+// shell. Otherwise the ellipsis and trailing facts expose terminal background.
 {
-  const edgeOutput = [
-    "165:      constructor(",
-    "399:  private get settingsManager() {",
-    "403:  constructor(runtimeHost: AgentSessionRuntime, options: InteractiveModeOptions) {",
-  ].join("\n");
-  const edgeResult = { content: [{ type: "text", text: edgeOutput }], details: { ok: true, output: edgeOutput, exitCode: 0 } };
-  const edgeArgs = { cmd: 'rg -n "private .*settingsManager|constructor\\(" packages/coding-agent/src/modes/interactive' };
-  for (const width of [40, 80]) {
-    const lines = renderersForTool("exec_command").renderResult(edgeResult, { expanded: false, isPartial: false }, theme, { args: edgeArgs }).render(width);
-    const terminalEdgeLines = lines
-      .map((line, index) => ({ index, width: visibleWidth(line), line }))
-      .filter((line) => line.width >= width);
-    assert(terminalEdgeLines.length === 0, `exec renderer wrote to the terminal edge at width ${width}: ${JSON.stringify(terminalEdgeLines[0])}`);
+  const ansiTheme = {
+    fg: (_color, value) => `\x1b[38;5;250m${value}\x1b[39m`,
+    bold: (value) => value,
+  };
+  const shellBackground = (value) => `\x1b[48;5;236m${value}\x1b[49m`;
+  const cases = [
+    {
+      name: "exec_command",
+      result: { content: [], details: { ok: true, output: "80 open\n7000 open", exitCode: 0 } },
+      args: { cmd: "command -v nmap >/dev/null && nmap -Pn -T4 --top-ports 100 192.0.2.1" },
+    },
+    {
+      name: "web_search_exa",
+      result: { content: [], details: { ok: true, response: { results: [] } } },
+      args: { query: "PipeWire KEF LSX II Bluetooth AAC first connection failure" },
+    },
+  ];
+  for (const { name, result, args } of cases) {
+    const component = renderersForTool(name).renderResult(result, { expanded: false, isPartial: false }, ansiTheme, { args });
+    const shell = new Box(1, 1, shellBackground);
+    shell.addChild(component);
+    const header = shell.render(80)[1];
+    let backgroundActive = false;
+    for (const segment of header.matchAll(/\x1b\[([0-9;]*)m|([^\x1b])/g)) {
+      if (segment[1] !== undefined) {
+        for (const code of (segment[1] || "0").split(";").map(Number)) {
+          if (code === 0 || code === 49) backgroundActive = false;
+          if (code === 48) backgroundActive = true;
+        }
+      } else if (segment[2] !== undefined) {
+        assert(backgroundActive, `${name} reset the default tool shell background before ${JSON.stringify(segment[2])}: ${JSON.stringify(header)}`);
+      }
+    }
   }
 }
 
 // Literal tabs expand to terminal tab stops, not Pi TUI's fixed logical width.
-// Keep the tab-indented source matches from `rg` below the physical terminal
-// edge too, or their wrapped fragments repaint stale background rows.
+// Normalize them so tab-indented source matches from `rg` do not overflow the
+// physical terminal width.
 {
   const physicalTerminalWidth = (line, tabStop = 8) => {
     const plain = line.replace(/\x1b\[[0-9;]*m/g, "");
