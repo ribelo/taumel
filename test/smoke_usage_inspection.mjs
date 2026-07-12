@@ -38,6 +38,8 @@ assert.match(output, /Burn 5\.2%\/h/);
 assert.match(output, /Est\. empty in/);
 assert.match(output, /Safe until reset/);
 assert.doesNotMatch(output, /Updated/);
+assert.match(output, /\[[█░]+\]/, "usage bars should use block glyphs");
+assert.doesNotMatch(output, /\[[#-]+\]/, "usage bars should not use ASCII hash bars");
 assert.ok(colors.some(({ color, text }) => color === "error" && text.includes("[")), "low quota bar should be error-colored");
 assert.ok(colors.some(({ color, text }) => color === "success" && text.includes("[")), "healthy quota bar should be success-colored");
 const thresholdColors = [];
@@ -56,6 +58,11 @@ const empty = renderUsageInspection(decodeUsageInspection({ notConfigured: false
 assert.match(empty.join("\n"), /No quota windows returned/);
 const failed = renderUsageInspection(decodeUsageInspection({ notConfigured: false, error: "Bearer secret-token failed", rateLimits: [] }), theme, 80);
 assert.doesNotMatch(failed.join("\n"), /secret-token/);
+const staleEstimate = renderUsageInspection(decodeUsageInspection({
+  notConfigured: false,
+  rateLimits: [{ label: "Weekly Limit", percentLeft: 99, burnRatePerHour: 1.8, exhaustsAt: 1_699_999_000, exhaustsBeforeReset: true }],
+}), theme, 80, 1_700_000_000_000).join("\n");
+assert.doesNotMatch(staleEstimate, /Est\. empty in under 1m/, "past exhaustion timestamps must not render as imminent estimates");
 
 let component;
 let closed = 0;

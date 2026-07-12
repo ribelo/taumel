@@ -7,6 +7,7 @@ type rate_limit_window = {
   resets_at : int option;
   burn_rate_per_hour : float option;
   exhausts_at : int option;
+  exhausts_in_seconds : int option;
   exhausts_before_reset : bool option;
   is_depleted : bool;
 }
@@ -60,7 +61,7 @@ type host_result = {
   api_key_present : bool;
   account_label : string option;
   account_id : string option;
-  fetched_at_ms : int;
+  fetched_at_ms : float;
   token_state : token_state;
   fetch_state : fetch_state;
 }
@@ -219,57 +220,42 @@ let json_int_field name json =
 let json_object_field name json =
   match object_field name json with Some (Shared.Object _ as value) -> Some value | _ -> None
 
-let map_window fetched_at_ms previous_state key_prefix window =
+let map_window fetched_at_ms window =
   let seconds = json_int_field "limit_window_seconds" window in
   let label = label_for_window_seconds seconds in
   let resets_at = json_int_field "reset_at" window in
+  let reset_after_seconds = json_int_field "reset_after_seconds" window in
   let percent_left = percent_left_from_used_percent (json_number_field "used_percent" window) in
-  let burn_rate_per_hour, exhausts_at, exhausts_before_reset =
-    match (percent_left, resets_at, seconds) with
-    | Some percent_left, Some resets_at, Some seconds when seconds > 0 ->
-        let window_start_ms = (resets_at * 1000) - (seconds * 1000) in
-        let elapsed_ms = fetched_at_ms - window_start_ms in
-        let elapsed_hours = float_of_int elapsed_ms /. (1000.0 *. 60.0 *. 60.0) in
+  let burn_rate_per_hour, exhausts_at, exhausts_in_seconds, exhausts_before_reset =
+    match (percent_left, seconds) with
+    | Some percent_left, Some seconds when seconds > 0 ->
+        let elapsed_seconds =
+          match reset_after_seconds with
+          | Some remaining -> float_of_int (max 0 (seconds - remaining))
+          | None -> (
+              match resets_at with
+              | Some reset ->
+                  (fetched_at_ms /. 1000.0) -. float_of_int (reset - seconds)
+              | None -> 0.0)
+        in
+        let elapsed_hours = elapsed_seconds /. 3600.0 in
         if elapsed_hours > 0.01 then
           let burn = float_of_int (100 - percent_left) /. elapsed_hours in
           if Float.is_finite burn && burn >= 0.01 then
             let exhaust_hours = float_of_int percent_left /. burn in
+            let exhausts_in_seconds = int_of_float (exhaust_hours *. 3600.0) in
             let exhausts_at =
-              int_of_float
-                ((float_of_int fetched_at_ms +. (exhaust_hours *. 60.0 *. 60.0 *. 1000.0))
-                /. 1000.0)
+              int_of_float ((fetched_at_ms /. 1000.0) +. float_of_int exhausts_in_seconds)
             in
-            (Some burn, Some exhausts_at, Some (exhausts_at < resets_at))
-          else (None, None, None)
-        else (None, None, None)
-    | _ -> (None, None, None)
-  in
-  let burn_rate_per_hour, exhausts_at, exhausts_before_reset =
-    match burn_rate_per_hour with
-    | Some value when value >= 0.01 ->
-        (burn_rate_per_hour, exhausts_at, exhausts_before_reset)
-    | _ -> (
-        match (percent_left, previous_state) with
-        | Some current_percent_left, Some (previous_fetched_at_ms, previous_values) -> (
-        match List.assoc_opt (key_prefix ^ label) previous_values with
-        | Some previous_percent_left ->
-            let elapsed_ms = fetched_at_ms - previous_fetched_at_ms in
-            let elapsed_hours = float_of_int elapsed_ms /. (1000.0 *. 60.0 *. 60.0) in
-            let used_percent = previous_percent_left - current_percent_left in
-            if elapsed_hours > 0.01 && used_percent > 0 then
-              let burn = float_of_int used_percent /. elapsed_hours in
-              if Float.is_finite burn && burn >= 0.01 then
-                let exhaust_hours = float_of_int current_percent_left /. burn in
-                let exhausts_at =
-                  int_of_float
-                    ((float_of_int fetched_at_ms +. (exhaust_hours *. 60.0 *. 60.0 *. 1000.0))
-                    /. 1000.0)
-                in
-                (Some burn, Some exhausts_at, Option.map (fun reset -> exhausts_at < reset) resets_at)
-              else (burn_rate_per_hour, exhausts_at, exhausts_before_reset)
-            else (burn_rate_per_hour, exhausts_at, exhausts_before_reset)
-        | None -> (burn_rate_per_hour, exhausts_at, exhausts_before_reset))
-        | _ -> (burn_rate_per_hour, exhausts_at, exhausts_before_reset))
+            let before_reset =
+              match reset_after_seconds with
+              | Some remaining -> Some (exhausts_in_seconds < remaining)
+              | None -> Option.map (fun reset -> exhausts_at < reset) resets_at
+            in
+            (Some burn, Some exhausts_at, Some exhausts_in_seconds, before_reset)
+          else (None, None, None, None)
+        else (None, None, None, None)
+    | _ -> (None, None, None, None)
   in
   {
     label;
@@ -278,11 +264,12 @@ let map_window fetched_at_ms previous_state key_prefix window =
     resets_at;
     burn_rate_per_hour;
     exhausts_at;
+    exhausts_in_seconds;
     exhausts_before_reset;
     is_depleted = percent_left = Some 0;
   }
 
-let openai_payload_to_account ?previous_state ~fetched_at_ms ~api_key_present
+let openai_payload_to_account ~fetched_at_ms ~api_key_present
     ?account_label ?error ?(not_configured = false) payload =
   let plan =
     match json_string_field "plan_type" payload with
@@ -296,7 +283,7 @@ let openai_payload_to_account ?previous_state ~fetched_at_ms ~api_key_present
         [ "primary_window"; "secondary_window" ]
         |> List.filter_map (fun name ->
                match json_object_field name rate_limit with
-               | Some window -> Some (map_window fetched_at_ms previous_state "openai:" window)
+               | Some window -> Some (map_window fetched_at_ms window)
                | None -> None)
   in
   let credits_balance =
@@ -330,7 +317,7 @@ let fallback_account ~api_key_present ?account_label ?error ?(not_configured = f
     rate_limits = [];
   }
 
-let openai_host_result ?previous_state result =
+let openai_host_result result =
   let fallback ?error ?(not_configured = false) () =
     fallback_account ~api_key_present:result.api_key_present
       ?account_label:result.account_label ?error ~not_configured ()
@@ -345,7 +332,7 @@ let openai_host_result ?previous_state result =
         (fallback ~error:(openai_usage_request_error status) (), true)
     | Token_present, Fetch_error error -> (fallback ~error (), true)
     | Token_present, Fetch_ok payload ->
-        ( openai_payload_to_account ?previous_state
+        ( openai_payload_to_account
             ?account_label:result.account_label ~fetched_at_ms:result.fetched_at_ms
             ~api_key_present:result.api_key_present payload,
           true )
@@ -367,6 +354,7 @@ let result_details result =
       @ option_field "resetsAt" row.resets_at (fun value -> Shared.Number (float_of_int value))
       @ option_field "burnRatePerHour" row.burn_rate_per_hour (fun value -> Shared.Number value)
       @ option_field "exhaustsAt" row.exhausts_at (fun value -> Shared.Number (float_of_int value))
+      @ option_field "exhaustsInSeconds" row.exhausts_in_seconds (fun value -> Shared.Number (float_of_int value))
       @ option_field "exhaustsBeforeReset" row.exhausts_before_reset (fun value -> Shared.Bool value))
   in
   Shared.Object

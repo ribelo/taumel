@@ -559,7 +559,7 @@ let test_usage_openai_rendering () =
   assert_bool "openai provider" (String.contains rendered 'o');
   assert_bool "credits balance" (String.contains rendered '8');
   let host_result ?(api_key_present = false) ?account_label ?account_id
-      ?(fetched_at_ms = 1000) token_state fetch_state =
+      ?(fetched_at_ms = 1000.0) token_state fetch_state =
     Usage.openai_host_result
       {
         Usage.api_key_present;
@@ -622,7 +622,7 @@ let test_usage_openai_rendering () =
     (live.account.credits_balance = Some 990.563425);
   assert_int "rate limit normalized" 1 (List.length live.account.rate_limits);
   let unlimited =
-    Usage.openai_payload_to_account ~fetched_at_ms:1000 ~api_key_present:true
+    Usage.openai_payload_to_account ~fetched_at_ms:1000.0 ~api_key_present:true
       (Shared.Object
          [
            ( "credits",
@@ -634,7 +634,31 @@ let test_usage_openai_rendering () =
                ] );
          ])
   in
-  assert_bool "unlimited credits omitted" (unlimited.credits_balance = None)
+  assert_bool "unlimited credits omitted" (unlimited.credits_balance = None);
+  let epoch_safe =
+    Usage.openai_payload_to_account ~fetched_at_ms:1_783_883_042_000.0
+      ~api_key_present:true
+      (Shared.Object
+         [
+           ( "rate_limit",
+             Shared.Object
+               [
+                 ( "primary_window",
+                   Shared.Object
+                     [
+                       ("limit_window_seconds", Shared.Number 604800.0);
+                       ("reset_at", Shared.Number 1784487674.0);
+                       ("reset_after_seconds", Shared.Number 602000.0);
+                       ("used_percent", Shared.Number 1.0);
+                     ] );
+               ] );
+         ])
+  in
+  match epoch_safe.rate_limits with
+  | [ row ] ->
+      assert_bool "epoch-safe exhaustion remains in the future"
+        (Option.value row.exhausts_in_seconds ~default:0 > 3600)
+  | _ -> fail "epoch-safe usage" "expected one rate limit"
 
 let test_tool_catalog_scope () =
   List.iter

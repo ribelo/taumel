@@ -53,8 +53,8 @@ let optional_bool params name default =
 
 let fetched_at_ms params =
   match float_field params "fetchedAt" with
-  | Some value when value >= 0.0 -> int_of_float value
-  | _ -> now_seconds () * 1000
+  | Some value when value >= 0.0 -> value
+  | _ -> float_of_int (now_seconds ()) *. 1000.0
 
 let payload params =
   match object_field params "payload" with

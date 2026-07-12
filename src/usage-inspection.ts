@@ -12,6 +12,7 @@ type UsageWindow = {
   readonly resetsAt?: number;
   readonly burnRatePerHour?: number;
   readonly exhaustsAt?: number;
+  readonly exhaustsInSeconds?: number;
   readonly exhaustsBeforeReset?: boolean;
 };
 
@@ -50,6 +51,7 @@ export function decodeUsageInspection(value: unknown): UsageInspection {
           ...(optionalNumber(row["resetsAt"]) === undefined ? {} : { resetsAt: optionalNumber(row["resetsAt"]) }),
           ...(optionalNumber(row["burnRatePerHour"]) === undefined ? {} : { burnRatePerHour: optionalNumber(row["burnRatePerHour"]) }),
           ...(optionalNumber(row["exhaustsAt"]) === undefined ? {} : { exhaustsAt: optionalNumber(row["exhaustsAt"]) }),
+          ...(optionalNumber(row["exhaustsInSeconds"]) === undefined ? {} : { exhaustsInSeconds: optionalNumber(row["exhaustsInSeconds"]) }),
           ...(typeof row["exhaustsBeforeReset"] === "boolean" ? { exhaustsBeforeReset: row["exhaustsBeforeReset"] } : {}),
         }];
       })
@@ -129,7 +131,7 @@ export function renderUsageInspection(data: UsageInspection, theme: Theme, width
       const barWidth = Math.max(6, Math.min(20, w - 15));
       const percent = row.percentLeft === undefined ? undefined : Math.max(0, Math.min(100, Math.round(row.percentLeft)));
       const filled = percent === undefined ? 0 : Math.round((percent / 100) * barWidth);
-      const bar = `[${"#".repeat(filled)}${"-".repeat(barWidth - filled)}]`;
+      const bar = `[${"█".repeat(filled)}${"░".repeat(barWidth - filled)}]`;
       lines.push(` ${theme.fg(quotaColor(percent), bar)} ${percent === undefined ? "?" : percent}% left`);
       if (row.resetsAt !== undefined) {
         const reset = timedEvent("Resets", row.resetsAt, nowMs);
@@ -139,9 +141,14 @@ export function renderUsageInspection(data: UsageInspection, theme: Theme, width
       }
       if (row.burnRatePerHour !== undefined && row.burnRatePerHour >= 0.01) {
         const burn = `Burn ${row.burnRatePerHour.toFixed(1)}%/h`;
+        const exhaustionTarget = row.exhaustsInSeconds !== undefined
+          ? Math.floor(nowMs / 1000 + row.exhaustsInSeconds)
+          : row.exhaustsAt !== undefined && row.exhaustsAt * 1000 > nowMs
+            ? row.exhaustsAt
+            : undefined;
         const estimate = row.exhaustsBeforeReset === false
           ? "Safe until reset"
-          : row.exhaustsAt === undefined ? undefined : timedEvent("Est. empty", row.exhaustsAt, nowMs);
+          : exhaustionTarget === undefined ? undefined : timedEvent("Est. empty", exhaustionTarget, nowMs);
         const burnLine = `${burn}${estimate === undefined ? "" : `  ·  ${estimate}`}`;
         if (` ${burnLine}`.length <= w || estimate === undefined) lines.push(` ${burnLine}`);
         else lines.push(` ${burn}`, ` ${estimate}`);
