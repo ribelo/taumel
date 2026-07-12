@@ -13,6 +13,7 @@
     "build:ocaml": "nix develop -c sh scripts/build-ocaml.sh",
     "test:ocaml": "nix develop -c sh -c 'node scripts/generate-contract-bindings.mjs && dune runtest'",
     "smoke:artifact": "nix develop -c node test/smoke_artifact.mjs",
+    "smoke:view-media-resolution": "nix develop -c node test/smoke_view_media_resolution.mjs",
     "smoke:tool-contracts": "bun test/smoke_tool_contracts.mjs",
     "smoke:exa-contracts": "bun test/smoke_exa_contracts.mjs",
     "smoke:cron-loop": "bun test/smoke_cron_loop.mjs",
@@ -26,7 +27,7 @@
     "smoke:thinking-shortcuts": "bun test/smoke_thinking_shortcuts.mjs",
     "smoke:util": "bun test/smoke_util.mjs",
     "check:typed-boundaries": "node test/check_typed_boundaries.mjs",
-    "gate": "npm run typecheck && npm run check:typed-boundaries && npm run build:ocaml && npm run test:ocaml && npm run smoke:artifact && npm run smoke:tool-contracts && npm run smoke:exa-contracts && npm run smoke:cron-loop && npm run smoke:cron-persistence && npm run smoke:compaction-model && npm run smoke:tool-renderers && npm run smoke:exec-notifications && npm run smoke:gateway-registration && npm run smoke:global-settings && npm run smoke:bridge-contracts && npm run smoke:thinking-shortcuts && npm run smoke:util"
+    "gate": "npm run typecheck && npm run check:typed-boundaries && npm run build:ocaml && npm run test:ocaml && npm run smoke:artifact && npm run smoke:view-media-resolution && npm run smoke:tool-contracts && npm run smoke:exa-contracts && npm run smoke:cron-loop && npm run smoke:cron-persistence && npm run smoke:compaction-model && npm run smoke:tool-renderers && npm run smoke:exec-notifications && npm run smoke:gateway-registration && npm run smoke:global-settings && npm run smoke:bridge-contracts && npm run smoke:thinking-shortcuts && npm run smoke:util"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.79.9",

@@ -154,7 +154,13 @@ function installEnvironmentContext(pi: PiLike, core: CoreBridge): void {
 export default async function taumel(pi: PiLike) {
   const artifact = new URL("../dist/taumel.cjs", import.meta.url);
   const require = createRequire(import.meta.url);
-  (globalThis as typeof globalThis & { require?: NodeRequire }).require = require;
+  const photon = await import("@silvia-odwyer/photon-node");
+  const globals = globalThis as typeof globalThis & {
+    require?: NodeRequire;
+    taumelPhoton?: typeof import("@silvia-odwyer/photon-node");
+  };
+  globals.require = require;
+  globals.taumelPhoton = photon;
   require(fileURLToPath(artifact));
 
   const coreGlobal = globalThis as typeof globalThis & TaumelGlobal;

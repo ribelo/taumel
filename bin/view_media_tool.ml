@@ -17,7 +17,7 @@ type candidate = {
 }
 
 let js_require name =
-  Unsafe.fun_call (Unsafe.js_expr "require") [| js_string name |]
+  Unsafe.fun_call (Unsafe.get Unsafe.global "require") [| js_string name |]
 
 let prepare params =
   with_gateway_authorized "view_media" (fun _sandbox ->
@@ -582,7 +582,7 @@ let view_media raw_facts =
                           else
                             (* Still image: proceed with Photon decode and resize *)
                             let photon_result =
-                              try Ok (js_require "@silvia-odwyer/photon-node")
+                              try Ok (Unsafe.get Unsafe.global "taumelPhoton")
                               with exn -> Error (Printexc.to_string exn)
                             in
                             match photon_result with
