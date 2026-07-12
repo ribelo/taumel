@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
-import { type Focusable, fuzzyFilter, Input, Key, truncateToWidth } from "@earendil-works/pi-tui";
+import { DynamicBorder, getSettingsListTheme } from "@earendil-works/pi-coding-agent";
+import { type SettingItem, SettingsList, truncateToWidth } from "@earendil-works/pi-tui";
 
 import type { CoreBridge, PiLike } from "./types.ts";
 import { taumelGlobalSettingsPath } from "./global-settings.ts";
@@ -8,17 +9,13 @@ import { decodeSkillListResult } from "./bridge-contracts.ts";
 import { decodeVisibilityListResult, decodeVisibilityRowsResult, decodeVisibilitySavePlan, decodeVisibilityToggleResult, decodeVisibilityWarningsResult, type VisibilityPrompt, type VisibilityRowsResult } from "./bridge-contracts.ts";
 import { toolNames } from "./tool-contracts.ts";
 import {
-  bg,
   bold,
-  column,
   commandResult,
   fg,
-  matchesSelect,
   mutationOk,
   notify,
   requestRenderFromTui,
   resultMessage,
-  type KeybindingsLike,
   type ThemeLike,
   uiFromContext,
 } from "./manager-kit.ts";
@@ -156,90 +153,61 @@ function loadVisibilityState(core: CoreBridge, category: Category, ctx: unknown)
 
 const MAX_VISIBLE_ROWS = 10;
 
-function rowSearchText(row: Row): string {
-  return `${row.name} ${row.description}`;
-}
-
-class VisibilityManagerComponent implements Focusable {
-  private selected = 0;
+class VisibilityManagerComponent {
   private busy: string | undefined;
   private status: string | undefined;
-  private readonly searchInput = new Input();
-  private _focused = false;
-
-  get focused(): boolean {
-    return this._focused;
-  }
-
-  set focused(value: boolean) {
-    this._focused = value;
-    this.searchInput.focused = value;
-  }
+  private settingsList: SettingsList;
+  private readonly frame: DynamicBorder;
 
   constructor(
     private state: VisibilityState,
     private readonly theme: ThemeLike,
-    private readonly keybindings: KeybindingsLike,
     private readonly callbacks: ManagerCallbacks,
-  ) {}
+  ) {
+    this.frame = new DynamicBorder((text: string) => fg(this.theme, "accent", text));
+    this.settingsList = this.createSettingsList();
+  }
 
-  invalidate(): void {}
+  invalidate(): void {
+    this.frame.invalidate();
+    this.settingsList.invalidate();
+  }
 
   render(width: number): string[] {
     const lines = this.baseHeader(width);
-    const rows = this.filteredRows();
-    for (const inputLine of this.searchInput.render(Math.max(0, width - 2))) {
-      lines.push(this.line(`  ${inputLine}`, width));
-    }
-    lines.push("");
-    lines.push(this.line(this.dim(`  ${column("State", 12)}  ${column("Name", 24)}  Description`), width));
-    const startIndex = Math.max(
-      0,
-      Math.min(this.selected - Math.floor(MAX_VISIBLE_ROWS / 2), rows.length - MAX_VISIBLE_ROWS),
-    );
-    const endIndex = Math.min(startIndex + MAX_VISIBLE_ROWS, rows.length);
-    for (let index = startIndex; index < endIndex; index += 1) {
-      const row = rows[index];
-      if (row) lines.push(this.renderRow(row, index === this.selected, width));
-    }
-    if (this.state.rows.length === 0) lines.push(this.line(this.dim("  Nothing registered."), width));
-    else if (rows.length === 0) lines.push(this.line(this.dim("  No matching entries."), width));
-    if (startIndex > 0 || endIndex < rows.length) {
-      lines.push(this.line(this.dim(`  (${this.selected + 1}/${rows.length})`), width));
-    }
+    lines.push(...this.settingsList.render(width));
     this.addStatus(lines, width);
-    lines.push("");
-    lines.push(this.line(this.dim("  type search • ↑↓ select • enter toggle • ctrl+s save to project • esc close"), width));
+    lines.push(this.line(this.dim("  Ctrl+S save to project"), width));
     lines.push(this.border(width));
     return lines;
   }
 
   handleInput(data: string): void {
     if (this.busy !== undefined) return;
-    if (this.isCancel(data)) {
-      this.callbacks.onDone({ kind: "exit" });
-      return;
-    }
-    if (this.isUp(data)) {
-      this.moveSelection(-1);
-      return;
-    }
-    if (this.isDown(data)) {
-      this.moveSelection(1);
-      return;
-    }
     if (isCtrlS(data)) {
       this.runSave();
       return;
     }
-    if (this.isConfirm(data)) {
-      const row = this.filteredRows()[this.selected];
-      if (row) this.runToggle(row.name);
-      return;
-    }
-    this.searchInput.handleInput(data);
-    this.clampSelection();
+    this.settingsList.handleInput(data);
     this.callbacks.requestRender();
+  }
+
+  private createSettingsList(): SettingsList {
+    const items: SettingItem[] = this.state.rows.map((row) => ({
+      id: row.name,
+      label: row.name,
+      description: row.description || undefined,
+      currentValue: row.available ? row.state : "unavailable",
+      values: row.available ? ["enabled", "disabled"] : ["unavailable", "enabled"],
+    }));
+    return new SettingsList(
+      items,
+      Math.min(Math.max(items.length, 1), MAX_VISIBLE_ROWS),
+      getSettingsListTheme(),
+      (name) => this.runToggle(name),
+      () => this.callbacks.onDone({ kind: "exit" }),
+      { enableSearch: true },
+    );
   }
 
   private baseHeader(width: number): string[] {
@@ -251,13 +219,6 @@ class VisibilityManagerComponent implements Focusable {
       this.line(`  ${disabled}${stale}`, width),
       "",
     ];
-  }
-
-  private renderRow(row: Row, selected: boolean, width: number): string {
-    const state = row.available ? row.state : "unavailable";
-    const text = `${column(state, 12)}  ${column(row.name, 24)}  ${row.description}`;
-    const rowText = selected ? bg(this.theme, "selectedBg", this.accent(text)) : text;
-    return this.line((selected ? this.accent("-> ") : "  ") + rowText, width);
   }
 
   private addStatus(lines: string[], width: number): void {
@@ -275,8 +236,7 @@ class VisibilityManagerComponent implements Focusable {
   }
 
   private border(width: number): string {
-    if (width <= 0) return "";
-    return this.accent("-".repeat(width));
+    return this.frame.render(width)[0] ?? "";
   }
 
   private accent(text: string): string {
@@ -287,18 +247,6 @@ class VisibilityManagerComponent implements Focusable {
     return fg(this.theme, "dim", text);
   }
 
-  private filteredRows(): readonly Row[] {
-    const query = this.searchInput.getValue().trim();
-    return query === "" ? this.state.rows : fuzzyFilter([...this.state.rows], query, rowSearchText);
-  }
-
-  private moveSelection(delta: number): void {
-    const rows = this.filteredRows();
-    if (rows.length === 0) return;
-    this.selected = (this.selected + delta + rows.length) % rows.length;
-    this.callbacks.requestRender();
-  }
-
   private runToggle(name: string): void {
     this.busy = "Updating visibility...";
     this.status = undefined;
@@ -307,7 +255,7 @@ class VisibilityManagerComponent implements Focusable {
       this.state = outcome.state;
       this.busy = undefined;
       this.status = outcome.message;
-      this.clampSelection();
+      this.settingsList = this.createSettingsList();
       this.callbacks.requestRender();
     });
   }
@@ -320,30 +268,11 @@ class VisibilityManagerComponent implements Focusable {
       this.state = outcome.state;
       this.busy = undefined;
       this.status = outcome.message;
-      this.clampSelection();
+      this.settingsList = this.createSettingsList();
       this.callbacks.requestRender();
     });
   }
 
-  private clampSelection(): void {
-    this.selected = Math.max(0, Math.min(this.selected, Math.max(0, this.filteredRows().length - 1)));
-  }
-
-  private isUp(data: string): boolean {
-    return matchesSelect(this.keybindings, data, "tui.select.up", Key.up);
-  }
-
-  private isDown(data: string): boolean {
-    return matchesSelect(this.keybindings, data, "tui.select.down", Key.down);
-  }
-
-  private isConfirm(data: string): boolean {
-    return matchesSelect(this.keybindings, data, "tui.select.confirm", Key.enter);
-  }
-
-  private isCancel(data: string): boolean {
-    return matchesSelect(this.keybindings, data, "tui.select.cancel", Key.escape);
-  }
 }
 
 export async function saveProjectVisibility(
@@ -402,11 +331,11 @@ export async function executeVisibilityManager(
   const action = await custom.call(ui, (
     tui: unknown,
     theme: ThemeLike,
-    keybindings: KeybindingsLike,
+    _keybindings: unknown,
     done: (action: ManagerAction) => void,
   ) => {
     const requestRender = requestRenderFromTui(tui);
-    return new VisibilityManagerComponent(state, theme, keybindings, {
+    return new VisibilityManagerComponent(state, theme, {
       onDone: done,
       requestRender,
       onToggle: async (name) => {

@@ -1,7 +1,10 @@
 import { strict as assert } from "node:assert";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { initTheme } from "@earendil-works/pi-coding-agent";
 import { executeCronManager } from "../src/cron-manager.ts";
+
+initTheme();
 
 const artifact = new URL("../dist/taumel.cjs", import.meta.url);
 const require = createRequire(import.meta.url);
@@ -97,10 +100,9 @@ assert(
   !renderedCronManagerLines.some((line) => /Disable task|Cancel task/.test(line)),
   `cron manager should not render action rows per task: ${JSON.stringify(renderedCronManagerLines)}`,
 );
-const headerLine = renderedCronManagerLines.find((line) => line.includes("ID") && line.includes("State"));
 const taskLine = renderedCronManagerLines.find((line) => line.includes(taskId));
 const masterLineIndex = renderedCronManagerLines.findIndex((line) => line.includes("Master switch:"));
-const headerLineIndex = renderedCronManagerLines.findIndex((line) => line === headerLine);
-assert(masterLineIndex >= 0 && masterLineIndex < headerLineIndex, "master switch row should be separate from the task table");
-assert.equal(headerLine?.indexOf("ID"), taskLine?.indexOf(taskId), "task id column should align with header");
-assert.equal(headerLine?.indexOf("State"), taskLine?.indexOf("disabled"), "task state column should align with header");
+assert(masterLineIndex >= 0, `cron manager should render the master switch: ${JSON.stringify(renderedCronManagerLines)}`);
+assert.match(taskLine ?? "", /disabled/, "task summary should include enabled state");
+assert.match(taskLine ?? "", /message/, "task summary should include mode");
+assert.match(taskLine ?? "", /recurring/, "task summary should include recurrence");

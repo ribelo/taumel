@@ -106,6 +106,9 @@ holds.
 - **cron-cm02** (event-driven): When the user selects an action in `/cron`, the system shall let the user enable or disable the master switch, enable or disable a specific task, or cancel a specific task through the selection picker.
 - **cron-cm03** (event-driven): When the user runs `/cron enable` or `/cron disable`, the system shall set the master switch accordingly; when the user runs `/cron enable ID` or `/cron disable ID`, the system shall set that task's enabled flag accordingly.
 - **cron-cm04** (unwanted): If the user attempts to create a task through `/cron`, then the system shall decline, because task authorship belongs to the model.
+- **cron-cm05** (ubiquitous): The `/cron` list view shall use Pi's `SelectList` and standard select-list theme for master-row and task navigation, rendering, truncation, scrolling, selection, and list keybindings.
+- **cron-cm06** (ubiquitous): The master-switch item shall identify the master switch and summarize its state. Each task item shall use the task id as its label and summarize its enabled state, schedule, mode, recurrence, and human-readable next due time in its description.
+- **cron-cm07** (event-driven): Pressing enter on a task in the list view shall open that task's details. The command workflow outside the selection list shall provide task shortcuts, mutation status, confirmation, prompt and schedule editing, and the details and confirmation views.
 
 ### Architecture
 

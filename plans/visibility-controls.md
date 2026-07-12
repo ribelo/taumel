@@ -74,12 +74,15 @@ config with `Ctrl+S` or a command-form `save` action.
 
 ### Manager UI
 
-- **vis-ui02** (ubiquitous): Each manager shall show the current session-effective state only: `enabled` or `disabled`, plus the item name and a short description or path where useful.
+- **vis-ui01** (ubiquitous): In TUI mode, `/tools` and `/skills` shall present their entries with Pi's `SettingsList` and standard settings-list theme. `SettingsList` shall own search, selection, scrolling, value presentation, hints, and list keybindings; a surrounding command controller may own the title, status, persistence shortcut, and tool synchronization.
+- **vis-ui02** (ubiquitous): Each manager shall show the current session-effective state as `enabled` or `disabled`, plus the item name and a short description or path where useful; unavailable disabled names shall use the state `unavailable`.
 - **vis-ui03** (event-driven): Pressing enter on a selected row shall toggle that row and apply the change immediately.
 - **vis-ui04** (event-driven): Pressing `Ctrl+S` shall save the current session-effective disabled list to trusted project config.
 - **vis-ui05** (ubiquitous): Manager help text shall include `enter toggle • ctrl+s save to project • esc close` or equivalent concise wording.
 - **vis-ui06** (ubiquitous): Managers shall show unavailable disabled names as explicit rows, marked `unavailable`, so the user can see stale config instead of it being hidden.
 - **vis-ui07** (event-driven): Toggling an unavailable disabled row to enabled shall explicitly remove that name from the session disabled set because the user selected that cleanup action.
+- **vis-ui08** (ubiquitous): A manager row shall map the registered tool or skill name to the settings label, its session-effective state to the settings value, and its tool or skill description or path to the settings description.
+- **vis-ui09** (ubiquitous): Manager presentation and interaction shall follow Pi's standard settings-list behavior rather than defining separate table layout, filtering, selection, scrolling, value styling, or list hints.
 
 ### Architecture limits
 

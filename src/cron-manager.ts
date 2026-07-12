@@ -1,11 +1,10 @@
-import { Key, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { DynamicBorder, getSelectListTheme } from "@earendil-works/pi-coding-agent";
+import { Key, type SelectItem, SelectList, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 
 import type { CoreBridge } from "./types.ts";
 import { decodeCronCommandResult, decodeCronListResult, decodeCronPrompt, decodeCronPromptPlan, type CronPrompt, type CronTaskPatch } from "./bridge-contracts.ts";
 import {
-  bg,
   bold,
-  column,
   commandResult,
   fg,
   matchesSelect,
@@ -70,24 +69,6 @@ function loadCronState(core: CoreBridge, ctx: unknown): CronState {
   return decodeCronListResult(core.call("prepareTool", [{ name: "cron_list", params: {}, ctx }])).details;
 }
 
-function taskTableRow(
-  id: string,
-  state: string,
-  schedule: string,
-  mode: string,
-  type: string,
-  next: string,
-): string {
-  return [
-    column(id, 8),
-    column(state, 8),
-    column(schedule, 19),
-    column(mode, 7),
-    column(type, 9),
-    next,
-  ].join("  ");
-}
-
 function normalizeCronInput(input: string): string {
   return input.trim().split(/\s+/).join(" ");
 }
@@ -113,6 +94,8 @@ class CronManagerComponent {
   private view: "list" | "details" | "confirm_cancel" = "list";
   private busy: string | undefined;
   private status: string | undefined;
+  private selectList: SelectList;
+  private readonly frame: DynamicBorder;
 
   constructor(
     private state: CronState,
@@ -121,13 +104,18 @@ class CronManagerComponent {
     private readonly callbacks: CronManagerCallbacks,
     selectedId?: string,
   ) {
+    this.frame = new DynamicBorder((text: string) => fg(this.theme, "accent", text));
     if (selectedId) {
       const index = state.tasks.findIndex((task) => task.id === selectedId);
       if (index >= 0) this.selected = index + 1;
     }
+    this.selectList = this.createSelectList();
   }
 
-  invalidate(): void {}
+  invalidate(): void {
+    this.frame.invalidate();
+    this.selectList.invalidate();
+  }
 
   render(width: number): string[] {
     if (this.view === "details") return this.renderDetails(width);
@@ -141,41 +129,30 @@ class CronManagerComponent {
       this.handleConfirmInput(data);
       return;
     }
-    if (this.view === "details" && this.isCancel(data)) {
-      this.view = "list";
-      this.callbacks.requestRender();
-      return;
-    }
-    if (this.isCancel(data)) {
-      this.callbacks.onDone({ kind: "exit" });
-      return;
-    }
-    if (this.isUp(data)) {
-      this.moveSelection(-1);
-      return;
-    }
-    if (this.isDown(data)) {
-      this.moveSelection(1);
+    if (this.view === "details") {
+      if (this.isCancel(data)) {
+        this.view = "list";
+        this.callbacks.requestRender();
+      } else {
+        this.handleTaskShortcut(data);
+      }
       return;
     }
     if (data === "m") {
       this.runMutation({ kind: "toggle_master" });
       return;
     }
-    if (this.isConfirm(data)) {
-      this.openDetails();
+    if (["e", "c", "p", "i", "s", "r", "g"].includes(data)) {
+      this.handleTaskShortcut(data);
       return;
     }
-    this.handleTaskShortcut(data);
+    this.selectList.handleInput(data);
+    this.callbacks.requestRender();
   }
 
   private renderList(width: number): string[] {
     const lines = this.baseHeader(width);
-    lines.push(this.renderMasterRow(width));
-    lines.push("");
-    lines.push(this.line(this.dim(`  ${taskTableRow("ID", "State", "Schedule", "Mode", "Type", "Next")}`), width));
-    for (const task of this.state.tasks) lines.push(this.renderTaskRow(task, width));
-    if (this.state.tasks.length === 0) lines.push(this.line(this.dim("  No cron tasks."), width));
+    lines.push(...this.selectList.render(width));
     this.addStatus(lines, width);
     lines.push("");
     lines.push(this.line(this.dim("  ↑↓ select • enter details • e toggle • c cancel • p prompt • s schedule"), width));
@@ -206,6 +183,44 @@ class CronManagerComponent {
     return lines;
   }
 
+  private createSelectList(): SelectList {
+    const items: SelectItem[] = [
+      {
+        value: "master",
+        label: "Master switch:",
+        description: this.state.enabled ? "enabled" : "disabled",
+      },
+      ...this.state.tasks.map((task) => ({
+        value: task.id,
+        label: task.id,
+        description: [
+          taskStatusLabel(task),
+          task.cron,
+          taskModeLabel(task),
+          taskTypeLabel(task),
+          `${task.nextDueText}${task.pending ? " pending" : ""}`,
+        ].join(" • "),
+      })),
+    ];
+    const list = new SelectList(items, Math.min(items.length, 10), getSelectListTheme());
+    list.setSelectedIndex(this.selected);
+    list.onSelectionChange = (item) => {
+      this.selected = item.value === "master"
+        ? 0
+        : Math.max(1, this.state.tasks.findIndex((task) => task.id === item.value) + 1);
+    };
+    list.onSelect = (item) => {
+      if (item.value === "master") {
+        this.runMutation({ kind: "toggle_master" });
+      } else {
+        this.selected = Math.max(1, this.state.tasks.findIndex((task) => task.id === item.value) + 1);
+        this.openDetails();
+      }
+    };
+    list.onCancel = () => this.callbacks.onDone({ kind: "exit" });
+    return list;
+  }
+
   private renderConfirmCancel(width: number): string[] {
     const task = this.selectedTask();
     if (!task) return this.renderList(width);
@@ -227,30 +242,6 @@ class CronManagerComponent {
     ];
   }
 
-  private renderMasterRow(width: number): string {
-    const selected = this.selected === 0;
-    return this.renderRow(`Master switch: ${this.state.enabled ? "enabled" : "disabled"}  m/e toggle`, selected, width);
-  }
-
-  private renderTaskRow(task: CronTask, width: number): string {
-    const index = this.state.tasks.findIndex((item) => item.id === task.id) + 1;
-    const row = taskTableRow(
-      task.id,
-      taskStatusLabel(task),
-      task.cron,
-      taskModeLabel(task),
-      taskTypeLabel(task),
-      `${task.nextDueText}${task.pending ? " pending" : ""}`,
-    );
-    return this.renderRow(row, this.selected === index, width);
-  }
-
-  private renderRow(text: string, selected: boolean, width: number): string {
-    const prefix = selected ? this.accent("→ ") : "  ";
-    const row = selected ? bg(this.theme, "selectedBg", this.accent(text)) : text;
-    return this.line(prefix + row, width);
-  }
-
   private addStatus(lines: string[], width: number): void {
     if (this.busy) {
       lines.push("");
@@ -266,8 +257,7 @@ class CronManagerComponent {
   }
 
   private border(width: number): string {
-    if (width <= 0) return "";
-    return this.accent("─".repeat(width));
+    return this.frame.render(width)[0] ?? "";
   }
 
   private accent(text: string): string {
@@ -316,13 +306,6 @@ class CronManagerComponent {
     }
   }
 
-  private moveSelection(delta: number): void {
-    const count = this.state.tasks.length + 1;
-    this.selected = (this.selected + delta + count) % count;
-    if (this.view === "details" && this.selected === 0) this.view = "list";
-    this.callbacks.requestRender();
-  }
-
   private runMutation(action: MutationAction): void {
     this.busy = "Updating cron task…";
     this.status = undefined;
@@ -333,6 +316,7 @@ class CronManagerComponent {
       this.status = outcome.message;
       this.clampSelection();
       if (action.kind === "cancel_task") this.view = "list";
+      this.selectList = this.createSelectList();
       this.callbacks.requestRender();
     });
   }
@@ -340,14 +324,6 @@ class CronManagerComponent {
   private clampSelection(): void {
     this.selected = Math.max(0, Math.min(this.selected, this.state.tasks.length));
     if (this.view === "details" && this.selected === 0) this.view = "list";
-  }
-
-  private isUp(data: string): boolean {
-    return matchesSelect(this.keybindings, data, "tui.select.up", Key.up);
-  }
-
-  private isDown(data: string): boolean {
-    return matchesSelect(this.keybindings, data, "tui.select.down", Key.down);
   }
 
   private isConfirm(data: string): boolean {
