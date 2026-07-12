@@ -58,6 +58,31 @@ const ctx = {
 registerGatewayCommands(pi, core, new Map());
 const goal = commands.get("goal");
 assert(goal, "goal command not registered");
+const systemPrompt = commands.get("system-prompt");
+assert(systemPrompt, "system-prompt command not registered");
+
+let inspectedPrompt = "";
+await systemPrompt.handler("", {
+  getSystemPrompt: () => "first line\nsecond line",
+  ui: {
+    custom: async (factory) => {
+      await new Promise((resolve) => {
+        const theme = {
+          prefix: "",
+          fg(_color, text) {
+            if (this !== theme) throw new Error("theme.fg receiver was lost");
+            return text;
+          },
+        };
+        const component = factory({ requestRender() {} }, theme, {}, resolve);
+        inspectedPrompt = component.render(120).join("\n");
+        component.handleInput("escape");
+      });
+    },
+  },
+});
+assert.match(inspectedPrompt, /first line\nsecond line/, "system-prompt should inspect the current prompt");
+assert.deepEqual(sentUserMessages, [], "system-prompt should not contact agent");
 
 await goal.handler("", ctx);
 assert.equal(inspections, 1, "bare goal should render one local inspection");

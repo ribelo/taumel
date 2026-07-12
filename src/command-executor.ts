@@ -31,7 +31,11 @@ import { toolNames } from "./tool-contracts.ts";
 import { decodeActiveToolsPlan, decodeCommandChildSessionPlan, decodeCommandExecutionPlan, decodeCommandNotificationPlan, decodeCommandSpecsResult } from "./bridge-contracts.ts";
 import { decodeBridgeCommandResult, decodeCommandChildDispatchPlan, decodeGatewayCommandOutput, decodeGoalContinuationPlan, decodeGoalRollbackResult, decodePermissionsCommandResult, decodePermissionsPrompt, decodePermissionsPromptPlan, type GatewayCommandOutput, type GoalContinuationFacts, type ToolResultEnvelope } from "./bridge-contracts.ts";
 
-type CommandContext = { readonly hasPendingMessages?: () => unknown; readonly ui?: unknown };
+type CommandContext = {
+  readonly getSystemPrompt?: () => unknown;
+  readonly hasPendingMessages?: () => unknown;
+  readonly ui?: unknown;
+};
 type CommandUi = {
   readonly notify?: (message: string, level: string) => unknown;
   readonly select?: (title: string, labels: readonly string[]) => unknown;
@@ -180,6 +184,49 @@ async function showGoalInspection(result: CommandResultLike, ctx: unknown): Prom
           (tui as { requestRender: () => void }).requestRender();
         }
       } else done();
+    },
+  }));
+}
+
+async function showSystemPromptInspection(ctx: unknown): Promise<void> {
+  const commandCtx = commandContext(ctx);
+  const getSystemPrompt = commandCtx?.getSystemPrompt;
+  const rawUi = commandCtx?.ui;
+  const ui = typeof rawUi === "object" && rawUi !== null ? rawUi as CommandUi : undefined;
+  if (typeof getSystemPrompt !== "function" || typeof ui?.custom !== "function") return;
+  const prompt = String(getSystemPrompt.call(ctx));
+  let offset = 0;
+  await ui.custom((tui: unknown, theme: unknown, _keys: unknown, done: () => void) => ({
+    render: (width: number) => {
+      const contentWidth = Math.max(1, width);
+      const lines = prompt.split("\n").flatMap((line) => {
+        if (line.length === 0) return [""];
+        const wrapped: string[] = [];
+        for (let index = 0; index < line.length; index += contentWidth) {
+          wrapped.push(line.slice(index, index + contentWidth));
+        }
+        return wrapped;
+      });
+      offset = Math.min(offset, Math.max(0, lines.length - 1));
+      const visible = lines.slice(offset, offset + 30);
+      const footer = `[${offset + 1}-${offset + visible.length}/${lines.length}] ↑↓ scroll · any other key closes`;
+      const themed = typeof theme === "object" && theme !== null && typeof (theme as { fg?: unknown }).fg === "function"
+        ? theme as { fg: (color: string, text: string) => string }
+        : undefined;
+      return [
+        themed ? themed.fg("customMessageLabel", "System prompt") : "System prompt",
+        ...visible,
+        themed ? themed.fg("dim", footer.slice(0, contentWidth)) : footer.slice(0, contentWidth),
+      ];
+    },
+    invalidate: () => undefined,
+    handleInput: (data: string) => {
+      if (data === "\x1b[A") offset = Math.max(0, offset - 1);
+      else if (data === "\x1b[B") offset += 1;
+      else return done();
+      if (typeof tui === "object" && tui !== null && typeof (tui as { requestRender?: unknown }).requestRender === "function") {
+        (tui as { requestRender: () => void }).requestRender();
+      }
     },
   }));
 }
@@ -433,6 +480,10 @@ export function registerGatewayCommands(
   composer?: ComposerController,
 ): void {
   if (typeof pi.registerCommand !== "function") return;
+  pi.registerCommand("system-prompt", {
+    description: "Inspect the current effective system prompt",
+    handler: async (_args, ctx) => showSystemPromptInspection(ctx),
+  });
   const { specs } = decodeCommandSpecsResult(core.call("commandSpecs", []));
   for (const spec of specs) {
     const name = spec.name;

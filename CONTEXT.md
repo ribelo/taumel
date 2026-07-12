@@ -50,6 +50,11 @@ A user-requested view of the current goal that does not contact the agent or
 advance goal work.
 _Avoid_: Goal prompt, goal continuation
 
+**System prompt inspection**:
+A user-requested view of Pi's current effective system prompt that does not
+contact the agent or become part of the conversation.
+_Avoid_: Prompt capture, system prompt message
+
 **Goal objective submission**:
 The visible user-authored message that starts work on a newly created goal.
 _Avoid_: Goal notification, goal summary
