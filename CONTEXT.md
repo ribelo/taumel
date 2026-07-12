@@ -44,3 +44,27 @@ _Avoid_: Loaded session permissions, spawn-time permission ceiling
 One delivered occurrence of a scheduled Taumel cron task, including a single
 delivery that represents multiple coalesced scheduled occurrences.
 _Avoid_: User message, reminder message, cron run
+
+**Goal inspection**:
+A user-requested view of the current goal that does not contact the agent or
+advance goal work.
+_Avoid_: Goal prompt, goal continuation
+
+**Goal objective submission**:
+The visible user-authored message that starts work on a newly created goal.
+_Avoid_: Goal notification, goal summary
+
+**Goal acknowledgement**:
+A transient confirmation of a goal lifecycle command that does not become part
+of the conversation.
+_Avoid_: Goal message, goal inspection
+
+**Goal continuation**:
+A system-authored follow-up that advances an active goal across turns and is
+visible to both the agent and user without appearing user-authored.
+_Avoid_: User message, goal acknowledgement, hidden prompt
+
+**Completed goal**:
+A goal the agent considers finished, which stops automated continuation but
+remains recorded and may be reopened or replaced only by the user.
+_Avoid_: Deleted goal, immutable goal, free goal slot
