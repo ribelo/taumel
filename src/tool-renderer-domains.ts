@@ -354,9 +354,7 @@ function buildAgent(name: string, result: unknown, options: unknown, theme: unkn
       thinking: details["thinking"],
       status,
     }, theme));
-    if (name === "agent_spawn") {
-      entries.push(...labeledText("Message", stringFieldOrUndefined(args, "message"), theme));
-    }
+    entries.push(...labeledText("Message", stringFieldOrUndefined(args, "message"), theme));
   }
   return { header, body: entries.length === 0 ? undefined : { mode: "rail", entries } };
 }
