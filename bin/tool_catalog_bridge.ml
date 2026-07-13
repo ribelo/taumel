@@ -20,11 +20,18 @@ let plan_command_notification facts =
       notification
   with
   | Taumel.Tool_catalog.Notification_unavailable ->
-      Tool_contracts.CommandNotificationUnavailable.create ~kind:"unavailable" ()
+      Boundary_contracts.CommandNotificationUnavailable.create ()
       |> Tool_contracts.CommandNotificationUnavailable.t_to_js |> inject
   | Taumel.Tool_catalog.Notification_send notification ->
-      Tool_contracts.CommandNotificationSend.create ~kind:"notify"
-        ~message:notification.message ~level:notification.level ()
+      let level =
+        (match notification.level with
+        | "info" -> `V_info
+        | "warning" -> `V_warning
+        | _ -> failwith "invalid command notification level")
+        |> Boundary_contracts.CommandNotificationSend.level_to_contract
+      in
+      Boundary_contracts.CommandNotificationSend.create
+        ~message:notification.message ~level ()
       |> Tool_contracts.CommandNotificationSend.t_to_js |> inject
 
 let active_ralph_child_session session_id =

@@ -47,30 +47,23 @@ let details ?(accounting_pending = false) goal automation =
   Unsafe.obj (Array.of_list fields)
 
 let tool_result ?(accounting_pending = false) goal text =
-  ok_obj
-    [
-      ("action", js_string "tool_result");
-      ("text", js_string text);
-      ( "details",
-        inject (details ~accounting_pending goal !goal_automation) );
-    ]
+  Boundary_contracts.BridgeToolResult.create ~text
+    ~details:
+      (Ts2ocaml.unknown_of_js
+         (ojs_of_js (details ~accounting_pending goal !goal_automation))) ()
+  |> Tool_contracts.BridgeToolResult.t_to_js |> inject
 
 let command_result ?(followup = false) ?(inspection = false) ?start_objective
     ?rollback goal message =
-  ok_obj
-    ([
-       ("action", js_string "command_result");
-       ("message", js_string message);
-       ("details", inject (details goal !goal_automation));
-     ]
-    @ (if followup then [ ("goalFollowup", js_bool true) ] else [])
-    @ (if inspection then [ ("goalInspection", js_bool true) ] else [])
-    @ (match start_objective with
-      | None -> []
-      | Some objective -> [ ("goalStartObjective", js_string objective) ])
-    @ (match rollback with
-      | None -> []
-      | Some value -> [ ("goalRollback", inject value) ]))
+  let details = Ts2ocaml.unknown_of_js (ojs_of_js (details goal !goal_automation)) in
+  let goalFollowup = if followup then Some true else None in
+  let goalInspection = if inspection then Some true else None in
+  let goalRollback =
+    Option.map (fun value -> Ts2ocaml.unknown_of_js (ojs_of_js value)) rollback
+  in
+  Boundary_contracts.GatewayCommandResult.create ~ok:true ~message ~details
+    ?goalFollowup ?goalStartObjective:start_objective ?goalRollback ?goalInspection ()
+  |> Tool_contracts.GatewayCommandResult.t_to_js |> inject
 
 let session_id ctx = Session_store.session_id_from_ctx ctx
 
@@ -107,7 +100,7 @@ let plan_continuation raw_facts =
   in
   let initial = Tool_contracts.GoalContinuationFacts.get_initial facts in
   if not (Session_sync.try_sync_session_from_host ~scope:"goal continuation" ctx) then
-    Tool_contracts.GoalContinuationNone.create ~kind:"none" ()
+    Boundary_contracts.GoalContinuationNone.create ()
     |> Tool_contracts.GoalContinuationNone.t_to_js |> inject
   else
     match
@@ -116,13 +109,13 @@ let plan_continuation raw_facts =
     with
     | Taumel.Goal.Send_continuation plan ->
         let details = details !current_goal !goal_automation in
-        Tool_contracts.GoalContinuationSend.create ~kind:"send"
+        Boundary_contracts.GoalContinuationSend.create
           ~customType:plan.custom_type ~content:plan.content ~display:plan.display
           ~triggerTurn:plan.trigger_turn ~deliverAs:plan.deliver_as
           ~details:(Obj.magic details) ()
         |> Tool_contracts.GoalContinuationSend.t_to_js |> inject
     | Taumel.Goal.No_continuation ->
-        Tool_contracts.GoalContinuationNone.create ~kind:"none" ()
+        Boundary_contracts.GoalContinuationNone.create ()
         |> Tool_contracts.GoalContinuationNone.t_to_js |> inject
 
 let goal_store_of_js value =
@@ -156,25 +149,14 @@ let plan_child_goal_continuation facts =
       ~max_iterations ~latest_assistant_stop_reason
   with
   | Taumel.Goal.Child_continue plan ->
-      ok_obj
-        [
-          ("action", js_string "send_goal_continuation");
-          ("customType", js_string plan.custom_type);
-          ("content", js_string plan.content);
-          ("display", js_bool plan.display);
-          ("triggerTurn", js_bool plan.trigger_turn);
-          ("deliverAs", js_string plan.deliver_as);
-        ]
+      Boundary_contracts.ChildGoalContinuationSend.create
+        ~customType:plan.custom_type ~content:plan.content ~display:plan.display
+        ~triggerTurn:plan.trigger_turn ~deliverAs:plan.deliver_as ()
+      |> Tool_contracts.ChildGoalContinuationSend.t_to_js |> inject
   | Taumel.Goal.Child_finalize { child_status; child_reason } ->
-      ok_obj
-        ([
-           ("action", js_string "finalize");
-           ("status", js_string child_status);
-         ]
-        @
-        match child_reason with
-        | None -> []
-        | Some reason -> [ ("reason", js_string reason) ])
+      Boundary_contracts.ChildGoalContinuationFinalize.create ~status:child_status
+        ?reason:child_reason ()
+      |> Tool_contracts.ChildGoalContinuationFinalize.t_to_js |> inject
 
 let prepare_get () =
   with_gateway_authorized "get_goal" (fun _ ->
@@ -222,12 +204,11 @@ let create_from_cron raw_facts =
 let prepare_update params ctx =
   with_gateway_authorized "update_goal" (fun _ ->
       let params = Tool_contracts.UpdateGoalParams.t_of_js (ojs_of_js params) in
-      let status = Tool_contracts.UpdateGoalParams.get_status params in
+      let status = Boundary_contracts.UpdateGoalParams.get_status params in
       let status =
         match status with
-        | "complete" -> Taumel.Goal.Complete
-        | "blocked" -> Taumel.Goal.Blocked
-        | _ -> failwith "invalid parsed update_goal.status"
+        | `V_complete -> Taumel.Goal.Complete
+        | `V_blocked -> Taumel.Goal.Blocked
       in
       let was_active =
         match !current_goal with
@@ -311,5 +292,5 @@ let rollback_goal_command raw_facts =
   pending_goal_terminal_status := None;
   Session_sync.save_goal_state ctx;
   Session_sync.save_goal_automation_state ctx;
-  Tool_contracts.GoalRollbackResult.create ~completed:true ()
+  Boundary_contracts.GoalRollbackResult.create ()
   |> Tool_contracts.GoalRollbackResult.t_to_js |> inject

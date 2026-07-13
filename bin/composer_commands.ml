@@ -18,13 +18,13 @@ let handle raw_facts =
   let path = Tool_contracts.ComposerCommandFacts.get_path facts in
   match Taumel.Global_settings.plan_composer_command ~settings ~path args with
   | Error message ->
-      Tool_contracts.ComposerCommandError.create ~kind:"error" ~message ()
+      Boundary_contracts.ComposerCommandError.create ~message ()
       |> Tool_contracts.ComposerCommandError.t_to_js |> inject
   | Ok result ->
       let settings =
         Taumel.Global_settings.to_json result.settings |> json_to_js |> ojs_of_js
         |> Tool_contracts.ComposerSettings.t_of_js
       in
-      Tool_contracts.ComposerCommandSuccess.create ~kind:"result" ~message:result.message
+      Boundary_contracts.ComposerCommandSuccess.create ~message:result.message
         ~settings ~writeSettings:result.write_settings ()
       |> Tool_contracts.ComposerCommandSuccess.t_to_js |> inject

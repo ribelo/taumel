@@ -38,10 +38,10 @@ let plan_context ctx facts =
   delivered_snapshot := Some snapshot;
   match context with
   | None ->
-      Tool_contracts.EnvironmentContextNone.create ~kind:"none" ()
+      Boundary_contracts.EnvironmentContextNone.create ()
       |> Tool_contracts.EnvironmentContextNone.t_to_js |> inject
   | Some context ->
-      Tool_contracts.EnvironmentContextInject.create ~kind:"inject"
+      Boundary_contracts.EnvironmentContextInject.create
         ~customType:custom_type
         ~content:(Taumel.Environment_context.serialize context) ~display:false ()
       |> Tool_contracts.EnvironmentContextInject.t_to_js |> inject

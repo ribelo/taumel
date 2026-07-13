@@ -20,6 +20,17 @@ independent of any single feature.
   invalid state cannot be made impossible, catch it at the earliest practical
   boundary, preferably at compile time, then at parse/normalization time, and
   only lastly through behavior tests or runtime assertions.
+- **eng-bc01** (ubiquitous): Every value returned through the Taumel core-call
+  boundary shall be constructed through the generated builder for its declared
+  bridge contract; code shall not return an ad hoc JavaScript object through that
+  boundary except inside a field that the declared contract explicitly types as
+  open data.
+- **eng-bc02** (ubiquitous): Generated bridge-contract builders shall supply
+  literal discriminants such as `ok`, `action`, and `kind` internally and shall
+  not permit callers to choose those values.
+- **eng-bc03** (unwanted): If production OCaml adds an untyped core-call result
+  producer or directly invokes a generated constructor whose contract contains
+  caller-controlled literal discriminants, then the repository gate shall fail.
 - **eng-host01** (ubiquitous): Taumel single-selection lists shall use Pi's
   `SelectList`, and Taumel mutable-settings lists shall use Pi's `SettingsList`.
   These lists shall use Pi's standard themes and built-in filtering, selection,

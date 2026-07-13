@@ -122,6 +122,27 @@ if (preparedWrite?.ok !== true || preparedWrite.path !== realpathSync("README.md
   throw new Error(`jsoo mutation preparation did not use the host authorization path: ${JSON.stringify(preparedWrite)}`);
 }
 
+for (const [name, params, expectedAction] of [
+  ["web_search_exa", { query: "artifact contract smoke" }, "exa_fetch"],
+  ["crawling_exa", { urls: ["https://example.com"] }, "exa_fetch"],
+  ["get_code_context_exa", { query: "artifact contract smoke" }, "exa_fetch"],
+  ["exa_agent_create_run", { query: "artifact contract smoke" }, "exa_agent_create_run_approval"],
+  ["exa_agent_get_run", { id: "artifact-run" }, "exa_fetch"],
+  ["exa_agent_list_runs", {}, "exa_fetch"],
+  ["exa_agent_cancel_run", { id: "artifact-run" }, "exa_fetch"],
+  ["exa_agent_list_events", { id: "artifact-run" }, "exa_fetch"],
+]) {
+  const preparedExa = core.call("prepareTool", [{ name, params, ctx }]);
+  if (
+    preparedExa?.ok !== true ||
+    preparedExa.action !== expectedAction ||
+    preparedExa.toolName !== name ||
+    Object.hasOwn(preparedExa, "apiKeyPresent")
+  ) {
+    throw new Error(`jsoo ${name} preparation violated its bridge contract: ${JSON.stringify(preparedExa)}`);
+  }
+}
+
 for (const handler of handlers.get("session_start") ?? []) {
   handler({ type: "session_start" }, ctx);
 }

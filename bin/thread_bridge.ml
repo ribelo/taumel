@@ -24,14 +24,10 @@ let prepare_query params =
       with
       | Error message -> error_obj message
       | Ok request ->
-          ok_obj
-            [
-              ("action", js_string "query_threads");
-              ("query", js_string request.query);
-              ("limit", js_number (float_of_int request.limit));
-              ("scope", js_string request.scope);
-              ("includeTools", js_bool request.include_tools);
-            ])
+          Boundary_contracts.PreparedThreadQuery.create ~query:request.query
+            ~limit:(float_of_int request.limit) ~scope:request.scope
+            ~includeTools:request.include_tools ()
+          |> Tool_contracts.PreparedThreadQuery.t_to_js |> inject)
 
 let locator_object params =
   match optional_field params "locator" with
@@ -60,51 +56,37 @@ let prepare_read params =
       match Taumel.Thread_tools.prepare_read_request (read_input_from_params params) with
       | Error message -> error_obj message
       | Ok request ->
-          let locator_fields =
+          let locator =
             match request.locator with
-            | None -> []
+            | None -> None
             | Some locator ->
-                [
-                  ( "locator",
-                    inject
-                      (Unsafe.obj
-                         [|
-                           ("threadID", js_string locator.locator_thread_id);
-                           ( "sourcePath",
-                             match locator.locator_source_path with
-                             | None -> inject Js_of_ocaml.Js.null
-                             | Some path -> js_string path );
-                           ( "entryID",
-                             match locator.locator_entry_id with
-                             | None -> inject Js_of_ocaml.Js.null
-                             | Some id -> js_string id );
-                           ( "line",
-                             match locator.locator_line with
-                             | None -> inject Js_of_ocaml.Js.null
-                             | Some line -> js_number (float_of_int line) );
-                         |]) );
-                ]
+                Some
+                  (Ts2ocaml.unknown_of_js
+                     (ojs_of_js
+                        (Unsafe.obj
+                           [|
+                             ("threadID", js_string locator.locator_thread_id);
+                             ( "sourcePath",
+                               match locator.locator_source_path with
+                               | None -> inject Js_of_ocaml.Js.null
+                               | Some path -> js_string path );
+                             ( "entryID",
+                               match locator.locator_entry_id with
+                               | None -> inject Js_of_ocaml.Js.null
+                               | Some id -> js_string id );
+                             ( "line",
+                               match locator.locator_line with
+                               | None -> inject Js_of_ocaml.Js.null
+                               | Some line -> js_number (float_of_int line) );
+                           |])))
           in
-          ok_obj
-            ([
-               ("action", js_string "read_thread");
-               ("threadID", js_string request.thread_id);
-               ("mode", js_string (Taumel.Thread_tools.read_mode_to_string request.mode));
-               ("around", js_number (float_of_int request.around));
-               ( "entryID",
-                 match request.entry_id with
-                 | None -> inject Js_of_ocaml.Js.null
-                 | Some id -> js_string id );
-               ( "line",
-                 match request.line with
-                 | None -> inject Js_of_ocaml.Js.null
-                 | Some line -> js_number (float_of_int line) );
-               ( "cursor",
-                 match request.cursor with
-                 | None -> inject Js_of_ocaml.Js.null
-                 | Some cursor -> js_string cursor );
-             ]
-            @ locator_fields))
+          Boundary_contracts.PreparedThreadRead.create
+            ~threadID:request.thread_id
+            ~mode:(Taumel.Thread_tools.read_mode_to_string request.mode)
+            ~around:(float_of_int request.around)
+            ?entryID:request.entry_id ?line:(Option.map float_of_int request.line)
+            ?cursor:request.cursor ?locator ()
+          |> Tool_contracts.PreparedThreadRead.t_to_js |> inject)
 
 let js_catalog_scan (scan : Taumel.Thread_tools.catalog_scan) =
   Tool_contracts.ThreadCatalogScan.create ~root:scan.root
@@ -222,21 +204,19 @@ let run_query params catalog =
         Taumel.Thread_tools.plan_query ~workspace:state.cwd request
           (catalog_from_js catalog)
       in
-      ok_obj
-        [
-          ("action", js_string "tool_result");
-          ("text", js_string plan.text);
-          ( "details",
-            inject
-              (Unsafe.obj
-                 [|
-                   ("ok", js_bool plan.ok);
-                   ("query", js_string plan.query);
-                   ("scope", js_string plan.scope);
-                   ("threads", js_array (List.map js_summary plan.threads));
-                   ("diagnostics", js_array (List.map js_diagnostic plan.diagnostics));
-                 |]) );
-        ]
+      let details =
+        Unsafe.obj
+          [|
+            ("ok", js_bool plan.ok);
+            ("query", js_string plan.query);
+            ("scope", js_string plan.scope);
+            ("threads", js_array (List.map js_summary plan.threads));
+            ("diagnostics", js_array (List.map js_diagnostic plan.diagnostics));
+          |]
+      in
+      Boundary_contracts.BridgeToolResult.create ~text:plan.text
+        ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details)) ()
+      |> Tool_contracts.BridgeToolResult.t_to_js |> inject
 
 let run_read params catalog =
   match Taumel.Thread_tools.prepare_read_request (read_input_from_params params) with
@@ -246,41 +226,38 @@ let run_read params catalog =
         Taumel.Thread_tools.plan_read ~id:request.thread_id request
           (catalog_from_js catalog)
       in
-      ok_obj
-        [
-          ("action", js_string "tool_result");
-          ("text", js_string plan.text);
-          ( "details",
-            inject
-              (Unsafe.obj
-                 [|
-                   ("ok", js_bool plan.ok);
-                   ( "thread",
-                     match plan.thread with
-                     | None -> inject Js_of_ocaml.Js.null
-                     | Some summary -> inject (js_summary summary) );
-                   ("entries", js_array (List.map js_entry plan.entries));
-                   ("diagnostics", js_array (List.map js_diagnostic plan.diagnostics));
-                   ("ambiguous", js_bool plan.ambiguous);
-                   ("matches", js_array (List.map js_string plan.matches));
-                   ("mode", js_string plan.mode);
-                   ("cursor", js_option_string plan.cursor);
-                   ("truncation", inject (js_truncation plan.truncation));
-                 |]) );
-        ]
+      let details =
+        Unsafe.obj
+          [|
+            ("ok", js_bool plan.ok);
+            ( "thread",
+              match plan.thread with
+              | None -> inject Js_of_ocaml.Js.null
+              | Some summary -> inject (js_summary summary) );
+            ("entries", js_array (List.map js_entry plan.entries));
+            ("diagnostics", js_array (List.map js_diagnostic plan.diagnostics));
+            ("ambiguous", js_bool plan.ambiguous);
+            ("matches", js_array (List.map js_string plan.matches));
+            ("mode", js_string plan.mode);
+            ("cursor", js_option_string plan.cursor);
+            ("truncation", inject (js_truncation plan.truncation));
+          |]
+      in
+      Boundary_contracts.BridgeToolResult.create ~text:plan.text
+        ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details)) ()
+      |> Tool_contracts.BridgeToolResult.t_to_js |> inject
 
 let run raw_facts =
   let facts = Tool_contracts.ThreadToolFacts.t_of_js (ojs_of_js raw_facts) in
-  let name = Tool_contracts.ThreadToolFacts.get_name facts in
+  let name = Boundary_contracts.ThreadToolFacts.get_name facts in
   let params = Tool_contracts.ThreadToolFacts.get_params facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
   let catalog = Tool_contracts.ThreadToolFacts.get_catalog facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
   let ctx = Tool_contracts.ThreadToolFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
   Session_sync.sync_session_from_host ~scope:"thread tool run" ctx;
   let result =
     match name with
-    | "query_threads" -> run_query params catalog
-    | "read_thread" -> run_read params catalog
-    | other -> error_obj ("not a thread tool: " ^ other)
+    | `V_query_threads -> run_query params catalog
+    | `V_read_thread -> run_read params catalog
   in
   if get_bool result "ok" then
     prepared_tool_result_with_extra result (Unsafe.obj [||])

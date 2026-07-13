@@ -1,5 +1,4 @@
 type approval = {
-  action : string;
   message : string;
   title : string;
   prompt : string;
@@ -17,7 +16,6 @@ type exec_request = {
 }
 
 type exec_plan = {
-  action : string;
   cmd : string;
   workdir : string;
   yield_time_ms : float option;
@@ -58,7 +56,6 @@ type patch_request = {
 }
 
 type mutation_plan = {
-  action : string;
   workspace_roots : string list;
   validate_workspace_paths : bool;
   path : string;
@@ -69,7 +66,6 @@ type mutation_plan = {
 }
 
 type patch_plan = {
-  action : string;
   workspace_roots : string list;
   validate_workspace_paths : bool;
   affected_paths : string list;
@@ -82,8 +78,8 @@ type patch_output = {
   affected_paths : string list;
 }
 
-let approval ?(message = "") action prompt =
-  { action; message; title = prompt.Sandbox.title; prompt = prompt.prompt; timeout_ms = prompt.timeout_ms }
+let approval ?(message = "") prompt =
+  { message; title = prompt.Sandbox.title; prompt = prompt.prompt; timeout_ms = prompt.timeout_ms }
 
 let patch_request_of_values ?input ?patch () =
   let patch =
@@ -107,9 +103,8 @@ let plan_exec ?policy_decision ?policy_message (sandbox : Sandbox.config) (reque
         sandbox_permissions = request.sandbox_permissions;
       }
     in
-    let base action approval =
+    let base approval =
       {
-        action;
         cmd;
         workdir;
         yield_time_ms = request.yield_time_ms;
@@ -119,12 +114,11 @@ let plan_exec ?policy_decision ?policy_message (sandbox : Sandbox.config) (reque
       }
     in
     match Sandbox.authorize_exec ?policy_decision ?policy_message sandbox sandbox_request with
-    | Sandbox.Allow -> Ok (base "exec_command" None)
+    | Sandbox.Allow -> Ok (base None)
     | Requires_approval message ->
         let prompt = Sandbox.exec_approval_prompt ~cmd message in
         Ok
-          (base "exec_command_approval"
-             (Some (approval ~message "exec_command" prompt)))
+          (base (Some (approval ~message prompt)))
     | Deny message -> Error message
 
 let plan_write_stdin (request : write_stdin_request) =
@@ -141,10 +135,9 @@ let plan_write_stdin (request : write_stdin_request) =
         output_mode = request.output_mode;
       }
 
-let resolved_mutation_plan ?contents ?(edits = []) ?approval ?auth_path action path
+let resolved_mutation_plan ?contents ?(edits = []) ?approval ?auth_path path
     (sandbox : Sandbox.config) =
   {
-    action;
     workspace_roots = sandbox.Sandbox.workspace_roots;
     validate_workspace_paths =
       Sandbox.requires_resolved_workspace_mutation_validation sandbox;
@@ -156,19 +149,18 @@ let resolved_mutation_plan ?contents ?(edits = []) ?approval ?auth_path action p
   }
 
 let filesystem_approval action path =
-  Sandbox.filesystem_approval_prompt ~tool:action ~path |> approval action
+  Sandbox.filesystem_approval_prompt ~tool:action ~path |> approval
 
 let plan_write ?auth_path ?auth_roots (sandbox : Sandbox.config)
     (request : write_request) =
   let path = request.path in
   let contents = request.contents in
   match Sandbox.authorize_mutation_path ?auth_path ?auth_roots sandbox Sandbox.Write path with
-  | Allow -> Ok (resolved_mutation_plan ~contents ?auth_path "write" path sandbox)
+  | Allow -> Ok (resolved_mutation_plan ~contents ?auth_path path sandbox)
   | Requires_approval _ ->
       Ok
         (resolved_mutation_plan ~contents ?auth_path
-           ~approval:(filesystem_approval "write" path)
-           "write_approval" path sandbox)
+           ~approval:(filesystem_approval "write" path) path sandbox)
   | Deny message -> Error message
 
 let plan_edit ?auth_path ?auth_roots (sandbox : Sandbox.config)
@@ -176,12 +168,11 @@ let plan_edit ?auth_path ?auth_roots (sandbox : Sandbox.config)
   let path = request.path in
   match Sandbox.authorize_mutation_path ?auth_path ?auth_roots sandbox Sandbox.Write path with
   | Allow ->
-      Ok (resolved_mutation_plan ~edits:request.edits ?auth_path "edit" path sandbox)
+      Ok (resolved_mutation_plan ~edits:request.edits ?auth_path path sandbox)
   | Requires_approval _ ->
       Ok
         (resolved_mutation_plan ~edits:request.edits ?auth_path
-           ~approval:(filesystem_approval "edit" path)
-           "edit_approval" path sandbox)
+           ~approval:(filesystem_approval "edit" path) path sandbox)
   | Deny message -> Error message
 
 let authorization_path auth_paths path =
@@ -203,7 +194,6 @@ let plan_apply_patch ?(auth_paths = []) ?auth_roots (sandbox : Sandbox.config) r
       | Allow ->
           Ok
             {
-              action = "apply_patch";
               workspace_roots = sandbox.workspace_roots;
               validate_workspace_paths =
                 Sandbox.requires_resolved_workspace_mutation_validation sandbox;
@@ -216,7 +206,6 @@ let plan_apply_patch ?(auth_paths = []) ?auth_roots (sandbox : Sandbox.config) r
           in
           Ok
             {
-              action = "apply_patch_approval";
               workspace_roots = sandbox.workspace_roots;
               validate_workspace_paths =
                 Sandbox.requires_resolved_workspace_mutation_validation sandbox;

@@ -64,21 +64,23 @@ let task_summary (task : Taumel.Cron.task) =
 
 let tasks_array tasks = js_array (List.map (fun task -> inject (task_summary task)) tasks)
 
+let typed_mode = function
+  | Taumel.Cron.Message -> `V_message
+  | Taumel.Cron.Goal -> `V_goal
+
 let typed_task (task : Taumel.Cron.task) =
+  let mode = typed_mode task.mode in
   Tool_contracts.CronTask.create ~id:task.id
     ~schedule:(Taumel.Cron_expr.describe task.cron) ~cron:task.cron ~prompt:task.prompt
-    ~recurring:task.recurring ~mode:(Taumel.Cron.mode_to_string task.mode)
+    ~recurring:task.recurring
+    ~mode:(Boundary_contracts.CronTask.mode_to_contract mode)
     ~enabled:task.enabled ~nextDue:(float_of_int task.next_due)
     ~nextDueText:(human_time task.next_due) ~pending:(Option.is_some task.pending_since) ()
 
 let tool_result text details =
-  Unsafe.obj
-    [|
-      ("ok", js_bool true);
-      ("action", js_string "tool_result");
-      ("text", js_string text);
-      ("details", details);
-    |]
+  Boundary_contracts.BridgeToolResult.create ~text
+    ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details)) ()
+  |> Tool_contracts.BridgeToolResult.t_to_js |> inject
 
 let stale_session_message = "Cron unavailable while session context is stale."
 
@@ -124,7 +126,7 @@ let prepare_list _params ctx =
       Tool_contracts.CronListDetails.create ~enabled:!cron_state.enabled
         ~tasks:(List.map typed_task !cron_state.tasks) ()
     in
-    Tool_contracts.CronListResult.create ~ok:true ~action:"tool_result" ~text:message
+    Boundary_contracts.CronListResult.create ~text:message
       ~details ()
     |> Tool_contracts.CronListResult.t_to_js |> inject
 
@@ -148,13 +150,9 @@ let prepare name params ctx =
   | _ -> error_obj ("unknown cron tool: " ^ name)
 
 let command_result ?(ok=true) message details =
-  Unsafe.obj
-    [|
-      ("ok", js_bool ok);
-      ("action", js_string "command_result");
-      ("message", js_string message);
-      ("details", details);
-    |]
+  Boundary_contracts.CronCommandResult.create ~ok ~message
+    ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details)) ()
+  |> Tool_contracts.CronCommandResult.t_to_js |> inject
 
 let starts_with ~prefix value =
   String.length value >= String.length prefix
@@ -256,13 +254,9 @@ let handle_command args ctx =
       if !cron_state.tasks = [] then
         command_result "No cron tasks." (Unsafe.obj [| ("tasks", tasks_array []) |])
       else
-        Unsafe.obj
-          [|
-            ("ok", js_bool true);
-            ("action", js_string "cron_prompt");
-            ("enabled", js_bool !cron_state.enabled);
-            ("tasks", tasks_array !cron_state.tasks);
-          |]
+        Boundary_contracts.CronPrompt.create ~enabled:!cron_state.enabled
+          ~tasks:(List.map typed_task !cron_state.tasks) ()
+        |> Tool_contracts.CronPrompt.t_to_js |> inject
   | _ -> command_result ~ok:false "Usage: /cron [enable|disable]" (Unsafe.obj [||])
 
 let handle_manager_command raw_facts =
@@ -289,37 +283,28 @@ let task_listing_message enabled tasks =
 
 let plan_prompt_impl prompt =
   let tasks = get_object_array prompt "tasks" in
-  if tasks = [] then
-    Unsafe.obj
-      [|
-        ("action", js_string "result");
-        ("result", command_result "No cron tasks." (Unsafe.obj [| ("tasks", js_array []) |]));
-       |]
-
-  else
-    Unsafe.obj
-      [|
-        ("action", js_string "result");
-        ( "result",
-          command_result
-            (task_listing_message (get_bool prompt "enabled") !cron_state.tasks)
-            (Unsafe.obj
-               [|
-                 ("enabled", js_bool (get_bool prompt "enabled"));
-                 ("tasks", tasks_array !cron_state.tasks);
-               |]) );
-      |]
+  let result =
+    if tasks = [] then
+      command_result "No cron tasks."
+        (Unsafe.obj [| ("tasks", js_array []) |])
+    else
+      command_result
+        (task_listing_message (get_bool prompt "enabled") !cron_state.tasks)
+        (Unsafe.obj
+           [|
+             ("enabled", js_bool (get_bool prompt "enabled"));
+             ("tasks", tasks_array !cron_state.tasks);
+           |])
+  in
+  result |> ojs_of_js |> Tool_contracts.CronCommandResult.t_of_js
 
 let plan_prompt raw_facts =
   let facts = Tool_contracts.CronPromptFacts.t_of_js (ojs_of_js raw_facts) in
   let prompt = Tool_contracts.CronPromptFacts.get_prompt facts
     |> Tool_contracts.CronPrompt.t_to_js |> Obj.magic
   in
-  let old_plan = plan_prompt_impl prompt in
-  let result = Unsafe.get old_plan "result" |> ojs_of_js
-    |> Tool_contracts.CronCommandResult.t_of_js
-  in
-  Tool_contracts.CronPromptPlan.create ~kind:"result" ~result ()
+  let result = plan_prompt_impl prompt in
+  Boundary_contracts.CronPromptPlan.create ~result ()
   |> Tool_contracts.CronPromptPlan.t_to_js |> inject
 
 let finish_prompt _prompt selection ctx =
@@ -364,7 +349,7 @@ let poll raw_facts =
   let facts = Tool_contracts.CronPollFacts.t_of_js (ojs_of_js raw_facts) in
   let ctx = Tool_contracts.CronPollFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
   let none () =
-    Tool_contracts.CronPollNone.create ~kind:"none" ()
+    Boundary_contracts.CronPollNone.create ()
     |> Tool_contracts.CronPollNone.t_to_js |> inject
   in
   if not (sync ctx) then none ()
@@ -376,8 +361,11 @@ let poll raw_facts =
     match Taumel.Cron.pending_delivery ~now (facts_from_js facts) !cron_state with
     | None -> none ()
     | Some delivery ->
-        Tool_contracts.CronPollDelivery.create ~kind:"deliver" ~id:delivery.task.id
-          ~mode:(Taumel.Cron.mode_to_string delivery.task.mode) ~content:delivery.content
+        Boundary_contracts.CronPollDelivery.create ~id:delivery.task.id
+          ~mode:
+            (typed_mode delivery.task.mode
+            |> Boundary_contracts.CronPollDelivery.mode_to_contract)
+          ~content:delivery.content
           ~coalesced:(float_of_int delivery.coalesced) ~cron:delivery.task.cron
           ~schedule:(Taumel.Cron_expr.describe delivery.task.cron) ()
         |> Tool_contracts.CronPollDelivery.t_to_js |> inject
@@ -443,7 +431,7 @@ let startup raw_facts =
   let facts = Tool_contracts.CronStartupFacts.t_of_js (ojs_of_js raw_facts) in
   let ctx = Tool_contracts.CronStartupFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
   let none () =
-    Tool_contracts.CronStartupNone.create ~kind:"none" ()
+    Boundary_contracts.CronStartupNone.create ()
     |> Tool_contracts.CronStartupNone.t_to_js |> inject
   in
   if not (sync ctx) then none ()
@@ -453,6 +441,6 @@ let startup raw_facts =
     cron_state := plan.state;
     save_state_if_changed ctx previous;
     if plan.notify && String.trim plan.message <> "" then
-      Tool_contracts.CronStartupNotify.create ~kind:"notify" ~message:plan.message ()
+      Boundary_contracts.CronStartupNotify.create ~message:plan.message ()
       |> Tool_contracts.CronStartupNotify.t_to_js |> inject
     else none ()

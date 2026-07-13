@@ -86,24 +86,24 @@ let core_call name_js args_js =
       Goal_tools.plan_child_goal_continuation (arg 0)
   | "startGoalTurn" ->
       Session_sync.start_goal_turn ();
-      ok_obj []
+      core_ack ()
   | "goalClockPauseStart" ->
       Session_sync.goal_clock_pause_start ();
-      ok_obj []
+      core_ack ()
   | "goalClockPauseEnd" ->
       Session_sync.goal_clock_pause_end ();
-      ok_obj []
+      core_ack ()
   | "interruptGoalAutomation" ->
       Session_sync.interrupt_goal_automation (arg 0);
-      ok_obj []
+      core_ack ()
   | "clearInterruptedGoalAutomation" ->
       Session_sync.clear_interrupted_goal_automation (arg 0);
-      ok_obj []
+      core_ack ()
   | "finalizeGoalError" ->
       let facts = arg 0 in
       Goal_tools.finalize_error (get_string facts "status")
         (Unsafe.get facts "ctx");
-      ok_obj []
+      core_ack ()
   | "planCommandChildSession" -> Command_bridge.plan_child_session (arg 0)
   | "planCommandChildDispatch" -> Command_bridge.plan_child_dispatch (arg 0)
   | "finishCommandChildDispatch" -> Command_bridge.finish_child_dispatch (arg 0)
@@ -119,7 +119,7 @@ let core_call name_js args_js =
   | "reloadSessionState" ->
       Session_sync.load_session_state (arg 0);
       App_state.loaded_session_id := Some (Session_store.session_id_from_ctx (arg 0));
-      ok_obj []
+      core_ack ()
    | "planCronPrompt" -> Cron_tools.plan_prompt (arg 0)
   | "finishCronPrompt" -> Cron_tools.finish_prompt (arg 0) (arg 1) (arg 2)
    | "planPermissionsPrompt" -> Permissions_commands.plan_prompt (arg 0)

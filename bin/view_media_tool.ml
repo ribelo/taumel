@@ -24,7 +24,9 @@ let prepare params =
       let params = Tool_contracts.ViewMediaParams.t_of_js (ojs_of_js params) in
       let path = Tool_contracts.ViewMediaParams.get_path params in
       if String.trim path = "" then error_obj "view_media requires a non-empty path"
-      else ok_obj [ ("action", js_string "view_media"); ("path", js_string path) ])
+      else
+        Boundary_contracts.PreparedViewMedia.create ~path ()
+        |> Tool_contracts.PreparedViewMedia.t_to_js |> inject)
 
 let int_value value = Option.map int_of_float (float_value value)
 
@@ -389,6 +391,23 @@ let resize_image photon image input_bytes mime_type =
     in
     loop start_width start_height
 
+let success_envelope text details candidate =
+  let text_content =
+    Boundary_contracts.ToolResultTextContent.create ~text ()
+    |> Tool_contracts.ToolResultTextContent.t_to_js
+    |> Ts2ocaml.unknown_of_js
+  in
+  let image_content =
+    Boundary_contracts.ToolResultImageContent.create ~data:candidate.data
+      ~mimeType:candidate.mime_type ()
+    |> Tool_contracts.ToolResultImageContent.t_to_js
+    |> Ts2ocaml.unknown_of_js
+  in
+  Tool_contracts.ViewMediaSuccessEnvelope.create
+    ~content:[ text_content; image_content ]
+    ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details)) ()
+  |> Tool_contracts.ViewMediaSuccessEnvelope.t_to_js |> inject
+
 let pass_through_success_result ~path ~full_path ~original_mime_type candidate
     ~width ~height ~byte_length =
   let text =
@@ -416,22 +435,7 @@ let pass_through_success_result ~path ~full_path ~original_mime_type candidate
         ("maxBytes", js_number (float_of_int max_base64_bytes));
       |]
   in
-  Unsafe.obj
-    [|
-      ( "content",
-        js_array
-          [
-            Unsafe.obj
-              [| ("type", js_string "text"); ("text", js_string text) |];
-            Unsafe.obj
-              [|
-                ("type", js_string "image");
-                ("data", js_string candidate.data);
-                ("mimeType", js_string candidate.mime_type);
-              |];
-          ] );
-      ("details", inject details);
-    |]
+  success_envelope text details candidate
 
 let success_result ~path ~full_path ~original_mime_type candidate ~original_width
     ~original_height ~width ~height ~was_resized ~byte_length =
@@ -464,22 +468,7 @@ let success_result ~path ~full_path ~original_mime_type candidate ~original_widt
         ("maxBytes", js_number (float_of_int max_base64_bytes));
       |]
   in
-  Unsafe.obj
-    [|
-      ( "content",
-        js_array
-          [
-            Unsafe.obj
-              [| ("type", js_string "text"); ("text", js_string text) |];
-            Unsafe.obj
-              [|
-                ("type", js_string "image");
-                ("data", js_string candidate.data);
-                ("mimeType", js_string candidate.mime_type);
-              |];
-          ] );
-      ("details", inject details);
-    |]
+  success_envelope text details candidate
 
 let view_media raw_facts =
   let facts = Tool_contracts.ViewMediaFacts.t_of_js (ojs_of_js raw_facts) in

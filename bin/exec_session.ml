@@ -636,92 +636,54 @@ let shell_result_text result =
       result.chunk_id (result.wall_time_ms /. 1000.) lifecycle
       result.original_token_count body
 
-let js_truncation truncation =
-  let fields =
-    [
-      ("truncated", js_bool truncation.trunc_truncated);
-      ("truncatedBy", js_string truncation.trunc_truncated_by);
-      ("totalLines", js_number (float_of_int truncation.trunc_total_lines));
-      ("totalBytes", js_number (float_of_int truncation.trunc_total_bytes));
-      ("outputLines", js_number (float_of_int truncation.trunc_output_lines));
-      ("outputBytes", js_number (float_of_int truncation.trunc_output_bytes));
-      ("maxLines", js_number (float_of_int truncation.trunc_max_lines));
-      ("maxBytes", js_number (float_of_int truncation.trunc_max_bytes));
-      ("lastLinePartial", js_bool truncation.trunc_last_line_partial);
-      ("firstLineExceedsLimit", js_bool truncation.trunc_first_line_exceeds_limit);
-    ]
-  in
-  let fields =
-    match truncation.trunc_full_output_path with
-    | Some path -> fields @ [ ("fullOutputPath", js_string path) ]
-    | None -> fields
-  in
-  Unsafe.obj (Array.of_list fields)
+let typed_truncation truncation =
+  Tool_contracts.ExecTruncation.create
+    ~truncated:truncation.trunc_truncated
+    ~truncatedBy:truncation.trunc_truncated_by
+    ~totalLines:(float_of_int truncation.trunc_total_lines)
+    ~totalBytes:(float_of_int truncation.trunc_total_bytes)
+    ~outputLines:(float_of_int truncation.trunc_output_lines)
+    ~outputBytes:(float_of_int truncation.trunc_output_bytes)
+    ~maxLines:(float_of_int truncation.trunc_max_lines)
+    ~maxBytes:(float_of_int truncation.trunc_max_bytes)
+    ~lastLinePartial:truncation.trunc_last_line_partial
+    ~firstLineExceedsLimit:truncation.trunc_first_line_exceeds_limit
+    ?fullOutputPath:truncation.trunc_full_output_path ()
 
 let shell_result_details result extra =
-  let fields =
-    [
-      ( "ok",
-        js_bool
-          (not result.output_limit_exceeded)
-      );
-      ("output", js_string result.output);
-      ("stdout", js_string result.output);
-      ("stderr", js_string "");
-      ("truncation", inject (js_truncation result.truncation));
-      ("wallTimeMs", js_number result.wall_time_ms);
-      ("outputMode", js_string result.output_mode);
-      ("suppressedLines", js_number (float_of_int result.suppressed_lines));
-      ("suppressedBytes", js_number (float_of_int result.suppressed_bytes));
-    ]
+  let optional_bool name =
+    if has_property extra name then Some (get_bool extra name) else None
   in
-  let fields =
-    if result.output_limit_exceeded then
-      fields
-      @ [
-          ("reasonCode", js_string "output_limit_exceeded");
-          ("outputLimitBytes", js_number (float_of_int total_output_limit_bytes));
-        ]
-    else fields
+  let optional_string name =
+    if has_property extra name then optional_string_field extra name else None
   in
-  let fields =
-    if result.truncation.trunc_truncated then fields @ [ ("truncated", js_bool true) ]
-    else fields
-  in
-  let fields =
-    match result.truncation.trunc_full_output_path with
-    | Some path -> fields @ [ ("fullOutputPath", js_string path) ]
-    | None -> fields
-  in
-  let fields =
-    match result.exit_code with
-    | None -> fields
-    | Some code ->
-        fields
-        @ [
-            ("exitCode", js_number (float_of_int code));
-            ("code", js_number (float_of_int code));
-          ]
-  in
-  let fields =
-    match result.session_id with
-    | None -> fields
-    | Some id ->
-        fields
-        @ [
-            ("sessionId", js_number (float_of_int id));
-            ("session_id", js_number (float_of_int id));
-          ]
-  in
-  merge_js_details (Unsafe.obj (Array.of_list fields)) extra
+  let exit_code = Option.map float_of_int result.exit_code in
+  let session_id = Option.map float_of_int result.session_id in
+  Tool_contracts.ExecResultDetails.create
+    ~ok:(not result.output_limit_exceeded) ~output:result.output
+    ~stdout:result.output ~stderr:""
+    ~truncation:(typed_truncation result.truncation)
+    ~wallTimeMs:result.wall_time_ms ~outputMode:result.output_mode
+    ~suppressedLines:(float_of_int result.suppressed_lines)
+    ~suppressedBytes:(float_of_int result.suppressed_bytes)
+    ?reasonCode:(if result.output_limit_exceeded then Some "output_limit_exceeded" else None)
+    ?outputLimitBytes:
+      (if result.output_limit_exceeded then Some (float_of_int total_output_limit_bytes) else None)
+    ?truncated:(if result.truncation.trunc_truncated then Some true else None)
+    ?fullOutputPath:result.truncation.trunc_full_output_path
+    ?exitCode:exit_code ?code:exit_code ?sessionId:session_id
+    ?session_id ?sandboxed:(optional_bool "sandboxed")
+    ?escalated:(optional_bool "escalated") ?kind:(optional_string "kind")
+    ?alreadyCompleted:(optional_bool "alreadyCompleted") ()
 
 let shell_tool_result result extra =
-  tool_result_envelope
-    (Unsafe.obj
-       [|
-         ("text", js_string (shell_result_text result));
-         ("details", shell_result_details result extra);
-       |])
+  let content =
+    Boundary_contracts.ToolResultTextContent.create
+      ~text:(shell_result_text result) ()
+  in
+  Tool_contracts.ExecToolResult.create ~content:[ content ]
+    ~details:(shell_result_details result extra) ()
+  |> Tool_contracts.ExecToolResult.t_to_js |> inject
 
 let node_env _tty ~shell =
   let process = node_process () in
@@ -1056,9 +1018,9 @@ let write_stdin raw_facts =
       | None ->
           let extra = Unsafe.obj [| ("kind", js_string "write_stdin") |] in
           let output_mode =
-            match Tool_contracts.WriteStdinFacts.get_outputMode facts with
-            | Some "status" -> "status"
-            | _ -> "delta"
+            match Boundary_contracts.WriteStdinFacts.get_output_mode facts with
+            | Some `V_status -> "status"
+            | Some `V_delta | None -> "delta"
           in
           promise_of_session session
             (normalize_write_yield_ms
@@ -1083,7 +1045,7 @@ let shutdown_owner owner_id =
     (fun _ retained ->
       if retained.retained_owner_id = owner_id then None else Some retained)
     retained_sessions;
-  ok_obj [ ("action", js_string "shutdown_exec_owner") ]
+  core_ack ()
 
 (* Background completion notification (mirrors isolated_child completion delivery).
 
@@ -1135,14 +1097,14 @@ let claim_exec_notification_delivery owner_id session_id =
   | Some session when exec_notification_deliverable owner_id session ->
       session.notification_delivery_claimed <- true;
       let claim =
-        Tool_contracts.ExecNotificationClaimed.create ~kind:"claimed"
+        Boundary_contracts.ExecNotificationClaimed.create
           ~sessionId:(float_of_int session.id) ~customType:"notification"
           ~content:(exec_notification_content session) ~display:true ()
       in
       Tool_contracts.ExecNotificationClaimed.t_to_js claim |> inject
   | _ ->
       let claim =
-        Tool_contracts.ExecNotificationUnavailable.create ~kind:"unavailable" ()
+        Boundary_contracts.ExecNotificationUnavailable.create ()
       in
       Tool_contracts.ExecNotificationUnavailable.t_to_js claim |> inject
 
@@ -1151,7 +1113,7 @@ let release_exec_notification_delivery session_id =
   | Some session when not session.notification_sent ->
       session.notification_delivery_claimed <- false
   | _ -> ());
-  ok_obj [ ("action", js_string "release_exec_notification_delivery") ]
+  core_ack ()
 
 let mark_exec_notification_delivered session_id =
   (match Hashtbl.find_opt sessions session_id with
@@ -1159,7 +1121,7 @@ let mark_exec_notification_delivered session_id =
       session.notification_delivery_claimed <- false;
       session.notification_sent <- true
   | None -> ());
-  ok_obj [ ("action", js_string "mark_exec_notification_delivered") ]
+  core_ack ()
 
 (* Resolves when the session has exited (or is already gone/drained), without
    draining or removing it, so the turn_end/idle flush can deliver its output.
@@ -1174,7 +1136,12 @@ let await_exec_completion session_id =
              let resolve_now () =
                ignore
                  (Unsafe.fun_call resolve
-                    [| inject (ok_obj [ ("exited", js_bool true) ]) |])
+                    [|
+                      inject
+                        (Boundary_contracts.ExecCompletionWaitResult.create
+                           ~exited:true ()
+                        |> Tool_contracts.ExecCompletionWaitResult.t_to_js)
+                    |])
              in
              let rec wait () =
                match Hashtbl.find_opt sessions session_id with

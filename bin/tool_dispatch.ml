@@ -35,4 +35,7 @@ let prepare raw_facts =
   | "exa_agent_list_runs" -> Exa_bridge.prepare_agent_list_runs params
   | "exa_agent_cancel_run" -> Exa_bridge.prepare_agent_cancel_run params
   | "exa_agent_list_events" -> Exa_bridge.prepare_agent_list_events params
-  | other -> error_obj ("tool executor is not connected yet: " ^ other)
+  | other ->
+      Boundary_contracts.GatewayCommandError.create
+        ~error:("tool executor is not connected yet: " ^ other) ()
+      |> Tool_contracts.GatewayCommandError.t_to_js |> inject

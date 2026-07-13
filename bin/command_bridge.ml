@@ -28,13 +28,13 @@ let plan_execution raw_facts =
       ~ralph_start_denial name args
   with
   | Error message ->
-      Tool_contracts.CommandExecutionError.create ~kind:"error" ~message ()
+      Boundary_contracts.CommandExecutionError.create ~message ()
       |> Tool_contracts.CommandExecutionError.t_to_js |> inject
   | Ok Taumel.Command_plan.Command_direct ->
-      Tool_contracts.CommandExecutionDirect.create ~kind:"direct" ()
+      Boundary_contracts.CommandExecutionDirect.create ()
       |> Tool_contracts.CommandExecutionDirect.t_to_js |> inject
   | Ok (Command_child_session plan) ->
-      Tool_contracts.CommandExecutionChild.create ~kind:"child"
+      Boundary_contracts.CommandExecutionChild.create
         ~metadata:(Tool_contracts.ChildSessionMetadata.t_of_js (ojs_of_js (json_to_js plan.metadata)))
         ~contextOverrides:(js_context_overrides plan.context_overrides)
         ~activeToolsMode:plan.active_tools_mode
@@ -79,7 +79,7 @@ let plan_child_dispatch raw_facts =
       (Child_session_bridge.child_bridge_details bridge_facts)
   in
   let return_result result =
-    Tool_contracts.CommandChildReturn.create ~kind:"return"
+    Boundary_contracts.CommandChildReturn.create
       ~result:(Tool_contracts.BridgeCommandResult.t_of_js (ojs_of_js result)) ()
     |> Tool_contracts.CommandChildReturn.t_to_js |> inject
   in
@@ -108,7 +108,7 @@ let plan_child_dispatch raw_facts =
         Tool_contracts.CommandBridgeUpdate.create ~action:plan.bridge_update_action
           ~key:plan.bridge_update_key ()
       in
-      Tool_contracts.CommandChildDispatch.create ~kind:"dispatch"
+      Boundary_contracts.CommandChildDispatch.create
         ~result:(Tool_contracts.BridgeCommandResult.t_of_js (ojs_of_js result_with_child))
         ~bridgeUpdate ~prompt:plan.prompt ()
       |> Tool_contracts.CommandChildDispatch.t_to_js |> inject

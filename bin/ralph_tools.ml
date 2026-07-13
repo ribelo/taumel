@@ -13,29 +13,27 @@ let child_session_from_ctx id ctx =
   | _ -> "child-" ^ id
 
 let tool_result task message =
-  ok_obj
-    [
-      ("action", js_string "tool_result");
-      ("text", js_string message);
-      ( "details",
-        inject
-          (Unsafe.obj
-             [|
-               ("ok", js_bool true);
-               ("taskId", js_string task.Taumel.Ralph_loop.id);
-               ("iteration", js_number (float_of_int task.iteration));
-               ("status", js_string (Taumel.Ralph_loop.status_to_string task.status));
-               ("reflection", js_bool (Taumel.Ralph_loop.should_reflect task));
-               ( "maxIterations",
-                 match task.max_iterations with
-                 | None -> Unsafe.inject Js.null
-                 | Some value -> js_number (float_of_int value) );
-               ( "reflectionEvery",
-                 match task.reflection_every with
-                 | None -> Unsafe.inject Js.null
-                 | Some value -> js_number (float_of_int value) );
-             |]) );
-    ]
+  let details =
+    Unsafe.obj
+      [|
+        ("ok", js_bool true);
+        ("taskId", js_string task.Taumel.Ralph_loop.id);
+        ("iteration", js_number (float_of_int task.iteration));
+        ("status", js_string (Taumel.Ralph_loop.status_to_string task.status));
+        ("reflection", js_bool (Taumel.Ralph_loop.should_reflect task));
+        ( "maxIterations",
+          match task.max_iterations with
+          | None -> Unsafe.inject Js.null
+          | Some value -> js_number (float_of_int value) );
+        ( "reflectionEvery",
+          match task.reflection_every with
+          | None -> Unsafe.inject Js.null
+          | Some value -> js_number (float_of_int value) );
+      |]
+  in
+  Boundary_contracts.BridgeToolResult.create ~text:message
+    ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details)) ()
+  |> Tool_contracts.BridgeToolResult.t_to_js |> inject
 
 let prepare_child_tool name params ctx =
   with_gateway_authorized name (fun _ ->
@@ -65,15 +63,11 @@ let prepare_child_tool name params ctx =
                   (Printf.sprintf "%s accepted for %s" name task_id))))
 
 let command_result ?details message =
-  let fields =
-    [ ("action", js_string "command_result"); ("message", js_string message) ]
+  let details =
+    Option.map (fun value -> Ts2ocaml.unknown_of_js (ojs_of_js value)) details
   in
-  let fields =
-    match details with
-    | None -> fields
-    | Some details -> fields @ [ ("details", inject details) ]
-  in
-  ok_obj fields
+  Boundary_contracts.GatewayCommandResult.create ~ok:true ~message ?details ()
+  |> Tool_contracts.GatewayCommandResult.t_to_js |> inject
 
 let start_details (details : Taumel.Ralph_loop.start_details) =
   Unsafe.obj

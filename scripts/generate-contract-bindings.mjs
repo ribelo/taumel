@@ -42,11 +42,11 @@ function propertyName(name) {
 function literalType(value) {
   switch (typeof value) {
     case "string":
-      return "string";
+      return JSON.stringify(value);
     case "number":
-      return "number";
+      return String(value);
     case "boolean":
-      return "boolean";
+      return String(value);
     default:
       return "unknown";
   }
@@ -77,6 +77,8 @@ function schemaToTs(schema, namedSchemas, currentName) {
         return "number";
       case "boolean":
         return "boolean";
+      case "null":
+        return "null";
       case "array":
         return `readonly ${schemaToTs(schema.items, namedSchemas, currentName)}[]`;
       case "object":
@@ -109,6 +111,99 @@ function interfaceText(name, schema, namedSchemas) {
     return `  readonly ${propertyName(fieldName)}${optional}: ${schemaToTs(property, namedSchemas, name)};`;
   });
   return [`export interface ${name} {`, ...fields, "}"].join("\n");
+}
+
+function generatedBuilders(dtsSchemas, generatedMli) {
+  const modules = [];
+  for (const [name, schema] of dtsSchemas) {
+    const properties = Object.entries(schema?.properties ?? {});
+    const literalProperties = properties.filter(([, property]) =>
+      property && typeof property === "object" && "const" in property
+    );
+    const enumProperties = properties.filter(([, property]) =>
+      Array.isArray(property?.anyOf) &&
+      property.anyOf.length > 0 &&
+      property.anyOf.every((item) => item && typeof item === "object" && typeof item.const === "string")
+    );
+    if (literalProperties.length === 0 && enumProperties.length === 0) {
+      continue;
+    }
+    const moduleMatch = generatedMli.match(
+      new RegExp(`module ${name} : sig[\\s\\S]*?\\n  val create: ([^\\n]+)\\nend`),
+    );
+    if (moduleMatch === null) throw new Error(`missing generated create signature for ${name}`);
+    const arguments_ = [...moduleMatch[1].matchAll(/(\??)([A-Za-z_][A-Za-z0-9_]*):/g)];
+    if (arguments_.length !== properties.length) {
+      throw new Error(`generated create signature for ${name} does not match its schema`);
+    }
+    const body = [
+      `module ${name} = struct`,
+      `  type t = Tool_contracts.${name}.t`,
+      `  let t_to_js = Tool_contracts.${name}.t_to_js`,
+      `  let t_of_js = Tool_contracts.${name}.t_of_js`,
+    ];
+    if (literalProperties.length > 0) {
+      const parameters = [];
+      const forwarded = [];
+      for (let index = 0; index < properties.length; index += 1) {
+        const [, property] = properties[index];
+        const [match, optional, label] = arguments_[index];
+        if (property && typeof property === "object" && "const" in property) {
+          const tail = moduleMatch[1].slice(arguments_[index].index + match.length);
+          const variant = tail.match(/`([A-Za-z0-9_]+)/)?.[1];
+          if (variant === undefined) throw new Error(`missing literal variant for ${name}.${label}`);
+          forwarded.push(`~${label}:\`${variant}`);
+        } else {
+          parameters.push(`${optional === "?" ? "?" : "~"}${label}`);
+          forwarded.push(`${optional === "?" ? "?" : "~"}${label}`);
+        }
+      }
+      body.push(
+        `  let create ${parameters.join(" ")} () =`,
+        `    Tool_contracts.${name}.create ${forwarded.join(" ")} ()`,
+      );
+    }
+    for (const [fieldName, property] of enumProperties) {
+      const localFieldName = fieldName.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
+      const getterMatch = generatedMli.match(
+        new RegExp(`module ${name} : sig[\\s\\S]*?\\n  val get_${fieldName}: t -> ([^\\n]+)`),
+      );
+      if (getterMatch === null) throw new Error(`missing generated getter for ${name}.${fieldName}`);
+      const generatedVariants = new Map(
+        [...getterMatch[1].matchAll(/`([A-Za-z0-9_]+)\[@js ("(?:[^"\\]|\\.)*")\]/g)]
+          .map((match) => [JSON.parse(match[2]), match[1]]),
+      );
+      const values = property.anyOf.map((item) => item.const);
+      const stable = (value) => `V_${value.replace(/[^A-Za-z0-9_]/g, "_")}`;
+      const mappings = values.map((value) => {
+        const generated = generatedVariants.get(value);
+        if (generated === undefined) throw new Error(`missing generated enum variant for ${name}.${fieldName}=${value}`);
+        return { generated, stable: stable(value) };
+      });
+      body.push(
+        `  type ${localFieldName} = [ ${mappings.map(({ stable }) => `\`${stable}`).join(" | ")} ]`,
+        `  let ${localFieldName}_to_contract = function`,
+        ...mappings.map(({ generated, stable }) => `    | \`${stable} -> \`${generated}`),
+        `  let get_${localFieldName} value =`,
+      );
+      const optional = /\boption\b/.test(getterMatch[1]);
+      if (optional) {
+        body.push(
+          `    match Tool_contracts.${name}.get_${fieldName} value with`,
+          "    | None -> None",
+          ...mappings.map(({ generated, stable }) => `    | Some \`${generated} -> Some \`${stable}`),
+        );
+      } else {
+        body.push(
+          `    match Tool_contracts.${name}.get_${fieldName} value with`,
+          ...mappings.map(({ generated, stable }) => `    | \`${generated} -> \`${stable}`),
+        );
+      }
+    }
+    body.push("end");
+    modules.push(body.join("\n"));
+  }
+  return `(* generated by scripts/generate-contract-bindings.mjs; do not edit *)\n\n${modules.join("\n\n")}\n`;
 }
 
 async function loadContracts(sourcePath) {
@@ -166,6 +261,12 @@ async function main() {
 
   run("gen_js_api", ["-o", "ts2ocaml.ml", "ts2ocaml.mli"], { cwd: outputDir });
   run("gen_js_api", ["-o", "tool_contracts.ml", "tool_contracts.mli"], { cwd: outputDir });
+  const generatedMli = await readFile(join(outputDir, "tool_contracts.mli"), "utf8");
+  await writeFile(
+    join(outputDir, "boundary_contracts.ml"),
+    generatedBuilders(dtsSchemas, generatedMli),
+    "utf8",
+  );
 }
 
 main().catch((error) => {

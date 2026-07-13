@@ -366,7 +366,7 @@ let compile_settings settings =
   exec_policy := compiled;
   let errors = compiled.errors in
   let result =
-    Tool_contracts.RefreshExecPolicyResult.create ~ok:true
+    Boundary_contracts.RefreshExecPolicyResult.create
       ~activeRuleCount:(float_of_int (Taumel.Exec_policy.active_rule_count compiled))
       ~scopes:(Taumel.Exec_policy.contributing_scopes compiled)
       ~errors:(List.map

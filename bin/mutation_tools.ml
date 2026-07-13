@@ -104,9 +104,9 @@ let write_stdin_request_from_params params =
        Option.map int_of_float
          (Tool_contracts.WriteStdinParams.get_max_output_tokens params);
      output_mode =
-       (match Tool_contracts.WriteStdinParams.get_output_mode params with
-        | Some "status" -> "status"
-        | _ -> "delta");
+       (match Boundary_contracts.WriteStdinParams.get_output_mode params with
+        | Some `V_status -> "status"
+        | Some `V_delta | None -> "delta");
    }
     : Taumel.Mutation_plan.write_stdin_request)
 
@@ -116,9 +116,9 @@ let write_request_from_params params =
      Taumel.Mutation_plan.path = Tool_contracts.WriteParams.get_path params;
      contents = Tool_contracts.WriteParams.get_content params;
      mode =
-       (match Tool_contracts.WriteParams.get_mode params with
-        | Some "append" -> "append"
-        | _ -> "overwrite");
+       (match Boundary_contracts.WriteParams.get_mode params with
+        | Some `V_append -> "append"
+        | Some `V_overwrite | None -> "overwrite");
    }
     : Taumel.Mutation_plan.write_request)
 
@@ -160,45 +160,28 @@ let prepare_exec_command params =
       match Taumel.Mutation_plan.plan_exec ?policy_decision ?policy_message sandbox request with
       | Error message -> error_obj message
       | Ok plan ->
-          let fields =
-            [
-              ("action", js_string plan.action);
-              ("cmd", js_string plan.cmd);
-              ("workdir", js_string plan.workdir);
-              ("tty", js_bool plan.tty);
-              ("sandbox", inject (js_sandbox_config sandbox));
-            ]
-            @ js_optional_number_field "yieldTimeMs" plan.yield_time_ms
-            @ (match plan.max_output_tokens with
-              | None -> []
-              | Some value -> [ ("maxOutputTokens", js_number (float_of_int value)) ])
-          in
-          let fields =
-            match plan.approval with
-            | None -> fields
-            | Some approval ->
-                let allow_amendment_fields =
-                  if not (String.starts_with ~prefix:"exec policy requires approval" approval.message) then []
-                  else if Exec_policy_bridge.explicit_prompt_or_forbidden request.cmd then []
-                  else
-                    match Exec_policy_bridge.allow_amendment_tokens request.cmd with
-                    | None -> []
-                    | Some tokens ->
-                        [
-                          ("execPolicyAllowAlwaysTokens", js_array (List.map js_string tokens));
-                        ]
-                in
-                fields
-                @ [
-                    ("approvalMessage", js_string approval.message);
-                    ("approvalTitle", js_string approval.title);
-                    ("approvalPrompt", js_string approval.prompt);
-                    ( "approvalTimeoutMs",
-                      js_number (float_of_int approval.timeout_ms) );
-                  ]
-                @ allow_amendment_fields
-          in
-          ok_obj fields)
+          let sandbox = typed_sandbox_config sandbox in
+          let yieldTimeMs = plan.yield_time_ms in
+          let maxOutputTokens = Option.map float_of_int plan.max_output_tokens in
+          (match plan.approval with
+          | None ->
+              Boundary_contracts.PreparedExec.create ~cmd:plan.cmd
+                ~workdir:plan.workdir ?yieldTimeMs ?maxOutputTokens ~tty:plan.tty
+                ~sandbox ()
+              |> Tool_contracts.PreparedExec.t_to_js |> inject
+          | Some approval ->
+              let execPolicyAllowAlwaysTokens =
+                if not (String.starts_with ~prefix:"exec policy requires approval" approval.message) then None
+                else if Exec_policy_bridge.explicit_prompt_or_forbidden request.cmd then None
+                else Exec_policy_bridge.allow_amendment_tokens request.cmd
+              in
+              Boundary_contracts.PreparedExecApproval.create ~cmd:plan.cmd
+                ~workdir:plan.workdir ?yieldTimeMs ?maxOutputTokens ~tty:plan.tty
+                ~sandbox ~approvalMessage:approval.message
+                ~approvalTitle:approval.title ~approvalPrompt:approval.prompt
+                ~approvalTimeoutMs:(float_of_int approval.timeout_ms)
+                ?execPolicyAllowAlwaysTokens ()
+              |> Tool_contracts.PreparedExecApproval.t_to_js |> inject))
 
 let prepare_write_stdin params =
   with_gateway_authorized "write_stdin" (fun _sandbox ->
@@ -206,17 +189,19 @@ let prepare_write_stdin params =
       match Taumel.Mutation_plan.plan_write_stdin request with
       | Error message -> error_obj message
       | Ok plan ->
-          ok_obj
-            ([
-               ("action", js_string "write_stdin");
-               ("sessionId", js_number (float_of_int plan.session_id));
-               ("chars", js_string plan.chars);
-               ("outputMode", js_string plan.output_mode);
-             ]
-            @ js_optional_number_field "yieldTimeMs" plan.yield_time_ms
-            @ (match plan.max_output_tokens with
-              | None -> []
-              | Some value -> [ ("maxOutputTokens", js_number (float_of_int value)) ])))
+          let outputMode =
+            (match plan.output_mode with
+            | "delta" -> `V_delta
+            | "status" -> `V_status
+            | _ -> failwith "invalid planned write_stdin output mode")
+            |> Boundary_contracts.PreparedWriteStdin.output_mode_to_contract
+          in
+          Boundary_contracts.PreparedWriteStdin.create
+            ~sessionId:(float_of_int plan.session_id) ~chars:plan.chars
+            ?yieldTimeMs:plan.yield_time_ms
+            ?maxOutputTokens:(Option.map float_of_int plan.max_output_tokens)
+            ~outputMode ()
+          |> Tool_contracts.PreparedWriteStdin.t_to_js |> inject)
 
 let js_edit_replacement (edit : Taumel.Sandbox.edit_replacement) =
   Unsafe.obj
@@ -225,28 +210,8 @@ let js_edit_replacement (edit : Taumel.Sandbox.edit_replacement) =
       ("newText", js_string edit.new_text);
     |]
 
-let js_approval_fields (approval : Taumel.Mutation_plan.approval) =
-  [
-    ("approvalAction", js_string approval.action);
-    ("approvalTitle", js_string approval.title);
-    ("approvalPrompt", js_string approval.prompt);
-    ("approvalTimeoutMs", js_number (float_of_int approval.timeout_ms));
-  ]
-
-let render_mutation_plan (plan : Taumel.Mutation_plan.mutation_plan) fields =
-  ok_obj
-    ([
-       ("action", js_string plan.action);
-       ("workspaceRoots", js_array (List.map js_string plan.workspace_roots));
-       ("validateWorkspacePaths", js_bool plan.validate_workspace_paths);
-       ("path", js_string plan.path);
-       ("displayPath", js_string plan.display_path);
-     ]
-    @ fields
-    @
-    match plan.approval with
-    | None -> []
-    | Some approval -> js_approval_fields approval)
+let unknown_edit edit =
+  Ts2ocaml.unknown_of_js (ojs_of_js (js_edit_replacement edit))
 
 let prepare_write params =
   with_gateway_profile_authorized "write" (fun sandbox ->
@@ -260,12 +225,24 @@ let prepare_write params =
           with
           | Error message -> error_obj message
           | Ok plan ->
-              render_mutation_plan plan
-                [
-                  ( "contents",
-                    js_string (Option.value plan.contents ~default:"") );
-                  ("mode", js_string request.mode);
-                ]))
+              let contents = Option.value plan.contents ~default:"" in
+              (match plan.approval with
+              | None ->
+                  Boundary_contracts.PreparedWrite.create
+                    ~workspaceRoots:plan.workspace_roots
+                    ~validateWorkspacePaths:plan.validate_workspace_paths
+                    ~path:plan.path ~displayPath:plan.display_path ~contents
+                    ~mode:request.mode ()
+                  |> Tool_contracts.PreparedWrite.t_to_js |> inject
+              | Some approval ->
+                  Boundary_contracts.PreparedWriteApproval.create
+                    ~workspaceRoots:plan.workspace_roots
+                    ~validateWorkspacePaths:plan.validate_workspace_paths
+                    ~path:plan.path ~displayPath:plan.display_path ~contents
+                    ~mode:request.mode ~approvalAction:"write"
+                    ~approvalTitle:approval.title ~approvalPrompt:approval.prompt
+                    ~approvalTimeoutMs:(float_of_int approval.timeout_ms) ()
+                  |> Tool_contracts.PreparedWriteApproval.t_to_js |> inject)))
 
 let prepare_read params =
   with_gateway_authorized "read" (fun _sandbox ->
@@ -273,19 +250,10 @@ let prepare_read params =
       let path = Tool_contracts.ReadParams.get_path params in
       if String.trim path = "" then error_obj "read requires a non-empty path"
       else
-        let int_opt = function
-          | Some value -> [ value ]
-          | None -> []
-        in
         let offset = Tool_contracts.ReadParams.get_offset params in
         let limit = Tool_contracts.ReadParams.get_limit params in
-        ok_obj
-          ([
-             ("action", js_string "read");
-             ("path", js_string path);
-           ]
-          @ List.map (fun v -> ("offset", js_number v)) (int_opt offset)
-          @ List.map (fun v -> ("limit", js_number v)) (int_opt limit)))
+        Boundary_contracts.PreparedRead.create ~path ?offset ?limit ()
+        |> Tool_contracts.PreparedRead.t_to_js |> inject)
 
 let prepare_edit params =
   with_gateway_profile_authorized "edit" (fun sandbox ->
@@ -298,8 +266,23 @@ let prepare_edit params =
           with
           | Error message -> error_obj message
           | Ok plan ->
-              render_mutation_plan plan
-                [ ("edits", js_array (List.map js_edit_replacement plan.edits)) ]))
+              let edits = List.map unknown_edit plan.edits in
+              (match plan.approval with
+              | None ->
+                  Boundary_contracts.PreparedEdit.create
+                    ~workspaceRoots:plan.workspace_roots
+                    ~validateWorkspacePaths:plan.validate_workspace_paths
+                    ~path:plan.path ~displayPath:plan.display_path ~edits ()
+                  |> Tool_contracts.PreparedEdit.t_to_js |> inject
+              | Some approval ->
+                  Boundary_contracts.PreparedEditApproval.create
+                    ~workspaceRoots:plan.workspace_roots
+                    ~validateWorkspacePaths:plan.validate_workspace_paths
+                    ~path:plan.path ~displayPath:plan.display_path ~edits
+                    ~approvalAction:"edit" ~approvalTitle:approval.title
+                    ~approvalPrompt:approval.prompt
+                    ~approvalTimeoutMs:(float_of_int approval.timeout_ms) ()
+                  |> Tool_contracts.PreparedEditApproval.t_to_js |> inject)))
 
 let apply_edit_to_file raw_facts =
   let facts = Tool_contracts.EditApplicationFacts.t_of_js (ojs_of_js raw_facts) in
@@ -314,10 +297,10 @@ let apply_edit_to_file raw_facts =
   in
   match Taumel.Sandbox.apply_edits ~display_path contents request.edits with
   | Error message ->
-      Tool_contracts.MutationError.create ~kind:"error" ~message ()
+      Boundary_contracts.MutationError.create ~message ()
       |> Tool_contracts.MutationError.t_to_js |> inject
   | Ok contents ->
-      Tool_contracts.EditApplied.create ~kind:"applied" ~path ~displayPath:display_path
+      Boundary_contracts.EditApplied.create ~path ~displayPath:display_path
         ~contents ~editCount:(float_of_int (List.length request.edits)) ()
       |> Tool_contracts.EditApplied.t_to_js |> inject
 
@@ -335,21 +318,22 @@ let prepare_apply_patch params =
               with
               | Error message -> error_obj message
               | Ok plan ->
-                  ok_obj
-                    ([
-                       ( "workspaceRoots",
-                         js_array (List.map js_string plan.workspace_roots) );
-                       ( "validateWorkspacePaths",
-                         js_bool plan.validate_workspace_paths );
-                       ("action", js_string plan.action);
-                       ( "affectedPaths",
-                         js_array (List.map js_string plan.affected_paths) );
-                       ("patch", js_string request.patch);
-                     ]
-                    @
-                    match plan.approval with
-                    | None -> []
-                    | Some approval -> js_approval_fields approval))))
+                  (match plan.approval with
+                  | None ->
+                      Boundary_contracts.PreparedPatch.create
+                        ~workspaceRoots:plan.workspace_roots
+                        ~validateWorkspacePaths:plan.validate_workspace_paths
+                        ~affectedPaths:plan.affected_paths ~patch:request.patch ()
+                      |> Tool_contracts.PreparedPatch.t_to_js |> inject
+                  | Some approval ->
+                      Boundary_contracts.PreparedPatchApproval.create
+                        ~workspaceRoots:plan.workspace_roots
+                        ~validateWorkspacePaths:plan.validate_workspace_paths
+                        ~affectedPaths:plan.affected_paths ~patch:request.patch
+                        ~approvalAction:"apply_patch"
+                        ~approvalTitle:approval.title ~approvalPrompt:approval.prompt
+                        ~approvalTimeoutMs:(float_of_int approval.timeout_ms) ()
+                      |> Tool_contracts.PreparedPatchApproval.t_to_js |> inject))))
 
 let files_map_from_js obj =
   object_keys obj
@@ -371,12 +355,12 @@ let apply_patch_to_files raw_facts =
   with_gateway_profile_authorized "apply_patch" (fun sandbox ->
       match patch_request_from_params params with
       | Error message ->
-          Tool_contracts.MutationError.create ~kind:"error" ~message ()
+          Boundary_contracts.MutationError.create ~message ()
           |> Tool_contracts.MutationError.t_to_js |> inject
       | Ok request -> (
           match patch_authorization sandbox request.patch with
           | Error message ->
-              Tool_contracts.MutationError.create ~kind:"error" ~message ()
+              Boundary_contracts.MutationError.create ~message ()
               |> Tool_contracts.MutationError.t_to_js |> inject
           | Ok (auth_paths, auth_roots) -> (
               match
@@ -384,7 +368,7 @@ let apply_patch_to_files raw_facts =
                   ~auth_roots sandbox request (files_map_from_js files)
               with
               | Error message ->
-                  Tool_contracts.MutationError.create ~kind:"error" ~message ()
+                  Boundary_contracts.MutationError.create ~message ()
                   |> Tool_contracts.MutationError.t_to_js |> inject
               | Ok output ->
                   let write_objects =
@@ -392,7 +376,7 @@ let apply_patch_to_files raw_facts =
                     |> List.map (fun (path, contents) ->
                            Tool_contracts.PatchWrite.create ~path ~contents ())
                   in
-                  Tool_contracts.PatchApplied.create ~kind:"applied"
+                  Boundary_contracts.PatchApplied.create
                     ~deletes:output.deletes ~writes:write_objects
                     ~affectedPaths:output.affected_paths ()
                   |> Tool_contracts.PatchApplied.t_to_js |> inject)))

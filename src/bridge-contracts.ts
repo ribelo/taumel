@@ -157,7 +157,7 @@ export const RefreshExecPolicyFactsSchema = Type.Object(
 );
 export const RefreshExecPolicyResultSchema = Type.Object(
   {
-    ok: Type.Boolean(),
+    ok: Type.Literal(true),
     activeRuleCount: Type.Integer({ minimum: 0 }),
     scopes: Type.Array(Type.String()),
     errors: Type.Array(Type.String()),
@@ -275,6 +275,21 @@ export const GoalContinuationPlanSchema = Type.Union([
 ]);
 export type GoalContinuationFacts = Static<typeof GoalContinuationFactsSchema>;
 export type GoalContinuationPlan = Static<typeof GoalContinuationPlanSchema>;
+export const ChildGoalContinuationSendSchema = Type.Object(
+  {
+    ok: Type.Literal(true), action: Type.Literal("send_goal_continuation"),
+    customType: Type.String({ minLength: 1 }), content: Type.String({ minLength: 1 }),
+    display: Type.Boolean(), triggerTurn: Type.Boolean(), deliverAs: Type.String({ minLength: 1 }),
+  },
+  { $id: "ChildGoalContinuationSend", additionalProperties: false },
+);
+export const ChildGoalContinuationFinalizeSchema = Type.Object(
+  {
+    ok: Type.Literal(true), action: Type.Literal("finalize"),
+    status: Type.String({ minLength: 1 }), reason: Type.Optional(Type.String({ minLength: 1 })),
+  },
+  { $id: "ChildGoalContinuationFinalize", additionalProperties: false },
+);
 
 export const ChildSessionMetadataSchema = Type.Object(
   {
@@ -480,6 +495,14 @@ export type BridgeToolResult = Static<typeof BridgeToolResultSchema>;
 export const BridgeErrorResultSchema = Type.Object(
   { ok: Type.Literal(false), error: Type.String({ minLength: 1 }) },
   { $id: "BridgeErrorResult", additionalProperties: false },
+);
+export const CoreAckSchema = Type.Object(
+  { ok: Type.Literal(true) },
+  { $id: "CoreAck", additionalProperties: false },
+);
+export const ExecCompletionWaitResultSchema = Type.Object(
+  { ok: Type.Literal(true), exited: Type.Boolean() },
+  { $id: "ExecCompletionWaitResult", additionalProperties: false },
 );
 export const BridgeToolExecutionResultSchema = Type.Union([BridgeToolResultSchema, BridgeErrorResultSchema]);
 export const ExaExecutionFactsSchema = Type.Object(
@@ -1053,6 +1076,36 @@ export const SandboxConfigSchema = Type.Object(
   },
   { $id: "SandboxConfig", additionalProperties: false },
 );
+export const ExecHostOptionsSchema = Type.Object(
+  {
+    cwd: Type.String(), timeout: Type.Optional(Type.Number({ minimum: 0 })),
+    yieldTimeMs: Type.Optional(Type.Number({ minimum: 0 })), tty: Type.Optional(Type.Boolean()),
+  },
+  { $id: "ExecHostOptions", additionalProperties: false },
+);
+export const ExecHostCallSchema = Type.Object(
+  {
+    ok: Type.Literal(true), command: Type.String({ minLength: 1 }),
+    args: Type.Array(Type.String()), options: ExecHostOptionsSchema,
+    sandboxed: Type.Boolean(), escalated: Type.Boolean(),
+  },
+  { $id: "ExecHostCall", additionalProperties: false },
+);
+export const WriteStdinHostOptionsSchema = Type.Object(
+  { yieldTimeMs: Type.Optional(Type.Number({ minimum: 0 })) },
+  { $id: "WriteStdinHostOptions", additionalProperties: false },
+);
+export const WriteStdinHostResultSchema = Type.Object(
+  { ok: Type.Literal(true), action: Type.Literal("result"), result: ToolResultEnvelopeSchema },
+  { $id: "WriteStdinHostResult", additionalProperties: false },
+);
+export const WriteStdinHostCallSchema = Type.Object(
+  {
+    ok: Type.Literal(true), action: Type.Literal("call"), sessionId: Type.Integer({ minimum: 1 }),
+    chars: Type.String(), options: WriteStdinHostOptionsSchema,
+  },
+  { $id: "WriteStdinHostCall", additionalProperties: false },
+);
 const approvalFields = {
   approvalTitle: Type.String({ minLength: 1 }), approvalPrompt: Type.String({ minLength: 1 }),
   approvalTimeoutMs: Type.Number({ minimum: 0 }),
@@ -1133,7 +1186,7 @@ export const PreparedExaSchema = Type.Object(
   { $id: "PreparedExa", additionalProperties: false },
 );
 export const PreparedExaApprovalSchema = Type.Object(
-  { ok: Type.Literal(true), action: Type.Literal("exa_agent_create_run_approval"), toolName: Type.String({ minLength: 1 }), method: Type.String({ minLength: 1 }), path: Type.String({ minLength: 1 }), bodyJson: Type.Optional(Type.String()), lastEventId: Type.Optional(Type.String()), apiKeyPresent: Type.Boolean(), ...approvalFields },
+  { ok: Type.Literal(true), action: Type.Literal("exa_agent_create_run_approval"), toolName: Type.String({ minLength: 1 }), method: Type.String({ minLength: 1 }), path: Type.String({ minLength: 1 }), bodyJson: Type.Optional(Type.String()), lastEventId: Type.Optional(Type.String()), ...approvalFields },
   { $id: "PreparedExaApproval", additionalProperties: false },
 );
 export const PreparedToolActionSchema = Type.Union([
@@ -1508,6 +1561,8 @@ export const bridgeDtsSchemas = [
   ["GoalContinuationFacts", GoalContinuationFactsSchema],
   ["GoalContinuationNone", GoalContinuationNoneSchema],
   ["GoalContinuationSend", GoalContinuationSendSchema],
+  ["ChildGoalContinuationSend", ChildGoalContinuationSendSchema],
+  ["ChildGoalContinuationFinalize", ChildGoalContinuationFinalizeSchema],
   ["ChildSessionStartFacts", ChildSessionStartFactsSchema],
   ["ChildSessionMetadata", ChildSessionMetadataSchema],
   ["ChildSessionCustomEntry", ChildSessionCustomEntrySchema],
@@ -1536,6 +1591,8 @@ export const bridgeDtsSchemas = [
   ["CommandChildSessionPlan", CommandChildSessionPlanSchema],
   ["BridgeToolResult", BridgeToolResultSchema],
   ["BridgeErrorResult", BridgeErrorResultSchema],
+  ["CoreAck", CoreAckSchema],
+  ["ExecCompletionWaitResult", ExecCompletionWaitResultSchema],
   ["ExaExecutionFacts", ExaExecutionFactsSchema],
   ["ToolResultTextContent", ToolResultTextContentSchema],
   ["ToolResultEnvelope", ToolResultEnvelopeSchema],
@@ -1626,6 +1683,11 @@ export const bridgeDtsSchemas = [
   ["OpenAiUsageFetch", OpenAiUsageFetchSchema],
   ["PrepareToolFacts", PrepareToolFactsSchema],
   ["SandboxConfig", SandboxConfigSchema],
+  ["ExecHostOptions", ExecHostOptionsSchema],
+  ["ExecHostCall", ExecHostCallSchema],
+  ["WriteStdinHostOptions", WriteStdinHostOptionsSchema],
+  ["WriteStdinHostResult", WriteStdinHostResultSchema],
+  ["WriteStdinHostCall", WriteStdinHostCallSchema],
   ["PreparedRead", PreparedReadSchema],
   ["PreparedViewMedia", PreparedViewMediaSchema],
   ["PreparedWriteStdin", PreparedWriteStdinSchema],

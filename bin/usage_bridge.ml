@@ -32,20 +32,20 @@ let openai_host_params params =
   in
   match lookup with
   | Taumel.Usage.Token_lookup_present token ->
-      Tool_contracts.OpenAiUsageHostParamsPresent.create ~apiKeyPresent
-        ?credential ~tokenState:"present" ~token ()
+      Boundary_contracts.OpenAiUsageHostParamsPresent.create ~apiKeyPresent
+        ?credential ~token ()
       |> Tool_contracts.OpenAiUsageHostParamsPresent.t_to_js |> inject
   | Taumel.Usage.Token_lookup_missing ->
-      Tool_contracts.OpenAiUsageHostParamsMissing.create ~apiKeyPresent
-        ?credential ~tokenState:"missing" ()
+      Boundary_contracts.OpenAiUsageHostParamsMissing.create ~apiKeyPresent
+        ?credential ()
       |> Tool_contracts.OpenAiUsageHostParamsMissing.t_to_js |> inject
   | Taumel.Usage.Token_lookup_error message ->
       let tokenError =
         Option.value (Taumel.Shared.trim_non_empty message)
           ~default:Taumel.Usage.token_lookup_error_default
       in
-      Tool_contracts.OpenAiUsageHostParamsError.create ~apiKeyPresent
-        ?credential ~tokenState:"error" ~tokenError ()
+      Boundary_contracts.OpenAiUsageHostParamsError.create ~apiKeyPresent
+        ?credential ~tokenError ()
       |> Tool_contracts.OpenAiUsageHostParamsError.t_to_js |> inject
 
 let optional_bool params name default =
@@ -157,7 +157,7 @@ let host_result params =
   result_from_fetch_state params fetch_state
 
 let normalized_tool_result result =
-  Tool_contracts.BridgeToolResult.create ~ok:true ~action:"tool_result"
+  Boundary_contracts.BridgeToolResult.create
     ~text:(Taumel.Usage.render result.Taumel.Usage.account)
     ~details:(Ts2ocaml.unknown_of_js (ojs_of_js (json_to_js (Taumel.Usage.result_details result)))) ()
   |> Tool_contracts.BridgeToolResult.t_to_js |> inject
@@ -228,8 +228,6 @@ let execute_openai params _ctx =
   js_promise_of_effect (execute_openai_effect params)
 
 let handle_command () =
-  ok_obj
-    [
-      ("action", js_string "openai_usage_fetch");
-      ("apiKeyPresent", js_bool (env_string "OPENAI_API_KEY" <> ""));
-    ]
+  Boundary_contracts.OpenAiUsageFetch.create
+    ~apiKeyPresent:(env_string "OPENAI_API_KEY" <> "") ()
+  |> Tool_contracts.OpenAiUsageFetch.t_to_js |> inject

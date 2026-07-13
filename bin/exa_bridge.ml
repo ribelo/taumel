@@ -10,7 +10,7 @@ let prepared_result_from_json json =
     if has_property result "details" then Unsafe.get result "details"
     else Unsafe.inject Js.null
   in
-  Tool_contracts.BridgeToolResult.create ~ok:true ~action:"tool_result"
+  Boundary_contracts.BridgeToolResult.create
     ~text:(js_content_to_text (Unsafe.get result "content"))
     ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details)) ()
   |> Tool_contracts.BridgeToolResult.t_to_js |> inject
@@ -47,21 +47,9 @@ let exa_api_key () = String.trim (env_string Taumel.Exa.api_key_env)
 let api_key_present () = exa_api_key () <> ""
 
 let prepared_fetch ?body_json ?last_event_id ~tool_name ~method_ ~path () =
-  ok_obj
-    ([
-       ("action", js_string "exa_fetch");
-       ("toolName", js_string tool_name);
-       ("method", js_string method_);
-       ("path", js_string path);
-       ("apiKeyPresent", js_bool (api_key_present ()));
-     ]
-    @ (match body_json with
-      | None -> []
-      | Some body_json -> [ ("bodyJson", js_string body_json) ])
-    @
-    match last_event_id with
-    | None -> []
-    | Some value -> [ ("lastEventId", js_string value) ])
+  Boundary_contracts.PreparedExa.create ~toolName:tool_name ~method_ ~path
+    ?bodyJson:body_json ?lastEventId:last_event_id ()
+  |> Tool_contracts.PreparedExa.t_to_js |> inject
 
 let prepared_missing_key tool_name =
   prepared_result_from_json (Taumel.Exa.missing_api_key_result tool_name)
@@ -98,18 +86,12 @@ let prepare_agent_create_run params =
               Taumel.Exa.approval_prompt
                 ~query:(Tool_contracts.ExaAgentCreateRunParams.get_query typed)
             in
-            ok_obj
-              [
-                ("action", js_string "exa_agent_create_run_approval");
-                ("toolName", js_string Taumel.Exa.create_run_tool_name);
-                ("method", js_string "POST");
-                ("path", js_string "/agent/runs");
-                ("bodyJson", js_string body_json);
-                ("apiKeyPresent", js_bool true);
-                ("approvalTitle", js_string prompt.title);
-                ("approvalPrompt", js_string prompt.prompt);
-                ("approvalTimeoutMs", js_number (float_of_int prompt.timeout_ms));
-              ])
+            Boundary_contracts.PreparedExaApproval.create
+              ~toolName:Taumel.Exa.create_run_tool_name ~method_:"POST"
+              ~path:"/agent/runs" ~bodyJson:body_json ~approvalTitle:prompt.title
+              ~approvalPrompt:prompt.prompt
+              ~approvalTimeoutMs:(float_of_int prompt.timeout_ms) ()
+            |> Tool_contracts.PreparedExaApproval.t_to_js |> inject)
 
 let prepare_agent_get_run params =
   with_gateway_authorized "exa_agent_get_run" (fun _sandbox ->
@@ -202,7 +184,7 @@ let execute_effect raw_prepared =
   match gateway_authorized tool_name with
   | Error error ->
       Effect.pure
-        (Tool_contracts.BridgeErrorResult.create ~ok:false
+        (Boundary_contracts.BridgeErrorResult.create
            ~error:(gateway_error_message error) ()
         |> Tool_contracts.BridgeErrorResult.t_to_js |> inject)
   | Ok _sandbox ->

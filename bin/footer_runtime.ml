@@ -146,4 +146,4 @@ let refresh_state ctx =
   let host = active_host_or_empty () in
   ignore (Session_sync.try_refresh_session_state_from_host ~scope:"footer refresh" ctx);
   emit_changed host;
-  ok_obj [ ("action", js_string "refresh_footer_state") ]
+  core_ack ()

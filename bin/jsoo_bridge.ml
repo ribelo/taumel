@@ -168,11 +168,13 @@ let js_lines lines =
 
 let js_array values = values |> Array.of_list |> Js.array |> inject
 
-let ok_obj fields =
-  Unsafe.obj (Array.of_list (("ok", js_bool true) :: fields))
-
 let error_obj message =
-  Unsafe.obj [| ("ok", js_bool false); ("error", js_string message) |]
+  Boundary_contracts.GatewayCommandError.create ~error:message ()
+  |> Tool_contracts.GatewayCommandError.t_to_js |> inject
+
+let core_ack () =
+  Boundary_contracts.CoreAck.create ()
+  |> Tool_contracts.CoreAck.t_to_js |> inject
 
 let object_keys obj =
   if not (is_property_container (inject obj)) then []
@@ -251,7 +253,7 @@ let js_content_to_text value =
   match json_from_js value with Ok json -> json_text json | Error _ -> ""
 
 let command_result_obj ~ok ~message ~details =
-  Tool_contracts.BridgeCommandResult.create ~ok ~action:"command_result" ~message
+  Boundary_contracts.BridgeCommandResult.create ~ok ~message
     ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details)) ()
   |> Tool_contracts.BridgeCommandResult.t_to_js |> inject
 
@@ -301,7 +303,7 @@ let command_result_with_details result extra =
     next
 
 let text_tool_result text details =
-  let content = Tool_contracts.ToolResultTextContent.create ~type_:"text" ~text () in
+  let content = Boundary_contracts.ToolResultTextContent.create ~text () in
   Tool_contracts.ToolResultEnvelope.create ~content:[ content ]
     ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details)) ()
   |> Tool_contracts.ToolResultEnvelope.t_to_js |> inject

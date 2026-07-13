@@ -19,6 +19,14 @@ let category_of_name = function
   | "skills" -> Some Skills
   | _ -> None
 
+let category_of_contract = function
+  | `V_tools -> Taumel.Visibility.Tools
+  | `V_skills -> Taumel.Visibility.Skills
+
+let contract_category = function
+  | Tools -> `V_tools
+  | Skills -> `V_skills
+
 let category_name = Taumel.Visibility.category_key
 
 let category_title = function
@@ -84,22 +92,12 @@ let visibility_details category ctx =
     |]
 
 let command_result ?(ok = true) ?details message =
-  let fields =
-    [
-      ("ok", js_bool ok);
-      ("action", js_string "command_result");
-      ("message", js_string message);
-    ]
+  let details =
+    Option.map (fun value -> Ts2ocaml.unknown_of_js (ojs_of_js value)) details
   in
-  let fields =
-    if ok then fields else fields @ [ ("error", js_string message) ]
-  in
-  let fields =
-    match details with
-    | None -> fields
-    | Some details -> fields @ [ ("details", inject details) ]
-  in
-  Unsafe.obj (Array.of_list fields)
+  Boundary_contracts.GatewayCommandResult.create ~ok ~message
+    ?error:(if ok then None else Some message) ?details ()
+  |> Tool_contracts.GatewayCommandResult.t_to_js |> inject
 
 let row_line (row : Taumel.Visibility.row) =
   let suffix =
@@ -122,21 +120,23 @@ let summary category ctx =
   | Some warning -> body ^ "\n\n" ^ warning
 
 let prompt_result category =
-  ok_obj
-    [
-      ("action", js_string "visibility_prompt");
-      ("category", js_string (category_name category));
-      ("title", js_string (category_title category));
-    ]
+  Boundary_contracts.VisibilityPrompt.create
+    ~category:
+      (contract_category category
+      |> Boundary_contracts.VisibilityPrompt.category_to_contract)
+    ~title:(category_title category) ()
+  |> Tool_contracts.VisibilityPrompt.t_to_js |> inject
 
 let save_result category ctx =
-  ok_obj
-    [
-      ("action", js_string "visibility_save_project");
-      ("category", js_string (category_name category));
-      ("disabled", js_string_array (Taumel.Visibility.disabled category !visibility_state));
-      ("details", inject (visibility_details category ctx));
-    ]
+  Boundary_contracts.VisibilitySavePlan.create
+    ~category:
+      (contract_category category
+      |> Boundary_contracts.VisibilitySavePlan.category_to_contract)
+    ~disabled:(Taumel.Visibility.disabled category !visibility_state)
+    ~details:
+      (Tool_contracts.VisibilityRowsResult.t_of_js
+         (ojs_of_js (visibility_details category ctx))) ()
+  |> Tool_contracts.VisibilitySavePlan.t_to_js |> inject
 
 let mutation_details category ctx ?enabled_name ?disabled_name () =
   let base = visibility_details category ctx in
@@ -202,7 +202,7 @@ let toggle_row_for category name ctx =
 
 let toggle_row raw_facts =
   let facts = Tool_contracts.VisibilityToggleFacts.t_of_js (ojs_of_js raw_facts) in
-  let category = Tool_contracts.VisibilityToggleFacts.get_category facts |> category_of_name |> Option.get in
+  let category = category_of_contract (Boundary_contracts.VisibilityToggleFacts.get_category facts) in
   let name = Tool_contracts.VisibilityToggleFacts.get_name facts in
   let ctx = Tool_contracts.VisibilityToggleFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
   let result = toggle_row_for category name ctx in
@@ -228,7 +228,7 @@ let handle category args ctx =
 
 let rows raw_facts =
   let facts = Tool_contracts.VisibilityRowsFacts.t_of_js (ojs_of_js raw_facts) in
-  let category = Tool_contracts.VisibilityRowsFacts.get_category facts |> category_of_name |> Option.get in
+  let category = category_of_contract (Boundary_contracts.VisibilityRowsFacts.get_category facts) in
   let ctx = Tool_contracts.VisibilityRowsFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
   Session_sync.sync_persisted_session ctx;
   let visible_rows =
@@ -237,7 +237,10 @@ let rows raw_facts =
            Tool_contracts.VisibilityRow.create ~name:row.name ~state:row.state
              ~available:row.available ~description:row.description ())
   in
-  Tool_contracts.VisibilityRowsResult.create ~category:(category_name category)
+  Tool_contracts.VisibilityRowsResult.create
+    ~category:
+      (contract_category category
+      |> Boundary_contracts.VisibilityRowsResult.category_to_contract)
     ~title:(category_title category) ~rows:visible_rows
     ~disabled:(Taumel.Visibility.disabled category !visibility_state)
     ~unavailable:(unavailable_names category ctx) ()
@@ -245,7 +248,7 @@ let rows raw_facts =
 
 let category_context_from_facts raw_facts =
   let facts = Tool_contracts.VisibilityRowsFacts.t_of_js (ojs_of_js raw_facts) in
-  let category = Tool_contracts.VisibilityRowsFacts.get_category facts |> category_of_name |> Option.get in
+  let category = category_of_contract (Boundary_contracts.VisibilityRowsFacts.get_category facts) in
   let ctx = Tool_contracts.VisibilityRowsFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
   (category, ctx)
 

@@ -71,7 +71,6 @@ let test_exec_plan () =
     | Ok plan -> plan
     | Error message -> fail "exec approval" message
   in
-  assert_equal "exec action" "exec_command_approval" plan.action;
   assert_equal "exec workdir default" "/repo" plan.workdir;
   assert_bool "exec tty" plan.tty;
   (match plan.approval with
@@ -114,12 +113,11 @@ let test_write_edit_plan () =
     | Ok plan -> plan
     | Error message -> fail "write approval" message
   in
-  assert_equal "write approval action" "write_approval" write.action;
   assert_equal "write display path" "/outside/file.txt" write.display_path;
   assert_bool "write validates workspace paths" write.validate_workspace_paths;
   (match write.approval with
   | Some approval ->
-      assert_equal "write approval action field" "write" approval.action
+      assert_equal "write approval title" "write: path outside workspace" approval.title
   | None -> fail "write approval" "expected approval")
 
 let test_write_stdin_plan () =
@@ -172,7 +170,7 @@ let test_apply_patch_plan () =
     | Ok plan -> plan
     | Error message -> fail "apply patch plan" message
   in
-  assert_equal "patch action" "apply_patch" plan.action;
+  assert_bool "patch needs no approval" (Option.is_none plan.approval);
   assert_int "patch affected paths" 1 (List.length plan.affected_paths);
   assert_equal "patch affected path" "/repo/inside.txt"
     (List.hd plan.affected_paths);

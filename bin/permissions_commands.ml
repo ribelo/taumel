@@ -12,13 +12,8 @@ let apply_state (next : Taumel.Permissions.state) =
       next.Taumel.Permissions.profile.sandbox_preset
 
 let js_menu_option (option : Taumel.Permissions.menu_option) =
-  Unsafe.obj
-    [|
-      ("label", js_string option.label);
-      ("value", js_string option.value);
-      ("description", js_string option.description);
-      ("selected", js_bool option.selected);
-    |]
+  Tool_contracts.PermissionsMenuOption.create ~label:option.label
+    ~value:option.value ~description:option.description ~selected:option.selected ()
 
 let menu_option_from_js obj =
   {
@@ -29,15 +24,10 @@ let menu_option_from_js obj =
   }
 
 let prompt_with ~title ~options permissions =
-  ok_obj
-    [
-      ("action", js_string "permissions_prompt");
-      ("title", js_string title);
-      ("message", js_string (Taumel.Permissions.summary permissions));
-      ( "options",
-        js_array (List.map (fun option -> inject (js_menu_option option)) options)
-      );
-    ]
+  Boundary_contracts.PermissionsPrompt.create ~title
+    ~message:(Taumel.Permissions.summary permissions)
+    ~options:(List.map js_menu_option options) ()
+  |> Tool_contracts.PermissionsPrompt.t_to_js |> inject
 
 let prompt_result permissions =
   prompt_with ~title:Taumel.Permissions.default_prompt_title
@@ -55,7 +45,8 @@ let build_permissions () =
     ~no_sandbox:!active_no_sandbox ~isolated_child:!active_isolated_child (active_profile ())
 
 let command_result message =
-  ok_obj [ ("action", js_string "command_result"); ("message", js_string message) ]
+  Boundary_contracts.PermissionsCommandResult.create ~ok:true ~message ()
+  |> Tool_contracts.PermissionsCommandResult.t_to_js |> inject
 
 let apply_and_persist permissions update ctx =
   match Taumel.Permissions.apply_update permissions update with
@@ -90,19 +81,19 @@ let apply_menu_value value ctx =
 let finish_prompt_impl prompt selection ctx =
   match get_string selection "status" with
   | "cancelled" ->
-      ok_obj
-        [
-          ("action", js_string "command_result");
-          ("message", js_string "Permissions unchanged.");
-          ("details", inject (Unsafe.obj [| ("cancelled", js_bool true) |]));
-        ]
+      Boundary_contracts.PermissionsCommandResult.create ~ok:true
+        ~message:"Permissions unchanged."
+        ~details:
+          (Ts2ocaml.unknown_of_js
+             (ojs_of_js (Unsafe.obj [| ("cancelled", js_bool true) |]))) ()
+      |> Tool_contracts.PermissionsCommandResult.t_to_js |> inject
   | "unavailable" ->
-      ok_obj
-        [
-          ("action", js_string "command_result");
-          ("message", js_string (get_string prompt "message"));
-          ("details", inject (Unsafe.obj [| ("unavailable", js_bool true) |]));
-        ]
+      Boundary_contracts.PermissionsCommandResult.create ~ok:true
+        ~message:(get_string prompt "message")
+        ~details:
+          (Ts2ocaml.unknown_of_js
+             (ojs_of_js (Unsafe.obj [| ("unavailable", js_bool true) |]))) ()
+      |> Tool_contracts.PermissionsCommandResult.t_to_js |> inject
   | _ ->
       let options =
         get_object_array prompt "options" |> List.map menu_option_from_js
@@ -110,56 +101,38 @@ let finish_prompt_impl prompt selection ctx =
       let selected = get_string selection "selected" in
       match Taumel.Permissions.menu_selected_value options selected with
       | None ->
-          Unsafe.obj
-            [|
-              ("ok", js_bool false);
-              ("action", js_string "command_result");
-              ("message", js_string "Invalid permissions selection.");
-            |]
+          Boundary_contracts.PermissionsCommandResult.create ~ok:false
+            ~message:"Invalid permissions selection."
+            ~error:"Invalid permissions selection." ()
+          |> Tool_contracts.PermissionsCommandResult.t_to_js |> inject
       | Some value -> apply_menu_value value ctx
-
-let plan_prompt_impl prompt facts =
-  let options =
-    get_object_array prompt "options" |> List.map menu_option_from_js
-  in
-  match
-    Taumel.Permissions.prompt_selection_plan
-      ~ui_available:(get_bool facts "uiAvailable")
-      ~title:(get_string prompt "title") options
-  with
-  | Taumel.Permissions.Prompt_unavailable ->
-      ok_obj
-        [
-          ("action", js_string "result");
-          ( "result",
-            finish_prompt_impl prompt
-              (Unsafe.obj [| ("status", js_string "unavailable") |])
-              (Unsafe.obj [||]) );
-        ]
-  | Taumel.Permissions.Prompt_select plan ->
-      ok_obj
-        [
-          ("action", js_string "select");
-          ("title", js_string plan.title);
-          ("labels", js_array (List.map js_string plan.labels));
-        ]
 
 let plan_prompt raw_facts =
   let facts = Tool_contracts.PermissionsPromptFacts.t_of_js (ojs_of_js raw_facts) in
   let prompt = Tool_contracts.PermissionsPromptFacts.get_prompt facts
     |> Tool_contracts.PermissionsPrompt.t_to_js |> Obj.magic
   in
-  let host_facts = Unsafe.obj [| ("uiAvailable", js_bool (Tool_contracts.PermissionsPromptFacts.get_uiAvailable facts)) |] in
-  let plan = plan_prompt_impl prompt host_facts in
-  if get_string plan "action" = "select" then
-    Tool_contracts.PermissionsPromptSelect.create ~kind:"select"
-      ~title:(get_string plan "title") ~labels:(get_string_array plan "labels") ()
-    |> Tool_contracts.PermissionsPromptSelect.t_to_js |> inject
-  else
-    let result = Unsafe.get plan "result" in
-    Tool_contracts.PermissionsPromptResult.create ~kind:"result"
-      ~result:(Tool_contracts.PermissionsCommandResult.t_of_js (ojs_of_js result)) ()
-    |> Tool_contracts.PermissionsPromptResult.t_to_js |> inject
+  let options =
+    get_object_array prompt "options" |> List.map menu_option_from_js
+  in
+  match
+    Taumel.Permissions.prompt_selection_plan
+      ~ui_available:(Tool_contracts.PermissionsPromptFacts.get_uiAvailable facts)
+      ~title:(get_string prompt "title") options
+  with
+  | Taumel.Permissions.Prompt_unavailable ->
+      let result =
+        finish_prompt_impl prompt
+          (Unsafe.obj [| ("status", js_string "unavailable") |])
+          (Unsafe.obj [||])
+        |> ojs_of_js |> Tool_contracts.PermissionsCommandResult.t_of_js
+      in
+      Boundary_contracts.PermissionsPromptResult.create ~result ()
+      |> Tool_contracts.PermissionsPromptResult.t_to_js |> inject
+  | Taumel.Permissions.Prompt_select plan ->
+      Boundary_contracts.PermissionsPromptSelect.create ~title:plan.title
+        ~labels:plan.labels ()
+      |> Tool_contracts.PermissionsPromptSelect.t_to_js |> inject
 
 let finish_prompt raw_facts =
   let facts = Tool_contracts.PermissionsPromptFinishFacts.t_of_js (ojs_of_js raw_facts) in
@@ -172,12 +145,4 @@ let finish_prompt raw_facts =
   let ctx = Tool_contracts.PermissionsPromptFinishFacts.get_ctx facts
     |> Ts2ocaml.unknown_to_js |> Obj.magic
   in
-  let output = finish_prompt_impl prompt selection ctx in
-  if get_string output "action" = "command_result" then
-    output |> ojs_of_js |> Tool_contracts.PermissionsCommandResult.t_of_js
-    |> Tool_contracts.PermissionsCommandResult.t_to_js |> inject
-  else
-    let message = get_string output "error" in
-    Tool_contracts.PermissionsCommandResult.create ~ok:false ~action:"command_result"
-      ~message ~error:message ()
-    |> Tool_contracts.PermissionsCommandResult.t_to_js |> inject
+  finish_prompt_impl prompt selection ctx

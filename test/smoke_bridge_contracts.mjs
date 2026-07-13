@@ -783,7 +783,16 @@ const preparedExecWithYield = decodePreparedToolAction({
   ok: true, action: "exec_command", cmd: "pwd", workdir: "", yieldTimeMs: 250, tty: false,
   sandbox: { filesystemMode: "workspace-write", networkMode: "disabled", workspaceRoots: ["/workspace"], noSandbox: false, isolated_child: false },
 });
-if (!("action" in preparedRead) || preparedRead.action !== "read" || !("action" in preparedExec) || !("action" in preparedExecWithYield)) {
+const preparedExa = decodePreparedToolAction({
+  ok: true, action: "exa_fetch", toolName: "web_search_exa", method: "POST", path: "/search",
+  bodyJson: '{"query":"test"}',
+});
+const preparedExaApproval = decodePreparedToolAction({
+  ok: true, action: "exa_agent_create_run_approval", toolName: "exa_agent_create_run",
+  method: "POST", path: "/agent/runs", bodyJson: '{"query":"test"}',
+  approvalTitle: "Approve Exa Agent run", approvalPrompt: "Create run?", approvalTimeoutMs: 30000,
+});
+if (!("action" in preparedRead) || preparedRead.action !== "read" || !("action" in preparedExec) || !("action" in preparedExecWithYield) || preparedExa.action !== "exa_fetch" || preparedExaApproval.action !== "exa_agent_create_run_approval") {
   throw new Error("prepared tool action did not decode");
 }
 for (const invalid of [
@@ -791,6 +800,8 @@ for (const invalid of [
   { ok: true, action: "write_stdin", sessionId: 0, chars: "", outputMode: "delta" },
   { ok: true, action: "exec_command", cmd: "pwd", workdir: "", tty: false, sandbox: { filesystemMode: "workspace-write" } },
   { ok: true, action: "exec_command", cmd: "pwd", workdir: "", yieldTimeMs: null, tty: false, sandbox: { filesystemMode: "workspace-write", networkMode: "disabled", workspaceRoots: ["/workspace"], noSandbox: false, isolated_child: false } },
+  { ok: true, action: "exa_fetch", toolName: "web_search_exa", method: "POST", path: "/search", apiKeyPresent: true },
+  { ok: true, action: "exa_agent_create_run_approval", toolName: "exa_agent_create_run", method: "POST", path: "/agent/runs", approvalTitle: "Approve", approvalPrompt: "Create?", approvalTimeoutMs: 30000, apiKeyPresent: true },
   { ok: true, action: "unregistered" },
 ]) {
   let rejected = false;
