@@ -103,6 +103,7 @@ export type PiLike = {
   readonly registerMessageRenderer?: (
     customType: string,
     renderer: (message: unknown, options: unknown, theme: unknown) => unknown,
+    options?: { readonly background?: "customMessageBg" | "toolPendingBg" | "toolSuccessBg" | "toolErrorBg" },
   ) => void;
   readonly registerCommand?: (name: string, command: CommandDefinition) => void;
   readonly registerShortcut?: (shortcut: string, shortcutDefinition: ShortcutDefinition) => void;

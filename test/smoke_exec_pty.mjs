@@ -6,6 +6,8 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { executeTool } from "../src/tool-executor.ts";
+
 const require = createRequire(import.meta.url);
 const pty = require("node-pty");
 const bash = spawnSync("which", ["bash"], { encoding: "utf8" }).stdout.trim();
@@ -97,6 +99,32 @@ async function runExec(cmd) {
 const bridgeResult = await runExec("printf 'stdout-ok\\n'; printf 'stderr-ok\\n' >&2");
 assert.match(bridgeResult.details.output, /stdout-ok/);
 assert.match(bridgeResult.details.output, /stderr-ok/);
+
+let completionWaits = 0;
+const observingCore = {
+  call(method, args) {
+    if (method === "awaitExecCompletion") completionWaits += 1;
+    return core.call(method, args);
+  },
+};
+const asyncResult = await executeTool(
+  {},
+  observingCore,
+  new Map(),
+  "exec_command",
+  { cmd: "sleep 1", yield_time_ms: 250 },
+  ctx,
+);
+assert.equal(typeof asyncResult.details.sessionId, "number");
+assert.equal(completionWaits, 1, "an async built exec result must start its completion waiter");
+await core.call("awaitExecCompletion", [asyncResult.details.sessionId]);
+await core.call("writeExecStdin", [{
+  sessionId: asyncResult.details.sessionId,
+  chars: "",
+  ownerId: "exec-pty-smoke",
+  yieldTimeMs: 5000,
+  outputMode: "delta",
+}]);
 
 process.env.TAUMEL_TEST_TOKEN = "ambient-token-ok";
 const environmentResult = await runExec(

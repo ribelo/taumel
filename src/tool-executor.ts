@@ -385,7 +385,7 @@ async function runPreparedExec(
   // Start a detached waiter that delivers its completion if the parent is idle
   // when it exits (the exec analogue of isolated_child onCompletion); turn_end/idle
   // flushes cover the other cases.
-  const sessionId = result.details.session_id;
+  const sessionId = result.details.sessionId;
   if (sessionId !== undefined) {
     void startExecCompletionWaiter(pi, core, ctx, sessionId);
   }
@@ -831,7 +831,7 @@ export function registerGatewayTools(
 ): void {
   if (typeof pi.registerTool !== "function") return;
   if (typeof pi.registerMessageRenderer === "function") {
-    pi.registerMessageRenderer("notification", notificationMessageRenderer());
+    pi.registerMessageRenderer("notification", notificationMessageRenderer(), { background: "toolSuccessBg" });
     pi.registerMessageRenderer("taumel.goal.continue", goalContinuationMessageRenderer());
   }
   installExecNotificationLifecycle(pi, core);

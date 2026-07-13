@@ -3,10 +3,14 @@ import { toolNames } from "../src/tool-contracts.ts";
 
 const registered = [];
 const renderers = [];
+const rendererOptions = new Map();
 const handlers = new Map();
 const pi = {
   registerTool: (tool) => registered.push(tool.name),
-  registerMessageRenderer: (name) => renderers.push(name),
+  registerMessageRenderer: (name, _renderer, options) => {
+    renderers.push(name);
+    rendererOptions.set(name, options);
+  },
   on: (event, handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
 };
 const core = {
@@ -24,6 +28,9 @@ if (JSON.stringify(registered) !== JSON.stringify(["read"])) {
 }
 if (!renderers.includes("notification")) {
   throw new Error("notification renderer was not registered");
+}
+if (rendererOptions.get("notification")?.background !== "toolSuccessBg") {
+  throw new Error("notification renderer did not request the successful tool background");
 }
 if (!renderers.includes("taumel.goal.continue")) {
   throw new Error("goal continuation renderer was not registered");
