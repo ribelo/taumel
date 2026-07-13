@@ -777,11 +777,11 @@ for (const invalid of [
 const preparedRead = decodePreparedToolAction({ ok: true, action: "read", path: "README.md", limit: 10 });
 const preparedExec = decodePreparedToolAction({
   ok: true, action: "exec_command", cmd: "pwd", workdir: "", tty: false,
-  sandbox: { filesystemMode: "workspace-write", networkMode: "disabled", workspaceRoots: ["/workspace"], noSandbox: false, isolated_child: false },
+  sandbox: { filesystemMode: "workspace-write", networkMode: "disabled", workspaceRoots: ["/workspace"], noSandbox: false, isolatedChild: false },
 });
 const preparedExecWithYield = decodePreparedToolAction({
   ok: true, action: "exec_command", cmd: "pwd", workdir: "", yieldTimeMs: 250, tty: false,
-  sandbox: { filesystemMode: "workspace-write", networkMode: "disabled", workspaceRoots: ["/workspace"], noSandbox: false, isolated_child: false },
+  sandbox: { filesystemMode: "workspace-write", networkMode: "disabled", workspaceRoots: ["/workspace"], noSandbox: false, isolatedChild: false },
 });
 const preparedExa = decodePreparedToolAction({
   ok: true, action: "exa_fetch", toolName: "web_search_exa", method: "POST", path: "/search",
@@ -799,7 +799,7 @@ for (const invalid of [
   { ok: true, action: "read", path: "", extra: true },
   { ok: true, action: "write_stdin", sessionId: 0, chars: "", outputMode: "delta" },
   { ok: true, action: "exec_command", cmd: "pwd", workdir: "", tty: false, sandbox: { filesystemMode: "workspace-write" } },
-  { ok: true, action: "exec_command", cmd: "pwd", workdir: "", yieldTimeMs: null, tty: false, sandbox: { filesystemMode: "workspace-write", networkMode: "disabled", workspaceRoots: ["/workspace"], noSandbox: false, isolated_child: false } },
+  { ok: true, action: "exec_command", cmd: "pwd", workdir: "", yieldTimeMs: null, tty: false, sandbox: { filesystemMode: "workspace-write", networkMode: "disabled", workspaceRoots: ["/workspace"], noSandbox: false, isolatedChild: false } },
   { ok: true, action: "exa_fetch", toolName: "web_search_exa", method: "POST", path: "/search", apiKeyPresent: true },
   { ok: true, action: "exa_agent_create_run_approval", toolName: "exa_agent_create_run", method: "POST", path: "/agent/runs", approvalTitle: "Approve", approvalPrompt: "Create?", approvalTimeoutMs: 30000, apiKeyPresent: true },
   { ok: true, action: "unregistered" },

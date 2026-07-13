@@ -58,7 +58,7 @@ const ownershipCore = {
       cmd: "echo test",
       workdir: "/tmp",
       tty: false,
-      sandbox: { filesystemMode: "workspace-write", networkMode: "disabled", workspaceRoots: ["/tmp"], noSandbox: false, isolated_child: true },
+      sandbox: { filesystemMode: "workspace-write", networkMode: "disabled", workspaceRoots: ["/tmp"], noSandbox: false, isolatedChild: true },
       approvalMessage: "approval required",
       approvalTitle: "Approve",
       approvalPrompt: "Run command?",

@@ -31,6 +31,9 @@ independent of any single feature.
 - **eng-bc03** (unwanted): If production OCaml adds an untyped core-call result
   producer or directly invokes a generated constructor whose contract contains
   caller-controlled literal discriminants, then the repository gate shall fail.
+- **bridge-7m4k** (ubiquitous): Every generated OCaml bridge producer shall emit
+  each JavaScript property under exactly the name declared by the corresponding
+  TypeBox transport schema.
 - **eng-host01** (ubiquitous): Taumel single-selection lists shall use Pi's
   `SelectList`, and Taumel mutable-settings lists shall use Pi's `SettingsList`.
   These lists shall use Pi's standard themes and built-in filtering, selection,

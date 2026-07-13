@@ -1072,7 +1072,9 @@ export const SandboxConfigSchema = Type.Object(
   {
     filesystemMode: Type.String({ minLength: 1 }), networkMode: Type.String({ minLength: 1 }),
     workspaceRoots: Type.Array(Type.String({ minLength: 1 })), noSandbox: Type.Boolean(),
-    isolated_child: Type.Boolean(), approvalPolicy: Type.Optional(Type.String({ minLength: 1 })),
+    // bridge-7m4k: generated builders camel-case OCaml labels, so this bridge-only
+    // field must remain `isolatedChild`; persisted session state uses `isolated_child`.
+    isolatedChild: Type.Boolean(), approvalPolicy: Type.Optional(Type.String({ minLength: 1 })),
   },
   { $id: "SandboxConfig", additionalProperties: false },
 );

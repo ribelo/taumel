@@ -33,6 +33,7 @@ and user-facing rendering remains Taumel-owned.
 - **exec-tc05** (unwanted): If `output_mode` is `status` while `chars` is non-empty, then the system shall reject the call; status-only operation is an empty-input wait or poll, not an interactive write.
 - **exec-tc06** (ubiquitous): The system shall provide `write_stdin.output_mode = status` for passive waits that drain process output without adding it to model context.
 - **exec-tc07** (ubiquitous): The system shall represent command session ids as opaque numeric locators and require `write_stdin` to receive the exact id returned by `exec_command`.
+- **exec-2q9v** (ubiquitous): The repository gate shall verify that actual built OCaml prepared-exec outputs, both with and without optional `exec_command` parameters, are accepted by the TypeScript prepared-action decoder.
 
 ### Shell selection
 

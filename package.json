@@ -22,6 +22,7 @@
     "smoke:compaction-model": "bun test/smoke_compaction_model.mjs",
     "smoke:tool-renderers": "bun test/smoke_tool_renderers.mjs",
     "smoke:exec-notifications": "bun test/smoke_exec_notifications.mjs",
+    "smoke:prepared-exec-contract": "bun test/smoke_prepared_exec_contract.mjs",
     "smoke:exec-pty": "node test/smoke_exec_pty.mjs",
     "smoke:gateway-registration": "bun test/smoke_gateway_registration.mjs",
     "smoke:global-settings": "bun test/smoke_global_settings.mjs",
@@ -32,7 +33,7 @@
     "smoke:thinking-shortcuts": "bun test/smoke_thinking_shortcuts.mjs",
     "smoke:util": "bun test/smoke_util.mjs",
     "check:typed-boundaries": "node test/check_typed_boundaries.mjs",
-    "gate": "npm run typecheck && npm run check:typed-boundaries && npm run build:ocaml && npm run test:ocaml && npm run smoke:artifact && npm run smoke:path-authorization && npm run smoke:view-media-resolution && npm run smoke:tool-contracts && npm run smoke:exa-contracts && npm run smoke:cron-loop && npm run smoke:cron-persistence && npm run smoke:compaction-model && npm run smoke:tool-renderers && npm run smoke:exec-notifications && npm run smoke:exec-pty && npm run smoke:gateway-registration && npm run smoke:global-settings && npm run smoke:visibility-manager && npm run smoke:goal-commands && npm run smoke:usage-inspection && npm run smoke:bridge-contracts && npm run smoke:thinking-shortcuts && npm run smoke:util"
+    "gate": "npm run typecheck && npm run check:typed-boundaries && npm run build:ocaml && npm run test:ocaml && npm run smoke:artifact && npm run smoke:path-authorization && npm run smoke:view-media-resolution && npm run smoke:tool-contracts && npm run smoke:exa-contracts && npm run smoke:cron-loop && npm run smoke:cron-persistence && npm run smoke:compaction-model && npm run smoke:tool-renderers && npm run smoke:exec-notifications && npm run smoke:prepared-exec-contract && npm run smoke:exec-pty && npm run smoke:gateway-registration && npm run smoke:global-settings && npm run smoke:visibility-manager && npm run smoke:goal-commands && npm run smoke:usage-inspection && npm run smoke:bridge-contracts && npm run smoke:thinking-shortcuts && npm run smoke:util"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.79.9",

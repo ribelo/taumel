@@ -21,7 +21,7 @@ let typed_sandbox_config (sandbox : Taumel.Sandbox.config) =
     ~filesystemMode:(Taumel.Sandbox.filesystem_mode_to_string sandbox.filesystem_mode)
     ~networkMode:(sandbox_network_to_string sandbox.network_mode)
     ~workspaceRoots:sandbox.workspace_roots ~noSandbox:sandbox.no_sandbox
-    ~isolated_child:sandbox.isolated_child
+    ~isolatedChild:sandbox.isolated_child
     ~approvalPolicy:(approval_policy_to_string sandbox.approval_policy) ()
 
 let sandbox_config_from_js sandbox =
@@ -39,7 +39,7 @@ let sandbox_config_from_js sandbox =
     network_mode;
     approval_policy = approval_policy_of_string (get_string sandbox "approvalPolicy");
     no_sandbox = get_bool sandbox "noSandbox";
-    isolated_child = get_bool sandbox "isolated_child";
+    isolated_child = get_bool sandbox "isolatedChild";
   }
 
 let exec_workspace_metadata_listing_from_js obj =
