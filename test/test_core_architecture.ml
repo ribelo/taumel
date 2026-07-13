@@ -244,7 +244,7 @@ let test_child_session_setup_entries () =
     Shared.Object
       [
         ("kind", Shared.String "agent");
-        ("workerId", Shared.String "worker-1");
+        ("agentId", Shared.String "worker-1");
         ("modelId", Shared.String "openai-codex/gpt-worker");
         ("thinkingLevel", Shared.String "high");
         ("activeTools", Shared.Array [ Shared.String "exec_command" ]);

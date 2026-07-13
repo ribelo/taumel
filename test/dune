@@ -77,6 +77,12 @@
  (libraries taumel))
 
 (test
+ (name test_agents_plan)
+ (modules test_agents_plan)
+ (package taumel)
+ (libraries taumel))
+
+(test
  (name test_exec_policy)
  (modules test_exec_policy)
  (package taumel)

@@ -6,8 +6,11 @@ let session_id_from_ctx ctx =
   | _ ->
       let session_manager = Unsafe.get ctx "sessionManager" in
       (match function_field session_manager "getSessionId" with
-      | Some get_session_id -> (
-        match string_value (Unsafe.fun_call get_session_id [||]) with
+      | Some _ -> (
+        match
+          string_value
+            (Unsafe.meth_call session_manager "getSessionId" [||])
+        with
         | Some value when String.trim value <> "" -> String.trim value
         | _ -> "current")
       | _ -> "current")

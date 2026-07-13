@@ -1,7 +1,13 @@
 import {
   createAgentSession as createPiAgentSession,
+  DefaultResourceLoader,
+  getAgentDir,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
+import { createHash } from "node:crypto";
+import { readFileSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ChildDispatchCompletion, ChildDispatchResult, ChildSessionCustomEntry, ChildSessionMetadata } from "./bridge-contracts.ts";
 import { decodeChildDispatchPlan } from "./bridge-contracts.ts";
 
@@ -26,21 +32,27 @@ import {
 type HostMethods = { [name: string]: unknown };
 type ChildContext = { readonly cwd?: unknown; readonly getModel?: () => unknown; readonly model?: unknown; readonly sessionManager?: unknown; readonly taumelSessionId?: unknown };
 type ModelDescriptor = { readonly provider?: unknown; readonly id?: unknown };
-type ModelRegistry = { readonly find?: (provider: string, model: string) => unknown };
+type ModelRegistry = {
+  readonly find?: (provider: string, model: string) => unknown;
+  readonly hasConfiguredAuth?: (model: unknown) => boolean;
+};
 type SessionManagerHost = { readonly getEntries?: () => unknown; readonly appendCustomEntry?: (customType: string, data: unknown) => unknown };
 type CustomEntry = { readonly customType?: unknown; readonly type?: unknown; readonly data?: unknown; readonly value?: unknown };
+type MessageEntry = { readonly type?: unknown; readonly id?: unknown; readonly message?: unknown };
 type CapabilityProfile = { readonly sandboxPreset?: unknown; readonly approvalPolicy?: unknown; [key: string]: unknown };
-type PermissionsEntry = { readonly profile?: unknown };
-type ChildMetadataEntry = { readonly capabilityProfile?: unknown };
+type PermissionsEntry = { readonly profile?: unknown; readonly networkMode?: unknown };
+type ChildMetadataEntry = { readonly capabilityProfile?: unknown; readonly networkMode?: unknown };
 type AgentMessage = { readonly role?: unknown; readonly content?: unknown; readonly stopReason?: unknown; readonly errorMessage?: unknown };
 type TextPart = { readonly text?: unknown };
 type AgentEndEvent = { readonly type?: unknown; readonly messages?: unknown };
 type SdkSession = {
   readonly subscribe?: (handler: (event: unknown) => void) => unknown;
+  readonly messages?: unknown;
   readonly isStreaming?: unknown;
   readonly steer?: (prompt: string) => Promise<unknown>;
   readonly followUp?: (prompt: string) => Promise<unknown>;
   readonly prompt?: (prompt: string, options: { streamingBehavior: string }) => Promise<unknown>;
+  readonly getAvailableThinkingLevels?: () => readonly string[];
   readonly sessionManager?: unknown; readonly sessionId?: unknown; readonly sessionFile?: unknown;
   readonly abort?: (reason?: string) => Promise<unknown>; readonly dispose?: () => unknown;
 };
@@ -58,6 +70,57 @@ type ChildUpdatesDetails = { readonly childSessionUpdates?: unknown };
 
 function hostObject<T extends object>(value: unknown): Partial<T> | undefined {
   return typeof value === "object" && value !== null ? value as Partial<T> : undefined;
+}
+
+function specialistResourcesDir(): string {
+  return join(dirname(fileURLToPath(import.meta.url)), "..", "resources", "agents");
+}
+
+function loadSpecialistPrompt(kind: string): string | undefined {
+  if (kind !== "finder" && kind !== "oracle") return undefined;
+  try {
+    const text = readFileSync(join(specialistResourcesDir(), `${kind}.md`), "utf8").trim();
+    return text === "" ? undefined : text;
+  } catch {
+    return undefined;
+  }
+}
+
+function specialistPromptForMetadata(metadata: Partial<{ readonly kind?: unknown; readonly agentKind?: unknown }> | undefined): string | undefined {
+  const agentKind = typeof metadata?.agentKind === "string" ? metadata.agentKind.trim() : "";
+  const kind = typeof metadata?.kind === "string" ? metadata.kind.trim() : "";
+  return loadSpecialistPrompt(agentKind !== "" ? agentKind : kind);
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed === "" ? undefined : trimmed;
+}
+
+function validateAgentSessionMarker(
+  sessionManager: unknown,
+  agentId: string,
+  parent: SessionInfo,
+): string | undefined {
+  const marker = hostObject<{ readonly [key: string]: unknown }>(
+    latestCustomEntry(sessionManager, "taumel.childSession"),
+  );
+  if (marker === undefined) return "child_session_identity_missing";
+  if (nonEmptyString(marker.agentId) !== agentId) return "child_session_agent_mismatch";
+
+  const expectedParentFile = nonEmptyString(parent.sessionFile);
+  const markerParentFile = nonEmptyString(marker.parentSessionFile);
+  if (expectedParentFile !== undefined) {
+    if (markerParentFile !== expectedParentFile) return "child_session_owner_mismatch";
+  } else {
+    const expectedParentId = nonEmptyString(parent.sessionId);
+    const markerParentId = nonEmptyString(marker.parentSessionId);
+    if (expectedParentId === undefined || markerParentId !== expectedParentId) {
+      return "child_session_owner_mismatch";
+    }
+  }
+  return undefined;
 }
 
 async function callOptionalAsync(receiver: unknown, names: readonly string[], args: readonly unknown[] = []): Promise<string | undefined> {
@@ -200,6 +263,7 @@ export function refreshOwnedChildPermissions(
     const manager = child.sessionManager;
     const childMetadata = latestCustomEntry(manager, "taumel.childSession");
     const ceiling = hostObject<CapabilityProfile>(hostObject<ChildMetadataEntry>(childMetadata)?.capabilityProfile);
+    const ceilingNetwork = hostObject<ChildMetadataEntry>(childMetadata)?.networkMode;
     if (ceiling === undefined) continue;
     const sandboxPreset = stricterValue(
       ceiling.sandboxPreset,
@@ -212,6 +276,10 @@ export function refreshOwnedChildPermissions(
       approvalRank,
     );
     if (sandboxPreset === undefined || approvalPolicy === undefined) continue;
+    const parentNetwork = hostObject<PermissionsEntry>(parentPermissions)?.networkMode;
+    const networkMode = ceilingNetwork === "enabled" && parentNetwork === "enabled"
+      ? "enabled"
+      : "disabled";
     const append = hostObject<SessionManagerHost>(manager)?.appendCustomEntry;
     if (typeof append !== "function") continue;
     append.call(manager, "taumel.permissions", {
@@ -222,7 +290,7 @@ export function refreshOwnedChildPermissions(
         approvalPolicy,
         noSandboxAllowed: false,
       },
-      networkMode: "disabled",
+      networkMode,
       noSandbox: false,
       isolated_child: true,
     });
@@ -243,24 +311,36 @@ function assistantTextFromMessage(message: unknown): string | undefined {
   const assistant = hostObject<AgentMessage>(message);
   if (assistant === undefined) return undefined;
   const content = assistant.content;
-  if (typeof content === "string") return content.trim() === "" ? undefined : content;
+  if (typeof content === "string") return content;
   return completionTextFromContent(content);
 }
 
-function completionFromAgentEndEvent(event: unknown): ChildDispatchCompletion | undefined {
-  const agentEnd = hostObject<AgentEndEvent>(event);
-  if (agentEnd?.type !== "agent_end" || !Array.isArray(agentEnd.messages)) {
-    return undefined;
+export function latestAssistantEntryId(sessionManager: unknown): string | undefined {
+  const manager = hostObject<SessionManagerHost>(sessionManager);
+  if (typeof manager?.getEntries !== "function") return undefined;
+  const entries = manager.getEntries.call(sessionManager);
+  if (!Array.isArray(entries)) return undefined;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = hostObject<MessageEntry>(entries[index]);
+    const message = hostObject<AgentMessage>(entry?.message);
+    if (entry?.type === "message" && message?.role === "assistant") {
+      return typeof entry.id === "string" && entry.id !== "" ? entry.id : undefined;
+    }
   }
-  const messages = agentEnd.messages;
+  return undefined;
+}
+
+function completionFromMessages(messages: unknown, startIndex = 0): ChildDispatchCompletion | undefined {
+  if (!Array.isArray(messages)) return undefined;
   let assistant: unknown;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
+  for (let index = messages.length - 1; index >= startIndex; index -= 1) {
     const message = messages[index];
     if (hostObject<AgentMessage>(message)?.role === "assistant") {
       assistant = message;
       break;
     }
   }
+  if (assistant === undefined) return undefined;
   const finalOutput = assistantTextFromMessage(assistant);
   const assistantMessage = hostObject<AgentMessage>(assistant);
   const stopReason = typeof assistantMessage?.stopReason === "string" ? assistantMessage.stopReason : "";
@@ -276,6 +356,12 @@ function completionFromAgentEndEvent(event: unknown): ChildDispatchCompletion | 
     ...(finalOutput !== undefined ? { finalOutput } : {}),
     ...(reason !== undefined ? { reason } : {}),
   };
+}
+
+function completionFromAgentEndEvent(event: unknown): ChildDispatchCompletion | undefined {
+  const agentEnd = hostObject<AgentEndEvent>(event);
+  if (agentEnd?.type !== "agent_end") return undefined;
+  return completionFromMessages(agentEnd.messages);
 }
 
 async function sendToSdkAgentSession(session: unknown, prompt: string, options: MessageDeliveryOptions): Promise<unknown> {
@@ -303,10 +389,11 @@ async function sendToSdkAgentSession(session: unknown, prompt: string, options: 
       return completion ?? result;
     }
     if (typeof sdk.prompt === "function") {
+      const messageCount = Array.isArray(sdk.messages) ? sdk.messages.length : 0;
       const result = await sdk.prompt.call(session, prompt, {
         streamingBehavior: deliverAs === "steer" ? "steer" : "followUp",
       });
-      return completion ?? result;
+      return completion ?? completionFromMessages(sdk.messages, messageCount) ?? result;
     }
     return undefined;
   } catch (error) {
@@ -351,6 +438,27 @@ async function closeChildSession(child: ChildSessionBridge | undefined, reason: 
   }
 }
 
+async function removeNewPrivateSessionArtifacts(sessionManager: unknown, agentId: string): Promise<void> {
+  const file = sessionInfoFromManager(sessionManager).sessionFile;
+  if (typeof file !== "string" || file === "") return;
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const directory = path.dirname(file);
+  if (path.basename(directory) === agentId) {
+    await fs.rm(directory, { recursive: true, force: true });
+  } else {
+    await fs.rm(file, { force: true });
+  }
+}
+
+function ownerSessionDirectoryToken(parent: SessionInfo): string {
+  const sessionId = nonEmptyString(parent.sessionId);
+  if (sessionId !== undefined) return createHash("sha256").update(sessionId).digest("hex");
+  const sessionFile = nonEmptyString(parent.sessionFile);
+  if (sessionFile !== undefined) return `file-${createHash("sha256").update(sessionFile).digest("hex")}`;
+  return `ephemeral-${process.pid}`;
+}
+
 export async function createChildSession(
   pi: PiLike,
   core: CoreBridge,
@@ -363,11 +471,20 @@ export async function createChildSession(
   const modelId = plan.modelId;
   const thinkingLevel = plan.thinkingLevel;
   const setupEntries = plan.setupEntries;
-  const cwd = cwdFromContext(ctx);
+  const parentCwd = cwdFromContext(ctx);
   const normalizedModelId = normalizeChildModelId(modelId);
   const model = resolveChildModel(pi, ctx, normalizedModelId);
   if (!model.applied || model.model === undefined) {
     return { error: "model_unavailable" };
+  }
+  const registry = modelRegistryFrom(pi, ctx);
+  const hasConfiguredAuth = hostObject<ModelRegistry>(registry)?.hasConfiguredAuth;
+  if (
+    normalizedModelId !== undefined &&
+    typeof hasConfiguredAuth === "function" &&
+    hasConfiguredAuth.call(registry, model.model) !== true
+  ) {
+    return { error: `model_authentication_unavailable: ${normalizedModelId}` };
   }
   if (activeTools === undefined) {
     return { error: "identity_snapshot_incomplete" };
@@ -387,22 +504,88 @@ export async function createChildSession(
       return { error: `tool_surface_unavailable: ${missing.join(", ")}` };
     }
   }
-  const sessionManager = SessionManager.inMemory(cwd);
-  appendSetupEntries(sessionManager, setupEntries);
+  const metadataRecord = hostObject<{
+    readonly kind?: unknown;
+    readonly agentKind?: unknown;
+    readonly agentId?: unknown;
+    readonly childSessionFile?: unknown;
+    readonly workspaceDirectory?: unknown;
+  }>(metadata);
+  const childKind = typeof metadataRecord?.kind === "string" ? metadataRecord.kind : "";
+  const agentId = typeof metadataRecord?.agentId === "string" ? metadataRecord.agentId.trim() : "";
+  const existingSessionFile =
+    typeof metadataRecord?.childSessionFile === "string" ? metadataRecord.childSessionFile.trim() : "";
+  const boundWorkspace = nonEmptyString(metadataRecord?.workspaceDirectory);
+  const usePrivatePersistentSession =
+    (childKind === "agent" || childKind === "generic" || childKind === "finder" || childKind === "oracle")
+    && (agentId !== "" || existingSessionFile !== "");
+  const cwd = usePrivatePersistentSession ? boundWorkspace : parentCwd;
+  if (cwd === undefined) return { error: "identity_workspace_missing" };
   try {
+    if (!statSync(cwd).isDirectory()) return { error: "identity_workspace_unavailable" };
+  } catch {
+    return { error: "identity_workspace_unavailable" };
+  }
+  const specialistPrompt = specialistPromptForMetadata(metadataRecord);
+  const agentKind = nonEmptyString(metadataRecord?.agentKind);
+  if ((agentKind === "finder" || agentKind === "oracle") && specialistPrompt === undefined) {
+    return { error: `specialist_prompt_unavailable: ${agentKind}` };
+  }
+  const resourceLoader =
+    specialistPrompt === undefined
+      ? undefined
+      : new DefaultResourceLoader({
+        cwd,
+        agentDir: getAgentDir(),
+        appendSystemPromptOverride: (base) => [...base, specialistPrompt],
+      });
+  let createdSessionManager: unknown;
+  try {
+    const sessionManager = usePrivatePersistentSession
+      ? (existingSessionFile !== ""
+        ? SessionManager.open(existingSessionFile)
+        : SessionManager.create(
+          cwd,
+          join(getAgentDir(), "taumel", "agents", "owners", ownerSessionDirectoryToken(parent), agentId),
+        ))
+      : SessionManager.inMemory(cwd);
+    createdSessionManager = sessionManager;
+    if (usePrivatePersistentSession && existingSessionFile !== "") {
+      const markerError = validateAgentSessionMarker(sessionManager, agentId, parent);
+      if (markerError !== undefined) return { error: markerError };
+    } else {
+      appendSetupEntries(sessionManager, setupEntries);
+    }
+    await resourceLoader?.reload();
     const options = {
       cwd,
       sessionManager,
       ...(model.model !== undefined ? { model: model.model } : {}),
       ...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
       ...(activeTools !== undefined ? { tools: [...activeTools] } : {}),
+      ...(resourceLoader !== undefined ? { resourceLoader } : {}),
     };
     const result =
       typeof pi.createAgentSession === "function"
         ? await pi.createAgentSession(options)
         : await createPiAgentSession(options as Parameters<typeof createPiAgentSession>[0]);
     const session = hostObject<SdkSession>(hostObject<CreatedSession>(result)?.session);
-    if (session === undefined) return { error: "createAgentSession did not return a session" };
+    if (session === undefined) {
+      if (usePrivatePersistentSession && existingSessionFile === "") {
+        await removeNewPrivateSessionArtifacts(sessionManager, agentId);
+      }
+      return { error: "createAgentSession did not return a session" };
+    }
+    if (thinkingLevel !== undefined && typeof session.getAvailableThinkingLevels === "function") {
+      const available = session.getAvailableThinkingLevels.call(session);
+      if (!Array.isArray(available) || !available.includes(thinkingLevel)) {
+        if (typeof session.dispose === "function") session.dispose.call(session);
+        if (usePrivatePersistentSession && existingSessionFile === "") {
+          await removeNewPrivateSessionArtifacts(session.sessionManager ?? sessionManager, agentId);
+        }
+        return { error: `thinking_level_unavailable: ${thinkingLevel}` };
+      }
+    }
     const childSessionManager = session.sessionManager ?? sessionManager;
     const setupInfo =
       childSessionManager === sessionManager || hasCustomEntry(childSessionManager, "taumel.childSession")
@@ -417,6 +600,9 @@ export async function createChildSession(
         ? session.sessionFile
         : setupInfo.sessionFile;
     if (!sessionId && !sessionFile) {
+      if (usePrivatePersistentSession && existingSessionFile === "") {
+        await removeNewPrivateSessionArtifacts(childSessionManager, agentId);
+      }
       return { missingSessionIdentifier: true };
     }
     const activeToolsApplied = activeTools === undefined ? false : applyChildActiveTools(session, activeTools);
@@ -443,6 +629,13 @@ export async function createChildSession(
       },
     };
   } catch (error) {
+    if (usePrivatePersistentSession && existingSessionFile === "" && createdSessionManager !== undefined) {
+      try {
+        await removeNewPrivateSessionArtifacts(createdSessionManager, agentId);
+      } catch {
+        // Preserve the original creation error; the identity rollback remains authoritative.
+      }
+    }
     return { error: error instanceof Error ? error.message : String(error) };
   }
 }
@@ -541,9 +734,9 @@ function completionTextFromContent(content: unknown): string | undefined {
   const parts: string[] = [];
   for (const item of content) {
     const text = hostObject<TextPart>(item)?.text;
-    if (typeof text === "string" && text.trim() !== "") parts.push(text);
+    if (typeof text === "string") parts.push(text);
   }
-  return parts.length === 0 ? undefined : parts.join("\n");
+  return parts.length === 0 ? "" : parts.join("\n");
 }
 
 function dispatchCompletionFromHostResult(hostResult: unknown): ChildDispatchCompletion | undefined {
@@ -569,7 +762,7 @@ function dispatchCompletionFromHostResult(hostResult: unknown): ChildDispatchCom
     typeof completion.error === "string" ? completion.error :
     stopReason !== "" ? stopReason :
     undefined;
-  const hasOutput = finalOutput !== undefined && finalOutput.trim() !== "";
+  const hasOutput = finalOutput !== undefined;
   const explicitTerminal = rawStatus !== "" || completion.isError === true || stopReason !== "";
   if (!hasOutput && status === "completed" && !explicitTerminal) {
     return undefined;
@@ -636,7 +829,7 @@ export async function applyChildSessionUpdate(
       const rawKey = typeof childUpdate.key === "string" ? childUpdate.key : "";
       if (rawKey === "") throw new Error("Invalid Taumel child session update");
       const key = childSessionCacheKey(rawKey, keyScope);
-      await closeChildSession(childSessions.get(key) ?? bridge, typeof childUpdate.reason === "string" ? childUpdate.reason : "closed_by_parent");
+      await closeChildSession(childSessions.get(key) ?? bridge, typeof childUpdate.reason === "string" ? childUpdate.reason : "agent_closed");
       childSessions.delete(key);
       return;
     }

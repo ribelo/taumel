@@ -69,7 +69,9 @@ let ignore_stale scope run =
 let register_handlers host =
   let update_handler install_footer =
     Js.wrap_callback (fun _event ctx ->
-        ignore_stale "footer session lifecycle" (fun () ->
+        if Session_sync.session_is_isolated_child ctx then ()
+        else
+          ignore_stale "footer session lifecycle" (fun () ->
             let previous_cwd = state.cwd in
             match
               Session_sync.try_sync_session_from_host_with

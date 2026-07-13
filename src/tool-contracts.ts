@@ -327,6 +327,51 @@ const ExaAgentListEventsParamsSchema = Type.Object(
   { $id: "ExaAgentListEventsParams", additionalProperties: false },
 );
 
+const AgentEffortSchema = Type.Union([
+  Type.Literal("low"),
+  Type.Literal("medium"),
+  Type.Literal("high"),
+]);
+
+const AgentSpawnParamsSchema = Type.Object(
+  {
+    message: Type.String({ minLength: 1 }),
+    effort: Type.Optional(AgentEffortSchema),
+  },
+  { $id: "AgentSpawnParams", additionalProperties: false },
+);
+
+const SpecialistMessageParamsSchema = Type.Object(
+  {
+    message: Type.String({ minLength: 1 }),
+  },
+  { $id: "SpecialistMessageParams", additionalProperties: false },
+);
+
+const AgentSendParamsSchema = Type.Object(
+  {
+    agent_id: Type.String({ minLength: 1 }),
+    message: Type.Optional(Type.String()),
+    interrupt: Type.Optional(Type.Boolean()),
+  },
+  { $id: "AgentSendParams", additionalProperties: false },
+);
+
+const AgentWaitParamsSchema = Type.Object(
+  {
+    run_ids: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+    timeout_seconds: Type.Optional(Type.Number({ minimum: 0 })),
+  },
+  { $id: "AgentWaitParams", additionalProperties: false },
+);
+
+const AgentCloseParamsSchema = Type.Object(
+  {
+    agent_id: Type.String({ minLength: 1 }),
+  },
+  { $id: "AgentCloseParams", additionalProperties: false },
+);
+
 export const dtsSchemas = [
   ["EmptyParams", EmptyParamsSchema],
   ["EditReplacement", EditReplacementSchema],
@@ -349,6 +394,11 @@ export const dtsSchemas = [
   ["ExaAgentRunIdParams", ExaAgentRunIdParamsSchema],
   ["ExaAgentListRunsParams", ExaAgentListRunsParamsSchema],
   ["ExaAgentListEventsParams", ExaAgentListEventsParamsSchema],
+  ["AgentSpawnParams", AgentSpawnParamsSchema],
+  ["SpecialistMessageParams", SpecialistMessageParamsSchema],
+  ["AgentSendParams", AgentSendParamsSchema],
+  ["AgentWaitParams", AgentWaitParamsSchema],
+  ["AgentCloseParams", AgentCloseParamsSchema],
 ] as const;
 
 export const toolParamSchemas = [
@@ -377,6 +427,13 @@ export const toolParamSchemas = [
   { name: "exa_agent_list_runs", interfaceName: "ExaAgentListRunsParams", schema: ExaAgentListRunsParamsSchema },
   { name: "exa_agent_cancel_run", interfaceName: "ExaAgentRunIdParams", schema: ExaAgentRunIdParamsSchema },
   { name: "exa_agent_list_events", interfaceName: "ExaAgentListEventsParams", schema: ExaAgentListEventsParamsSchema },
+  { name: "agent_spawn", interfaceName: "AgentSpawnParams", schema: AgentSpawnParamsSchema },
+  { name: "finder", interfaceName: "SpecialistMessageParams", schema: SpecialistMessageParamsSchema },
+  { name: "oracle", interfaceName: "SpecialistMessageParams", schema: SpecialistMessageParamsSchema },
+  { name: "agent_send", interfaceName: "AgentSendParams", schema: AgentSendParamsSchema },
+  { name: "agent_wait", interfaceName: "AgentWaitParams", schema: AgentWaitParamsSchema },
+  { name: "agent_list", interfaceName: "EmptyParams", schema: EmptyParamsSchema },
+  { name: "agent_close", interfaceName: "AgentCloseParams", schema: AgentCloseParamsSchema },
 ] as const;
 
 type Validator = ReturnType<typeof Compile>;
@@ -422,6 +479,47 @@ export function parseToolParams(toolName: string, rawParams: unknown): ParseTool
     ("ids" in params) === ("urls" in params)
   ) {
     return { ok: false, error: "crawling_exa: provide either ids or urls, but not both" };
+  }
+  if (
+    toolName === "agent_send" &&
+    typeof params === "object" &&
+    params !== null
+  ) {
+    const record = params as { message?: unknown; interrupt?: unknown };
+    const message = typeof record.message === "string" ? record.message.trim() : "";
+    if (message === "" && record.interrupt !== true) {
+      return { ok: false, error: "agent_send.message is required unless interrupt is true" };
+    }
+  }
+  if (
+    (toolName === "agent_spawn" || toolName === "finder" || toolName === "oracle") &&
+    typeof params === "object" && params !== null
+  ) {
+    const message = (params as { message?: unknown }).message;
+    if (typeof message !== "string" || message.trim() === "") {
+      return { ok: false, error: `${toolName}.message must not be empty` };
+    }
+  }
+  if (toolName === "agent_wait" && typeof params === "object" && params !== null) {
+    const runIds = (params as { run_ids?: unknown }).run_ids;
+    if (Array.isArray(runIds)) {
+      const trimmed = runIds.map((value) => typeof value === "string" ? value.trim() : "");
+      if (trimmed.some((value) => value === "")) {
+        return { ok: false, error: "agent_wait.run_ids must not contain empty ids" };
+      }
+      if (new Set(trimmed).size !== trimmed.length) {
+        return { ok: false, error: "agent_wait.run_ids must not contain duplicate ids" };
+      }
+    }
+  }
+  if (
+    (toolName === "agent_send" || toolName === "agent_close") &&
+    typeof params === "object" && params !== null
+  ) {
+    const agentId = (params as { agent_id?: unknown }).agent_id;
+    if (typeof agentId !== "string" || agentId.trim() === "") {
+      return { ok: false, error: `${toolName}.agent_id must not be empty` };
+    }
   }
   return { ok: true, params: params as ParsedToolParams };
 }
@@ -743,5 +841,54 @@ export const toolContracts: readonly ToolContract[] = [
     description: "List stored events for an Exa Agent run.",
     promptSnippet: "List Exa Agent run events.",
     parameters: toolParameters(ExaAgentListEventsParamsSchema),
+  },
+  {
+    name: "agent_spawn",
+    label: "agent.spawn",
+    description: "Create a durable generic Taumel agent and start one asynchronous run.",
+    promptSnippet: "Spawn a durable child agent with a message and optional effort.",
+    parameters: toolParameters(AgentSpawnParamsSchema),
+  },
+  {
+    name: "finder",
+    label: "finder",
+    description: "Start a read-only Finder specialist for local multi-step codebase discovery.",
+    promptSnippet: "Start Finder for local conceptual and multi-step discovery.",
+    parameters: toolParameters(SpecialistMessageParamsSchema),
+  },
+  {
+    name: "oracle",
+    label: "oracle",
+    description: "Start a read-only Oracle specialist for expensive second-opinion analysis.",
+    promptSnippet: "Start Oracle for architecture, debugging, planning, or ad-hoc review.",
+    parameters: toolParameters(SpecialistMessageParamsSchema),
+  },
+  {
+    name: "agent_send",
+    label: "agent.send",
+    description: "Send a message to an existing open Taumel agent, or interrupt it when interrupt is true.",
+    promptSnippet: "Send, steer, resume, or interrupt a durable agent.",
+    parameters: toolParameters(AgentSendParamsSchema),
+  },
+  {
+    name: "agent_wait",
+    label: "agent.wait",
+    description: "Race selected Taumel agent runs and return every result ready at the observation point.",
+    promptSnippet: "Wait for one or more agent runs by run_id.",
+    parameters: toolParameters(AgentWaitParamsSchema),
+  },
+  {
+    name: "agent_list",
+    label: "agent.list",
+    description: "List Taumel agent identities owned by the current parent session.",
+    promptSnippet: "List owned agent identities.",
+    parameters: toolParameters(EmptyParamsSchema),
+  },
+  {
+    name: "agent_close",
+    label: "agent.close",
+    description: "Permanently close one Taumel agent identity and remove it from current Taumel state.",
+    promptSnippet: "Close and forget one agent identity.",
+    parameters: toolParameters(AgentCloseParamsSchema),
   },
 ];

@@ -12,6 +12,7 @@ let effect_kind_label = function
   | Taumel.Tool_gateway.Execute -> "execute"
   | Taumel.Tool_gateway.Mutate -> "mutate"
   | Taumel.Tool_gateway.Network -> "network"
+  | Taumel.Tool_gateway.Spawn_agent -> "spawn agent"
   | Taumel.Tool_gateway.Ask_user -> "ask user"
 
 let category_of_name = function

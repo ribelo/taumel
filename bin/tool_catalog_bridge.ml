@@ -52,6 +52,14 @@ let ralph_child_context ctx =
         | Some data when get_string data "kind" = "ralph" -> true
         | _ -> false
 
+let agent_child_context ctx =
+  match Session_store.custom_entry_data ctx "taumel.childSession" with
+  | Some data -> (
+      match get_string data "kind" with
+      | "agent" | "generic" | "finder" | "oracle" -> true
+      | _ -> false)
+  | None -> false
+
 let plan_active_tools_sync_js facts =
   let facts = Tool_contracts.ActiveToolsSyncFacts.t_of_js (ojs_of_js facts) in
   let ctx =
@@ -62,11 +70,13 @@ let plan_active_tools_sync_js facts =
   Session_sync.sync_persisted_session ctx;
   let tool_names = Tool_contracts.ActiveToolsSyncFacts.get_tools facts in
   let ralph_child = ralph_child_context ctx in
+  let agent_child = agent_child_context ctx in
   let provider =
     if App_state.state.provider = "" then None else Some App_state.state.provider
   in
   let plan =
-    Taumel.Tool_catalog.plan_active_tools_sync ?provider ~ralph_child tool_names
+    Taumel.Tool_catalog.plan_active_tools_sync ?provider ~ralph_child ~agent_child
+      tool_names
       ~disabled_tools:
         (Taumel.Visibility.disabled Taumel.Visibility.Tools
            !App_state.visibility_state)

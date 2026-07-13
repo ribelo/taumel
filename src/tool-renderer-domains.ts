@@ -275,7 +275,71 @@ function buildExaAgent(name: string, result: unknown, options: unknown, theme: u
   return { header, body: entries.length === 0 ? undefined : { mode: "rail", entries } };
 }
 
+function agentLine(item: ToolRenderFields, theme: unknown): string {
+  const id = stringFieldOrUndefined(item, "agent_id") ?? "agent";
+  const kind = stringFieldOrUndefined(item, "kind") ?? "generic";
+  const status = stringFieldOrUndefined(item, "status")
+    ?? stringFieldOrUndefined(item, "latest_run_status")
+    ?? "idle";
+  const model = stringFieldOrUndefined(item, "model") ?? "";
+  const thinking = stringFieldOrUndefined(item, "thinking") ?? "";
+  return [themeFg(theme, "toolOutput", id), kind, status, model, thinking]
+    .filter((part) => part !== "")
+    .join(` ${themeFg(theme, "dim", "·")} `);
+}
+
+function buildAgent(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
+  const expanded = expandedFromOptions(options);
+  const details = detailsRecord(result);
+  const agents = recordArrayFieldOrEmpty<ToolRenderFields>(details, "agents");
+  const results = recordArrayFieldOrEmpty<ToolRenderFields>(details, "results");
+  const agentId = stringFieldOrUndefined(details, "agent_id")
+    ?? stringFieldOrUndefined(args, "agent_id")
+    ?? "";
+  const runId = stringFieldOrUndefined(details, "run_id") ?? "";
+  const kind = stringFieldOrUndefined(details, "kind")
+    ?? (name === "finder" || name === "oracle" ? name : "generic");
+  const status = stringFieldOrUndefined(details, "status")
+    ?? stringFieldOrUndefined(details, "outcome");
+  let subject: string;
+  if (name === "agent_list") subject = `${agents.length} agent${agents.length === 1 ? "" : "s"}`;
+  else if (name === "agent_wait") {
+    const pending = Array.isArray(details["pending_run_ids"]) ? details["pending_run_ids"].length : 0;
+    subject = `${results.length} ready · ${pending} pending`;
+  } else if (name === "agent_spawn") {
+    subject = [agentId, stringFieldOrUndefined(details, "effort")].filter((part) => part !== undefined && part !== "").join(" · ");
+  } else if (name === "finder" || name === "oracle") {
+    subject = agentId;
+  } else {
+    subject = [agentId, runId, kind, status].filter((part) => part !== "").join(" · ");
+  }
+  const header = headerSpec(name, subject, dotFromDetails(details), theme);
+  if (!expanded) return { header, body: undefined };
+  const entries: Entry[] = [];
+  if (agents.length > 0) {
+    for (const agent of agents) entries.push({ text: agentLine(agent, theme) });
+  } else if (results.length > 0) {
+    for (const run of results) {
+      entries.push({ text: agentLine(run, theme) });
+      entries.push(...labeled("Run", stringFieldOrUndefined(run, "run_id"), theme));
+      entries.push(...labeled("Reason", stringFieldOrUndefined(run, "reason_code"), theme));
+      entries.push(...labeled("Error", stringFieldOrUndefined(run, "error"), theme));
+    }
+  } else {
+    entries.push(...labeled("Agent", agentId, theme));
+    entries.push(...labeled("Run", runId, theme));
+    entries.push(...labeled("Kind", kind, theme));
+    entries.push(...labeled("Model", stringFieldOrUndefined(details, "model"), theme));
+    entries.push(...labeled("Thinking", stringFieldOrUndefined(details, "thinking"), theme));
+    entries.push(...labeled("Status", status, theme));
+  }
+  return { header, body: entries.length === 0 ? undefined : { mode: "rail", entries } };
+}
+
 export function buildDomainResult(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block | undefined {
+  if (["agent_spawn", "agent_send", "agent_wait", "agent_list", "agent_close", "finder", "oracle"].includes(name)) {
+    return buildAgent(name, result, options, theme, args);
+  }
   if (name === "get_goal" || name === "create_goal" || name === "update_goal") return buildGoal(name, result, options, theme, args);
   if (name.startsWith("cron_")) return buildCron(name, result, options, theme, args);
   if (name === "query_threads") return buildQueryThreads(name, result, options, theme, args);

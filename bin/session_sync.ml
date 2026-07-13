@@ -254,6 +254,7 @@ type persisted_session_snapshot = {
   permissions : Unsafe.any option;
   ralph : Unsafe.any option;
   visibility : Unsafe.any option;
+  agents : Unsafe.any option;
 }
 
 let persisted_session_snapshot ctx =
@@ -266,6 +267,7 @@ let persisted_session_snapshot ctx =
     permissions = Session_store.custom_entry_data ctx "taumel.permissions";
     ralph = Session_store.custom_entry_data ctx "taumel.ralph";
     visibility = Session_store.custom_entry_data ctx "taumel.visibility";
+    agents = Session_store.custom_entry_data ctx "taumel.agents.v2";
   }
 
 let load_goal_state_data ~session_id = function
@@ -345,6 +347,97 @@ let load_visibility_state_data visibility =
                ("Ignoring incompatible saved Taumel visibility entry: " ^ message));
           visibility_state := Taumel.Visibility.empty)
 
+let child_marker_matches (identity : Taumel.Agents.identity) raw =
+  raw |> String.split_on_char '\n'
+  |> List.fold_left
+       (fun found line ->
+         match Taumel.Shared.decode_json_string line with
+         | Ok (Taumel.Shared.Object fields) -> (
+             match
+               ( List.assoc_opt "type" fields,
+                 List.assoc_opt "customType" fields,
+                 List.assoc_opt "data" fields )
+             with
+             | Some (Taumel.Shared.String "custom"),
+               Some (Taumel.Shared.String "taumel.childSession"),
+               Some (Taumel.Shared.Object data) ->
+                 let string name =
+                   match List.assoc_opt name data with
+                   | Some (Taumel.Shared.String value) -> value
+                   | _ -> ""
+                 in
+                 string "agentId" = identity.identity_agent_id
+                 && string "parentSessionId"
+                    = identity.identity_owner_session_id
+             | _ -> found)
+         | _ -> found)
+       false
+
+let child_session_file_available (identity : Taumel.Agents.identity) =
+  match identity.identity_child_session_file with
+  | None -> false
+  | Some path -> (
+      try
+        let process = Unsafe.get Unsafe.global "process" in
+        let fs =
+          match function_field process "getBuiltinModule" with
+          | Some get_builtin ->
+              Unsafe.fun_call get_builtin [| js_string "fs" |]
+          | None ->
+              let require = Unsafe.get Unsafe.global "require" in
+              Unsafe.fun_call require [| js_string "fs" |]
+        in
+        if
+          not
+            (Js.to_bool
+               (Unsafe.meth_call fs "existsSync" [| js_string path |]))
+        then false
+        else
+          let raw =
+            Js.to_string
+              (Unsafe.meth_call fs "readFileSync"
+                 [| js_string path; js_string "utf8" |])
+          in
+          child_marker_matches identity raw
+      with _ -> false)
+
+let seen_agent_session_ids : string list ref = ref []
+
+let first_agent_session_load session_id =
+  not (List.mem session_id !seen_agent_session_ids)
+
+let remember_agent_session session_id =
+  if not (List.mem session_id !seen_agent_session_ids) then
+    seen_agent_session_ids := session_id :: !seen_agent_session_ids
+
+let load_agent_state_data ~recover_running = function
+  | None ->
+      agent_notification_claims := [];
+      agent_closing_ids := [];
+      agent_state_load_error := None;
+      agent_state := Taumel.Agents.empty_session_state
+  | Some data -> (
+      agent_notification_claims := [];
+      agent_closing_ids := [];
+      match Result.bind (json_from_js data) Taumel.Agents_codec.decode with
+      | Ok state ->
+          agent_state_load_error := None;
+          agent_state :=
+            if recover_running then
+              Taumel.Agents.mark_running_after_process_loss state
+                ~now:(now_seconds ())
+                ~child_session_available:(fun run ->
+                  match Taumel.Agents.find_identity state run.run_agent_id with
+                  | Some identity ->
+                      child_session_file_available identity
+                  | None -> false)
+            else state
+      | Error message ->
+          agent_state_load_error := Some message;
+          report_session_sync_error "agents load"
+            (Failure ("Ignoring incompatible saved Taumel agents entry: " ^ message));
+          agent_state := Taumel.Agents.empty_session_state)
+
 let load_session_state ctx =
   let snapshot = persisted_session_snapshot ctx in
   let forked = load_goal_state_data ~session_id:snapshot.session_id snapshot.goal in
@@ -354,6 +447,10 @@ let load_session_state ctx =
     snapshot.permissions;
   load_ralph_state_data snapshot.ralph;
   load_visibility_state_data snapshot.visibility;
+  load_agent_state_data
+    ~recover_running:(first_agent_session_load snapshot.session_id)
+    snapshot.agents;
+  remember_agent_session snapshot.session_id;
   last_goal_accounting_key := None;
   goal_turn_clock := Taumel.Goal.empty_clock;
   pending_goal_terminal_status := None;
@@ -367,6 +464,7 @@ let has_persisted_component_entry snapshot =
   || snapshot.permissions <> None
   || snapshot.ralph <> None
   || snapshot.visibility <> None
+  || snapshot.agents <> None
 
 let sync_persisted_session_snapshot ?(reset_missing = true)
     ?(clear_retained_outputs = false) snapshot =
@@ -384,6 +482,10 @@ let sync_persisted_session_snapshot ?(reset_missing = true)
       snapshot.permissions;
     load_ralph_state_data snapshot.ralph;
     load_visibility_state_data snapshot.visibility;
+    load_agent_state_data
+      ~recover_running:(first_agent_session_load snapshot.session_id)
+      snapshot.agents;
+    remember_agent_session snapshot.session_id;
     last_goal_accounting_key := None;
     goal_turn_clock := Taumel.Goal.empty_clock;
     pending_goal_terminal_status := None;

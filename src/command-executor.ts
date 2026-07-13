@@ -9,6 +9,7 @@ import type {
 import { executeComposerCommand } from "./composer.ts";
 import { executeCompactionModelCommand } from "./compaction-model.ts";
 import { executeCronManager } from "./cron-manager.ts";
+import { executeAgentRunsManager } from "./agent-runs-manager.ts";
 import { initializeTaumelGlobalConfig, taumelStatus } from "./global-settings.ts";
 import { executeVisibilityManager, saveProjectVisibility } from "./visibility.ts";
 import { showUsageInspection } from "./usage-inspection.ts";
@@ -409,6 +410,9 @@ export async function executeGatewayCommand(
   }
   if (name === "compaction-model") {
     return executeCompactionModelCommand(pi, core, args, ctx);
+  }
+  if (name === "agent-runs") {
+    return executeAgentRunsManager(pi, core, childSessions, args, ctx);
   }
   if (name === "execpolicy") {
     const trimmed = args.trim();

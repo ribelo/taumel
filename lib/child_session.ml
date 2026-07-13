@@ -117,6 +117,10 @@ let permissions_entry metadata =
               [
                 ("version", Shared.Number 1.);
                 ("profile", profile);
+                ( "networkMode",
+                  match List.assoc_opt "networkMode" fields with
+                  | Some (Shared.String value) -> Shared.String value
+                  | _ -> Shared.String "disabled" );
                 ("noSandbox", Shared.Bool (bool_field "noSandbox" fields));
                 ("isolated_child", Shared.Bool (bool_field "isolated_child" fields));
               ];
@@ -127,7 +131,7 @@ let initial_goal_entries fields =
   match string_field "initialGoalObjective" fields with
   | None -> []
   | Some objective -> (
-      let worker_id = string_field "workerId" fields |> Option.value ~default:"agent" in
+      let worker_id = string_field "agentId" fields |> Option.value ~default:"agent" in
       let thread_id = "agent:" ^ worker_id in
       match Goal.create ~thread_id ~now:0 objective None with
       | Error _ -> []

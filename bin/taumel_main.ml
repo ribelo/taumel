@@ -107,6 +107,31 @@ let core_call name_js args_js =
   | "planCommandChildSession" -> Command_bridge.plan_child_session (arg 0)
   | "planCommandChildDispatch" -> Command_bridge.plan_child_dispatch (arg 0)
   | "finishCommandChildDispatch" -> Command_bridge.finish_child_dispatch (arg 0)
+  | "recordAgentChildSessionStart" -> Agent_lifecycle.record_child_session_start (arg 0) (arg 1)
+  | "agentRoutingDiagnostics" -> Agent_tools.routing_diagnostics ()
+  | "rollbackUnacceptedAgentStart" ->
+      Agent_lifecycle.rollback_unaccepted_start (arg 0) (arg 1)
+  | "rollbackAgentSendPreflight" ->
+      Agent_lifecycle.rollback_send_preflight (arg 0) (arg 1)
+  | "recordAgentSendDispatchFailure" ->
+      Agent_lifecycle.record_send_dispatch_failure (arg 0) (arg 1)
+  | "rollbackFailedAgentInterruption" ->
+      Agent_lifecycle.rollback_failed_interruption (arg 0) (arg 1)
+  | "recordAgentDispatchCompletion" -> Agent_lifecycle.record_dispatch_completion (arg 0) (arg 1)
+  | "pendingAgentNotifications" -> Agent_lifecycle.pending_agent_notifications (arg 0)
+  | "recordAgentBackgroundNotification" -> Agent_lifecycle.record_background_notification (arg 0) (arg 1)
+  | "releaseAgentBackgroundNotification" ->
+      Agent_lifecycle.release_background_notification (arg 0)
+  | "validateAgentBackgroundNotificationClaim" ->
+      Agent_lifecycle.validate_background_notification_claim (arg 0) (arg 1)
+  | "countActiveChildRuns" -> Agent_lifecycle.count_active_child_runs (arg 0)
+  | "ephemeralAgentCleanupPlan" -> Agent_lifecycle.ephemeral_cleanup_plan (arg 0)
+  | "agentManagerSnapshot" -> Agent_lifecycle.manager_snapshot (arg 0)
+  | "finishEphemeralAgentCleanup" -> Agent_lifecycle.finish_ephemeral_cleanup (arg 0)
+  | "suspendOwnerAgentsOnShutdown" -> Agent_lifecycle.suspend_owner_on_shutdown (arg 0)
+  | "finishAgentWait" -> Agent_lifecycle.finish_wait (arg 0) (arg 1)
+  | "finishAgentClose" -> Agent_tools.finish_close (arg 0) (arg 1)
+  | "releaseAgentClose" -> Agent_tools.release_close (arg 0)
   | "handleCommand" -> Command_bridge.handle (arg 0)
   | "handleComposerCommand" -> Composer_commands.handle (arg 0)
    | "planCommandNotification" ->

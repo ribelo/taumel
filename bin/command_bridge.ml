@@ -145,4 +145,5 @@ let handle raw_facts =
   | "tools" -> Visibility_commands.handle Taumel.Visibility.Tools args ctx
   | "skills" -> Visibility_commands.handle Taumel.Visibility.Skills args ctx
   | "execpolicy" -> Exec_policy_bridge.handle_command args
+  | "agent-runs" -> Agent_lifecycle.handle_agent_runs_command args ctx
   | other -> error_obj ("command is not connected yet: " ^ other)

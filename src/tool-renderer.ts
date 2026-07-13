@@ -137,6 +137,20 @@ function subjectFromArgs(name: string, args: ToolRenderFields): string {
       return stringFieldOrUndefined(args, "id") ?? "";
     case "exa_agent_list_runs":
       return args["limit"] === undefined ? "recent runs" : `limit ${args["limit"]}`;
+    case "agent_spawn":
+      return `${stringFieldOrUndefined(args, "effort") ?? "medium"} agent`;
+    case "finder":
+    case "oracle":
+      return oneLine(stringFieldOrUndefined(args, "message") ?? name);
+    case "agent_send":
+    case "agent_close":
+      return stringFieldOrUndefined(args, "agent_id") ?? "";
+    case "agent_wait": {
+      const runIds = stringArrayFieldOrEmpty(args, "run_ids");
+      return `${runIds.length} run${runIds.length === 1 ? "" : "s"}`;
+    }
+    case "agent_list":
+      return "agents";
     default:
       return "";
   }
@@ -559,8 +573,15 @@ function buildNotificationBlock(message: unknown, options: unknown, theme: unkno
   if (content === "") return undefined;
   const expanded = expandedFromOptions(options);
   const execMatch = /^Command session ([0-9]+) has finished\./.exec(content);
-  const name = execMatch !== null ? "exec_completion" : "notification";
-  const subject = execMatch !== null ? `session ${execMatch[1]} ready` : "ready";
+  const agentMatch = /^Agent run (\S+) for (\S+) \((\S+)\) has finished\./.exec(content);
+  const name = execMatch !== null
+    ? "exec_completion"
+    : agentMatch !== null ? "agent_completion" : "notification";
+  const subject = execMatch !== null
+    ? `session ${execMatch[1]} ready`
+    : agentMatch !== null
+      ? `${agentMatch[2]} · ${agentMatch[3]} · ${agentMatch[1]} ready`
+      : "ready";
 
   return {
     header: headerSpec(name, subject, "muted", theme),
@@ -645,6 +666,8 @@ export function cronFireMessageRenderer() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function progressText(name: string): string {
+  if (name === "agent_wait") return "waiting for agents";
+  if (name === "agent_spawn" || name === "finder" || name === "oracle") return "starting agent";
   if (name.startsWith("exa_") || name.endsWith("_exa")) return "waiting for Exa";
   if (name === "query_threads") return "searching threads";
   if (name === "read_thread") return "reading thread";

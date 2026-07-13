@@ -9,7 +9,7 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const projectRoot = dirname(scriptDir);
 const sourcePaths = [
   join(projectRoot, "src", "tool-contracts.ts"),
-  join(projectRoot, "src", "bridge-contracts.ts"),
+  join(projectRoot, "src", "bridge-contract-catalog.ts"),
 ];
 const outputDir = join(projectRoot, "bin", "generated");
 const ts2ocamlBin = join(projectRoot, "node_modules", ".bin", "ts2ocaml");

@@ -17,6 +17,23 @@ type active_tools_sync = {
   changed : bool;
 }
 
+let agent_tool_specs =
+  [
+    { Tool_gateway.name = "agent_spawn"; effect_kind = Tool_gateway.Spawn_agent };
+    { name = "agent_send"; effect_kind = Spawn_agent };
+    { name = "agent_wait"; effect_kind = Pure };
+    { name = "agent_list"; effect_kind = Pure };
+    { name = "agent_close"; effect_kind = Spawn_agent };
+    { name = "finder"; effect_kind = Spawn_agent };
+    { name = "oracle"; effect_kind = Spawn_agent };
+  ]
+
+let agent_tool_names =
+  List.map (fun (spec : Tool_gateway.spec) -> spec.name) agent_tool_specs
+
+let goal_tool_names =
+  List.map (fun (spec : Tool_gateway.spec) -> spec.name) Goal.tool_specs
+
 let tool_specs =
   Sandbox.canonical_tool_specs
   @ Goal.tool_specs @ Ralph_loop.tool_specs
@@ -25,7 +42,7 @@ let tool_specs =
       { name = "cron_list"; effect_kind = Pure };
       { name = "cron_delete"; effect_kind = Mutate };
     ]
-  @ Thread_tools.tool_specs @ Exa.tool_specs
+  @ Thread_tools.tool_specs @ Exa.tool_specs @ agent_tool_specs
 
 let command_specs =
   [
@@ -44,6 +61,10 @@ let command_specs =
     { name = "skills"; description = "List, enable, disable, or save Taumel skill visibility." };
     { name = "execpolicy"; description = "Show or check exec command policy decisions." };
     { name = "compaction-model"; description = "Choose a model for context compaction." };
+    {
+      name = "agent-runs";
+      description = "Inspect, stop, or close durable Taumel agent identities and runs.";
+    };
   ]
 
 let tool_names = List.map (fun (spec : Tool_gateway.spec) -> spec.name) tool_specs
@@ -128,19 +149,25 @@ let rewrite_shell_tool_names tool_names =
   in
   loop false [] tool_names
 
-let rewrite_active_tools ?provider ?(ralph_child = false) tool_names =
+let rewrite_active_tools ?provider ?(ralph_child = false) ?(agent_child = false)
+    tool_names =
   let tool_names =
     tool_names |> rewrite_mutation_tool_names ?provider |> rewrite_shell_tool_names
     |> remove_tool_names ambient_hidden_tool_names
   in
-  if ralph_child then ensure_tool_names ralph_control_tool_names tool_names
-  else remove_tool_names ralph_control_tool_names tool_names
+  let tool_names =
+    if ralph_child then ensure_tool_names ralph_control_tool_names tool_names
+    else remove_tool_names ralph_control_tool_names tool_names
+  in
+  if agent_child then
+    remove_tool_names (agent_tool_names @ goal_tool_names) tool_names
+  else tool_names
 
-let plan_active_tools_sync ?provider ?(ralph_child = false) ?(disabled_tools = [])
-    tool_names =
+let plan_active_tools_sync ?provider ?(ralph_child = false) ?(agent_child = false)
+    ?(disabled_tools = []) tool_names =
   let current = unique_tool_names tool_names in
   let tools =
-    rewrite_active_tools ?provider ~ralph_child current
+    rewrite_active_tools ?provider ~ralph_child ~agent_child current
     |> remove_tool_names disabled_tools
   in
   { tools; changed = current <> tools }

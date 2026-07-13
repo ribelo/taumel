@@ -13,6 +13,8 @@ let prepare raw_facts =
   Session_sync.sync_session_from_host ~scope:"tool prepare"
     ~reset_missing:(name <> "ralph_continue" && name <> "ralph_finish") ctx;
   match name with
+  | "agent_spawn" | "agent_send" | "agent_wait" | "agent_list" | "agent_close"
+  | "finder" | "oracle" -> Agent_tools.prepare name params ctx
   | "exec_command" -> Mutation_tools.prepare_exec_command params
   | "write_stdin" -> Mutation_tools.prepare_write_stdin params
   | "apply_patch" -> Mutation_tools.prepare_apply_patch params

@@ -28,6 +28,7 @@ import {
   writeFileAtomically,
   writePatchFiles,
   appendToFile,
+  contextWithOverrides,
 } from "./util.ts";
 import { goalContinuationMessageRenderer, notificationMessageRenderer, renderersForTool } from "./tool-renderer.ts";
 import {
@@ -38,6 +39,7 @@ import {
   sendToChildSession,
 } from "./child-sessions.ts";
 import { installExecNotificationLifecycle, startExecCompletionWaiter } from "./exec-notifications.ts";
+import { executeAgentPrepared, installAgentLifecycle } from "./agent-orchestration.ts";
 import { decodeBridgeToolExecutionResult, decodeBridgeToolResult, decodeEditApplicationResult, decodeExecApprovalPromptPlan, decodeExecApprovalResult, decodeExecPolicyAllowRuleResult, decodeExecToolResult, decodePatchApplicationResult, decodeToolNamesResult, decodeToolResultEnvelope, decodeViewMediaResultEnvelope, type PreparedToolAction, type ToolResultEnvelope } from "./bridge-contracts.ts";
 import {
   decodeOpenAiUsageHostAuth,
@@ -57,7 +59,10 @@ type ToolContext = { readonly cwd?: unknown; readonly model?: unknown; readonly 
 type ToolUi = { readonly confirm?: (...args: unknown[]) => Promise<unknown>; readonly select?: (...args: unknown[]) => Promise<unknown> };
 type SessionManagerHost = { readonly getEntries?: () => unknown };
 type SessionEntry = { readonly type?: unknown; readonly customType?: unknown; readonly data?: unknown };
-type ChildMetadata = { readonly isolated_child?: unknown; readonly kind?: unknown; readonly parentSessionId?: unknown };
+type ChildMetadata = {
+  readonly isolated_child?: unknown; readonly kind?: unknown;
+  readonly parentSessionId?: unknown; readonly agentId?: unknown;
+};
 type ImageModel = { readonly input?: unknown };
 type EditReplacement = { readonly oldText?: unknown; readonly newText?: unknown };
 type NodeError = { readonly code?: unknown };
@@ -107,7 +112,7 @@ function approvalOutcomeMessage(action: string, outcome: ApprovalOutcome): strin
     case "timed_out":
       return `Error: ${action} approval timed out`;
     case "unavailable":
-      return `Error: ${action} approval unavailable`;
+      return `Error: approval_unavailable: ${action} approval is unavailable`;
     case "interrupted":
       return `Error: ${action} approval interrupted`;
     case "approved_always":
@@ -462,9 +467,14 @@ async function confirmExecApproval(
   const rawUi = toolContext(ctx)?.ui;
   const ui = typeof rawUi === "object" && rawUi !== null ? rawUi as ToolUi : undefined;
   const confirm = ui?.confirm;
+  const childMetadata = childSessionMetadataFromContext(ctx);
+  const agentId = typeof childMetadata?.agentId === "string" ? childMetadata.agentId.trim() : "";
+  const requester = childMetadata?.kind === "agent" && agentId !== ""
+    ? `Agent ${agentId}: `
+    : "";
   const plan = decodeExecApprovalPromptPlan(core.call("planExecApprovalPrompt", [{
-    approvalTitle: prepared.approvalTitle,
-    approvalPrompt: prepared.approvalPrompt,
+    approvalTitle: `${requester}${prepared.approvalTitle}`,
+    approvalPrompt: `${requester}${prepared.approvalPrompt}`,
     approvalTimeoutMs: prepared.approvalTimeoutMs,
     uiAvailable: typeof confirm === "function",
   }]));
@@ -691,10 +701,12 @@ async function executeApplyPatch(
   return hostToolResult(core, "apply_patch", { ...application, writes: writesWithBefore, deletedFiles });
 }
 
+const pendingAgentWaits = new Map<string, Set<AbortController>>();
+
 export async function executeTool(
   pi: PiLike,
   core: CoreBridge,
-  _childSessions: Map<string, ChildSessionBridge>,
+  childSessions: Map<string, ChildSessionBridge>,
   name: string,
   rawParams: unknown,
   ctx: unknown,
@@ -708,13 +720,30 @@ export async function executeTool(
     const error = "Current model does not support image input";
     return errorToolResult(core, error, { ok: false, error, modelSupportsImages: false });
   }
-  const prepared = preparedAction(core, name, parsed.params, ctx);
+  const agentTool = name === "agent_spawn" || name === "finder" || name === "oracle";
+  const prepareCtx = agentTool && typeof pi.getActiveTools === "function"
+    ? contextWithOverrides(ctx, { activeTools: pi.getActiveTools() })
+    : ctx;
+  const prepared = preparedAction(core, name, parsed.params, prepareCtx);
   if (!prepared.ok) {
     return errorToolResult(core, prepared.error, { ...prepared });
   }
   switch (prepared.action) {
     case "tool_result":
       return preparedToolResult(core, prepared);
+    case "agent_start":
+    case "agent_send":
+    case "agent_wait":
+    case "agent_close":
+      return executeAgentPrepared(
+        pi,
+        core,
+        childSessions,
+        pendingAgentWaits,
+        prepared as { readonly [key: string]: unknown },
+        ctx,
+        signal,
+      );
     case "openai_usage_fetch":
       return executeOpenAiUsageWithHostAuth(pi, core, prepared, ctx);
     case "exa_fetch":
@@ -806,6 +835,7 @@ export function registerGatewayTools(
     pi.registerMessageRenderer("taumel.goal.continue", goalContinuationMessageRenderer());
   }
   installExecNotificationLifecycle(pi, core);
+  installAgentLifecycle(pi, core, childSessions, pendingAgentWaits);
   installIsolatedChildOwnershipLifecycle(pi, childSessions);
   assertToolCatalogMatchesCore(core);
   const allowed = new Set(decodeToolNamesResult(core.call("allowedToolNames", [])).names);

@@ -51,6 +51,11 @@ let exec_policy : Taumel.Exec_policy.compiled ref = ref Taumel.Exec_policy.empty
 let visibility_state : Taumel.Visibility.t ref = ref Taumel.Visibility.empty
 let visibility_warning_flags : Taumel.Visibility.warning_flags ref =
   ref Taumel.Visibility.empty_warning_flags
+let agent_state : Taumel.Agents.session_state ref =
+  ref Taumel.Agents.empty_session_state
+let agent_notification_claims : string list ref = ref []
+let agent_state_load_error : string option ref = ref None
+let agent_closing_ids : string list ref = ref []
 let loaded_session_id : string option ref = ref None
 let last_goal_accounting_key : string option ref = ref None
 let pending_goal_load_warning : string option ref = ref None

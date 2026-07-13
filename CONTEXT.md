@@ -25,6 +25,11 @@ The tool name, description, parameter schema, and result text presented to the
 agent model, independent of hidden result details and user-facing rendering.
 _Avoid_: Tool rendering, tool implementation, structured details
 
+**Tool slot**:
+The single visible TUI unit occupied by one tool invocation throughout its
+lifecycle.
+_Avoid_: Renderer callback, tool result, protocol message
+
 **Loaded session state**:
 The single in-memory projection of Taumel component state for Pi's currently
 active main session.
@@ -34,6 +39,70 @@ _Avoid_: Global session state, session cache
 Taumel work that may remain live after its initiating call and therefore carries
 the identity of the parent session that may observe or control it.
 _Avoid_: Background global, detached task
+
+**Agent owner**:
+The Pi session identity that exclusively observes and controls an agent identity
+and its runs. Conversation branches within that session share the same ownership.
+_Avoid_: Conversation branch, workspace, loaded session
+
+**Agent identity**:
+A durable child agent that retains its conversation and fixed policy across
+multiple runs until closed. An identity may be generic or specialist.
+_Avoid_: Agent run, disposable worker
+
+**Agent handle**:
+The short, human-facing name used to address an agent identity within its owning
+Pi session. It is owner-scoped rather than globally unique.
+_Avoid_: Pi child session identity, global agent identifier, storage key
+
+**Agent run**:
+One accepted asynchronous, bounded unit of agent work owned by a parent session
+and identified independently so its eventual result can be awaited. Generic
+subagents and specialist tools both produce agent runs.
+_Avoid_: Agent identity, synchronous tool call
+
+**Agent interruption**:
+An explicit parent action that stops an agent run's current execution without
+closing its identity. A replacement message may continue the same run.
+_Avoid_: Steering, cancellation, closing
+
+**Agent suspension**:
+The state of an interrupted agent run that received no replacement message and
+can continue later in the retained agent conversation.
+_Avoid_: Cancellation, completion, closing
+
+**Agent closure**:
+The permanent end of an agent identity, after which the identity and its runs no
+longer exist in Taumel state and cannot be observed or controlled.
+_Avoid_: Interruption, suspension, archival
+
+**Agent message channel**:
+The explicit exchange of parent-supplied messages and the child's last assistant
+message for a run. The independent conversations share no other conversation state.
+_Avoid_: Shared context, transcript inheritance, hidden handoff
+
+**Subagent task**:
+A general objective delegated to a durable agent identity without selecting a
+named behavioral profile.
+_Avoid_: Specialist task, persona, agent run
+
+**Agent effort**:
+The low, medium, or high capacity requested when creating a generic agent. By
+default it selects the matching thinking level on the parent's model, while
+configuration may route it to a different model and thinking level.
+_Avoid_: Persona, model name, raw thinking level, specialist task
+
+**Agent routing**:
+The model and thinking level resolved for an agent identity when it is created.
+Routing is either inherited as declared or concrete and exact; unavailable
+concrete routing fails rather than falling back silently.
+_Avoid_: Best-effort model selection, model fallback, agent effort
+
+**Specialist task**:
+A model-backed objective with a fixed purpose and policy, such as Finder or
+Oracle, which is started through its own tool rather than selected as a generic
+subagent profile.
+_Avoid_: Persona, subagent profile, general subagent task
 
 **Non-interactive PTY environment**:
 A command environment that retains PTY capabilities such as ordered combined

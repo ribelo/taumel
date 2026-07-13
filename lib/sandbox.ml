@@ -228,10 +228,10 @@ let resolve_mutation_path ?auth_path (config : config) path =
 
 let authorize_effect (config : config) = function
   | Tool_gateway.Pure | Tool_gateway.Ask_user -> Ok ()
-  | Tool_gateway.Execute ->
-      (* Execution is allowed in every sandbox mode.  In read-only mode the
-         command runs inside a read-only bubblewrap mount; the sandbox
-         constrains how the command executes, not whether it may run. *)
+  | Tool_gateway.Execute | Tool_gateway.Spawn_agent ->
+      (* Execution and agent spawning are allowed in every sandbox mode.  In
+         read-only mode the child inherits a clamped ceiling; the sandbox
+         constrains side effects, not whether an agent may be started. *)
       Ok ()
   | Tool_gateway.Mutate -> (
       match config.filesystem_mode with

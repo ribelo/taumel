@@ -63,17 +63,18 @@ function argsFor(name) {
     case "read_thread":
       return { threadID: "thread-1" };
     case "agent_spawn":
-      return { profile: "finder", objective: "inspect renderer coverage" };
+      return { message: "inspect renderer coverage", effort: "medium" };
+    case "finder":
+    case "oracle":
+      return { message: "inspect renderer coverage" };
     case "agent_send":
       return { agent_id: "worker-1", message: "continue" };
     case "agent_wait":
-      return { agent_ids: ["worker-1"], timeout_seconds: 0 };
+      return { run_ids: ["worker-1-run-1"], timeout_seconds: 0 };
     case "agent_list":
-      return { include_closed: false };
-    case "agent_close":
-      return { agent_ids: ["worker-1"] };
-    case "agent_profiles":
       return {};
+    case "agent_close":
+      return { agent_id: "worker-1" };
     case "cron_create":
       return { cron: "*/5 * * * *", prompt: "check status", recurring: true };
     case "cron_list":
@@ -125,23 +126,22 @@ function resultFor(name) {
   if (name === "read_thread") {
     return { content: [{ type: "text", text: longLines }], details: { ok: true, thread: { id: "thread-1", title: "Thread 1" } } };
   }
-  if (name === "agent_spawn") {
-    return { content: [{ type: "text", text: "<taumel_agent_spawn>raw xml</taumel_agent_spawn>" }], details: { ok: true, profile: "finder", agent_id: "finder-1", run_id: "finder-1-run-1", status: "running" } };
+  if (name === "agent_spawn" || name === "finder" || name === "oracle") {
+    const kind = name === "agent_spawn" ? "generic" : name;
+    const agentId = name === "agent_spawn" ? "agent-7k2m" : `${kind}-2sk2`;
+    return { content: [{ type: "text", text: "agent started" }], details: { ok: true, kind, agent_id: agentId, run_id: `${agentId}-run-1`, effort: name === "agent_spawn" ? "medium" : undefined, model: "provider/model", thinking: kind === "oracle" ? "high" : "low", status: "running" } };
   }
   if (name === "agent_send") {
-    return { content: [{ type: "text", text: "<taumel_agent_send>raw xml</taumel_agent_send>" }], details: { ok: true, agent_id: "worker-1", profile: "finder", deliveryKind: "steered", run_id: "worker-1-run-1", submission_id: "worker-1-sub-2" } };
+    return { content: [{ type: "text", text: "agent message sent" }], details: { ok: true, agent_id: "worker-1", outcome: "message_sent", run_id: "worker-1-run-1", status: "running" } };
   }
   if (name === "agent_wait") {
-    return { content: [{ type: "text", text: "<taumel_agent_wait>raw xml</taumel_agent_wait>" }], details: { ok: true, runs: [{ agent_id: "worker-1", run_id: "worker-1-run-1", status: "completed", finalOutput: "done", outputAvailable: true }], hasActiveRuns: false } };
+    return { content: [{ type: "text", text: "done" }], details: { ok: true, results: [{ agent_id: "worker-1", run_id: "worker-1-run-1", kind: "generic", model: "provider/model", thinking: "medium", status: "completed", output: "done", output_available: true }], pending_run_ids: [], timed_out: false } };
   }
   if (name === "agent_list") {
-    return { content: [{ type: "text", text: "<taumel_agent_list>raw xml</taumel_agent_list>" }], details: { ok: true, agents: [{ agent_id: "worker-1", profile: "finder", lifecycle: "open", child_session_id: "child-1", latestRun: { run_id: "worker-1-run-1", status: "running", elapsedSeconds: 4 } }] } };
+    return { content: [{ type: "text", text: "worker-1" }], details: { ok: true, agents: [{ agent_id: "worker-1", kind: "generic", model: "provider/model", thinking: "medium", workspace: "/workspace", latest_run_id: "worker-1-run-1", latest_run_status: "running" }] } };
   }
   if (name === "agent_close") {
-    return { content: [{ type: "text", text: "<taumel_agent_close>raw xml</taumel_agent_close>" }], details: { ok: true, agent_ids: ["worker-1"], closedCount: 1 } };
-  }
-  if (name === "agent_profiles") {
-    return { content: [{ type: "text", text: "<taumel_agent_profiles>raw xml</taumel_agent_profiles>" }], details: { ok: true, profiles: [{ name: "finder", enabled: true, sandbox: "read-only", tools: "inherit", description: "Find files" }, { name: "review", enabled: false, disabledReason: "disabled for this session", sandbox: "workspace-write", tools: "read, edit", description: "Review changes" }] } };
+    return { content: [{ type: "text", text: "closed" }], details: { ok: true, agent_id: "worker-1", status: "closed" } };
   }
   if (name.startsWith("cron_")) {
     const task = { id: "cron-a", schedule: "every 5 minutes", cron: "*/5 * * * *", prompt: "check status", recurring: true, mode: "message", enabled: true, nextDueText: "soon" };
@@ -176,7 +176,7 @@ for (const name of toolNames) {
   assertDirectLayout(call, `${name} call`);
   assert(call.startsWith("•"), `${name} call header should start with the • dot before Pi adds its outer margin: ${call}`);
   assert(call.includes(name), `${name} call header should name the tool: ${call}`);
-  assert(/\(running\)|\(searching threads\)|\(reading thread\)|\(reading\)|\(viewing image\)|\(waiting\)|\(waiting for Exa\)/.test(call), `${name} call header should carry a dim progress suffix: ${call}`);
+  assert(/\(running\)|\(searching threads\)|\(reading thread\)|\(reading\)|\(viewing image\)|\(waiting\)|\(waiting for Exa\)|\(starting agent\)|\(waiting for agents\)/.test(call), `${name} call header should carry a dim progress suffix: ${call}`);
 
   const result = resultFor(name);
   const compact = renderText(renderers.renderResult(result, { expanded: false, isPartial: false }, theme, { args }));
@@ -205,6 +205,27 @@ assert(
   renderersForTool("write_stdin").renderCall({ session_id: 7 }, theme, { isPartial: false }).render(120).length === 0,
   "completed write_stdin call placeholder should render zero lines, not a blank top-margin row",
 );
+for (const name of ["agent_spawn", "finder", "oracle", "agent_send", "agent_wait", "agent_list", "agent_close"]) {
+  assert(
+    renderersForTool(name).renderCall(argsFor(name), theme, { isPartial: false }).render(120).length === 0,
+    `completed ${name} call placeholder should leave exactly one visible tool slot`,
+  );
+}
+
+const spawnedAgent = renderText(renderersForTool("agent_spawn").renderResult(
+  resultFor("agent_spawn"),
+  { expanded: false, isPartial: false },
+  theme,
+  { args: argsFor("agent_spawn") },
+));
+assert(/^• agent_spawn · agent-7k2m · medium$/.test(spawnedAgent), `generic spawn compact slot wrong: ${spawnedAgent}`);
+const spawnedFinder = renderText(renderersForTool("finder").renderResult(
+  resultFor("finder"),
+  { expanded: false, isPartial: false },
+  theme,
+  { args: argsFor("finder") },
+));
+assert(/^• finder · finder-2sk2$/.test(spawnedFinder), `finder compact slot wrong: ${spawnedFinder}`);
 
 const shell = renderersForTool("exec_command");
 const shellArgs = argsFor("exec_command");

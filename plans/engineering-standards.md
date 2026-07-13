@@ -39,3 +39,21 @@ independent of any single feature.
   These lists shall use Pi's standard themes and built-in filtering, selection,
   navigation, scrolling, truncation, value presentation, and list hints.
   Feature-specific workflows shall be composed around the list component.
+- **eng-ce01** (ubiquitous): The system shall implement only the currently
+  declared contract and shall not provide backward-compatible aliases, adapters,
+  fallback interpretation, dual reads or writes, or state migrations unless a
+  feature requirement explicitly mandates a named exception.
+- **eng-ce02** (event-driven): When configuration, persisted state, input, or an
+  artifact conforms only to a superseded contract, the system shall leave it
+  inert and shall not migrate, interpret, resurrect, or expose it through the
+  current model-facing or user-facing contract.
+- **eng-ce03** (ubiquitous): A compatibility or migration exception shall exist
+  only when the user explicitly requires it; design and implementation shall not
+  infer, solicit, or add such an exception by default.
+- **eng-rq01** (ubiquitous): The project shall express behavioral, interface,
+  persistence, and architecture contracts as uniquely identified EARS
+  requirements in `plans/*.md` and shall treat those requirements as the
+  authoritative design source.
+- **eng-rq02** (unwanted): The project shall not create ADRs or use ADRs as an
+  authoritative source for new decisions; it shall capture each new decision by
+  adding or updating the applicable EARS requirements.
