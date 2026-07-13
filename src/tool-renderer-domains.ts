@@ -24,6 +24,15 @@ function labeled(label: string, value: string | undefined, theme: unknown): Entr
   return [{ text: `${themeFg(theme, "dim", `${label}:`)} ${themeFg(theme, "toolOutput", value)}` }];
 }
 
+function labeledText(label: string, value: string | undefined, theme: unknown): Entry[] {
+  if (value === undefined || value.trim() === "") return [];
+  const lines = value.trimEnd().split(/\r?\n/);
+  return [
+    { text: `${themeFg(theme, "dim", `${label}:`)} ${themeFg(theme, "toolOutput", lines[0])}` },
+    ...lines.slice(1).map((line) => ({ text: themeFg(theme, "toolOutput", line) })),
+  ];
+}
+
 function boolState(value: boolean | undefined, trueText: string, falseText: string): string | undefined {
   if (value === undefined) return undefined;
   return value ? trueText : falseText;
@@ -288,6 +297,17 @@ function agentLine(item: ToolRenderFields, theme: unknown): string {
     .join(` ${themeFg(theme, "dim", "·")} `);
 }
 
+function agentResultEntries(item: ToolRenderFields, theme: unknown): Entry[] {
+  return [
+    ...labeled("Agent", stringFieldOrUndefined(item, "agent_id"), theme),
+    ...labeled("Run", stringFieldOrUndefined(item, "run_id"), theme),
+    ...labeled("Kind", stringFieldOrUndefined(item, "kind"), theme),
+    ...labeled("Model", stringFieldOrUndefined(item, "model"), theme),
+    ...labeled("Thinking", stringFieldOrUndefined(item, "thinking"), theme),
+    ...labeled("Status", stringFieldOrUndefined(item, "status"), theme),
+  ];
+}
+
 function buildAgent(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
@@ -320,18 +340,23 @@ function buildAgent(name: string, result: unknown, options: unknown, theme: unkn
     for (const agent of agents) entries.push({ text: agentLine(agent, theme) });
   } else if (results.length > 0) {
     for (const run of results) {
-      entries.push({ text: agentLine(run, theme) });
-      entries.push(...labeled("Run", stringFieldOrUndefined(run, "run_id"), theme));
+      entries.push(...agentResultEntries(run, theme));
       entries.push(...labeled("Reason", stringFieldOrUndefined(run, "reason_code"), theme));
       entries.push(...labeled("Error", stringFieldOrUndefined(run, "error"), theme));
+      entries.push(...labeledText("Response", stringFieldOrUndefined(run, "output"), theme));
     }
   } else {
-    entries.push(...labeled("Agent", agentId, theme));
-    entries.push(...labeled("Run", runId, theme));
-    entries.push(...labeled("Kind", kind, theme));
-    entries.push(...labeled("Model", stringFieldOrUndefined(details, "model"), theme));
-    entries.push(...labeled("Thinking", stringFieldOrUndefined(details, "thinking"), theme));
-    entries.push(...labeled("Status", status, theme));
+    entries.push(...agentResultEntries({
+      agent_id: agentId,
+      run_id: runId,
+      kind,
+      model: details["model"],
+      thinking: details["thinking"],
+      status,
+    }, theme));
+    if (name === "agent_spawn") {
+      entries.push(...labeledText("Message", stringFieldOrUndefined(args, "message"), theme));
+    }
   }
   return { header, body: entries.length === 0 ? undefined : { mode: "rail", entries } };
 }

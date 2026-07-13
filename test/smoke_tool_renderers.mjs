@@ -219,6 +219,23 @@ const spawnedAgent = renderText(renderersForTool("agent_spawn").renderResult(
   { args: argsFor("agent_spawn") },
 ));
 assert(/^• agent_spawn · agent-7k2m · medium$/.test(spawnedAgent), `generic spawn compact slot wrong: ${spawnedAgent}`);
+const expandedSpawnedAgent = renderText(renderersForTool("agent_spawn").renderResult(
+  resultFor("agent_spawn"),
+  { expanded: true, isPartial: false },
+  theme,
+  { args: argsFor("agent_spawn") },
+));
+for (const expected of [
+  "Agent: agent-7k2m",
+  "Run: agent-7k2m-run-1",
+  "Kind: generic",
+  "Model: provider/model",
+  "Thinking: low",
+  "Status: running",
+  "Message: inspect renderer coverage",
+]) {
+  assert(expandedSpawnedAgent.includes(expected), `expanded agent_spawn missing ${expected}: ${expandedSpawnedAgent}`);
+}
 const spawnedFinder = renderText(renderersForTool("finder").renderResult(
   resultFor("finder"),
   { expanded: false, isPartial: false },
@@ -226,6 +243,23 @@ const spawnedFinder = renderText(renderersForTool("finder").renderResult(
   { args: argsFor("finder") },
 ));
 assert(/^• finder · finder-2sk2$/.test(spawnedFinder), `finder compact slot wrong: ${spawnedFinder}`);
+const expandedWait = renderText(renderersForTool("agent_wait").renderResult(
+  resultFor("agent_wait"),
+  { expanded: true, isPartial: false },
+  theme,
+  { args: argsFor("agent_wait") },
+));
+for (const expected of [
+  "Agent: worker-1",
+  "Run: worker-1-run-1",
+  "Kind: generic",
+  "Model: provider/model",
+  "Thinking: medium",
+  "Status: completed",
+  "Response: done",
+]) {
+  assert(expandedWait.includes(expected), `expanded agent_wait missing ${expected}: ${expandedWait}`);
+}
 
 const shell = renderersForTool("exec_command");
 const shellArgs = argsFor("exec_command");
