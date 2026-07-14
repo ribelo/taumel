@@ -1,6 +1,6 @@
 ---
 kind: issue
-status: blocked
+status: done
 requirements:
   - "[[plans/subagents#^agent-tc17|agent-tc17]]"
   - "[[plans/subagents#^agent-rs17|agent-rs17]]"

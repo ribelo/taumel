@@ -3,7 +3,7 @@
 
 module String_set = Shared.String_set
 
-let schema_version = 2
+let schema_version = 3
 let max_identities_per_owner = 64
 let max_error_chars = 4096
 let nano_id_alphabet = "abcdefghjkmnpqrstuvwxyz23456789"
@@ -28,6 +28,13 @@ type run_status =
   | Failed
   | Cancelled
   | Lost
+
+type activity_state =
+  | Starting
+  | Reasoning
+  | Using_tool
+  | Orphaned
+  | Inactive
 
 type reason_code =
   | Interrupted_by_parent
@@ -82,8 +89,15 @@ type agent_run = {
   run_announcement : announcement;
   run_started_at : int;
   run_ended_at : int option;
+  run_suspended_at : int option;
   run_submission_id : string;
   run_result_entry_id : string option;
+  run_previous_assistant_entry_id : string option;
+  run_description : string;
+  run_turn_count : int;
+  run_last_activity_at : int option;
+  run_activity_state : activity_state;
+  run_active_tool_count : int;
 }
 
 type issued_identity_counts = {
@@ -121,6 +135,7 @@ type wait_item = {
   wait_partial_output : string option;
   wait_started_at : int;
   wait_ended_at : int option;
+  wait_suspended_at : int option;
 }
 
 type wait_result = {
@@ -164,6 +179,21 @@ let run_status_to_string = function
   | Failed -> "failed"
   | Cancelled -> "cancelled"
   | Lost -> "lost"
+
+let activity_state_to_string = function
+  | Starting -> "starting"
+  | Reasoning -> "reasoning"
+  | Using_tool -> "using_tool"
+  | Orphaned -> "orphaned"
+  | Inactive -> "inactive"
+
+let activity_state_of_string = function
+  | "starting" -> Ok Starting
+  | "reasoning" -> Ok Reasoning
+  | "using_tool" -> Ok Using_tool
+  | "orphaned" -> Ok Orphaned
+  | "inactive" -> Ok Inactive
+  | value -> Error ("invalid agent activity state: " ^ value)
 
 let run_status_of_string = function
   | "running" -> Ok Running
@@ -449,7 +479,7 @@ let default_thinking_for_kind ~effort = function
   | Finder -> "low"
   | Oracle -> "high"
 
-let create_run ~now ~agent_id ~run_id =
+let create_run ~now ~agent_id ~run_id ~description =
   {
     run_id;
     run_agent_id = agent_id;
@@ -462,8 +492,15 @@ let create_run ~now ~agent_id ~run_id =
     run_announcement = Pending;
     run_started_at = now;
     run_ended_at = None;
+    run_suspended_at = None;
     run_submission_id = submission_id run_id 1;
     run_result_entry_id = None;
+    run_previous_assistant_entry_id = None;
+    run_description = description;
+    run_turn_count = 0;
+    run_last_activity_at = None;
+    run_activity_state = Starting;
+    run_active_tool_count = 0;
   }
 
 let validate_unique_ids label ids =
@@ -478,6 +515,7 @@ let validate_unique_ids label ids =
   loop [] ids
 
 let record_spawn state ~now ~owner_session_id ~kind ?effort ~model ~thinking
+    ~description
     ~active_tools ~permission_ceiling ?(network_allowed = false) ~workspace () =
   let owner_session_id = String.trim owner_session_id in
   let workspace = String.trim workspace in
@@ -518,7 +556,7 @@ let record_spawn state ~now ~owner_session_id ~kind ?effort ~model ~thinking
         identity_created_at = now;
       }
     in
-    let run = create_run ~now ~agent_id ~run_id in
+    let run = create_run ~now ~agent_id ~run_id ~description in
     let state =
       {
         identities = identity :: state.identities;
@@ -585,7 +623,8 @@ let next_submission run =
   in
   { run with run_submission_id = submission_id run.run_id index }
 
-let record_send ?(interrupt = false) state ~now ~owner_session_id ~agent_id message =
+let record_send ?(interrupt = false) state ~now ~owner_session_id ~agent_id
+    ?(description = "") message =
   let message = String.trim message in
   if message = "" && not interrupt then
     Error "agent_send.message is required unless interrupt is true"
@@ -602,6 +641,9 @@ let record_send ?(interrupt = false) state ~now ~owner_session_id ~agent_id mess
                 run_reason_code = Some Interrupted_by_parent;
                 run_error = None;
                 run_ended_at = None;
+                run_suspended_at = Some now;
+                run_activity_state = Inactive;
+                run_active_tool_count = 0;
               }
             in
             Ok
@@ -636,6 +678,9 @@ let record_send ?(interrupt = false) state ~now ~owner_session_id ~agent_id mess
                   run_partial_output = None;
                   run_announcement = Pending;
                   run_ended_at = None;
+                  run_description = if description = "" then run.run_description else description;
+                  run_activity_state = Starting;
+                  run_active_tool_count = 0;
                 }
             in
             Ok
@@ -648,7 +693,11 @@ let record_send ?(interrupt = false) state ~now ~owner_session_id ~agent_id mess
                 delivery_previous_status = Some Suspended;
               }
         | Some run when run.run_status = Running && interrupt && message <> "" ->
-            let updated = next_submission run in
+            let updated =
+              next_submission
+                { run with
+                  run_description = if description = "" then run.run_description else description }
+            in
             Ok
               {
                 delivery_state = { state with runs = replace_run updated state.runs };
@@ -659,7 +708,11 @@ let record_send ?(interrupt = false) state ~now ~owner_session_id ~agent_id mess
                 delivery_previous_status = Some Running;
               }
         | Some run when run.run_status = Running && message <> "" ->
-            let updated = next_submission run in
+            let updated =
+              next_submission
+                { run with
+                  run_description = if description = "" then run.run_description else description }
+            in
             Ok
               {
                 delivery_state = { state with runs = replace_run updated state.runs };
@@ -682,7 +735,7 @@ let record_send ?(interrupt = false) state ~now ~owner_session_id ~agent_id mess
         | None when message <> "" ->
             let next_run_count = identity.identity_issued_run_count + 1 in
             let run_id = generate_run_id agent_id next_run_count in
-            let run = create_run ~now ~agent_id ~run_id in
+            let run = create_run ~now ~agent_id ~run_id ~description in
             let identity =
               { identity with identity_issued_run_count = next_run_count }
             in
@@ -787,7 +840,10 @@ let mark_run_terminal run ~now ~status ?reason_code ?error ?final_output
           | _ -> None);
         run_output_available = output_available;
         run_ended_at = Some now;
+        run_suspended_at = None;
         run_result_entry_id = result_entry_id;
+        run_activity_state = Inactive;
+        run_active_tool_count = 0;
       }
 
 let record_run_completion state ~now ~run_id ~status ?reason_code ?error
@@ -806,6 +862,20 @@ let record_run_completion state ~now ~run_id ~status ?reason_code ?error
       with
       | Error _ as error -> error
       | Ok updated -> Ok { state with runs = replace_run updated state.runs })
+
+let record_dispatch_boundary state ~run_id ~submission_id
+    ~previous_assistant_entry_id =
+  match find_run state run_id with
+  | Some run
+    when run.run_status = Running && run.run_submission_id = submission_id ->
+      let updated =
+        { run with
+          run_previous_assistant_entry_id =
+            Option.bind previous_assistant_entry_id Shared.trim_non_empty }
+      in
+      Ok { state with runs = replace_run updated state.runs }
+  | Some _ -> Ok state
+  | None -> Error ("unknown run: " ^ run_id)
 
 let record_dispatch_failure state ~now ~run_id ?error ?submission_id () =
   record_run_completion state ~now ~run_id ~status:Failed
@@ -858,7 +928,10 @@ let suspend_run run ~now reason_code =
         run_partial_output = None;
         run_output_available = false;
         run_ended_at = None;
+        run_suspended_at = Some now;
         run_started_at = run.run_started_at;
+        run_activity_state = Inactive;
+        run_active_tool_count = 0;
       }
 
 let suspend_running_for_owner state ~now ~owner_session_id ~reason_code =
@@ -892,6 +965,9 @@ let mark_running_after_process_loss state ~now ~child_session_available =
             run_final_output = None;
             run_partial_output = None;
             run_ended_at = None;
+            run_suspended_at = Some now;
+            run_activity_state = Inactive;
+            run_active_tool_count = 0;
           }
         else
           {
@@ -903,90 +979,10 @@ let mark_running_after_process_loss state ~now ~child_session_available =
             run_final_output = None;
             run_partial_output = None;
             run_ended_at = Some now;
+            run_suspended_at = None;
+            run_activity_state = Inactive;
+            run_active_tool_count = 0;
           })
       state.runs
   in
   { state with runs }
-
-let observe_announcement run =
-  match run.run_announcement with
-  | Pending when terminal_run_status run.run_status ->
-      { run with run_announcement = Observed_by_agent_wait }
-  | _ -> run
-
-let mark_notification_sent state ~run_id =
-  match find_run state run_id with
-  | None -> Error ("unknown run: " ^ run_id)
-  | Some run when not (terminal_run_status run.run_status) ->
-      Error "notification requires a terminal run"
-  | Some run when run.run_announcement = Observed_by_agent_wait -> Ok state
-  | Some run ->
-      let updated = { run with run_announcement = Notification_sent } in
-      Ok { state with runs = replace_run updated state.runs }
-
-let notifiable_terminal_run run =
-  terminal_run_status run.run_status && run.run_announcement = Pending
-
-let pending_notifications state ~owner_session_id =
-  state.runs
-  |> List.filter (fun run ->
-         notifiable_terminal_run run
-         &&
-         match find_identity state run.run_agent_id with
-         | Some identity -> identity.identity_owner_session_id = owner_session_id
-         | None -> false)
-
-let completion_message identity run =
-  Printf.sprintf
-    "Agent run %s for %s (%s) has finished. To read the result, call agent_wait with run_ids=[%s], timeout_seconds=0."
-    run.run_id identity.identity_agent_id
-    (agent_kind_to_string identity.identity_kind)
-    run.run_id
-
-let record_close state ~owner_session_id ~agent_id =
-  match owned_identity state ~owner_session_id agent_id with
-  | Error _ as error -> error
-  | Ok identity ->
-      let state =
-        {
-          identities = remove_identity identity.identity_agent_id state.identities;
-          runs = remove_runs_for_agent identity.identity_agent_id state.runs;
-          issued_identity_counts = state.issued_identity_counts;
-        }
-      in
-      Ok (state, identity)
-
-let close_all_for_owner state ~owner_session_id =
-  let closing = owned_identities state ~owner_session_id in
-  let closing_ids = List.map (fun identity -> identity.identity_agent_id) closing in
-  let state =
-    {
-      identities =
-        List.filter
-          (fun identity -> not (List.mem identity.identity_agent_id closing_ids))
-          state.identities;
-      runs =
-        List.filter
-          (fun run -> not (List.mem run.run_agent_id closing_ids))
-          state.runs;
-      issued_identity_counts = state.issued_identity_counts;
-    }
-  in
-  (state, closing)
-
-let list_for_owner state ~owner_session_id =
-  owned_identities state ~owner_session_id
-  |> List.map (fun identity ->
-         let latest = latest_run state identity.identity_agent_id in
-         (identity, latest))
-
-let count_active_child_runs state ~owner_session_id =
-  List.fold_left
-    (fun count run ->
-      match find_identity state run.run_agent_id with
-      | Some identity
-        when identity.identity_owner_session_id = owner_session_id
-             && active_work_run_status run.run_status ->
-          count + 1
-      | _ -> count)
-    0 state.runs

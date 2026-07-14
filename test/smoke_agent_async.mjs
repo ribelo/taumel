@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import { executeAgentPrepared } from "../src/agent-orchestration.ts";
+import { executeTool } from "../src/tool-executor.ts";
 
 const root = mkdtempSync(join(tmpdir(), "taumel-agent-async-"));
 process.env.PI_CODING_AGENT_DIR = root;
@@ -34,7 +35,7 @@ core.init({
 });
 
 const prepared = core.call("prepareTool", [{
-  name: "agent_spawn", params: { message: "work asynchronously" }, ctx,
+  name: "agent_spawn", params: { message: "work asynchronously", description: "Run asynchronous work" }, ctx,
 }]);
 assert.equal(prepared.action, "agent_start");
 const childDirectory = join(root, "taumel", "agents", prepared.agentId);
@@ -51,7 +52,8 @@ const childManager = {
 };
 
 let settle;
-let subscriber;
+const subscribers = new Set();
+let streaming = false;
 let allocatedSessionFile;
 const sessionMessages = [];
 const model = { provider: "test", id: "model", reasoning: true };
@@ -67,21 +69,24 @@ const pi = {
     session: {
       sessionId: "async-child", sessionFile: childFile, sessionManager: childManager,
       messages: sessionMessages,
+      get isStreaming() { return streaming; },
       getAvailableThinkingLevels: () => ["off", "low", "medium", "high"],
       subscribe: (handler) => {
-        subscriber = handler;
-        return () => { subscriber = undefined; };
+        subscribers.add(handler);
+        return () => { subscribers.delete(handler); };
       },
       prompt: () => new Promise((resolve) => {
+        streaming = true;
         settle = (message = { role: "assistant", content: [{ type: "text", text: "async answer" }], stopReason: "stop" }) => {
           sessionMessages.push(message);
+          childEntries.push({ type: "message", id: `async-answer-${childEntries.length}`, message });
+          for (const subscriber of subscribers) subscriber({ type: "turn_end", message, toolResults: [] });
+          for (const subscriber of subscribers) subscriber({ type: "agent_end", messages: [message], willRetry: false });
+          streaming = false;
           resolve(undefined);
-          queueMicrotask(() => {
-            childEntries.push({ type: "message", id: `async-answer-${childEntries.length}`, message });
-            subscriber?.({ type: "agent_end", messages: [message] });
-          });
         };
       }),
+      followUp: async () => undefined,
       abort: async () => undefined,
       dispose: () => undefined,
     },
@@ -91,6 +96,12 @@ const pi = {
 
 const childSessions = new Map();
 const pendingWaits = new Map();
+// agent-tc17: failed agent calls use the stable JSON error envelope.
+const invalidStart = await executeTool(pi, core, childSessions, "agent_spawn", { message: "missing label" }, ctx);
+assert.deepEqual(JSON.parse(invalidStart.content[0].text), {
+  ok: false,
+  error: { code: "invalid_arguments", message: "agent_spawn: must have required properties description" },
+});
 const result = await executeAgentPrepared(pi, core, childSessions, pendingWaits, prepared, ctx);
 assert.equal(result.details.status, "running");
 assert.equal(
@@ -99,17 +110,34 @@ assert.equal(
   "private child storage must be namespaced by owner rather than the public handle alone",
 );
 assert.equal(typeof settle, "function", "start must dispatch without waiting for completion");
-assert.equal(core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]).details.agents[0].latest_run_status, "running");
+assert.equal(core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]).details.agents[0].status, "running");
 
 settle();
 await new Promise((resolve) => setTimeout(resolve, 0));
+// agent-nt04: completion is an opaque attributed JSON instruction, never child output.
+const pendingNotification = core.call("pendingAgentNotifications", [ctx]).notifications[0];
+assert.deepEqual(JSON.parse(pendingNotification.content), {
+  event: "agent_completion",
+  agent_id: prepared.agentId,
+  run_id: prepared.runId,
+  kind: "generic",
+  next_action: { tool: "agent_wait", arguments: { run_ids: [prepared.runId], timeout_seconds: 0 } },
+});
+assert.equal(pendingNotification.content.includes("async answer"), false);
+core.call("releaseAgentBackgroundNotification", [{ run_id: prepared.runId }]);
 const waited = core.call("prepareTool", [{
   name: "agent_wait", params: { run_ids: [prepared.runId], timeout_seconds: 0 }, ctx,
 }]);
 assert.equal(waited.details.results[0].output, "async answer");
+// agent-rs17: completed wait results contain only common and completed fields.
+const waitedJson = JSON.parse(waited.text);
+assert.deepEqual(Object.keys(waitedJson).sort(), ["pending_run_ids", "results", "timed_out"]);
+assert.deepEqual(Object.keys(waitedJson.results[0]).sort(), ["agent_id", "ended_at", "kind", "output", "run_id", "started_at", "status"]);
+assert.equal("model" in waitedJson.results[0], false);
+assert.equal("thinking" in waitedJson.results[0], false);
 
 const failedSend = core.call("prepareTool", [{
-  name: "agent_send", params: { agent_id: prepared.agentId, message: "fail" }, ctx,
+  name: "agent_send", params: { agent_id: prepared.agentId, message: "fail", description: "Trigger failed work" }, ctx,
 }]);
 await executeAgentPrepared(pi, core, childSessions, pendingWaits, failedSend, ctx);
 settle({ role: "assistant", content: [], stopReason: "error", errorMessage: "provider failed" });
@@ -122,15 +150,36 @@ assert.equal(failedWait.details.results[0].error, "provider failed");
 
 // A close must cancel an indefinite wait for a run it removes.
 const send = core.call("prepareTool", [{
-  name: "agent_send", params: { agent_id: prepared.agentId, message: "run again" }, ctx,
+  name: "agent_send", params: { agent_id: prepared.agentId, message: "run again", description: "Run agent again" }, ctx,
 }]);
 await executeAgentPrepared(pi, core, childSessions, pendingWaits, send, ctx);
-assert.equal(core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]).details.agents[0].latest_run_status, "running");
+assert.equal(core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]).details.agents[0].status, "running");
+// agent-id20/agent-id22: a queued follow-up keeps its subscription through agent_settled.
+const steered = core.call("prepareTool", [{
+  name: "agent_send", params: { agent_id: prepared.agentId, message: "steer queued", description: "Steer queued work" }, ctx,
+}]);
+await executeAgentPrepared(pi, core, childSessions, pendingWaits, steered, ctx);
+assert.equal(subscribers.size, 2, "queued follow-up subscription must remain live until settlement");
+settle({ role: "assistant", content: [{ type: "text", text: "steered answer" }], stopReason: "stop" });
+await new Promise((resolve) => setTimeout(resolve, 0));
+const steeredList = core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]).details.agents[0];
+assert.equal(steeredList.status, "completed");
+assert.equal(steeredList.turn_count, 1);
+assert.equal(subscribers.size, 0, "all dispatch subscriptions must be released after host settlement");
+const steeredWait = core.call("prepareTool", [{
+  name: "agent_wait", params: { run_ids: [steered.runId], timeout_seconds: 0 }, ctx,
+}]);
+assert.equal(steeredWait.details.results[0].output, "steered answer");
+
+const closeRun = core.call("prepareTool", [{
+  name: "agent_send", params: { agent_id: prepared.agentId, message: "wait for close", description: "Wait for agent close" }, ctx,
+}]);
+await executeAgentPrepared(pi, core, childSessions, pendingWaits, closeRun, ctx);
 const pendingWait = core.call("prepareTool", [{
-  name: "agent_wait", params: { run_ids: [send.runId] }, ctx,
+  name: "agent_wait", params: { run_ids: [closeRun.runId] }, ctx,
 }]);
 assert.equal(pendingWait.action, "agent_wait");
-assert.equal(core.call("finishAgentWait", [{ run_ids: [send.runId] }, ctx]).action, "agent_wait");
+assert.equal(core.call("finishAgentWait", [{ run_ids: [closeRun.runId] }, ctx]).action, "agent_wait");
 const waitPromise = executeAgentPrepared(pi, core, childSessions, pendingWaits, pendingWait, ctx);
 const secondWaitPromise = executeAgentPrepared(pi, core, childSessions, pendingWaits, pendingWait, ctx);
 await new Promise((resolve) => setTimeout(resolve, 0));

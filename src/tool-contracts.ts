@@ -327,47 +327,96 @@ const ExaAgentListEventsParamsSchema = Type.Object(
   { $id: "ExaAgentListEventsParams", additionalProperties: false },
 );
 
-const AgentEffortSchema = Type.Union([
-  Type.Literal("low"),
-  Type.Literal("medium"),
-  Type.Literal("high"),
-]);
+const AgentEffortSchema = Type.Union(
+  [Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")],
+  { description: "The agent's model and reasoning effort tier. Defaults to `medium`." },
+);
 
 const AgentSpawnParamsSchema = Type.Object(
   {
-    message: Type.String({ minLength: 1 }),
+    message: Type.String({
+      minLength: 1,
+      description:
+        "The agent's initial task. State the desired outcome, scope, relevant context, constraints, validation, and expected result.",
+    }),
+    description: Type.String({
+      minLength: 1,
+      description:
+        "A specific, action-oriented three-to-five-word label written for the user and used for compact TUI display. This label is not sent to the child.",
+    }),
     effort: Type.Optional(AgentEffortSchema),
   },
   { $id: "AgentSpawnParams", additionalProperties: false },
 );
 
-const SpecialistMessageParamsSchema = Type.Object(
+const FinderParamsSchema = Type.Object(
   {
-    message: Type.String({ minLength: 1 }),
+    query: Type.String({
+      minLength: 1,
+      description:
+        "The codebase search query. Be specific and include relevant technical terms, file types, expected code patterns, and clear success criteria.",
+    }),
+    description: Type.String({
+      minLength: 1,
+      description:
+        "A specific, action-oriented three-to-five-word label written for the user and used for compact TUI display. This label is not sent to the child.",
+    }),
   },
-  { $id: "SpecialistMessageParams", additionalProperties: false },
+  { $id: "FinderParams", additionalProperties: false },
+);
+
+const OracleParamsSchema = Type.Object(
+  {
+    message: Type.String({
+      minLength: 1,
+      description:
+        "The Oracle's initial instruction. Include the guidance or decision needed, relevant context and constraints, available evidence, and attempted approaches.",
+    }),
+    description: Type.String({
+      minLength: 1,
+      description:
+        "A specific, action-oriented three-to-five-word label written for the user and used for compact TUI display. This label is not sent to the child.",
+    }),
+  },
+  { $id: "OracleParams", additionalProperties: false },
 );
 
 const AgentSendParamsSchema = Type.Object(
   {
-    agent_id: Type.String({ minLength: 1 }),
-    message: Type.Optional(Type.String()),
-    interrupt: Type.Optional(Type.Boolean()),
+    agent_id: Type.String({ minLength: 1, description: "The owner-scoped handle returned by a start or `agent_list`." }),
+    message: Type.Optional(Type.String({
+      description: "The instruction for idle start, active steering, suspended resume, or interruption replacement; omit only for interruption without replacement work.",
+    })),
+    description: Type.Optional(Type.String({
+      minLength: 1,
+      description:
+        "A required three-to-five-word user-facing label for the message, used in compact TUI display and not sent to the child.",
+    })),
+    interrupt: Type.Optional(Type.Boolean({
+      description: "Replace active work before sending, suspend without a message, or have no additional effect when no execution exists.",
+    })),
   },
   { $id: "AgentSendParams", additionalProperties: false },
 );
 
 const AgentWaitParamsSchema = Type.Object(
   {
-    run_ids: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
-    timeout_seconds: Type.Optional(Type.Number({ minimum: 0 })),
+    run_ids: Type.Array(Type.String({ minLength: 1 }), {
+      minItems: 1,
+      description: "Unique owner-scoped run IDs that all belong to the current session.",
+    }),
+    timeout_seconds: Type.Optional(Type.Number({
+      minimum: 0,
+      description:
+        "Maximum seconds to wait. Omit to wait indefinitely; use 0 to poll once. Timing out leaves all pending runs active.",
+    })),
   },
   { $id: "AgentWaitParams", additionalProperties: false },
 );
 
 const AgentCloseParamsSchema = Type.Object(
   {
-    agent_id: Type.String({ minLength: 1 }),
+    agent_id: Type.String({ minLength: 1, description: "The owner-scoped handle of the identity to close permanently." }),
   },
   { $id: "AgentCloseParams", additionalProperties: false },
 );
@@ -395,7 +444,8 @@ export const dtsSchemas = [
   ["ExaAgentListRunsParams", ExaAgentListRunsParamsSchema],
   ["ExaAgentListEventsParams", ExaAgentListEventsParamsSchema],
   ["AgentSpawnParams", AgentSpawnParamsSchema],
-  ["SpecialistMessageParams", SpecialistMessageParamsSchema],
+  ["FinderParams", FinderParamsSchema],
+  ["OracleParams", OracleParamsSchema],
   ["AgentSendParams", AgentSendParamsSchema],
   ["AgentWaitParams", AgentWaitParamsSchema],
   ["AgentCloseParams", AgentCloseParamsSchema],
@@ -428,8 +478,8 @@ export const toolParamSchemas = [
   { name: "exa_agent_cancel_run", interfaceName: "ExaAgentRunIdParams", schema: ExaAgentRunIdParamsSchema },
   { name: "exa_agent_list_events", interfaceName: "ExaAgentListEventsParams", schema: ExaAgentListEventsParamsSchema },
   { name: "agent_spawn", interfaceName: "AgentSpawnParams", schema: AgentSpawnParamsSchema },
-  { name: "finder", interfaceName: "SpecialistMessageParams", schema: SpecialistMessageParamsSchema },
-  { name: "oracle", interfaceName: "SpecialistMessageParams", schema: SpecialistMessageParamsSchema },
+  { name: "finder", interfaceName: "FinderParams", schema: FinderParamsSchema },
+  { name: "oracle", interfaceName: "OracleParams", schema: OracleParamsSchema },
   { name: "agent_send", interfaceName: "AgentSendParams", schema: AgentSendParamsSchema },
   { name: "agent_wait", interfaceName: "AgentWaitParams", schema: AgentWaitParamsSchema },
   { name: "agent_list", interfaceName: "EmptyParams", schema: EmptyParamsSchema },
@@ -485,19 +535,28 @@ export function parseToolParams(toolName: string, rawParams: unknown): ParseTool
     typeof params === "object" &&
     params !== null
   ) {
-    const record = params as { message?: unknown; interrupt?: unknown };
+    const record = params as { message?: unknown; description?: unknown; interrupt?: unknown };
     const message = typeof record.message === "string" ? record.message.trim() : "";
     if (message === "" && record.interrupt !== true) {
       return { ok: false, error: "agent_send.message is required unless interrupt is true" };
     }
+    if (message !== "" && (typeof record.description !== "string" || record.description.trim() === "")) {
+      return { ok: false, error: "agent_send.description is required when message is supplied" };
+    }
   }
   if (
-    (toolName === "agent_spawn" || toolName === "finder" || toolName === "oracle") &&
+    (toolName === "agent_spawn" || toolName === "oracle") &&
     typeof params === "object" && params !== null
   ) {
     const message = (params as { message?: unknown }).message;
     if (typeof message !== "string" || message.trim() === "") {
       return { ok: false, error: `${toolName}.message must not be empty` };
+    }
+  }
+  if (toolName === "finder" && typeof params === "object" && params !== null) {
+    const query = (params as { query?: unknown }).query;
+    if (typeof query !== "string" || query.trim() === "") {
+      return { ok: false, error: "finder.query must not be empty" };
     }
   }
   if (toolName === "agent_wait" && typeof params === "object" && params !== null) {
@@ -845,49 +904,54 @@ export const toolContracts: readonly ToolContract[] = [
   {
     name: "agent_spawn",
     label: "agent.spawn",
-    description: "Create a durable generic Taumel agent and start one asynchronous run.",
-    promptSnippet: "Spawn a durable child agent with a message and optional effort.",
+    description:
+      "Create a durable agent and start an asynchronous run for substantial delegated work that benefits from independent execution. The agent can be steered later with `agent_send`.",
+    promptSnippet: "Spawn a durable, steerable agent for substantial asynchronous work.",
     parameters: toolParameters(AgentSpawnParamsSchema),
   },
   {
     name: "finder",
     label: "finder",
-    description: "Start a read-only Finder specialist for local multi-step codebase discovery.",
-    promptSnippet: "Start Finder for local conceptual and multi-step discovery.",
-    parameters: toolParameters(SpecialistMessageParamsSchema),
+    description:
+      "Start an asynchronous Finder specialist for conceptual, behavior-based, or multi-step codebase searches that require correlating findings across files. Use direct read or search tools when you already know the path, symbol, or exact text.",
+    promptSnippet: "Start an asynchronous Finder for conceptual or multi-step codebase search.",
+    parameters: toolParameters(FinderParamsSchema),
   },
   {
     name: "oracle",
     label: "oracle",
-    description: "Start a read-only Oracle specialist for expensive second-opinion analysis.",
-    promptSnippet: "Start Oracle for architecture, debugging, planning, or ad-hoc review.",
-    parameters: toolParameters(SpecialistMessageParamsSchema),
+    description:
+      "Start an asynchronous Oracle specialist for architecture or code review, root-cause analysis from code and runtime evidence, complex planning, or a second opinion on technical decisions. Use Oracle selectively when the problem warrants expensive independent reasoning.",
+    promptSnippet:
+      "Start an asynchronous Oracle for architecture, planning, review, or a technical second opinion. Use it selectively when the problem warrants expensive independent reasoning.",
+    parameters: toolParameters(OracleParamsSchema),
   },
   {
     name: "agent_send",
     label: "agent.send",
-    description: "Send a message to an existing open Taumel agent, or interrupt it when interrupt is true.",
+    description: "Send an instruction to an existing open agent, resume a suspended run, steer or replace active work, or interrupt execution. A message requires a short user-facing description.",
     promptSnippet: "Send, steer, resume, or interrupt a durable agent.",
     parameters: toolParameters(AgentSendParamsSchema),
   },
   {
     name: "agent_wait",
     label: "agent.wait",
-    description: "Race selected Taumel agent runs and return every result ready at the observation point.",
+    description:
+      "Race selected agent runs and return every result ready at the observation point. Omitted timeout waits indefinitely; a timeout bounds only this call and never stops the runs. Call again with returned pending_run_ids to await later completions.",
     promptSnippet: "Wait for one or more agent runs by run_id.",
     parameters: toolParameters(AgentWaitParamsSchema),
   },
   {
     name: "agent_list",
     label: "agent.list",
-    description: "List Taumel agent identities owned by the current parent session.",
+    description: "List all open agent identities owned by the current session. Returns lifecycle status, per-run turn count, and observable activity phase and timing for progress inspection. Activity describes observable execution, not inferred health or a time-based stall.",
     promptSnippet: "List owned agent identities.",
     parameters: toolParameters(EmptyParamsSchema),
   },
   {
     name: "agent_close",
     label: "agent.close",
-    description: "Permanently close one Taumel agent identity and remove it from current Taumel state.",
+    description: "Permanently close one agent identity, interrupt active execution, and remove all of its runs from current Taumel state. Closed identities cannot be resumed; use agent_send interruption for a reversible stop.",
     promptSnippet: "Close and forget one agent identity.",
     parameters: toolParameters(AgentCloseParamsSchema),
   },

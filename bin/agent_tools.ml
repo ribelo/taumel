@@ -16,18 +16,24 @@ let reject_nested name =
   error_obj (name ^ " is unavailable inside a child agent")
 
 let save_agent_state ctx =
-  Session_store.append_custom_entry ctx "taumel.agents.v2"
+  Session_store.append_custom_entry ctx "taumel.agents.v3"
     (Taumel.Agents_codec.encode !agent_state)
+
+let commit_agent_state ctx next =
+  let previous = !agent_state in
+  agent_state := next;
+  try
+    save_agent_state ctx;
+    Ok ()
+  with error ->
+    agent_state := previous;
+    Error ("agent state persistence failed: " ^ Printexc.to_string error)
 
 let js_string_array values = js_array (List.map js_string values)
 
 let option_string = function
   | None -> Unsafe.inject Js.null
   | Some value -> js_string value
-
-let option_number = function
-  | None -> Unsafe.inject Js.null
-  | Some value -> js_number (float_of_int value)
 
 let js_run_status status =
   js_string (Taumel.Agents.run_status_to_string status)
@@ -38,9 +44,33 @@ let js_effort = function
   | None -> Unsafe.inject Js.null
   | Some effort -> js_string (Taumel.Agents.effort_to_string effort)
 
-let js_reason = function
-  | None -> Unsafe.inject Js.null
-  | Some reason -> js_string (Taumel.Agents.reason_code_to_string reason)
+let local_timestamp seconds =
+  let value = Unix.localtime (float_of_int seconds) in
+  let date =
+    Unsafe.new_obj (Unsafe.get Unsafe.global "Date")
+      [| js_number (float_of_int seconds *. 1000.) |]
+  in
+  let offset =
+    match float_value (Unsafe.meth_call date "getTimezoneOffset" [||]) with
+    | Some minutes -> -int_of_float (minutes *. 60.)
+    | None -> 0
+  in
+  let sign = if offset < 0 then "-" else "+" in
+  let absolute = abs offset in
+  Printf.sprintf "%04d-%02d-%02dT%02d:%02d:%02d%s%02d:%02d"
+    (value.Unix.tm_year + 1900) (value.Unix.tm_mon + 1) value.Unix.tm_mday
+    value.Unix.tm_hour value.Unix.tm_min value.Unix.tm_sec sign
+    (absolute / 3600) ((absolute mod 3600) / 60)
+
+let js_timestamp seconds = js_string (local_timestamp seconds)
+
+let recommendation_for status activity =
+  match (status, activity) with
+  | "running", ("starting" | "reasoning" | "using_tool") -> "wait"
+  | "running", "orphaned" -> "interrupt_or_close"
+  | ("completed" | "failed" | "cancelled" | "lost"), "inactive" -> "call_agent_wait"
+  | "suspended", "inactive" -> "resume_or_close"
+  | _ -> "wait"
 
 let current_active_tools ctx =
   match optional_string_array ctx "activeTools" with
@@ -179,84 +209,9 @@ let routing_diagnostics () =
     ~diagnostics:catalog.diagnostics ()
   |> Tool_contracts.AgentRoutingDiagnosticsResult.t_to_js |> inject
 
-let max_output_lines = 2000
-let max_output_bytes = 50 * 1024
-
-let owner_storage_token value =
-  let crypto = node_require "crypto" in
-  let hash =
-    Unsafe.fun_call (Unsafe.get crypto "createHash") [| js_string "sha256" |]
-  in
-  ignore (Unsafe.meth_call hash "update" [| js_string value |]);
-  Js.to_string (Unsafe.meth_call hash "digest" [| js_string "hex" |])
-
 let truncate_output ?owner_session_id ?agent_id ?run_id text =
-  let lines = String.split_on_char '\n' text in
-  let line_count = List.length lines in
-  let byte_count = String.length text in
-  if line_count <= max_output_lines && byte_count <= max_output_bytes then
-    (text, false, None)
-  else
-    let rec take acc n = function
-      | [] -> List.rev acc
-      | _ when n <= 0 -> List.rev acc
-      | line :: rest -> take (line :: acc) (n - 1) rest
-    in
-    let kept_lines = take [] max_output_lines lines in
-    let candidate = String.concat "\n" kept_lines in
-    let clipped =
-      if String.length candidate <= max_output_bytes then candidate
-      else String.sub candidate 0 max_output_bytes
-    in
-    let path =
-      try
-        let fs = node_require "fs" in
-        let path_mod = node_require "path" in
-        let directory =
-          Js.to_string
-            (Unsafe.meth_call path_mod "join"
-               [|
-                 js_string (pi_agent_dir ());
-                 js_string "taumel";
-                 js_string "agents";
-                 js_string "owners";
-                 js_string
-                   (Option.fold ~none:"unowned" ~some:owner_storage_token
-                      owner_session_id);
-                 js_string (Option.value agent_id ~default:"unowned");
-                 js_string "outputs";
-               |])
-        in
-        ignore
-          (Unsafe.meth_call fs "mkdirSync"
-             [|
-               js_string directory;
-               inject (Unsafe.obj [| ("recursive", js_bool true) |]);
-             |]);
-        let tmp =
-          Js.to_string
-            (Unsafe.meth_call path_mod "join"
-               [|
-                 js_string directory;
-                 js_string
-                   (Option.value run_id
-                      ~default:(string_of_int (now_milliseconds ()))
-                  ^ ".txt");
-               |])
-        in
-        ignore
-          (Unsafe.meth_call fs "writeFileSync"
-             [| js_string tmp; js_string text; js_string "utf8" |]);
-        Some tmp
-      with _ -> None
-    in
-    let notice =
-      match path with
-      | Some path ->
-          "\n\n[Output truncated. Full output: " ^ path ^ "]"
-      | None -> "\n\n[Output truncated.]"
-    in
-    (clipped ^ notice, true, path)
+  Agent_output.truncate ~agent_dir:(pi_agent_dir ()) ?owner_session_id ?agent_id
+    ?run_id text
 
 let permission_ceiling_for ~kind (parent : Taumel.Capability_profile.t) =
   let sandbox_preset =
@@ -296,6 +251,10 @@ let tool_result text details =
     ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details)) ()
   |> Tool_contracts.BridgeToolResult.t_to_js |> inject
 
+let json_text value = Taumel.Shared.encode_json value
+
+let json_success fields = json_text (Taumel.Shared.Object fields)
+
 let start_details ~(identity : Taumel.Agents.identity) ~(run : Taumel.Agents.agent_run)
     ~prompt =
   let fields =
@@ -327,15 +286,26 @@ let prepare_start name params ctx =
     with_gateway_authorized name (fun _ ->
         match kind_of_tool name with
         | Error message -> error_obj message
+        | Ok _
+          when Taumel.Agents.identity_count_for_owner !agent_state
+                 ~owner_session_id:(owner_id ctx)
+               >= Taumel.Agents.max_identities_per_owner ->
+            error_obj "owner already has 64 agents"
         | Ok kind -> (
+            let message_field =
+              match kind with Taumel.Agents.Finder -> "query" | _ -> "message"
+            in
             match
-              ( Option.bind (optional_string_field params "message")
+              ( Option.bind (optional_string_field params message_field)
+                  Taumel.Shared.trim_non_empty,
+                Option.bind (optional_string_field params "description")
                   Taumel.Shared.trim_non_empty,
                 effort_of_params params )
             with
-            | None, _ -> error_obj (name ^ ".message is required")
-            | _, Error message -> error_obj message
-            | Some message, Ok effort -> (
+            | None, _, _ -> error_obj (name ^ "." ^ message_field ^ " is required")
+            | _, None, _ -> error_obj (name ^ ".description is required")
+            | _, _, Error message -> error_obj message
+            | Some message, Some description, Ok effort -> (
                 match
                   resolve_routing ~kind ?effort:
                     (match effort with Some value -> Some value | None -> None)
@@ -367,7 +337,7 @@ let prepare_start name params ctx =
                 match
                   Taumel.Agents.record_spawn !agent_state ~now
                     ~owner_session_id:(owner_id ctx) ~kind ?effort ~model
-                    ~thinking ~active_tools ~permission_ceiling:ceiling
+                    ~thinking ~description ~active_tools ~permission_ceiling:ceiling
                     ~network_allowed
                     ~workspace:state.cwd ()
                 with
@@ -376,19 +346,27 @@ let prepare_start name params ctx =
                     ( next,
                       (identity : Taumel.Agents.identity),
                       (run : Taumel.Agents.agent_run) ) ->
-                    agent_state := next;
-                    save_agent_state ctx;
-                    let text =
-                      Printf.sprintf
-                        "agent_id=%s\nrun_id=%s\nkind=%s\nmodel=%s\nthinking=%s\nstatus=running%s"
-                        identity.identity_agent_id run.run_id
-                        (Taumel.Agents.agent_kind_to_string identity.identity_kind)
-                        identity.identity_model identity.identity_thinking
-                        (match identity.identity_effort with
-                        | None -> ""
-                        | Some effort ->
-                            "\neffort=" ^ Taumel.Agents.effort_to_string effort)
+                    (match commit_agent_state ctx next with
+                    | Error message -> error_obj message
+                    | Ok () ->
+                    let result_fields =
+                      [
+                        ("agent_id", Taumel.Shared.String identity.identity_agent_id);
+                        ("run_id", Taumel.Shared.String run.run_id);
+                        ( "kind",
+                          Taumel.Shared.String
+                            (Taumel.Agents.agent_kind_to_string identity.identity_kind) );
+                        ("status", Taumel.Shared.String "running");
+                      ]
                     in
+                    let result_fields =
+                      match identity.identity_effort with
+                      | None -> result_fields
+                      | Some value ->
+                          result_fields
+                          @ [ ("effort", Taumel.Shared.String (Taumel.Agents.effort_to_string value)) ]
+                    in
+                    let text = json_success result_fields in
                     let details =
                       start_details ~identity ~run ~prompt:message
                     in
@@ -427,7 +405,7 @@ let prepare_start name params ctx =
                       ~prompt:message ~agentId:identity.identity_agent_id
                       ~runId:run.run_id ~submissionId:run.run_submission_id
                       ~metadata:(Ts2ocaml.unknown_of_js (ojs_of_js metadata)) ()
-                    |> Tool_contracts.PreparedAgentStart.t_to_js |> inject)))
+                    |> Tool_contracts.PreparedAgentStart.t_to_js |> inject))))
 
 let prepare_send params ctx =
   if is_agent_child ctx then reject_nested "agent_send"
@@ -447,25 +425,31 @@ let prepare_send params ctx =
               | None -> ""
               | Some value -> value
             in
+            let description =
+              match optional_string_field params "description" with
+              | None -> ""
+              | Some value -> String.trim value
+            in
             let previous_run =
               Taumel.Agents.active_or_suspended_run !agent_state agent_id
             in
             let now = now_seconds () in
             match
               Taumel.Agents.record_send !agent_state ~now
-                ~owner_session_id:(owner_id ctx) ~agent_id ~interrupt message
+                ~owner_session_id:(owner_id ctx) ~agent_id ~interrupt
+                ~description message
             with
             | Error message -> error_obj message
             | Ok delivery ->
-                agent_state := delivery.delivery_state;
-                save_agent_state ctx;
+                (match commit_agent_state ctx delivery.delivery_state with
+                | Error message -> error_obj message
+                | Ok () ->
                 let outcome =
                   Taumel.Agents.send_outcome_to_string delivery.delivery_outcome
                 in
                 let details =
                   let fields =
                     [
-                      ("ok", js_bool true);
                       ("agent_id", js_string agent_id);
                       ("outcome", js_string outcome);
                     ]
@@ -542,19 +526,23 @@ let prepare_send params ctx =
                                | Some value -> Taumel.Shared.String value );
                            ])
                 in
-                let text =
-                  "agent_id=" ^ agent_id ^ "\noutcome=" ^ outcome
-                  ^
-                  match delivery.delivery_run_id with
-                  | None -> ""
-                  | Some run_id ->
-                      "\nrun_id=" ^ run_id
-                      ^
-                      match delivery.delivery_status with
-                      | None -> ""
-                      | Some status ->
-                          "\nstatus=" ^ Taumel.Agents.run_status_to_string status
+                let result_fields =
+                  [
+                    ("agent_id", Taumel.Shared.String agent_id);
+                    ("outcome", Taumel.Shared.String outcome);
+                  ]
                 in
+                let result_fields =
+                  match (delivery.delivery_run_id, delivery.delivery_status) with
+                  | Some run_id, Some status ->
+                      result_fields
+                      @ [
+                          ("run_id", Taumel.Shared.String run_id);
+                          ("status", Taumel.Shared.String (Taumel.Agents.run_status_to_string status));
+                        ]
+                  | _ -> result_fields
+                in
+                let text = json_success result_fields in
                 let previous_submission_id =
                   Option.map
                     (fun (run : Taumel.Agents.agent_run) -> run.run_submission_id)
@@ -574,7 +562,7 @@ let prepare_send params ctx =
                   ?previousSubmissionId:previous_submission_id
                   ?previousReasonCode:previous_reason_code ~outcome
                   ~metadata:(Ts2ocaml.unknown_of_js (ojs_of_js metadata)) ()
-                |> Tool_contracts.PreparedAgentSend.t_to_js |> inject)
+                |> Tool_contracts.PreparedAgentSend.t_to_js |> inject))
 
 let assistant_text_from_entry_json = function
   | Taumel.Shared.Object fields -> (
@@ -664,6 +652,11 @@ let prepare_wait params ctx =
           | Some value when value < 0. -> None
           | Some value -> Some value
         in
+        let reconciled = Session_sync.reconcile_settled_runs !agent_state in
+        if reconciled != !agent_state then (
+          match commit_agent_state ctx reconciled with
+          | Ok () -> ()
+          | Error message -> failwith message);
         agent_state := recover_selected_outputs !agent_state run_ids;
         match
           Taumel.Agent_wait.wait_for_run_ids !agent_state ~owner_session_id:(owner_id ctx)
@@ -671,143 +664,101 @@ let prepare_wait params ctx =
         with
         | Error message -> error_obj message
         | Ok wait when wait.wait_items <> [] || timeout_seconds = Some 0. ->
-            agent_state := wait.wait_state;
-            save_agent_state ctx;
+            (match commit_agent_state ctx wait.wait_state with
+            | Error message -> error_obj message
+            | Ok () ->
+            let nullable_string = function
+              | None -> Taumel.Shared.Null
+              | Some value -> Taumel.Shared.String value
+            in
+            let result_json (item : Taumel.Agents.wait_item) =
+              let common =
+                [
+                  ("agent_id", Taumel.Shared.String item.wait_agent_id);
+                  ("run_id", Taumel.Shared.String item.wait_run_id);
+                  ("kind", Taumel.Shared.String (Taumel.Agents.agent_kind_to_string item.wait_kind));
+                  ("status", Taumel.Shared.String (Taumel.Agents.run_status_to_string item.wait_status));
+                  ("started_at", Taumel.Shared.String (local_timestamp item.wait_started_at));
+                ]
+              in
+              let output_field name value =
+                match value with
+                | None -> ([ (name, Taumel.Shared.Null) ], None)
+                | Some output ->
+                    let text, truncated, path =
+                      truncate_output ~owner_session_id:(owner_id ctx)
+                        ~agent_id:item.wait_agent_id ~run_id:item.wait_run_id output
+                    in
+                    let truncation =
+                      match (truncated, path) with
+                      | true, Some full_output_path ->
+                          Some
+                            ( "truncation",
+                              Taumel.Shared.Object
+                                [
+                                  ("original_bytes", Taumel.Shared.Number (float_of_int (String.length output)));
+                                  ("returned_bytes", Taumel.Shared.Number (float_of_int (String.length text)));
+                                  ("full_output_path", Taumel.Shared.String full_output_path);
+                                ] )
+                      | _ -> None
+                    in
+                    ([ (name, Taumel.Shared.String text) ], truncation)
+              in
+              let fields =
+                match item.wait_status with
+                | Taumel.Agents.Completed ->
+                    let output, truncation = output_field "output" item.wait_output in
+                    common
+                    @ [ ("ended_at", Taumel.Shared.String (local_timestamp (Option.value item.wait_ended_at ~default:item.wait_started_at))) ]
+                    @ output @ Option.to_list truncation
+                | Taumel.Agents.Failed | Taumel.Agents.Cancelled | Taumel.Agents.Lost ->
+                    let output, truncation = output_field "partial_output" item.wait_partial_output in
+                    common
+                    @ [
+                        ("ended_at", Taumel.Shared.String (local_timestamp (Option.value item.wait_ended_at ~default:item.wait_started_at)));
+                        ("reason", nullable_string (Option.map Taumel.Agents.reason_code_to_string item.wait_reason_code));
+                        ("error", nullable_string item.wait_error);
+                      ]
+                    @ output @ Option.to_list truncation
+                | Taumel.Agents.Suspended ->
+                    common
+                    @ [
+                        ("suspended_at", Taumel.Shared.String (local_timestamp (Option.value item.wait_suspended_at ~default:item.wait_started_at)));
+                        ("reason", nullable_string (Option.map Taumel.Agents.reason_code_to_string item.wait_reason_code));
+                      ]
+                | Taumel.Agents.Running -> common
+              in
+              Taumel.Shared.Object fields
+            in
+            let result_values = List.map result_json wait.wait_items in
+            let payload =
+              Taumel.Shared.Object
+                [
+                  ("timed_out", Taumel.Shared.Bool wait.wait_timed_out);
+                  ("results", Taumel.Shared.Array result_values);
+                  ("pending_run_ids", Taumel.Shared.Array (List.map (fun value -> Taumel.Shared.String value) wait.wait_pending_run_ids));
+                ]
+            in
             let results =
-              wait.wait_items
-              |> List.map (fun (item : Taumel.Agents.wait_item) ->
-                     let fields =
-                       [
-                         ("agent_id", js_string item.wait_agent_id);
-                         ("run_id", js_string item.wait_run_id);
-                         ("kind", js_kind item.wait_kind);
-                         ("model", js_string item.wait_model);
-                         ("thinking", js_string item.wait_thinking);
-                         ("status", js_run_status item.wait_status);
-                         ("output_available", js_bool item.wait_output_available);
-                         ("started_at", js_number (float_of_int item.wait_started_at));
-                         ("ended_at", option_number item.wait_ended_at);
-                         ("reason_code", js_reason item.wait_reason_code);
-                         ("error", option_string item.wait_error);
-                       ]
-                     in
-                     let fields =
-                       match item.wait_output with
-                       | None -> fields
-                       | Some output ->
-                           let text, truncated, path =
-                             truncate_output ~owner_session_id:(owner_id ctx)
-                               ~agent_id:item.wait_agent_id
-                               ~run_id:item.wait_run_id output
-                           in
-                           let fields = fields @ [ ("output", js_string text) ] in
-                           let fields =
-                             if truncated then
-                               fields
-                               @ [
-                                   ("truncated", js_bool true);
-                                   ("full_output_path", option_string path);
-                                 ]
-                             else fields
-                           in
-                           fields
-                     in
-                     let fields =
-                       match item.wait_partial_output with
-                       | None -> fields
-                       | Some output ->
-                           let text, truncated, path =
-                             truncate_output ~owner_session_id:(owner_id ctx)
-                               ~agent_id:item.wait_agent_id
-                               ~run_id:item.wait_run_id output
-                           in
-                           let fields =
-                             fields @ [ ("partial_output", js_string text) ]
-                           in
-                           if truncated then
-                             fields
-                             @ [
-                                 ("truncated", js_bool true);
-                                 ("full_output_path", option_string path);
-                               ]
-                           else fields
-                     in
-                     Unsafe.obj (Array.of_list fields))
+              List.map2
+                (fun (item : Taumel.Agents.wait_item) value ->
+                  let result = json_to_js value in
+                  Unsafe.set result "model" (js_string item.wait_model);
+                  Unsafe.set result "thinking" (js_string item.wait_thinking);
+                  result)
+                wait.wait_items result_values
             in
-            let pending =
-              wait.wait_pending_run_ids |> List.map js_string |> js_array
-            in
-            let result_text (item : Taumel.Agents.wait_item) =
-              let base =
-                Printf.sprintf
-                  "agent_id=%s\nrun_id=%s\nkind=%s\nmodel=%s\nthinking=%s\nstatus=%s\nstarted_at=%d\noutput_available=%b"
-                  item.wait_agent_id item.wait_run_id
-                  (Taumel.Agents.agent_kind_to_string item.wait_kind)
-                  item.wait_model item.wait_thinking
-                  (Taumel.Agents.run_status_to_string item.wait_status)
-                  item.wait_started_at item.wait_output_available
-              in
-              let base =
-                match item.wait_ended_at with
-                | None -> base
-                | Some value -> base ^ "\nended_at=" ^ string_of_int value
-              in
-              let base =
-                match item.wait_reason_code with
-                | None -> base
-                | Some value ->
-                    base ^ "\nreason_code="
-                    ^ Taumel.Agents.reason_code_to_string value
-              in
-              let base =
-                match item.wait_error with
-                | None -> base
-                | Some value -> base ^ "\nerror=" ^ value
-              in
-              match (item.wait_output, item.wait_partial_output) with
-              | Some output, _ ->
-                  let output, _, _ =
-                    truncate_output ~owner_session_id:(owner_id ctx)
-                      ~agent_id:item.wait_agent_id
-                      ~run_id:item.wait_run_id output
-                  in
-                  base ^ "\noutput:\n" ^ output
-              | _, Some output ->
-                  let output, _, _ =
-                    truncate_output ~owner_session_id:(owner_id ctx)
-                      ~agent_id:item.wait_agent_id
-                      ~run_id:item.wait_run_id output
-                  in
-                  base ^ "\npartial_output:\n" ^ output
-              | _ -> base
-            in
-            let text =
-              if wait.wait_timed_out then
-                "agent_wait timed out\npending_run_ids="
-                ^ String.concat "," wait.wait_pending_run_ids
-              else if wait.wait_items = [] then
-                "agent_wait: no ready runs\npending_run_ids="
-                ^ String.concat "," wait.wait_pending_run_ids
-              else
-                let results =
-                  wait.wait_items |> List.map result_text
-                  |> String.concat "\n\n---\n\n"
-                in
-                if wait.wait_pending_run_ids = [] then results
-                else
-                  results ^ "\n\npending_run_ids="
-                  ^ String.concat "," wait.wait_pending_run_ids
-            in
+            let pending = wait.wait_pending_run_ids |> List.map js_string |> js_array in
+            let text = Taumel.Shared.encode_json payload in
             let details =
               Unsafe.obj
                 [|
-                  ("ok", js_bool true);
                   ("timed_out", js_bool wait.wait_timed_out);
                   ("results", js_array (List.map inject results));
                   ("pending_run_ids", pending);
                 |]
             in
-            tool_result text details
+            tool_result text details)
         | Ok wait ->
             (* Still waiting: return a prepared pending wait action for TS. *)
             let details =
@@ -834,8 +785,58 @@ let prepare_list ctx =
   if is_agent_child ctx then reject_nested "agent_list"
   else
     with_gateway_authorized "agent_list" (fun _ ->
+        let reconciled = Session_sync.reconcile_settled_runs !agent_state in
+        if reconciled != !agent_state then (
+          match commit_agent_state ctx reconciled with
+          | Ok () -> ()
+          | Error message -> failwith message);
+        let json_agent (identity : Taumel.Agents.identity) latest =
+          let fields =
+            [
+              ("agent_id", Taumel.Shared.String identity.identity_agent_id);
+              ("created_at", Taumel.Shared.String (local_timestamp identity.identity_created_at));
+              ("kind", Taumel.Shared.String (Taumel.Agents.agent_kind_to_string identity.identity_kind));
+              ("workspace", Taumel.Shared.String identity.identity_workspace);
+            ]
+          in
+          let fields =
+            match identity.identity_effort with
+            | None -> fields
+            | Some value -> fields @ [ ("effort", Taumel.Shared.String (Taumel.Agents.effort_to_string value)) ]
+          in
+          match latest with
+          | None -> Taumel.Shared.Object fields
+          | Some (run : Taumel.Agents.agent_run) ->
+              let activity = Taumel.Agents.activity_state_to_string run.run_activity_state in
+              let activity_fields =
+                [
+                  ("state", Taumel.Shared.String activity);
+                  ( "last_at",
+                    match run.run_last_activity_at with
+                    | None -> Taumel.Shared.Null
+                    | Some value -> Taumel.Shared.String (local_timestamp value) );
+                  ( "recommendation",
+                    Taumel.Shared.String
+                      (recommendation_for
+                         (Taumel.Agents.run_status_to_string run.run_status) activity) );
+                ]
+              in
+              Taumel.Shared.Object
+                (fields
+                @ [
+                    ("run_id", Taumel.Shared.String run.run_id);
+                    ("started_at", Taumel.Shared.String (local_timestamp run.run_started_at));
+                    ("status", Taumel.Shared.String (Taumel.Agents.run_status_to_string run.run_status));
+                    ("turn_count", Taumel.Shared.Number (float_of_int run.run_turn_count));
+                    ("activity", Taumel.Shared.Object activity_fields);
+                  ])
+        in
+        let json_agents =
+          Taumel.Agent_registry.list_for_owner !agent_state ~owner_session_id:(owner_id ctx)
+          |> List.map (fun (identity, latest) -> json_agent identity latest)
+        in
         let agents =
-          Taumel.Agents.list_for_owner !agent_state ~owner_session_id:(owner_id ctx)
+          Taumel.Agent_registry.list_for_owner !agent_state ~owner_session_id:(owner_id ctx)
           |> List.map
                (fun
                  ( (identity : Taumel.Agents.identity),
@@ -843,6 +844,7 @@ let prepare_list ctx =
                  let fields =
                    [
                      ("agent_id", js_string identity.identity_agent_id);
+                     ("created_at", js_timestamp identity.identity_created_at);
                      ("kind", js_kind identity.identity_kind);
                      ("model", js_string identity.identity_model);
                      ("thinking", js_string identity.identity_thinking);
@@ -861,36 +863,34 @@ let prepare_list ctx =
                  in
                  let fields =
                    match latest with
-                   | None ->
-                       fields
-                       @ [
-                           ("latest_run_id", Unsafe.inject Js.null);
-                           ("latest_run_status", Unsafe.inject Js.null);
-                         ]
+                   | None -> fields
                    | Some run ->
+                       let activity = Taumel.Agents.activity_state_to_string run.run_activity_state in
+                       let activity_fields =
+                         [
+                           ("state", js_string activity);
+                           ( "last_at",
+                             Option.fold ~none:(Unsafe.inject Js.null) ~some:js_timestamp
+                               run.run_last_activity_at );
+                           ( "recommendation",
+                             js_string
+                               (recommendation_for
+                                  (Taumel.Agents.run_status_to_string run.run_status)
+                                  activity) );
+                         ]
+                       in
                        fields
                        @ [
-                           ("latest_run_id", js_string run.run_id);
-                           ("latest_run_status", js_run_status run.run_status);
+                           ("run_id", js_string run.run_id);
+                           ("started_at", js_timestamp run.run_started_at);
+                           ("status", js_run_status run.run_status);
+                           ("turn_count", js_number (float_of_int run.run_turn_count));
+                           ("activity", Unsafe.obj (Array.of_list activity_fields));
                          ]
                  in
                  Unsafe.obj (Array.of_list fields))
         in
-        let text =
-          if agents = [] then "No agents."
-          else
-            agents
-            |> List.map (fun agent ->
-                   let effort = get_string agent "effort" in
-                   get_string agent "agent_id" ^ " kind="
-                   ^ get_string agent "kind" ^ " model="
-                   ^ get_string agent "model" ^ " thinking="
-                   ^ get_string agent "thinking" ^ " workspace="
-                   ^ get_string agent "workspace" ^ " latest_run_id="
-                   ^ get_string agent "latest_run_id" ^ " latest_run_status="
-                   ^ get_string agent "latest_run_status"
-                   ^ if effort = "" then "" else " effort=" ^ effort)
-            |> String.concat "\n"
+        let text = Taumel.Shared.encode_json (Taumel.Shared.Array json_agents)
         in
         tool_result text
           (Unsafe.obj
@@ -921,7 +921,6 @@ let prepare_close params ctx =
                 let details =
                   Unsafe.obj
                     [|
-                      ("ok", js_bool true);
                       ("agent_id", js_string agent_id);
                       ("status", js_string "closed");
                     |]
@@ -931,7 +930,12 @@ let prepare_close params ctx =
                   |> List.map (fun (run : Taumel.Agents.agent_run) -> run.run_id)
                 in
                 Boundary_contracts.PreparedAgentClose.create
-                  ~text:("Closed agent " ^ agent_id)
+                  ~text:
+                    (json_success
+                       [
+                         ("agent_id", Taumel.Shared.String agent_id);
+                         ("status", Taumel.Shared.String "closed");
+                       ])
                   ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details))
                   ~agentId:agent_id ~runIds:run_ids
                   ?childSessionFile:identity.identity_child_session_file ()
@@ -941,11 +945,12 @@ let finish_close facts ctx =
   Session_sync.sync_persisted_session ctx;
   let agent_id = get_string facts "agent_id" in
   match
-    Taumel.Agents.record_close !agent_state ~owner_session_id:(owner_id ctx)
+    Taumel.Agent_registry.record_close !agent_state ~owner_session_id:(owner_id ctx)
       ~agent_id
   with
   | Error message -> error_obj message
   | Ok (next, _) ->
+      let previous = !agent_state in
       agent_closing_ids :=
         List.filter (fun value -> value <> agent_id) !agent_closing_ids;
       agent_notification_claims :=
@@ -956,8 +961,12 @@ let finish_close facts ctx =
             | None -> false)
           !agent_notification_claims;
       agent_state := next;
-      save_agent_state ctx;
-      core_ack ()
+      (try
+         save_agent_state ctx;
+         core_ack ()
+       with error ->
+         agent_state := previous;
+         error_obj ("agent state persistence failed: " ^ Printexc.to_string error))
 
 let release_close facts =
   let agent_id = get_string facts "agent_id" in

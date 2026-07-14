@@ -13,17 +13,20 @@ for (const name of [
   assert.ok(toolNames.includes(name), `missing tool contract: ${name}`);
 }
 
-assert.equal(parseToolParams("agent_spawn", { message: "investigate" }).ok, true);
-assert.equal(parseToolParams("agent_spawn", { message: "investigate", effort: "high" }).ok, true);
+// agent-tc01: start calls require a parent-facing description.
+assert.equal(parseToolParams("agent_spawn", { message: "investigate", description: "Investigate agent work" }).ok, true);
+assert.equal(parseToolParams("agent_spawn", { message: "investigate", description: "Investigate agent work", effort: "high" }).ok, true);
+assert.equal(parseToolParams("agent_spawn", { message: "investigate" }).ok, false);
 assert.equal(parseToolParams("agent_spawn", { message: "x", effort: "extreme" }).ok, false);
 assert.equal(parseToolParams("agent_spawn", { message: "x", profile: "finder" }).ok, false);
 assert.equal(parseToolParams("agent_spawn", { message: "   " }).ok, false);
 
-assert.equal(parseToolParams("finder", { message: "find auth" }).ok, true);
-assert.equal(parseToolParams("oracle", { message: "review architecture" }).ok, true);
-assert.equal(parseToolParams("finder", { message: "x", effort: "low" }).ok, false);
+assert.equal(parseToolParams("finder", { query: "find auth", description: "Locate authentication code" }).ok, true);
+assert.equal(parseToolParams("oracle", { message: "review architecture", description: "Review system architecture" }).ok, true);
+assert.equal(parseToolParams("finder", { query: "x", effort: "low" }).ok, false);
 
-assert.equal(parseToolParams("agent_send", { agent_id: "a1", message: "continue" }).ok, true);
+assert.equal(parseToolParams("agent_send", { agent_id: "a1", message: "continue", description: "Continue agent work" }).ok, true);
+assert.equal(parseToolParams("agent_send", { agent_id: "a1", message: "continue" }).ok, false);
 assert.equal(parseToolParams("agent_send", { agent_id: "a1", interrupt: true }).ok, true);
 assert.equal(parseToolParams("agent_send", { agent_id: "a1" }).ok, false);
 assert.equal(parseToolParams("agent_send", { agent_id: "a1", message: "" }).ok, false);

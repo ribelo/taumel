@@ -14,6 +14,11 @@ export function errorToolResult(core: CoreBridge, text: string, details: unknown
   }]));
 }
 
+export function agentErrorToolResult(core: CoreBridge, code: string, message: string) {
+  const payload = { ok: false, error: { code, message } };
+  return errorToolResult(core, JSON.stringify(payload), payload);
+}
+
 export function hostToolResult(core: CoreBridge, action: string, details: unknown): ToolResultEnvelope {
   return decodeToolResultEnvelope(core.call("hostToolResult", [{ action, details }]));
 }

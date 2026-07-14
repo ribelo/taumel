@@ -164,10 +164,52 @@ let record_dispatch_completion facts ctx =
       save_agent_state ctx;
       core_ack ()
 
+let record_activity facts ctx =
+  Session_sync.sync_persisted_session ctx;
+  let run_id = get_string facts "run_id" in
+  let submission_id = get_string facts "submission_id" in
+  let event = get_string facts "event" in
+  agent_state :=
+    Taumel.Agent_registry.record_activity_event !agent_state ~run_id ~submission_id
+      ~now:(now_seconds ()) ~event;
+  save_agent_state ctx;
+  core_ack ()
+
+let record_dispatch_boundary facts ctx =
+  Session_sync.sync_persisted_session ctx;
+  let run_id = get_string facts "run_id" in
+  let submission_id = get_string facts "submission_id" in
+  let previous_assistant_entry_id =
+    Option.bind (optional_string_field facts "previous_assistant_entry_id")
+      Taumel.Shared.trim_non_empty
+  in
+  match
+    Taumel.Agents.record_dispatch_boundary !agent_state ~run_id ~submission_id
+      ~previous_assistant_entry_id
+  with
+  | Error message -> error_obj message
+  | Ok next -> (
+      match commit_agent_state ctx next with
+      | Ok () -> core_ack ()
+      | Error message -> error_obj message)
+
+let reconcile_live_dispatches facts ctx =
+  Session_sync.sync_persisted_session ctx;
+  let live_agent_ids = Option.value (optional_string_array facts "live_agent_ids") ~default:[] in
+  let next =
+    Taumel.Agent_registry.reconcile_live_dispatches !agent_state
+      ~owner_session_id:(owner_id ctx) ~live_agent_ids
+  in
+  if next = !agent_state then core_ack ()
+  else
+    match commit_agent_state ctx next with
+    | Ok () -> core_ack ()
+    | Error message -> error_obj message
+
 let pending_agent_notifications ctx =
   let owner = owner_id ctx in
   let pending =
-    Taumel.Agents.pending_notifications !agent_state ~owner_session_id:owner
+    Taumel.Agent_registry.pending_notifications !agent_state ~owner_session_id:owner
     |> List.filter (fun (run : Taumel.Agents.agent_run) ->
            not (List.mem run.run_id !agent_notification_claims)
            && not (List.mem run.run_agent_id !agent_closing_ids))
@@ -192,7 +234,7 @@ let pending_agent_notifications ctx =
             Some
               (Tool_contracts.AgentNotification.create ~runId:run.run_id
                  ~customType:"notification"
-                 ~content:(Taumel.Agents.completion_message identity run)
+                 ~content:(Taumel.Agent_registry.completion_message identity run)
                  ~display:true
                  ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details)) ()))
       pending
@@ -212,7 +254,7 @@ let record_background_notification facts ctx =
     | None -> false
   in
   match
-    if owned then Taumel.Agents.mark_notification_sent !agent_state ~run_id
+    if owned then Taumel.Agent_registry.mark_notification_sent !agent_state ~run_id
     else Error ("unknown run: " ^ run_id)
   with
   | Error message -> error_obj message
@@ -249,7 +291,7 @@ let validate_background_notification_claim facts ctx =
 
 let count_active_child_runs ctx =
   let count =
-    Taumel.Agents.count_active_child_runs !agent_state ~owner_session_id:(owner_id ctx)
+    Taumel.Agent_registry.count_active_child_runs !agent_state ~owner_session_id:(owner_id ctx)
   in
   Tool_contracts.AgentActiveCountResult.create ~count:(float_of_int count) ()
   |> Tool_contracts.AgentActiveCountResult.t_to_js |> inject
@@ -268,6 +310,11 @@ let ephemeral_cleanup_plan ctx =
 
 let manager_snapshot ctx =
   Session_sync.sync_persisted_session ctx;
+  let reconciled = Session_sync.reconcile_settled_runs !agent_state in
+  if reconciled != !agent_state then (
+    match commit_agent_state ctx reconciled with
+    | Ok () -> ()
+    | Error message -> failwith message);
   (match !agent_state_load_error with
   | Some message -> failwith ("agent state is unavailable: " ^ message)
   | None -> ());
@@ -281,6 +328,8 @@ let manager_snapshot ctx =
           ~kind:(Taumel.Agents.agent_kind_to_string identity.identity_kind)
           ~model:identity.identity_model ~thinking:identity.identity_thinking
           ~workspace:identity.identity_workspace
+          ~createdAt:(float_of_int identity.identity_created_at)
+          ?childSessionFile:identity.identity_child_session_file
           ?effort:
             (Option.map Taumel.Agents.effort_to_string identity.identity_effort)
           ())
@@ -291,13 +340,30 @@ let manager_snapshot ctx =
     (!agent_state).runs
     |> List.filter (fun (run : Taumel.Agents.agent_run) -> List.mem run.run_agent_id owned_ids)
     |> List.map (fun (run : Taumel.Agents.agent_run) ->
+           let activity = Taumel.Agents.activity_state_to_string run.run_activity_state in
+           let recommendation =
+             match (run.run_status, run.run_activity_state) with
+             | Taumel.Agents.Running,
+               (Taumel.Agents.Starting | Taumel.Agents.Reasoning | Taumel.Agents.Using_tool) -> "wait"
+             | Taumel.Agents.Running, Taumel.Agents.Orphaned -> "interrupt_or_close"
+             | (Taumel.Agents.Completed | Taumel.Agents.Failed | Taumel.Agents.Cancelled | Taumel.Agents.Lost),
+               Taumel.Agents.Inactive -> "call_agent_wait"
+             | Taumel.Agents.Suspended, Taumel.Agents.Inactive -> "resume_or_close"
+             | _ -> "wait"
+           in
            Tool_contracts.AgentManagerRun.create ~runId:run.run_id
              ~agentId:run.run_agent_id
              ~status:(Taumel.Agents.run_status_to_string run.run_status)
              ?reasonCode:
                (Option.map Taumel.Agents.reason_code_to_string run.run_reason_code)
              ~startedAt:(float_of_int run.run_started_at)
-             ?endedAt:(Option.map float_of_int run.run_ended_at) ())
+             ?endedAt:(Option.map float_of_int run.run_ended_at)
+             ?suspendedAt:(Option.map float_of_int run.run_suspended_at)
+             ~description:run.run_description ~turnCount:(float_of_int run.run_turn_count)
+             ?lastActivityAt:(Option.map float_of_int run.run_last_activity_at)
+             ~activityState:activity ~recommendation ~submissionId:run.run_submission_id
+             ?error:run.run_error
+             ~announcement:(Taumel.Agents.announcement_to_string run.run_announcement) ())
   in
   Tool_contracts.AgentManagerSnapshot.create ~agents ~runs ()
   |> Tool_contracts.AgentManagerSnapshot.t_to_js |> inject
@@ -307,7 +373,7 @@ let finish_ephemeral_cleanup ctx =
   | Some message -> error_obj ("agent state is unavailable: " ^ message)
   | None ->
       let next, _ =
-        Taumel.Agents.close_all_for_owner !agent_state
+        Taumel.Agent_registry.close_all_for_owner !agent_state
           ~owner_session_id:(owner_id ctx)
       in
       agent_state := next;
@@ -369,7 +435,7 @@ let agent_identity_line (identity : Taumel.Agents.identity) latest =
     status
 
 let agent_runs_summary owner_id =
-  match Taumel.Agents.list_for_owner !agent_state ~owner_session_id:owner_id with
+  match Taumel.Agent_registry.list_for_owner !agent_state ~owner_session_id:owner_id with
   | [] -> "No agents."
   | items ->
       String.concat "\n"

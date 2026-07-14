@@ -267,7 +267,7 @@ let persisted_session_snapshot ctx =
     permissions = Session_store.custom_entry_data ctx "taumel.permissions";
     ralph = Session_store.custom_entry_data ctx "taumel.ralph";
     visibility = Session_store.custom_entry_data ctx "taumel.visibility";
-    agents = Session_store.custom_entry_data ctx "taumel.agents.v2";
+    agents = Session_store.custom_entry_data ctx "taumel.agents.v3";
   }
 
 let load_goal_state_data ~session_id = function
@@ -401,6 +401,69 @@ let child_session_file_available (identity : Taumel.Agents.identity) =
           child_marker_matches identity raw
       with _ -> false)
 
+let settled_entry_id (identity : Taumel.Agents.identity)
+    (run : Taumel.Agents.agent_run) =
+  match identity.identity_child_session_file with
+  | None -> None
+  | Some path -> (
+      try
+        let process = Unsafe.get Unsafe.global "process" in
+        let fs =
+          match function_field process "getBuiltinModule" with
+          | Some get_builtin -> Unsafe.fun_call get_builtin [| js_string "fs" |]
+          | None -> Unsafe.fun_call (Unsafe.get Unsafe.global "require") [| js_string "fs" |]
+        in
+        let raw =
+          Js.to_string
+            (Unsafe.meth_call fs "readFileSync" [| js_string path; js_string "utf8" |])
+        in
+        if not (child_marker_matches identity raw) then None
+        else
+          let rec scan = function
+            | [] -> None
+            | line :: rest -> (
+                match Taumel.Shared.decode_json_string line with
+                | Ok (Taumel.Shared.Object fields) -> (
+                    match List.assoc_opt "id" fields with
+                    | Some (Taumel.Shared.String id)
+                      when Some id = run.run_previous_assistant_entry_id -> None
+                    | Some (Taumel.Shared.String id) -> (
+                        match List.assoc_opt "message" fields with
+                        | Some (Taumel.Shared.Object message) -> (
+                            match
+                              ( List.assoc_opt "role" message,
+                                List.assoc_opt "stopReason" message )
+                            with
+                            | Some (Taumel.Shared.String "assistant"),
+                              Some (Taumel.Shared.String ("stop" | "completed")) -> Some id
+                            | _ -> scan rest)
+                        | _ -> scan rest)
+                    | _ -> scan rest)
+                | _ -> scan rest)
+          in
+          scan (List.rev (String.split_on_char '\n' raw))
+      with _ -> None)
+
+let reconcile_settled_runs state =
+  List.fold_left
+    (fun state (run : Taumel.Agents.agent_run) ->
+      if run.run_status <> Taumel.Agents.Running then state
+      else
+        match Taumel.Agents.find_identity state run.run_agent_id with
+        | None -> state
+        | Some identity -> (
+            match settled_entry_id identity run with
+            | None -> state
+            | Some result_entry_id -> (
+                match
+                  Taumel.Agents.record_run_completion state ~now:(now_seconds ())
+                    ~run_id:run.run_id ~status:Taumel.Agents.Completed
+                    ~result_entry_id ~submission_id:run.run_submission_id ()
+                with
+                | Ok next -> next
+                | Error _ -> state)))
+    state state.runs
+
 let seen_agent_session_ids : string list ref = ref []
 
 let first_agent_session_load session_id =
@@ -422,6 +485,7 @@ let load_agent_state_data ~recover_running = function
       match Result.bind (json_from_js data) Taumel.Agents_codec.decode with
       | Ok state ->
           agent_state_load_error := None;
+          let state = if recover_running then reconcile_settled_runs state else state in
           agent_state :=
             if recover_running then
               Taumel.Agents.mark_running_after_process_loss state

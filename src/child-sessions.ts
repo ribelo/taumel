@@ -44,7 +44,6 @@ type PermissionsEntry = { readonly profile?: unknown; readonly networkMode?: unk
 type ChildMetadataEntry = { readonly capabilityProfile?: unknown; readonly networkMode?: unknown };
 type AgentMessage = { readonly role?: unknown; readonly content?: unknown; readonly stopReason?: unknown; readonly errorMessage?: unknown };
 type TextPart = { readonly text?: unknown };
-type AgentEndEvent = { readonly type?: unknown; readonly messages?: unknown };
 type SdkSession = {
   readonly subscribe?: (handler: (event: unknown) => void) => unknown;
   readonly messages?: unknown;
@@ -358,23 +357,36 @@ function completionFromMessages(messages: unknown, startIndex = 0): ChildDispatc
   };
 }
 
-function completionFromAgentEndEvent(event: unknown): ChildDispatchCompletion | undefined {
-  const agentEnd = hostObject<AgentEndEvent>(event);
-  if (agentEnd?.type !== "agent_end") return undefined;
-  return completionFromMessages(agentEnd.messages);
-}
-
 async function sendToSdkAgentSession(session: unknown, prompt: string, options: MessageDeliveryOptions): Promise<unknown> {
   const sdk = hostObject<SdkSession>(session);
   if (sdk === undefined) {
     return undefined;
   }
   const subscribe = sdk.subscribe;
-  let completion: ChildDispatchCompletion | undefined;
+  const messageCount = Array.isArray(sdk.messages) ? sdk.messages.length : 0;
+  let resolveSettled: ((value: unknown) => void) | undefined;
+  const settled = new Promise<unknown>((resolve) => {
+    resolveSettled = resolve;
+  });
+  let settlementCheckStarted = false;
+  const settleWhenIdle = async (event: unknown) => {
+    if (settlementCheckStarted) return;
+    settlementCheckStarted = true;
+    while (sdk.isStreaming === true) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    resolveSettled?.(
+      completionFromMessages(sdk.messages, messageCount) ?? event,
+    );
+  };
   const unsubscribe =
     typeof subscribe === "function"
       ? subscribe.call(session, (event: unknown) => {
-        completion = completionFromAgentEndEvent(event) ?? completion;
+        options.onEvent?.(event);
+        const lifecycle = hostObject<{ readonly type?: unknown; readonly willRetry?: unknown }>(event);
+        if (lifecycle?.type === "agent_end" && lifecycle.willRetry !== true) {
+          void settleWhenIdle(event);
+        }
       })
       : undefined;
   try {
@@ -382,18 +394,17 @@ async function sendToSdkAgentSession(session: unknown, prompt: string, options: 
     const isStreaming = sdk.isStreaming === true;
     if (isStreaming && deliverAs === "steer" && typeof sdk.steer === "function") {
       const result = await sdk.steer.call(session, prompt);
-      return completion ?? result;
+      return typeof subscribe === "function" ? await settled : result;
     }
     if (isStreaming && typeof sdk.followUp === "function") {
       const result = await sdk.followUp.call(session, prompt);
-      return completion ?? result;
+      return typeof subscribe === "function" ? await settled : result;
     }
     if (typeof sdk.prompt === "function") {
-      const messageCount = Array.isArray(sdk.messages) ? sdk.messages.length : 0;
       const result = await sdk.prompt.call(session, prompt, {
         streamingBehavior: deliverAs === "steer" ? "steer" : "followUp",
       });
-      return completion ?? completionFromMessages(sdk.messages, messageCount) ?? result;
+      return completionFromMessages(sdk.messages, messageCount) ?? result;
     }
     return undefined;
   } catch (error) {
@@ -649,6 +660,7 @@ export async function sendToChildSession(
   options: {
     readonly awaitCompletion?: boolean;
     readonly deliverAs?: string;
+    readonly onEvent?: (event: unknown) => void;
     readonly onCompletion?: (dispatch: ChildDispatchResult) => void | Promise<void>;
   } = {},
 ): Promise<ChildDispatchResult> {
@@ -671,7 +683,7 @@ export async function sendToChildSession(
   const dispatchPrompt = plan.prompt;
   const deliverAs = plan.deliverAs;
   if (deliverAs === "") throw new Error("Invalid Taumel child dispatch delivery mode");
-  const sendOptions = { deliverAs };
+  const sendOptions = { deliverAs, onEvent: options.onEvent };
   const awaitCompletion = options.awaitCompletion !== false;
   const completeLater = (send: () => Promise<unknown> | unknown) => {
     let hostResult: Promise<unknown> | unknown;

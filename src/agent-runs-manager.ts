@@ -31,11 +31,21 @@ function loadSnapshot(core: CoreBridge, ctx: unknown): AgentManagerSnapshot {
 }
 
 function agentLabel(agent: AgentListItem): string {
-  return `${agent.agentId} · ${agent.kind} · ${agent.model}:${agent.thinking}`;
+  return `${agent.agentId} · ${agent.kind}`;
 }
 
 function runLabel(run: AgentRunItem): string {
-  return `${run.runId} · ${run.status}${run.reasonCode === undefined ? "" : ` · ${run.reasonCode}`}`;
+  const activity = run.status === "running" ? ` · ${run.activityState}` : "";
+  const baseline = run.lastActivityAt ?? run.startedAt;
+  const age = Math.max(0, Math.floor(Date.now() / 1000) - baseline);
+  return `${run.runId} · ${run.status}${activity} · ${run.description} · ${run.turnCount} turns · ${age}s`;
+}
+
+function identityRunSummary(run: AgentRunItem): string {
+  const activity = run.status === "running" ? ` · ${run.activityState}` : "";
+  const baseline = run.lastActivityAt ?? run.startedAt;
+  const age = Math.max(0, Math.floor(Date.now() / 1000) - baseline);
+  return `${run.status}${activity} · ${run.description} · ${run.turnCount} turns · ${age}s`;
 }
 
 async function runAgentRunsCommand(
@@ -140,6 +150,11 @@ export async function executeAgentRunsManager(
   }
 
   const ui = uiFromContext(ctx);
+  const prefix = `${childSessionCacheKeyScopeFromContext(ctx)}\0`;
+  const liveAgentIds = [...childSessions.keys()]
+    .filter((key) => key.startsWith(prefix))
+    .map((key) => key.slice(prefix.length));
+  decodeCoreAck(core.call("reconcileLiveAgentDispatches", [{ live_agent_ids: liveAgentIds }, ctx]));
   const snapshot = loadSnapshot(core, ctx);
   const agents = snapshot.agents;
   if (agents.length === 0) {
@@ -149,7 +164,10 @@ export async function executeAgentRunsManager(
     return runAgentRunsCommand(core, ctx, "list");
   }
 
-  const labels = agents.map((agent) => agentLabel(agent));
+  const labels = agents.map((agent) => {
+    const latest = snapshot.runs.find((run) => run.agentId === agent.agentId);
+    return latest === undefined ? agentLabel(agent) : `${agentLabel(agent)} · ${identityRunSummary(latest)}`;
+  });
   const selectedLabel =
     typeof (ui as { select?: (title: string, labels: string[]) => unknown }).select === "function"
       ? await (ui as { select: (title: string, labels: string[]) => Promise<string | undefined> }).select(
@@ -178,7 +196,7 @@ export async function executeAgentRunsManager(
       : undefined;
   if (action === "Inspect") {
     const latest = agentRuns[0];
-    return commandResult(true, `${agentLabel(agent)}\nworkspace=${agent.workspace}\nlatest_run_id=${latest?.runId ?? ""}\nlatest_status=${latest?.status ?? ""}`, {
+    return commandResult(true, `${agentLabel(agent)}\nmodel=${agent.model}\nthinking=${agent.thinking}\nworkspace=${agent.workspace}\ncreated_at=${agent.createdAt}\nchild_session_file=${agent.childSessionFile ?? ""}\nlatest_run_id=${latest?.runId ?? ""}\nlatest_status=${latest?.status ?? ""}\nactivity_state=${latest?.activityState ?? ""}\nrecommendation=${latest?.recommendation ?? ""}\nstarted_at=${latest?.startedAt ?? ""}\nlast_activity_at=${latest?.lastActivityAt ?? ""}\nended_at=${latest?.endedAt ?? ""}\nsuspended_at=${latest?.suspendedAt ?? ""}\nturn_count=${latest?.turnCount ?? 0}\ndescription=${latest?.description ?? ""}\nreason=${latest?.reasonCode ?? ""}\nerror=${latest?.error ?? ""}\nnotification=${latest?.announcement ?? ""}`, {
       agent,
       runs: agentRuns,
     });

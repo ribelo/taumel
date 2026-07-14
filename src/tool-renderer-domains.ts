@@ -292,7 +292,21 @@ function agentLine(item: ToolRenderFields, theme: unknown): string {
     ?? "idle";
   const model = stringFieldOrUndefined(item, "model") ?? "";
   const thinking = stringFieldOrUndefined(item, "thinking") ?? "";
-  return [themeFg(theme, "toolOutput", id), kind, status, model, thinking]
+  const activity = recordFieldOrUndefined<ToolRenderFields>(item, "activity");
+  const activitySummary = activity === undefined ? "" : [
+    stringFieldOrUndefined(activity, "state"),
+    stringFieldOrUndefined(activity, "last_at"),
+    stringFieldOrUndefined(activity, "recommendation"),
+  ].filter((part) => part !== undefined && part !== "").join("/");
+  const turns = typeof item.turn_count === "number" ? `${item.turn_count} turns` : "";
+  return [
+    themeFg(theme, "toolOutput", id), kind, status,
+    stringFieldOrUndefined(item, "run_id") ?? "",
+    turns, activitySummary,
+    stringFieldOrUndefined(item, "workspace") ?? "",
+    stringFieldOrUndefined(item, "effort") ?? "",
+    model, thinking,
+  ]
     .filter((part) => part !== "")
     .join(` ${themeFg(theme, "dim", "·")} `);
 }
@@ -327,9 +341,11 @@ function buildAgent(name: string, result: unknown, options: unknown, theme: unkn
     const pending = Array.isArray(details["pending_run_ids"]) ? details["pending_run_ids"].length : 0;
     subject = `${results.length} ready · ${pending} pending`;
   } else if (name === "agent_spawn") {
-    subject = [agentId, stringFieldOrUndefined(details, "effort")].filter((part) => part !== undefined && part !== "").join(" · ");
+    subject = [agentId, stringFieldOrUndefined(args, "description")].filter((part) => part !== undefined && part !== "").join(" · ");
   } else if (name === "finder" || name === "oracle") {
-    subject = agentId;
+    subject = [agentId, stringFieldOrUndefined(args, "description")].filter((part) => part !== undefined && part !== "").join(" · ");
+  } else if (name === "agent_send") {
+    subject = [agentId, stringFieldOrUndefined(args, "description"), status].filter((part) => part !== undefined && part !== "").join(" · ");
   } else {
     subject = [agentId, runId, kind, status].filter((part) => part !== "").join(" · ");
   }
@@ -341,9 +357,12 @@ function buildAgent(name: string, result: unknown, options: unknown, theme: unkn
   } else if (results.length > 0) {
     for (const run of results) {
       entries.push(...agentResultEntries(run, theme));
-      entries.push(...labeled("Reason", stringFieldOrUndefined(run, "reason_code"), theme));
+      entries.push(...labeled("Started", stringFieldOrUndefined(run, "started_at"), theme));
+      entries.push(...labeled("Ended", stringFieldOrUndefined(run, "ended_at") ?? stringFieldOrUndefined(run, "suspended_at"), theme));
+      entries.push(...labeled("Reason", stringFieldOrUndefined(run, "reason"), theme));
       entries.push(...labeled("Error", stringFieldOrUndefined(run, "error"), theme));
       entries.push(...labeledText("Response", stringFieldOrUndefined(run, "output"), theme));
+      entries.push(...labeledText("Partial response", stringFieldOrUndefined(run, "partial_output"), theme));
     }
   } else {
     entries.push(...agentResultEntries({
@@ -354,7 +373,12 @@ function buildAgent(name: string, result: unknown, options: unknown, theme: unkn
       thinking: details["thinking"],
       status,
     }, theme));
-    entries.push(...labeledText("Message", stringFieldOrUndefined(args, "message"), theme));
+    entries.push(...labeled("Description", stringFieldOrUndefined(args, "description"), theme));
+    if (name === "finder") {
+      entries.push(...labeledText("Query", stringFieldOrUndefined(args, "query"), theme));
+    } else {
+      entries.push(...labeledText("Message", stringFieldOrUndefined(args, "message"), theme));
+    }
   }
   return { header, body: entries.length === 0 ? undefined : { mode: "rail", entries } };
 }

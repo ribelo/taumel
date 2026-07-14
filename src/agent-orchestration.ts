@@ -13,7 +13,7 @@ import {
   refreshOwnedChildPermissions,
   sendToChildSession,
 } from "./child-sessions.ts";
-import { errorToolResult, preparedToolResult } from "./tool-results.ts";
+import { agentErrorToolResult, preparedToolResult } from "./tool-results.ts";
 import {
   decodeAgentActiveCountResult,
   decodeAgentCleanupPlan,
@@ -37,6 +37,13 @@ function isObject(value: unknown): value is UnknownFields {
 function stringField(value: UnknownFields, key: string): string {
   const raw = value[key];
   return typeof raw === "string" ? raw : "";
+}
+
+function childFailureCode(message: string): string {
+  if (/model|authentication|thinking/.test(message)) return "routing_unavailable";
+  if (/workspace/.test(message)) return "workspace_unavailable";
+  if (/child_session|agent_mismatch|owner_mismatch|identity_missing/.test(message)) return "child_session_unavailable";
+  return "dispatch_failed";
 }
 
 function pendingAgentWaitKey(ctx: unknown, runId: string): string {
@@ -171,6 +178,35 @@ function recordDispatchCompletionInBackground(
   };
 }
 
+function recordDispatchActivity(core: CoreBridge, prepared: UnknownFields, ctx: unknown) {
+  return (event: unknown) => {
+    if (!isObject(event) || typeof event.type !== "string") return;
+    const observed = new Set([
+      "agent_start", "turn_start", "turn_end", "tool_execution_start",
+      "tool_execution_update", "tool_execution_end",
+    ]);
+    if (!observed.has(event.type)) return;
+    decodeCoreAck(core.call("recordAgentActivity", [{
+      run_id: stringField(prepared, "runId"),
+      submission_id: stringField(prepared, "submissionId"),
+      event: event.type,
+    }, ctx]));
+  };
+}
+
+function recordDispatchBoundary(
+  core: CoreBridge,
+  prepared: UnknownFields,
+  ctx: unknown,
+  bridge: ChildSessionBridge | undefined,
+): void {
+  decodeCoreAck(core.call("recordAgentDispatchBoundary", [{
+    run_id: stringField(prepared, "runId"),
+    submission_id: stringField(prepared, "submissionId"),
+    previous_assistant_entry_id: latestAssistantEntryId(bridge?.sessionManager),
+  }, ctx]));
+}
+
 async function rollbackUnacceptedStart(
   core: CoreBridge,
   childSessions: Map<string, ChildSessionBridge>,
@@ -257,10 +293,14 @@ export async function executeAgentPrepared(
       const bridge = await createAgentChildSession(pi, core, childSessions, prepared, ctx);
       if (bridge?.error !== undefined || bridge?.missingSessionIdentifier) {
         await rollbackUnacceptedStart(core, childSessions, prepared, ctx, bridge);
-        return errorToolResult(core, bridge?.error ?? "failed to create child session", {
-          ok: false,
-          error: bridge?.error ?? "failed to create child session",
-        });
+        const message = bridge?.error ?? "failed to create child session";
+        return agentErrorToolResult(core, childFailureCode(message), message);
+      }
+      try {
+        recordDispatchBoundary(core, prepared, ctx, bridge);
+      } catch (error) {
+        await rollbackUnacceptedStart(core, childSessions, prepared, ctx, bridge);
+        return agentErrorToolResult(core, "persistence_failed", error instanceof Error ? error.message : String(error));
       }
       const dispatch = await sendToChildSession(
         pi,
@@ -270,6 +310,7 @@ export async function executeAgentPrepared(
         "no initial prompt",
         {
           awaitCompletion: false,
+          onEvent: recordDispatchActivity(core, prepared, ctx),
           onCompletion: recordDispatchCompletionInBackground(pi, core, prepared, ctx, pendingAgentWaits, bridge),
         },
       );
@@ -278,7 +319,7 @@ export async function executeAgentPrepared(
         const reason = typeof dispatch.reason === "string"
           ? dispatch.reason
           : "initial message was not accepted";
-        return errorToolResult(core, reason, { ok: false, error: reason });
+        return agentErrorToolResult(core, "dispatch_failed", reason);
       }
       return preparedToolResult(core, {
         text: stringField(prepared, "text"),
@@ -301,10 +342,7 @@ export async function executeAgentPrepared(
             run_id: stringField(prepared, "runId"),
           }, ctx]));
           const message = error instanceof Error ? error.message : String(error);
-          return errorToolResult(core, `agent interruption failed: ${message}`, {
-            ok: false,
-            error: message,
-          });
+          return agentErrorToolResult(core, "dispatch_failed", `agent interruption failed: ${message}`);
         }
         return preparedToolResult(core, {
           text: stringField(prepared, "text"),
@@ -315,33 +353,39 @@ export async function executeAgentPrepared(
       const workspace = metadata === undefined ? "" : stringField(metadata, "workspaceDirectory");
       if (workspace === "") {
         rollbackAgentSendPreflight(core, prepared, ctx);
-        return errorToolResult(core, "identity_workspace_missing", {
-          ok: false,
-          error: "identity_workspace_missing",
-        });
+        return agentErrorToolResult(core, "workspace_unavailable", "identity workspace is missing");
       }
       try {
         const fs = await import("node:fs/promises");
         if (!(await fs.stat(workspace)).isDirectory()) throw new Error("not a directory");
       } catch {
         rollbackAgentSendPreflight(core, prepared, ctx);
-        return errorToolResult(core, "identity_workspace_unavailable", {
-          ok: false,
-          error: "identity_workspace_unavailable",
-        });
+        return agentErrorToolResult(core, "workspace_unavailable", "identity workspace is unavailable");
       }
       if (bridge === undefined) {
         bridge = await createAgentChildSession(pi, core, childSessions, prepared, ctx);
       }
       if (bridge === undefined || bridge.error !== undefined || bridge.missingSessionIdentifier) {
         rollbackAgentSendPreflight(core, prepared, ctx);
-        return errorToolResult(core, bridge?.error ?? "failed to reopen child session", {
-          ok: false,
-          error: bridge?.error ?? "failed to reopen child session",
-        });
+        return agentErrorToolResult(core, "child_session_unavailable", bridge?.error ?? "failed to reopen child session");
+      }
+      try {
+        recordDispatchBoundary(core, prepared, ctx, bridge);
+      } catch (error) {
+        rollbackAgentSendPreflight(core, prepared, ctx);
+        return agentErrorToolResult(core, "persistence_failed", error instanceof Error ? error.message : String(error));
       }
       if (interrupt && bridge.stop !== undefined) {
-        await bridge.stop("interrupted_by_parent");
+        try {
+          await bridge.stop("interrupted_by_parent");
+        } catch (error) {
+          rollbackAgentSendPreflight(core, prepared, ctx);
+          return agentErrorToolResult(
+            core,
+            "dispatch_failed",
+            `agent interruption failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
       }
       if (prepared.dispatch === true) {
         const dispatch = await sendToChildSession(
@@ -353,6 +397,7 @@ export async function executeAgentPrepared(
           {
             awaitCompletion: false,
             deliverAs: stringField(prepared, "dispatchDeliverAs") || "followUp",
+            onEvent: recordDispatchActivity(core, prepared, ctx),
             onCompletion: recordDispatchCompletionInBackground(pi, core, prepared, ctx, pendingAgentWaits, bridge),
           },
         );
@@ -369,7 +414,7 @@ export async function executeAgentPrepared(
           } else {
             rollbackAgentSendPreflight(core, prepared, ctx);
           }
-          return errorToolResult(core, reason, { ok: false, error: reason });
+          return agentErrorToolResult(core, "dispatch_failed", reason);
         }
       }
       return preparedToolResult(core, {
@@ -402,16 +447,14 @@ export async function executeAgentPrepared(
         }
       };
       const closed = () => controllers.some((controller) => controller.signal.aborted);
-      const cancelledByClose = () => errorToolResult(
-        core,
-        "agent_wait cancelled because a selected run was closed",
-        { ok: false, error: "agent_closed" },
+      const cancelledByClose = () => agentErrorToolResult(
+        core, "run_not_found", "one or more selected runs no longer exist",
       );
       try {
         if (closed()) return cancelledByClose();
         if (signal?.aborted) {
           clearClaims();
-          return errorToolResult(core, "agent_wait interrupted", { ok: false, error: "interrupted" });
+          return agentErrorToolResult(core, "internal_error", "agent_wait was interrupted");
         }
         const started = Date.now();
         while (true) {
@@ -420,7 +463,7 @@ export async function executeAgentPrepared(
           );
           if (finished.ok === false) {
             if (closed()) return cancelledByClose();
-            return errorToolResult(core, finished.error, finished);
+            return agentErrorToolResult(core, "run_not_found", finished.error);
           }
           if (finished.ok === true && finished.action === "tool_result") {
             clearClaims();
@@ -430,22 +473,15 @@ export async function executeAgentPrepared(
             const elapsed = (Date.now() - started) / 1000;
             if (elapsed >= timeoutSeconds) {
               clearClaims();
-              return preparedToolResult(core, {
-                text: `agent_wait timed out\npending_run_ids=${runIds.join(",")}`,
-                details: {
-                  ok: true,
-                  timed_out: true,
-                  results: [],
-                  pending_run_ids: runIds,
-                },
-              });
+              const payload = { timed_out: true, results: [], pending_run_ids: runIds };
+              return preparedToolResult(core, { text: JSON.stringify(payload), details: payload });
             }
           }
           await new Promise((resolve) => setTimeout(resolve, 50));
           if (closed()) return cancelledByClose();
           if (signal?.aborted) {
             clearClaims();
-            return errorToolResult(core, "agent_wait interrupted", { ok: false, error: "interrupted" });
+            return agentErrorToolResult(core, "internal_error", "agent_wait was interrupted");
           }
         }
       } finally {
@@ -487,16 +523,19 @@ export async function executeAgentPrepared(
       } catch (error) {
         decodeCoreAck(core.call("releaseAgentClose", [{ agent_id: agentId }]));
         const message = error instanceof Error ? error.message : String(error);
-        return errorToolResult(core, `agent_close cleanup failed: ${message}`, {
-          ok: false,
-          error: message,
-        });
+        return agentErrorToolResult(core, "cleanup_failed", `agent_close cleanup failed: ${message}`);
       }
-      const finished = decodeCoreAck(core.call("finishAgentClose", [{ agent_id: agentId }, ctx]));
+      let finished;
+      try {
+        finished = decodeCoreAck(core.call("finishAgentClose", [{ agent_id: agentId }, ctx]));
+      } catch (error) {
+        decodeCoreAck(core.call("releaseAgentClose", [{ agent_id: agentId }]));
+        return agentErrorToolResult(core, "persistence_failed", error instanceof Error ? error.message : String(error));
+      }
       if (finished.ok !== true) {
         decodeCoreAck(core.call("releaseAgentClose", [{ agent_id: agentId }]));
         const message = "agent close state removal failed";
-        return errorToolResult(core, message, finished);
+        return agentErrorToolResult(core, "persistence_failed", message);
       }
       return preparedToolResult(core, {
         text: stringField(prepared, "text"),
@@ -504,7 +543,7 @@ export async function executeAgentPrepared(
       });
     }
     default:
-      return errorToolResult(core, `unknown agent action: ${action}`, { ok: false, error: action });
+      return agentErrorToolResult(core, "internal_error", `unknown agent action: ${action}`);
   }
 }
 

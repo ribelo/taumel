@@ -295,6 +295,7 @@ export const AgentManagerIdentitySchema = Type.Object(
     agentId: Type.String({ minLength: 1 }), kind: Type.String({ minLength: 1 }),
     model: Type.String({ minLength: 1 }), thinking: Type.String({ minLength: 1 }),
     workspace: Type.String({ minLength: 1 }), effort: Type.Optional(Type.String({ minLength: 1 })),
+    createdAt: Type.Integer(), childSessionFile: Type.Optional(Type.String({ minLength: 1 })),
   },
   { $id: "AgentManagerIdentity", additionalProperties: false },
 );
@@ -303,6 +304,10 @@ export const AgentManagerRunSchema = Type.Object(
     runId: Type.String({ minLength: 1 }), agentId: Type.String({ minLength: 1 }),
     status: Type.String({ minLength: 1 }), reasonCode: Type.Optional(Type.String({ minLength: 1 })),
     startedAt: Type.Integer(), endedAt: Type.Optional(Type.Integer()),
+    suspendedAt: Type.Optional(Type.Integer()), description: Type.String(), turnCount: Type.Integer({ minimum: 0 }),
+    lastActivityAt: Type.Optional(Type.Integer()), activityState: Type.String({ minLength: 1 }),
+    recommendation: Type.String({ minLength: 1 }), submissionId: Type.String({ minLength: 1 }),
+    error: Type.Optional(Type.String()), announcement: Type.String({ minLength: 1 }),
   },
   { $id: "AgentManagerRun", additionalProperties: false },
 );

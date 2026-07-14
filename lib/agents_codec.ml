@@ -12,6 +12,10 @@ let option_effort = function
   | None -> Shared.Null
   | Some value -> Shared.String (effort_to_string value)
 
+let option_number = function
+  | None -> Shared.Null
+  | Some value -> Shared.Number (float_of_int value)
+
 let required_nullable_string path fields name =
   match List.assoc_opt name fields with
   | None -> Error (Shared.json_path path name ^ " is required")
@@ -72,8 +76,15 @@ let encode_run (run : agent_run) =
         match run.run_ended_at with
         | None -> Shared.Null
         | Some value -> Shared.Number (float_of_int value) );
+      ("suspended_at", option_number run.run_suspended_at);
       ("submission_id", Shared.String run.run_submission_id);
       ("result_entry_id", option_string run.run_result_entry_id);
+      ("previous_assistant_entry_id", option_string run.run_previous_assistant_entry_id);
+      ("description", Shared.String run.run_description);
+      ("turn_count", Shared.Number (float_of_int run.run_turn_count));
+      ("last_activity_at", option_number run.run_last_activity_at);
+      ("activity_state", Shared.String (activity_state_to_string run.run_activity_state));
+      ("active_tool_count", Shared.Number (float_of_int run.run_active_tool_count));
     ]
 
 let encode (state : session_state) =
@@ -187,8 +198,32 @@ let decode_run path fields =
     | Ok None -> Ok None
     | Ok (Some value) -> Ok (Some (int_of_float value))
   in
+  let* suspended_at =
+    match required_nullable_number path fields "suspended_at" with
+    | Error _ as error -> error
+    | Ok None -> Ok None
+    | Ok (Some value) -> Ok (Some (int_of_float value))
+  in
   let* submission_id = Shared.json_required_string path fields "submission_id" in
   let* result_entry_id = required_nullable_string path fields "result_entry_id" in
+  let* previous_assistant_entry_id =
+    required_nullable_string path fields "previous_assistant_entry_id"
+  in
+  let* description = Shared.json_required_string path fields "description" in
+  let* turn_count = Shared.json_required_int path fields "turn_count" in
+  let* last_activity_at =
+    match required_nullable_number path fields "last_activity_at" with
+    | Error _ as error -> error
+    | Ok None -> Ok None
+    | Ok (Some value) -> Ok (Some (int_of_float value))
+  in
+  let* activity_state_raw = Shared.json_required_string path fields "activity_state" in
+  let* activity_state = activity_state_of_string activity_state_raw in
+  let* active_tool_count = Shared.json_required_int path fields "active_tool_count" in
+  let* () =
+    if turn_count >= 0 && active_tool_count >= 0 then Ok ()
+    else Error (path ^ " activity counters must be non-negative")
+  in
   if not (reason_compatible status reason_code) then
     Error (path ^ " has incompatible status/reason_code")
   else
@@ -205,8 +240,15 @@ let decode_run path fields =
         run_announcement = announcement;
         run_started_at = started_at;
         run_ended_at = ended_at;
+        run_suspended_at = suspended_at;
         run_submission_id = submission_id;
         run_result_entry_id = result_entry_id;
+        run_previous_assistant_entry_id = previous_assistant_entry_id;
+        run_description = description;
+        run_turn_count = turn_count;
+        run_last_activity_at = last_activity_at;
+        run_activity_state = activity_state;
+        run_active_tool_count = active_tool_count;
       }
 
 let decode_list path decode_item = function

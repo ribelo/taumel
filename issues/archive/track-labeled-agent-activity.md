@@ -1,6 +1,6 @@
 ---
 kind: issue
-status: ready-for-agent
+status: done
 requirements:
   - "[[plans/subagents#^agent-tc01|agent-tc01]]"
   - "[[plans/subagents#^agent-id20|agent-id20]]"

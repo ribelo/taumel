@@ -23,7 +23,7 @@ let ceiling =
 
 let spawn ?(kind = Agents.Generic) ?(effort = Agents.Medium) state =
   Agents.record_spawn state ~now:1 ~owner_session_id:"parent-1" ~kind ~effort
-    ~model:"anthropic/claude" ~thinking:"medium"
+    ~model:"anthropic/claude" ~thinking:"medium" ~description:"Investigate agent work"
     ~active_tools:[ "read"; "bash"; "edit"; "agent_spawn" ]
     ~permission_ceiling:ceiling ~workspace:"/tmp/project" ()
 
@@ -70,7 +70,7 @@ let test_closed_identity_id_is_never_reused () =
   | Error message -> failwith message
   | Ok (state, first, _run) -> (
       match
-        Agents.record_close state ~owner_session_id:"parent-1"
+        Agent_registry.record_close state ~owner_session_id:"parent-1"
           ~agent_id:first.identity_agent_id
       with
       | Error message -> failwith message
@@ -245,7 +245,7 @@ let test_close_removes_identity_and_runs () =
   | Error message -> failwith message
   | Ok (state, identity, run) -> (
       match
-        Agents.record_close state ~owner_session_id:"parent-1"
+        Agent_registry.record_close state ~owner_session_id:"parent-1"
           ~agent_id:identity.identity_agent_id
       with
       | Error message -> failwith message

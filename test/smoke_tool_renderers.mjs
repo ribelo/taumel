@@ -63,12 +63,13 @@ function argsFor(name) {
     case "read_thread":
       return { threadID: "thread-1" };
     case "agent_spawn":
-      return { message: "inspect renderer coverage", effort: "medium" };
+      return { message: "inspect renderer coverage", description: "Inspect renderer coverage", effort: "medium" };
     case "finder":
+      return { query: "inspect renderer coverage", description: "Locate renderer coverage" };
     case "oracle":
-      return { message: "inspect renderer coverage" };
+      return { message: "inspect renderer coverage", description: "Review renderer coverage" };
     case "agent_send":
-      return { agent_id: "worker-1", message: "continue" };
+      return { agent_id: "worker-1", message: "continue", description: "Continue renderer work" };
     case "agent_wait":
       return { run_ids: ["worker-1-run-1"], timeout_seconds: 0 };
     case "agent_list":
@@ -218,7 +219,7 @@ const spawnedAgent = renderText(renderersForTool("agent_spawn").renderResult(
   theme,
   { args: argsFor("agent_spawn") },
 ));
-assert(/^• agent_spawn · agent-7k2m · medium$/.test(spawnedAgent), `generic spawn compact slot wrong: ${spawnedAgent}`);
+assert(/^• agent_spawn · agent-7k2m · Inspect renderer coverage$/.test(spawnedAgent), `generic spawn compact slot wrong: ${spawnedAgent}`);
 const expandedSpawnedAgent = renderText(renderersForTool("agent_spawn").renderResult(
   resultFor("agent_spawn"),
   { expanded: true, isPartial: false },
@@ -232,6 +233,7 @@ for (const expected of [
   "Model: provider/model",
   "Thinking: low",
   "Status: running",
+  "Description: Inspect renderer coverage",
   "Message: inspect renderer coverage",
 ]) {
   assert(expandedSpawnedAgent.includes(expected), `expanded agent_spawn missing ${expected}: ${expandedSpawnedAgent}`);
@@ -242,7 +244,8 @@ const spawnedFinder = renderText(renderersForTool("finder").renderResult(
   theme,
   { args: argsFor("finder") },
 ));
-assert(/^• finder · finder-2sk2$/.test(spawnedFinder), `finder compact slot wrong: ${spawnedFinder}`);
+assert(/^• finder · finder-2sk2 · Locate renderer coverage$/.test(spawnedFinder), `finder compact slot wrong: ${spawnedFinder}`);
+// agent-rn15: expanded wait rendering includes routing only on the user-facing surface.
 const expandedWait = renderText(renderersForTool("agent_wait").renderResult(
   resultFor("agent_wait"),
   { expanded: true, isPartial: false },
@@ -626,6 +629,12 @@ assert(/• exec_completion · session 3 ready/.test(compactExecNote), `exec not
 assert(!/exit|code|line-1/.test(compactExecNote), `exec notification should not include terminal status or output: ${compactExecNote}`);
 assert(!compactExecNote.includes("\n") && !compactExecNote.includes("write_stdin"), `exec compact notification should be one-line ready signal only: ${compactExecNote}`);
 assert(expandedExecNote.includes("Command session 3 has finished") && expandedExecNote.includes("yield_time_ms=5000"), `expanded exec notification should preserve visible body: ${expandedExecNote}`);
+const agentNote = JSON.stringify({
+  event: "agent_completion", agent_id: "agent-7k2m", run_id: "agent-7k2m-run-1", kind: "generic",
+  next_action: { tool: "agent_wait", arguments: { run_ids: ["agent-7k2m-run-1"], timeout_seconds: 0 } },
+});
+const compactAgentNote = renderText(renderNotification({ customType: "notification", content: agentNote }, { expanded: false }, theme));
+assert(/• agent_completion · agent-7k2m · generic · agent-7k2m-run-1 ready/.test(compactAgentNote), `agent completion JSON rendering wrong: ${compactAgentNote}`);
 const strictTheme = {
   ...theme,
   fg: (color, value) => {

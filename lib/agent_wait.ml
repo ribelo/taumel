@@ -19,6 +19,7 @@ let wait_item_of_run identity run =
       | _ -> None);
     wait_started_at = run.run_started_at;
     wait_ended_at = run.run_ended_at;
+    wait_suspended_at = run.run_suspended_at;
   }
 
 let validate_wait_selection state ~owner_session_id run_ids =
@@ -57,7 +58,7 @@ let wait_for_run_ids state ~owner_session_id run_ids =
                 match find_identity !state_ref run.run_agent_id with
                 | None -> None
                 | Some identity ->
-                    let observed = observe_announcement run in
+                    let observed = Agent_registry.observe_announcement run in
                     if observed != run then
                       state_ref :=
                         {

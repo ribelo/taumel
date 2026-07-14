@@ -61,6 +61,7 @@ export type ToolDefinition = {
 export type MessageDeliveryOptions = {
   readonly triggerTurn?: boolean;
   readonly deliverAs?: string;
+  readonly onEvent?: (event: unknown) => void;
 };
 
 export type AgentSessionOptions = {

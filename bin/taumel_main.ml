@@ -118,6 +118,9 @@ let core_call name_js args_js =
   | "rollbackFailedAgentInterruption" ->
       Agent_lifecycle.rollback_failed_interruption (arg 0) (arg 1)
   | "recordAgentDispatchCompletion" -> Agent_lifecycle.record_dispatch_completion (arg 0) (arg 1)
+  | "recordAgentActivity" -> Agent_lifecycle.record_activity (arg 0) (arg 1)
+  | "recordAgentDispatchBoundary" -> Agent_lifecycle.record_dispatch_boundary (arg 0) (arg 1)
+  | "reconcileLiveAgentDispatches" -> Agent_lifecycle.reconcile_live_dispatches (arg 0) (arg 1)
   | "pendingAgentNotifications" -> Agent_lifecycle.pending_agent_notifications (arg 0)
   | "recordAgentBackgroundNotification" -> Agent_lifecycle.record_background_notification (arg 0) (arg 1)
   | "releaseAgentBackgroundNotification" ->

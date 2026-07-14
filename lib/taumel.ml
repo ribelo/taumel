@@ -2,6 +2,7 @@ module Agents = Agents
 module Agents_codec = Agents_codec
 module Agent_routing = Agent_routing
 module Agent_wait = Agent_wait
+module Agent_registry = Agent_registry
 module Capability_profile = Capability_profile
 module Child_session = Child_session
 module Command_plan = Command_plan

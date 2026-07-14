@@ -574,14 +574,20 @@ function buildNotificationBlock(message: unknown, options: unknown, theme: unkno
   if (content === "") return undefined;
   const expanded = expandedFromOptions(options);
   const execMatch = /^Command session ([0-9]+) has finished\./.exec(content);
-  const agentMatch = /^Agent run (\S+) for (\S+) \((\S+)\) has finished\./.exec(content);
+  let agent: ToolRenderFields | undefined;
+  try {
+    const value = JSON.parse(content);
+    if (isToolRenderFields(value) && value.event === "agent_completion") agent = value;
+  } catch {
+    agent = undefined;
+  }
   const name = execMatch !== null
     ? "exec_completion"
-    : agentMatch !== null ? "agent_completion" : "notification";
+    : agent !== undefined ? "agent_completion" : "notification";
   const subject = execMatch !== null
     ? `session ${execMatch[1]} ready`
-    : agentMatch !== null
-      ? `${agentMatch[2]} · ${agentMatch[3]} · ${agentMatch[1]} ready`
+    : agent !== undefined
+      ? `${stringFieldOrUndefined(agent, "agent_id")} · ${stringFieldOrUndefined(agent, "kind")} · ${stringFieldOrUndefined(agent, "run_id")} ready`
       : "ready";
 
   return {

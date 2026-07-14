@@ -48,6 +48,7 @@ import {
   type OpenAiUsageHostParams,
 } from "./bridge-contracts.ts";
 import {
+  agentErrorToolResult,
   errorToolResult,
   hostToolResult,
   preparedAction,
@@ -714,6 +715,9 @@ export async function executeTool(
 ) {
   const parsed = parseToolParams(name, rawParams);
   if (!parsed.ok) {
+    if (["agent_spawn", "finder", "oracle", "agent_send", "agent_wait", "agent_list", "agent_close"].includes(name)) {
+      return agentErrorToolResult(core, "invalid_arguments", parsed.error);
+    }
     return errorToolResult(core, parsed.error, { ok: false, error: parsed.error });
   }
   if (name === "view_media" && !contextModelSupportsImages(ctx)) {
@@ -721,11 +725,45 @@ export async function executeTool(
     return errorToolResult(core, error, { ok: false, error, modelSupportsImages: false });
   }
   const agentTool = name === "agent_spawn" || name === "finder" || name === "oracle";
+  if (name === "agent_list") {
+    const prefix = `${childSessionCacheKeyScopeFromContext(ctx)}\0`;
+    const liveAgentIds = [...childSessions.keys()]
+      .filter((key) => key.startsWith(prefix))
+      .map((key) => key.slice(prefix.length));
+    try {
+      core.call("reconcileLiveAgentDispatches", [{ live_agent_ids: liveAgentIds }, ctx]);
+    } catch (error) {
+      return agentErrorToolResult(core, "persistence_failed", error instanceof Error ? error.message : String(error));
+    }
+  }
   const prepareCtx = agentTool && typeof pi.getActiveTools === "function"
     ? contextWithOverrides(ctx, { activeTools: pi.getActiveTools() })
     : ctx;
-  const prepared = preparedAction(core, name, parsed.params, prepareCtx);
+  let prepared;
+  try {
+    prepared = preparedAction(core, name, parsed.params, prepareCtx);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (["agent_spawn", "finder", "oracle", "agent_send", "agent_wait", "agent_list", "agent_close"].includes(name)) {
+      return agentErrorToolResult(core, "persistence_failed", message);
+    }
+    throw error;
+  }
   if (!prepared.ok) {
+    if (["agent_spawn", "finder", "oracle", "agent_send", "agent_wait", "agent_list", "agent_close"].includes(name)) {
+      const message = prepared.error;
+      const code = /unknown run|not owned.*run/.test(message) ? "run_not_found"
+        : /unknown agent|not owned.*agent|closing/.test(message) ? "agent_not_found"
+        : /64 agents|namespace is exhausted/.test(message) ? "agent_limit_reached"
+        : /routing|model|thinking|authentication/.test(message) ? "routing_unavailable"
+        : /workspace/.test(message) ? "workspace_unavailable"
+        : /state is unavailable/.test(message) ? "persistence_failed"
+        : "internal_error";
+      const safeMessage = code === "run_not_found" ? "run not found"
+        : code === "agent_not_found" ? "agent not found"
+        : message;
+      return agentErrorToolResult(core, code, safeMessage);
+    }
     return errorToolResult(core, prepared.error, { ...prepared });
   }
   switch (prepared.action) {
