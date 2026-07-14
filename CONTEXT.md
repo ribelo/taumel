@@ -167,6 +167,18 @@ The side-effect authority within which tools execute, including sandbox,
 approval, network, and no-sandbox constraints.
 _Avoid_: Tool surface, active tools
 
+**Agent approval request**:
+A request attributed to an agent handle for user authorization of one concrete
+side effect outside the agent's current permission envelope, presented by the Pi
+host without involving either the parent or child model.
+_Avoid_: Agent prompt, parent-agent request, implicit permission, generic confirmation
+
+**Harness approval coordinator**:
+The Taumel-owned bridge that serializes top-level and agent approval requests
+through the loaded session's Pi-host approval UI without involving a model or
+giving a child session direct UI ownership.
+_Avoid_: Agent approval broker, parent agent, child UI, approval model
+
 **Requested path**:
 The pathname supplied by a tool caller, retained for user-facing evidence and
 diagnostics even when it names a filesystem location through an alias.
