@@ -92,9 +92,36 @@ patch parsing stay separate from each other and from execution.
 - **sandbox-tl01** (ubiquitous): The system shall expose `exec_command`, `write_stdin`, and provider-appropriate mutation tools through Taumel-owned wrappers.
 - **sandbox-tl02** (ubiquitous): The system shall disable, hide, or wrap Pi built-in `bash`, `write`, and `edit` so filesystem mutation cannot bypass the gateway.
 - **sandbox-tl03** (event-driven): When the provider is OpenAI or OpenAI-Codex, the system shall route mutation through `apply_patch`; for other providers it shall route through sandboxed `edit` and `write` wrappers.
-- **sandbox-tl04** (ubiquitous): The system shall implement `apply_patch` as an object-shaped Pi tool contract whose `input` or `patch` field carries the patch body, while the patch engine accepts Tau-tolerant forms (heredocs, missing end markers, git and unified diffs, rename/add/delete, loose hunks, CRLF preservation, fallback context matching).
+- **sandbox-tl04** (ubiquitous): The system shall implement `apply_patch` as an object-shaped Pi function tool contract with exactly one required model-facing parameter named `input`, whose string value carries the complete patch body, while the patch engine accepts Tau-tolerant forms (heredocs, missing end markers, git and unified diffs, rename/add/delete, loose hunks, CRLF preservation, fallback context matching).
 - **sandbox-tl05** (ubiquitous): The system shall enforce the same filesystem policy boundary for `apply_patch`, `edit`, and `write` as for shell execution.
 - **sandbox-tl06** (event-driven): When the host adapter cannot service `write_stdin`, or the session id is missing, the system shall report the unavailable or invalid-session result rather than execute.
+- **sandbox-tl07** (ubiquitous): The system shall describe `apply_patch` to the model as `Apply a patch to add, update, move, or delete one or more workspace files. Use the *** Begin Patch format.`
+- **sandbox-tl08** (ubiquitous): The system shall describe `apply_patch.input` to the model as `The complete patch in *** Begin Patch format.`
+- **sandbox-tl09** (ubiquitous): The system shall reject an `apply_patch` call that omits `input` or supplies any unknown parameter through its closed TypeBox schema.
+- **sandbox-tl10** (ubiquitous): The system shall present `apply_patch` in the system tool catalog with the prompt snippet `Add, update, move, or delete workspace files with one patch.`
+- **sandbox-tl11** (ubiquitous): The system shall describe `read` to the model as `Read a UTF-8 text file. Output is line-numbered and truncated to 2000 lines, 50KB total, and 2000 characters per line.`
+- **sandbox-tl12** (ubiquitous): The system shall describe `read.path` to the model as `Path to the UTF-8 text file to read, relative to the current working directory or absolute.`
+- **sandbox-tl13** (ubiquitous): The system shall describe `read.offset` to the model as `1-indexed line at which to start. Omit to start at line 1; a negative value starts that many lines from the end of the file.`
+- **sandbox-tl14** (ubiquitous): The system shall describe `read.limit` to the model as `Maximum number of lines to return. Omit to read from offset to the end of the file, subject to the tool's truncation limits.`
+- **sandbox-tl15** (ubiquitous): The system shall require `read.path` to be a non-empty string, allow optional integer `offset` and optional integer `limit` no smaller than 1, and reject unknown parameters through its closed TypeBox schema.
+- **sandbox-tl16** (ubiquitous): The system shall present `read` in the system tool catalog with the prompt snippet `Read a line-numbered UTF-8 text file.` and no additional `read`-specific prompt guidance.
+- **sandbox-tl17** (ubiquitous): The system shall describe `view_media` to the model as `View a PNG, JPEG, GIF, or WebP image.`
+- **sandbox-tl18** (ubiquitous): The system shall describe `view_media.path` to the model as `Path to the image, relative to the current working directory or absolute.`
+- **sandbox-tl19** (ubiquitous): The system shall require `view_media.path` to be a non-empty string and reject unknown parameters through its closed TypeBox schema.
+- **sandbox-tl20** (ubiquitous): The system shall present `view_media` in the system tool catalog with the prompt snippet `View an image file.` and no additional `view_media`-specific prompt guidance.
+- **sandbox-tl21** (ubiquitous): The system shall describe `edit` to the model as `Edit an existing text file with one or more exact text replacements.`
+- **sandbox-tl22** (ubiquitous): The system shall describe `edit.path` to the model as `Path to the existing UTF-8 text file to edit, relative to the current working directory or absolute.`
+- **sandbox-tl23** (ubiquitous): The system shall describe `edit.edits` to the model as `One or more non-overlapping replacements, all matched against the original file.`
+- **sandbox-tl24** (ubiquitous): The system shall describe `edit.edits[].oldText` to the model as `Exact, non-empty text to replace. It must occur exactly once in the original file.`
+- **sandbox-tl25** (ubiquitous): The system shall describe `edit.edits[].newText` to the model as `Replacement text. Use an empty string to delete oldText.`
+- **sandbox-tl26** (ubiquitous): The system shall require `edit.path` and each `edit.edits[].oldText` to be non-empty strings, require at least one `edit.edits` entry, allow each `edit.edits[].newText` to be any string, and reject unknown parameters at every object level through its closed TypeBox schemas.
+- **sandbox-tl27** (ubiquitous): The system shall present `edit` in the system tool catalog with the prompt snippet `Make one or more exact replacements in a text file.` and no additional `edit`-specific prompt guidance.
+- **sandbox-tl28** (ubiquitous): The system shall describe `write` to the model as `Create, overwrite, or append to a UTF-8 text file. Parent directories are created as needed.`
+- **sandbox-tl29** (ubiquitous): The system shall describe `write.path` to the model as `Path to the file, relative to the current working directory or absolute.`
+- **sandbox-tl30** (ubiquitous): The system shall describe `write.content` to the model as `UTF-8 text to write exactly as provided.`
+- **sandbox-tl31** (ubiquitous): The system shall describe `write.mode` to the model as `Write behavior: overwrite (default) replaces the file; append adds content at the end without inserting a newline.`
+- **sandbox-tl32** (ubiquitous): The system shall require `write.path` to be a non-empty string, allow `write.content` to be any string, allow optional `write.mode` values `overwrite` and `append`, and reject unknown parameters through its closed TypeBox schema.
+- **sandbox-tl33** (ubiquitous): The system shall present `write` in the system tool catalog with the prompt snippet `Create, overwrite, or append to a text file.` and no additional `write`-specific prompt guidance.
 
 ### no-sandbox escape hatch
 

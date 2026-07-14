@@ -99,6 +99,16 @@ holds.
 - **cron-tl02** (event-driven): When the model calls `cron_list`, the system shall return the cron master switch state and each task's `id`, schedule, `mode`, per-task enabled flag, recurring flag, raw `nextDue`, and human-readable next-due time, and shall make disabled stored tasks explicit so the model tells the user to run `/cron enable` rather than treating tasks as gone.
 - **cron-tl03** (event-driven): When the model calls `cron_delete` with an `id`, the system shall remove that task.
 - **cron-tl04** (ubiquitous): The system shall instruct the model, on create, to tell the user the task `id` and that the user manages crons through `/cron`.
+- **cron-tl05** (ubiquitous): The system shall describe `cron_create` to the model as `Schedule a prompt in this Pi session with a standard 5-field cron expression evaluated in the host’s local timezone. Tasks run only while the session is open.`
+- **cron-tl06** (ubiquitous): The system shall describe `cron_create.cron` to the model as `Standard 5-field cron expression: minute, hour, day of month, month, and day of week. Evaluated in the host’s local timezone.`
+- **cron-tl07** (ubiquitous): The system shall describe `cron_create.prompt` to the model as `Prompt delivered to the main session when the task fires. With goal = true, it becomes the goal objective.`
+- **cron-tl08** (ubiquitous): The system shall describe `cron_create.recurring` to the model as `Whether the task repeats. Defaults to true; false fires once and deletes the task after delivery.`
+- **cron-tl09** (ubiquitous): The system shall describe `cron_create.goal` to the model as `Whether to deliver the prompt as a goal instead of a message. Defaults to false; a goal-mode fire waits while the session’s goal slot is occupied.`
+- **cron-tl10** (ubiquitous): The system shall present `cron_create` in the system tool catalog with the prompt snippet `Create a recurring or one-shot cron task. Tell the user the returned task id and that /cron manages crons.`
+- **cron-tl11** (ubiquitous): The system shall describe `cron_list` to the model as `List this Pi session’s cron tasks and scheduling state.` and present it in the system tool catalog with the prompt snippet `List cron tasks.`
+- **cron-tl12** (ubiquitous): The system shall describe `cron_delete` to the model as `Delete a scheduled cron task by ID.`
+- **cron-tl13** (ubiquitous): The system shall describe `cron_delete.id` to the model as `Eight-character lowercase hexadecimal task ID returned by cron_create or cron_list.`
+- **cron-tl14** (ubiquitous): The system shall present `cron_delete` in the system tool catalog with the prompt snippet `Delete a cron task.`
 
 ### User command
 

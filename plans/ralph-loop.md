@@ -18,6 +18,9 @@ infrastructure with goal and reaches goal only through goal's public API.
 
 - **ralph-wf01** (event-driven): When the user runs `/ralph`, the system shall provide a start, resume, pause, stop/finish, archive/cleanup, and list workflow.
 - **ralph-ct01** (event-driven): When a child session runs `ralph_continue` or `ralph_finish`, the system shall accept it only from the owned child session.
+- **ralph-tl01** (ubiquitous): The system shall describe `ralph_continue` to the model as `Advance Ralph session by one iteration.` and present it in the system tool catalog with the prompt snippet `Advance Ralph session to the next iteration.`
+- **ralph-tl02** (ubiquitous): The system shall describe `ralph_finish` to the model as `Finish Ralph session.` and present it in the system tool catalog with the prompt snippet `Finish Ralph session.`
+- **ralph-tl03** (ubiquitous): The system shall describe the shared `ralph_continue.task_id` and `ralph_finish.task_id` parameter to the model as `Ralph task ID from the Ralph session prompt.`
 - **ralph-cm01** (event-driven): When a controller command runs, the system shall accept it only from the controller session.
 - **ralph-st01** (ubiquitous): The system shall keep persisted state Ralph-only and keep prompt construction, state transitions, and child-session dispatch as separate concerns.
 - **ralph-it01** (ubiquitous): The system shall track iteration count, max-iteration controls, reflection checkpoints, and user-facing metrics.
