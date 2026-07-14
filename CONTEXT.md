@@ -61,6 +61,39 @@ and identified independently so its eventual result can be awaited. Generic
 subagents and specialist tools both produce agent runs.
 _Avoid_: Agent identity, synchronous tool call
 
+**Agent turn**:
+One assistant response emitted within an agent run, whether it requests tools or
+provides the final answer. Turn counting starts again for each run.
+_Avoid_: Agent run, conversation entry, identity-wide turn
+
+**Agent task description**:
+A short, model-supplied, user-facing label that identifies the latest delegated
+work in compact displays without reproducing the full instruction or becoming
+part of the child's instruction.
+_Avoid_: Agent prompt, generated summary, clipped instruction
+
+**Agent instruction**:
+A parent-supplied message accepted for an agent run, including its initial task,
+steering, or resumed continuation. The latest instruction is the most recently
+accepted such message for that run.
+_Avoid_: Agent turn, tool result, unaccepted message
+
+**Agent activity**:
+An observable sign that an agent run is advancing: an assistant turn, child tool
+start, child tool progress, or child tool result.
+_Avoid_: Parent instruction, lifecycle status, elapsed wall time
+
+**Agent run status**:
+The authoritative lifecycle state of a run: running, suspended, completed,
+failed, cancelled, or lost. It records what may happen to the run, independently
+of its currently observable activity phase.
+_Avoid_: Activity state, health estimate, task description
+
+**Activity state**:
+The observable execution phase of an agent run, separate from the run's
+authoritative lifecycle status.
+_Avoid_: Run status, latency estimate, health guess
+
 **Agent interruption**:
 An explicit parent action that stops an agent run's current execution without
 closing its identity. A replacement message may continue the same run.
