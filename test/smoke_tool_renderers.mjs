@@ -213,6 +213,35 @@ for (const name of ["agent_spawn", "finder", "oracle", "agent_send", "agent_wait
   );
 }
 
+// agent-rn07: Pi retains the component returned for the pending call and stacks
+// the result component beneath it. Settling must therefore hide the original
+// component, not merely return an empty component from a later renderCall call.
+{
+  const renderers = renderersForTool("agent_close");
+  const state = {};
+  const args = { agent_id: "agent-zmrk" };
+  const call = renderers.renderCall(args, theme, { args, state, isPartial: true });
+  const result = renderers.renderResult(
+    { content: [{ type: "text", text: "closed" }], details: { ok: true, agent_id: "agent-zmrk", status: "closed" } },
+    { expanded: false, isPartial: false },
+    theme,
+    { args, state, isPartial: false, isError: false },
+  );
+  const stacked = [...call.render(120), ...result.render(120)].join("\n");
+  assert((stacked.match(/•/g) ?? []).length === 1, `settled agent_close must occupy one visible tool slot: ${stacked}`);
+  assert(/^• agent_close · agent-zmrk · closed$/.test(stacked), `agent_close compact slot wrong: ${stacked}`);
+  const expanded = renderText(renderers.renderResult(
+    { content: [{ type: "text", text: "closed" }], details: { ok: true, agent_id: "agent-zmrk", status: "closed" } },
+    { expanded: true, isPartial: false },
+    theme,
+    { args },
+  ));
+  assert(expanded.includes("Agent: agent-zmrk"), `expanded agent_close must identify the agent: ${expanded}`);
+  assert(expanded.includes("Status: closed"), `expanded agent_close must show closed status: ${expanded}`);
+  assert(expanded.includes("Permanent closure: confirmed"), `expanded agent_close must confirm permanent closure: ${expanded}`);
+  assert(!expanded.includes("Kind: generic"), `expanded agent_close must not invent a generic kind: ${expanded}`);
+}
+
 const spawnedAgent = renderText(renderersForTool("agent_spawn").renderResult(
   resultFor("agent_spawn"),
   { expanded: false, isPartial: false },

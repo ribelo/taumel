@@ -45,6 +45,30 @@ function argsFromContext(context: unknown): ToolRenderFields {
   return isToolRenderFields(context) && isToolRenderFields(context["args"]) ? context["args"] : {};
 }
 
+const agentToolNames = ["agent_spawn", "finder", "oracle", "agent_send", "agent_wait", "agent_list", "agent_close"];
+const agentResultRenderedKey = "taumelAgentResultRendered";
+type ToolRenderState = { [key: string]: unknown };
+
+function agentRenderState(name: string, context: unknown): ToolRenderState | undefined {
+  if (!agentToolNames.includes(name) || !isToolRenderFields(context)) return undefined;
+  const state = context["state"];
+  return isToolRenderFields(state) ? state as ToolRenderState : undefined;
+}
+
+function hideAfterAgentResult(
+  component: { render(width: number): string[]; invalidate(): void },
+  state: ToolRenderState,
+): { render(width: number): string[]; invalidate(): void } {
+  return {
+    render(width: number) {
+      return state[agentResultRenderedKey] === true ? [] : component.render(width);
+    },
+    invalidate() {
+      component.invalidate();
+    },
+  };
+}
+
 function compactJson(value: unknown): string {
   try {
     return JSON.stringify(value, null, 2);
@@ -723,9 +747,13 @@ export function renderersForTool(name: string) {
       const callArgs = isToolRenderFields(args) ? args : {};
       // In-flight call: yellow dot header + dim (progress), header-only, clipped to one line.
       const header = headerSpec(name, subjectFromArgs(name, callArgs), "warning", theme, themeFg(theme, "dim", `(${progressText(name)})`));
-      return renderBlock({ header, body: undefined }, false);
+      const component = renderBlock({ header, body: undefined }, false);
+      const state = agentRenderState(name, context);
+      return state === undefined ? component : hideAfterAgentResult(component, state);
     },
     renderResult(result: unknown, options: unknown, theme: unknown, context: unknown) {
+      const state = agentRenderState(name, context);
+      if (state !== undefined) state[agentResultRenderedKey] = true;
       const expanded = expandedFromOptions(options);
       if (isToolRenderFields(options) && options["isPartial"] === true) {
         const args = argsFromContext(context);

@@ -346,6 +346,8 @@ function buildAgent(name: string, result: unknown, options: unknown, theme: unkn
     subject = [agentId, stringFieldOrUndefined(args, "description")].filter((part) => part !== undefined && part !== "").join(" · ");
   } else if (name === "agent_send") {
     subject = [agentId, stringFieldOrUndefined(args, "description")].filter((part) => part !== undefined && part !== "").join(" · ");
+  } else if (name === "agent_close") {
+    subject = [agentId, status].filter((part) => part !== undefined && part !== "").join(" · ");
   } else {
     subject = [agentId, runId, kind, status].filter((part) => part !== "").join(" · ");
   }
@@ -364,6 +366,10 @@ function buildAgent(name: string, result: unknown, options: unknown, theme: unkn
       entries.push(...labeledText("Response", stringFieldOrUndefined(run, "output"), theme));
       entries.push(...labeledText("Partial response", stringFieldOrUndefined(run, "partial_output"), theme));
     }
+  } else if (name === "agent_close") {
+    entries.push(...labeled("Agent", agentId, theme));
+    entries.push(...labeled("Status", status, theme));
+    entries.push(...labeled("Permanent closure", "confirmed", theme));
   } else {
     entries.push(...agentResultEntries({
       agent_id: agentId,
