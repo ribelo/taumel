@@ -25,7 +25,7 @@ type ComposerUi = {
 };
 type ComposerContext = { hasUI?: unknown; ui?: unknown; cwd?: unknown };
 
-const EVERFOREST_BG1 = "\x1b[48;2;46;56;60m";
+const COMPOSER_BACKGROUND = "\x1b[48;2;42;50;54m";
 const ANSI_PATTERN = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
 const SKILL_TOKEN_PATTERN = /(^|[\s])\$([a-z0-9-]*)$/;
 const RESOLVABLE_SKILL_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
@@ -51,8 +51,8 @@ function isHorizontalBorderLine(line: string): boolean {
 
 function withBackground(line: string, width: number): string {
   const padded = line + " ".repeat(Math.max(0, width - visibleWidth(line)));
-  const patched = padded.replaceAll("\x1b[0m", `\x1b[0m${EVERFOREST_BG1}`);
-  return `${EVERFOREST_BG1}${patched}\x1b[0m`;
+  const patched = padded.replaceAll("\x1b[0m", `\x1b[0m${COMPOSER_BACKGROUND}`);
+  return `${COMPOSER_BACKGROUND}${patched}\x1b[0m`;
 }
 
 function skillTokenPrefix(textBeforeCursor: string): string | null {
