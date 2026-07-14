@@ -72,6 +72,25 @@ work in compact displays without reproducing the full instruction or becoming
 part of the child's instruction.
 _Avoid_: Agent prompt, generated summary, clipped instruction
 
+**Agent presentation**:
+The user-facing representation of an agent tool invocation or agent completion
+notification, independent of the model-facing tool contract.
+_Avoid_: Model-facing result, agent protocol, tool implementation
+
+**Compact agent presentation**:
+The single-line agent presentation shown in the ordinary collapsed timeline.
+_Avoid_: Expanded agent presentation, model-facing summary
+
+**Expanded agent presentation**:
+The human-readable agent presentation shown when the user expands a timeline
+item.
+_Avoid_: Raw tool result, protocol serialization, compact agent presentation
+
+**Agent completion notification**:
+The asynchronous signal that an agent run has reached a terminal state and can
+be retrieved explicitly.
+_Avoid_: Agent result, readiness status, agent wait
+
 **Agent instruction**:
 A parent-supplied message accepted for an agent run, including its initial task,
 steering, or resumed continuation. The latest instruction is the most recently
