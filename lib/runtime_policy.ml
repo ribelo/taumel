@@ -13,7 +13,7 @@ let fallback_sandbox ~workspace_roots ~isolated_child =
     Sandbox.filesystem_mode = Sandbox.Workspace_write;
     workspace_roots;
     network_mode = Sandbox.Network_disabled;
-    approval_policy = Sandbox.On_request;
+    approval_policy = Sandbox.Never;
     no_sandbox = false;
     isolated_child;
   }

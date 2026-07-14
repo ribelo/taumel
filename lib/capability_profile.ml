@@ -30,7 +30,7 @@ let default =
     model_id = "inherit";
     thinking_level = "medium";
     sandbox_preset = Workspace_write;
-    approval_policy = On_request;
+    approval_policy = Never;
     tools = All;
     no_sandbox_allowed = false;
   }

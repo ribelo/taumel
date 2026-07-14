@@ -7,7 +7,8 @@ import { taumelGlobalSettingsPath } from "./global-settings.ts";
 import { cwdFromContext, isProjectTrusted, liveToolNames, projectSettingsPath, writeFileAtomically } from "./util.ts";
 import { decodeSkillListResult } from "./bridge-contracts.ts";
 import { decodeVisibilityListResult, decodeVisibilityRowsResult, decodeVisibilitySavePlan, decodeVisibilityToggleResult, decodeVisibilityWarningsResult, type VisibilityPrompt, type VisibilityRowsResult } from "./bridge-contracts.ts";
-import { toolContracts, toolNames } from "./tool-contracts.ts";
+import { toolNames } from "./tool-contracts.ts";
+import { toolContracts } from "./tool-contract-catalog.ts";
 import {
   bold,
   commandResult,

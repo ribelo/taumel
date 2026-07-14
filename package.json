@@ -16,6 +16,7 @@
     "smoke:path-authorization": "nix develop -c node test/smoke_path_authorization.mjs",
     "smoke:view-media-resolution": "nix develop -c node test/smoke_view_media_resolution.mjs",
     "smoke:tool-contracts": "bun test/smoke_tool_contracts.mjs",
+    "smoke:tool-metadata-requirements": "bun test/smoke_tool_metadata_requirements.mjs",
     "smoke:agent-contracts": "bun test/smoke_agent_contracts.mjs",
     "smoke:agent-lifecycle": "nix develop -c node test/smoke_agent_lifecycle.mjs",
     "smoke:agent-runs-manager": "bun test/smoke_agent_runs_manager.mjs",
@@ -38,7 +39,7 @@
     "smoke:util": "bun test/smoke_util.mjs",
     "check:typed-boundaries": "node test/check_typed_boundaries.mjs",
     "check:source-file-sizes": "node test/check_source_file_sizes.mjs",
-    "gate": "npm run typecheck && npm run check:typed-boundaries && npm run check:source-file-sizes && npm run build:ocaml && npm run test:ocaml && npm run smoke:artifact && npm run smoke:path-authorization && npm run smoke:view-media-resolution && npm run smoke:tool-contracts && npm run smoke:agent-contracts && npm run smoke:agent-lifecycle && npm run smoke:agent-runs-manager && npm run smoke:agent-async && npm run smoke:exa-contracts && npm run smoke:cron-loop && npm run smoke:cron-persistence && npm run smoke:compaction-model && npm run smoke:tool-renderers && npm run smoke:exec-notifications && npm run smoke:prepared-exec-contract && npm run smoke:exec-pty && npm run smoke:gateway-registration && npm run smoke:global-settings && npm run smoke:visibility-manager && npm run smoke:goal-commands && npm run smoke:usage-inspection && npm run smoke:bridge-contracts && npm run smoke:thinking-shortcuts && npm run smoke:util"
+    "gate": "npm run typecheck && npm run check:typed-boundaries && npm run check:source-file-sizes && npm run build:ocaml && npm run test:ocaml && npm run smoke:artifact && npm run smoke:path-authorization && npm run smoke:view-media-resolution && npm run smoke:tool-contracts && npm run smoke:tool-metadata-requirements && npm run smoke:agent-contracts && npm run smoke:agent-lifecycle && npm run smoke:agent-runs-manager && npm run smoke:agent-async && npm run smoke:exa-contracts && npm run smoke:cron-loop && npm run smoke:cron-persistence && npm run smoke:compaction-model && npm run smoke:tool-renderers && npm run smoke:exec-notifications && npm run smoke:prepared-exec-contract && npm run smoke:exec-pty && npm run smoke:gateway-registration && npm run smoke:global-settings && npm run smoke:visibility-manager && npm run smoke:goal-commands && npm run smoke:usage-inspection && npm run smoke:bridge-contracts && npm run smoke:thinking-shortcuts && npm run smoke:util"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.79.9",

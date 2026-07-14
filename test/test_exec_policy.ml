@@ -306,24 +306,24 @@ let test_exec_policy_prompt_under_never_allows_but_boundaries_deny () =
   | Sandbox.Deny _ -> ()
   | _ -> failwith "read-only write under never: expected denial")
 
-let test_fresh_full_access_dangerous_prompts () =
+let test_fresh_full_access_never_approval () =
   let active =
     Permissions.resolve_active ~host_sandbox_preset:None ~host_network_mode:None
       ~host_no_sandbox:None ~session_isolated_child:false Permissions.Missing
   in
-  assert_bool "fresh session is on-request full access"
+  assert_bool "fresh session is never-approval full access"
     (active.profile.sandbox_preset = Capability.Danger_full_access
-    && active.profile.approval_policy = Capability.On_request);
+    && active.profile.approval_policy = Capability.Never);
   let context =
     Exec_policy.{
-      approval_never = false;
-      approval_prompts_available = true;
+      approval_never = true;
+      approval_prompts_available = false;
       sandbox_restricted = false;
       sandbox_disabled = true;
       requests_sandbox_override = false;
     }
   in
-  assert_decision "fresh rm -rf prompts" Exec_policy.Prompt
+  assert_decision "fresh rm -rf allows under never" Exec_policy.Allow
     (Exec_policy.decision_for_unmatched_command context [ "rm"; "-rf"; "target" ])
 
 let () =
@@ -337,5 +337,5 @@ let () =
   test_unsupported_defers_to_sandbox ();
   test_approval_rank_ordering ();
   test_exec_policy_prompt_under_never_allows_but_boundaries_deny ();
-  test_fresh_full_access_dangerous_prompts ();
+  test_fresh_full_access_never_approval ();
   test_empty_policy_fallback ()

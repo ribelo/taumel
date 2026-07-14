@@ -37,6 +37,12 @@ expectOk("web_search_exa", {
   contents: { highlights: true, maxAgeHours: 24 },
 });
 expectError("web_search_exa", { query: "docs", context: true }, "additional properties");
+expectError("web_search_exa", { query: "docs", startCrawlDate: "2020-01-01" }, "additional properties");
+expectError("web_search_exa", { query: "docs", endCrawlDate: "2020-01-01" }, "additional properties");
+assert(
+  parseToolParams("web_search_exa", { query: "docs", contents: { highlights: { numSentences: 2 } } }).ok === false,
+  "web_search_exa should reject deprecated highlights.numSentences",
+);
 expectError("web_search_exa", { query: "docs", contents: { livecrawl: "always" } }, "additional properties");
 
 expectOk("crawling_exa", { urls: ["https://exa.ai"], text: true, maxAgeHours: 0 });

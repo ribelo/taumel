@@ -3,336 +3,711 @@ import Type from "typebox";
 
 const stringArray = Type.Array(Type.String());
 
-const ExaSearchTypeSchema = Type.Union([
-  Type.Literal("instant"),
-  Type.Literal("fast"),
-  Type.Literal("auto"),
-  Type.Literal("deep-lite"),
-  Type.Literal("deep"),
-  Type.Literal("deep-reasoning"),
-]);
+export const ExaSearchTypeSchema = Type.Union(
+  [
+    Type.Literal("instant"),
+    Type.Literal("fast"),
+    Type.Literal("auto"),
+    Type.Literal("deep-lite"),
+    Type.Literal("deep"),
+    Type.Literal("deep-reasoning"),
+  ],
+  { description: "Search mode controlling latency and depth. Omit to let Exa choose." },
+);
 
-const ExaComplianceSchema = Type.Literal("hipaa");
+export const ExaComplianceSchema = Type.Literal("hipaa", {
+  description: "Compliance mode; currently only hipaa.",
+});
 
-const ExaJsonObjectSchema = Type.Record(Type.String(), Type.Unknown());
-
-const ExaTextOptionsSchema = Type.Object(
+export const ExaTextOptionsSchema = Type.Object(
   {
-    maxCharacters: Type.Optional(Type.Integer({ minimum: 1 })),
+    maxCharacters: Type.Optional(
+      Type.Integer({
+        minimum: 1,
+        description: "Maximum page-text characters to return.",
+      }),
+    ),
   },
   { $id: "ExaTextOptions", additionalProperties: false },
 );
 
-const ExaHighlightsOptionsSchema = Type.Object(
+export const ExaHighlightsOptionsSchema = Type.Object(
   {
-    query: Type.Optional(Type.String({ minLength: 1 })),
-    numSentences: Type.Optional(Type.Integer({ minimum: 1, maximum: 10 })),
-    highlightsPerUrl: Type.Optional(Type.Integer({ minimum: 1, maximum: 10 })),
+    query: Type.Optional(
+      Type.String({
+        minLength: 1,
+        description:
+          "Query used to select relevant highlights; defaults to the surrounding search query when available.",
+      }),
+    ),
+    maxCharacters: Type.Optional(
+      Type.Integer({
+        minimum: 1,
+        description: "Maximum total highlight characters to return.",
+      }),
+    ),
   },
   { $id: "ExaHighlightsOptions", additionalProperties: false },
 );
 
-const ExaSummaryOptionsSchema = Type.Object(
+export const ExaSummaryOptionsSchema = Type.Object(
   {
-    query: Type.Optional(Type.String({ minLength: 1 })),
+    query: Type.Optional(
+      Type.String({
+        minLength: 1,
+        description: "Question or focus for the generated summary.",
+      }),
+    ),
   },
-  { $id: "ExaSummaryOptions", additionalProperties: false },
+  {
+    $id: "ExaSummaryOptions",
+    additionalProperties: false,
+    description: "Request a generated summary for each result.",
+  },
 );
 
-const ExaContentOptionsSchema = Type.Object(
+export const ExaContentOptionsSchema = Type.Object(
   {
-    text: Type.Optional(Type.Union([Type.Boolean(), ExaTextOptionsSchema])),
-    highlights: Type.Optional(Type.Union([Type.Boolean(), ExaHighlightsOptionsSchema])),
+    text: Type.Optional(
+      Type.Union([Type.Boolean(), ExaTextOptionsSchema], {
+        description: "Whether to return page text. Use an options object to limit returned characters.",
+      }),
+    ),
+    highlights: Type.Optional(
+      Type.Union([Type.Boolean(), ExaHighlightsOptionsSchema], {
+        description:
+          "Whether to return relevant page excerpts. Use an options object to control excerpt selection.",
+      }),
+    ),
     summary: Type.Optional(ExaSummaryOptionsSchema),
-    maxAgeHours: Type.Optional(Type.Integer({ minimum: -1, maximum: 720 })),
-    subpages: Type.Optional(Type.Integer({ minimum: 0, maximum: 100 })),
-    subpageTarget: Type.Optional(Type.Union([Type.String({ minLength: 1, maxLength: 100 }), stringArray])),
+    maxAgeHours: Type.Optional(
+      Type.Integer({
+        minimum: -1,
+        maximum: 720,
+        description:
+          "Maximum cached-content age in hours: positive values accept cache younger than the limit, 0 fetches fresh content, -1 uses cache only, and omission uses fallback fetching.",
+      }),
+    ),
+    subpages: Type.Optional(
+      Type.Integer({
+        minimum: 0,
+        maximum: 100,
+        description: "Number of linked subpages to crawl per result. Defaults to 0; accepts 0–100.",
+      }),
+    ),
+    subpageTarget: Type.Optional(
+      Type.Union([Type.String({ minLength: 1, maxLength: 100 }), stringArray], {
+        description: "Keyword or keywords used to prioritize which subpages to crawl.",
+      }),
+    ),
   },
-  { $id: "ExaContentOptions", additionalProperties: false },
+  {
+    $id: "ExaContentOptions",
+    additionalProperties: false,
+    description: "Content extraction to include with each search result.",
+  },
 );
 
-const ExaRunIdSchema = Type.String({
-  minLength: 1,
-  maxLength: 200,
-  pattern: "^[A-Za-z0-9_.:-]+$",
-});
-
-const EditReplacementSchema = Type.Object(
+export const EditReplacementSchema = Type.Object(
   {
     oldText: Type.String({
-      description:
-        "Exact text for one targeted replacement. It must be unique in the original file and must not overlap with any other edits[].oldText in the same call.",
+      minLength: 1,
+      description: "Exact, non-empty text to replace. It must occur exactly once in the original file.",
     }),
     newText: Type.String({
-      description: "Replacement text for this targeted edit.",
+      description: "Replacement text. Use an empty string to delete oldText.",
     }),
   },
   { $id: "EditReplacement", additionalProperties: false },
 );
 
-const EmptyParamsSchema = Type.Object({}, { $id: "EmptyParams", additionalProperties: false });
+export const EmptyParamsSchema = Type.Object({}, { $id: "EmptyParams", additionalProperties: false });
 
-const ExecCommandParamsSchema = Type.Object(
+export const ExecCommandParamsSchema = Type.Object(
   {
     cmd: Type.String({ minLength: 1, pattern: "\\S", description: "Shell command to execute." }),
-    workdir: Type.Optional(Type.String({ description: "Working directory for the command." })),
+    workdir: Type.Optional(
+      Type.String({
+        description: "Working directory for the command. Omit to use the current turn working directory.",
+      }),
+    ),
     yield_time_ms: Type.Optional(
       Type.Number({
-        description: "How long to wait (in milliseconds) for output before yielding.",
+        description:
+          "Milliseconds to wait for output before yielding. Defaults to 10000; rounded to an integer; minimum 250; maximum 30000. Yielding leaves a live command running.",
       }),
     ),
-    max_output_tokens: Type.Optional(Type.Integer({ minimum: 0, description: "Maximum approximate tokens to return. Excess output will be truncated." })),
+    max_output_tokens: Type.Optional(
+      Type.Integer({
+        minimum: 0,
+        description:
+          "Approximate returned-output limit. Defaults to 10000 and truncates excess model-visible output without changing the command-output safety ceiling.",
+      }),
+    ),
     with_escalated_permissions: Type.Optional(
       Type.Boolean({
-        description: "Whether to request escalated permissions. Set to true if command needs to be run without sandbox restrictions",
+        description:
+          "When true, requests execution outside sandbox restrictions. May require approval or be denied.",
       }),
     ),
-    justification: Type.Optional(Type.String({ description: "Only set if with_escalated_permissions is true. 1-sentence explanation of why we want to run this command." })),
+    justification: Type.Optional(
+      Type.String({
+        description:
+          "One-sentence explanation of why escalated permissions are needed. Supply only when with_escalated_permissions is true.",
+      }),
+    ),
   },
   { $id: "ExecCommandParams", additionalProperties: false },
 );
 
-const WriteStdinParamsSchema = Type.Object(
+export const WriteStdinParamsSchema = Type.Object(
   {
-    session_id: Type.Integer(),
-    chars: Type.Optional(Type.String()),
-    yield_time_ms: Type.Optional(Type.Number()),
-    max_output_tokens: Type.Optional(Type.Integer({ minimum: 0, description: "Maximum approximate tokens to return. Excess output will be truncated." })),
+    session_id: Type.Integer({
+      description: "Exact session id returned by exec_command.",
+    }),
+    chars: Type.Optional(
+      Type.String({
+        description: "Characters sent verbatim. Omit or use an empty string to poll without writing.",
+      }),
+    ),
+    yield_time_ms: Type.Optional(
+      Type.Number({
+        description:
+          "Milliseconds to wait; yielding leaves the process running. Delta-mode writes and polls default to 250 and accept 250–30000. Empty status-mode waits default to 5000 and accept 5000–300000.",
+      }),
+    ),
+    max_output_tokens: Type.Optional(
+      Type.Integer({
+        minimum: 0,
+        description:
+          "Approximate returned-output limit. Defaults to 10000 and truncates excess model-visible output.",
+      }),
+    ),
     output_mode: Type.Optional(
       Type.Union([Type.Literal("delta"), Type.Literal("status")], {
         description:
-          "delta returns new process output; status drains output into the full log and returns only process status and suppression counts.",
+          "delta returns output to your context and permits interaction; status silently drains output during an empty-input passive wait. Omit to default to delta.",
       }),
     ),
   },
   { $id: "WriteStdinParams", additionalProperties: false },
 );
 
-const ApplyPatchParamsSchema = Type.Object(
+export const ApplyPatchParamsSchema = Type.Object(
   {
-    input: Type.Optional(Type.String()),
-    patch: Type.Optional(Type.String()),
+    input: Type.String({
+      minLength: 1,
+      description: "The complete patch in *** Begin Patch format.",
+    }),
   },
   { $id: "ApplyPatchParams", additionalProperties: false },
 );
 
-const WriteParamsSchema = Type.Object(
+export const WriteParamsSchema = Type.Object(
   {
-    path: Type.String({ description: "Path to the file to write (relative or absolute)" }),
-    content: Type.String({ description: "Content to write to the file" }),
+    path: Type.String({
+      minLength: 1,
+      description: "Path to the file, relative to the current working directory or absolute.",
+    }),
+    content: Type.String({ description: "UTF-8 text to write exactly as provided." }),
     mode: Type.Optional(
       Type.Union([Type.Literal("overwrite"), Type.Literal("append")], {
         description:
-          "Write mode. Defaults to overwrite. append adds content to the end of the file exactly as provided (no extra newline).",
+          "Write behavior: overwrite (default) replaces the file; append adds content at the end without inserting a newline.",
       }),
     ),
   },
   { $id: "WriteParams", additionalProperties: false },
 );
 
-const ReadParamsSchema = Type.Object(
+export const ReadParamsSchema = Type.Object(
   {
-    path: Type.String({ description: "Path to the text file to read (relative or absolute)" }),
+    path: Type.String({
+      minLength: 1,
+      description: "Path to the UTF-8 text file to read, relative to the current working directory or absolute.",
+    }),
     offset: Type.Optional(
       Type.Integer({
         description:
-          "Line number to start reading from (1-indexed). A negative value reads from the end of the file (tail).",
+          "1-indexed line at which to start. Omit to start at line 1; a negative value starts that many lines from the end of the file.",
       }),
     ),
-    limit: Type.Optional(Type.Integer({ minimum: 1, description: "Maximum number of lines to read" })),
+    limit: Type.Optional(
+      Type.Integer({
+        minimum: 1,
+        description:
+          "Maximum number of lines to return. Omit to read from offset to the end of the file, subject to the tool's truncation limits.",
+      }),
+    ),
   },
   { $id: "ReadParams", additionalProperties: false },
 );
 
-const ViewMediaParamsSchema = Type.Object(
+export const ViewMediaParamsSchema = Type.Object(
   {
-    path: Type.String({ description: "Path to the image file to view (relative or absolute)" }),
+    path: Type.String({
+      minLength: 1,
+      description: "Path to the image, relative to the current working directory or absolute.",
+    }),
   },
   { $id: "ViewMediaParams", additionalProperties: false },
 );
 
-const EditParamsSchema = Type.Object(
+export const EditParamsSchema = Type.Object(
   {
-    path: Type.String({ description: "Path to the file to edit (relative or absolute)" }),
+    path: Type.String({
+      minLength: 1,
+      description: "Path to the existing UTF-8 text file to edit, relative to the current working directory or absolute.",
+    }),
     edits: Type.Array(EditReplacementSchema, {
-      description:
-        "One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits.",
+      minItems: 1,
+      description: "One or more non-overlapping replacements, all matched against the original file.",
     }),
   },
   { $id: "EditParams", additionalProperties: false },
 );
 
-const CreateGoalParamsSchema = Type.Object(
+export const CreateGoalParamsSchema = Type.Object(
   {
-    objective: Type.String(),
-    time_limit_seconds: Type.Optional(Type.Integer({ minimum: 1 })),
+    objective: Type.String({
+      minLength: 1,
+      description:
+        "The objective to pursue across turns. Preserve the user\u2019s full requested outcome, scope, constraints, and completion criteria.",
+    }),
+    time_limit_seconds: Type.Optional(
+      Type.Integer({
+        minimum: 1,
+        description: "User-requested active-time limit in seconds. Minimum 1. Omit unless the user explicitly requested it.",
+      }),
+    ),
   },
   { $id: "CreateGoalParams", additionalProperties: false },
 );
 
-const UpdateGoalParamsSchema = Type.Object(
+export const UpdateGoalParamsSchema = Type.Object(
   {
-    status: Type.Union([Type.Literal("complete"), Type.Literal("blocked")]),
+    status: Type.Union([Type.Literal("complete"), Type.Literal("blocked")], {
+      description:
+        "Terminal status to set. Use complete only when every required outcome is satisfied; use blocked only at a genuine impasse requiring user input or an external-state change.",
+    }),
   },
   { $id: "UpdateGoalParams", additionalProperties: false },
 );
 
-const CronCreateParamsSchema = Type.Object(
+export const CronCreateParamsSchema = Type.Object(
   {
-    cron: Type.String({ minLength: 1 }),
-    prompt: Type.String({ minLength: 1 }),
-    recurring: Type.Optional(Type.Boolean()),
-    goal: Type.Optional(Type.Boolean()),
+    cron: Type.String({
+      minLength: 1,
+      description:
+        "Standard 5-field cron expression: minute, hour, day of month, month, and day of week. Evaluated in the host\u2019s local timezone.",
+    }),
+    prompt: Type.String({
+      minLength: 1,
+      description:
+        "Prompt delivered to the main session when the task fires. With goal = true, it becomes the goal objective.",
+    }),
+    recurring: Type.Optional(
+      Type.Boolean({
+        description:
+          "Whether the task repeats. Defaults to true; false fires once and deletes the task after delivery.",
+      }),
+    ),
+    goal: Type.Optional(
+      Type.Boolean({
+        description:
+          "Whether to deliver the prompt as a goal instead of a message. Defaults to false; a goal-mode fire waits while the session\u2019s goal slot is occupied.",
+      }),
+    ),
   },
   { $id: "CronCreateParams", additionalProperties: false },
 );
 
-const CronDeleteParamsSchema = Type.Object(
+export const CronDeleteParamsSchema = Type.Object(
   {
-    id: Type.String({ pattern: "^[0-9a-f]{8}$" }),
+    id: Type.String({
+      pattern: "^[0-9a-f]{8}$",
+      description: "Eight-character lowercase hexadecimal task ID returned by cron_create or cron_list.",
+    }),
   },
   { $id: "CronDeleteParams", additionalProperties: false },
 );
 
-const QueryThreadsParamsSchema = Type.Object(
+export const QueryThreadsParamsSchema = Type.Object(
   {
-    query: Type.String({ minLength: 1, maxLength: 500 }),
-    limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
-    scope: Type.Optional(Type.Union([Type.Literal("current_workspace"), Type.Literal("all")])),
-    includeTools: Type.Optional(Type.Boolean()),
+    query: Type.String({
+      minLength: 1,
+      maxLength: 500,
+      description:
+        "Text to find in persisted conversations. Matching is case-insensitive substring search, not regex or a query language. Maximum 500 characters.",
+    }),
+    limit: Type.Optional(
+      Type.Integer({
+        minimum: 1,
+        maximum: 50,
+        description: "Maximum number of threads to return. Defaults to 10; accepts 1\u201350.",
+      }),
+    ),
+    scope: Type.Optional(
+      Type.Union([Type.Literal("current_workspace"), Type.Literal("all")], {
+        description:
+          "Where to search. current_workspace searches threads associated with your current workspace and is the default; all searches all persisted threads.",
+      }),
+    ),
+    includeTools: Type.Optional(
+      Type.Boolean({
+        description: "Whether to search tool calls, tool results, and notifications. Defaults to true.",
+      }),
+    ),
   },
   { $id: "QueryThreadsParams", additionalProperties: false },
 );
 
-const ThreadLocatorSchema = Type.Object(
+export const ThreadLocatorSchema = Type.Object(
   {
-    threadID: Type.String({ minLength: 1 }),
-    sourcePath: Type.Optional(Type.String({ minLength: 1 })),
-    entryID: Type.Optional(Type.String({ minLength: 1 })),
-    line: Type.Optional(Type.Integer({ minimum: 1 })),
+    threadID: Type.String({ minLength: 1, description: "Thread ID carried by the locator." }),
+    sourcePath: Type.Optional(
+      Type.String({
+        minLength: 1,
+        description:
+          "Persisted source path carried by the locator for exact source recovery. Copy it unchanged.",
+      }),
+    ),
+    entryID: Type.Optional(
+      Type.String({ minLength: 1, description: "Persisted entry ID identifying the matched event." }),
+    ),
+    line: Type.Optional(
+      Type.Integer({
+        minimum: 1,
+        description: "Persisted JSONL line number used as a fallback locator for the matched event.",
+      }),
+    ),
   },
   { $id: "ThreadLocator", additionalProperties: false },
 );
 
-const ReadThreadParamsSchema = Type.Object(
+export const ReadThreadParamsSchema = Type.Object(
   {
-    threadID: Type.Optional(Type.String({ minLength: 1 })),
-    locator: Type.Optional(ThreadLocatorSchema),
-    entryID: Type.Optional(Type.String({ minLength: 1 })),
-    line: Type.Optional(Type.Integer({ minimum: 1 })),
-    mode: Type.Optional(Type.Union([Type.Literal("overview"), Type.Literal("window"), Type.Literal("full")])),
-    around: Type.Optional(Type.Integer({ minimum: 0, maximum: 10 })),
-    cursor: Type.Optional(Type.String({ minLength: 1 })),
+    threadID: Type.Optional(
+      Type.String({
+        minLength: 1,
+        description: "Exact thread ID or unique ID prefix. Required unless locator supplies the thread ID.",
+      }),
+    ),
+    locator: Type.Optional(
+      Type.Object(
+        {
+          threadID: Type.String({ minLength: 1, description: "Thread ID carried by the locator." }),
+          sourcePath: Type.Optional(
+            Type.String({
+              minLength: 1,
+              description:
+                "Persisted source path carried by the locator for exact source recovery. Copy it unchanged.",
+            }),
+          ),
+          entryID: Type.Optional(
+            Type.String({ minLength: 1, description: "Persisted entry ID identifying the matched event." }),
+          ),
+          line: Type.Optional(
+            Type.Integer({
+              minimum: 1,
+              description: "Persisted JSONL line number used as a fallback locator for the matched event.",
+            }),
+          ),
+        },
+        {
+          description: "Exact hit locator returned by query_threads. Use with mode = window to read context around that hit.",
+          additionalProperties: false,
+        },
+      ),
+    ),
+    entryID: Type.Optional(
+      Type.String({ minLength: 1, description: "Entry ID to target when using mode = window without a locator." }),
+    ),
+    line: Type.Optional(
+      Type.Integer({
+        minimum: 1,
+        description: "Persisted JSONL line number to target when using mode = window without a locator.",
+      }),
+    ),
+    mode: Type.Optional(
+      Type.Union([Type.Literal("overview"), Type.Literal("window"), Type.Literal("full")], {
+        description:
+          "What to read: overview returns bounded metadata, summaries, and recent entries and is the default; window returns context around a locator, entry ID, or line; full returns a paginated visible transcript.",
+      }),
+    ),
+    around: Type.Optional(
+      Type.Integer({
+        minimum: 0,
+        maximum: 10,
+        description: "Number of visible entries to include before and after a window target. Defaults to 3; accepts 0\u201310.",
+      }),
+    ),
+    cursor: Type.Optional(
+      Type.String({
+        minLength: 1,
+        description:
+          "Opaque cursor returned by a previous full response. Use only with mode = full; omit it for the first page.",
+      }),
+    ),
   },
   { $id: "ReadThreadParams", additionalProperties: false },
 );
 
-const RalphTaskParamsSchema = Type.Object(
+export const RalphTaskParamsSchema = Type.Object(
   {
-    task_id: Type.String(),
+    task_id: Type.String({
+      minLength: 1,
+      description: "Ralph task ID from the Ralph session prompt.",
+    }),
   },
   { $id: "RalphTaskParams", additionalProperties: false },
 );
 
-const WebSearchExaParamsSchema = Type.Object(
+export const WebSearchExaParamsSchema = Type.Object(
   {
-    query: Type.String({ minLength: 1, maxLength: 2000 }),
+    query: Type.String({
+      minLength: 1,
+      maxLength: 2000,
+      description:
+        "Search query or question. Be specific about the desired facts, entities, sources, or time range. Maximum 2,000 characters.",
+    }),
     type: Type.Optional(ExaSearchTypeSchema),
-    includeDomains: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { maxItems: 1200 })),
-    excludeDomains: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { maxItems: 1200 })),
-    startCrawlDate: Type.Optional(Type.String()),
-    endCrawlDate: Type.Optional(Type.String()),
-    startPublishedDate: Type.Optional(Type.String()),
-    endPublishedDate: Type.Optional(Type.String()),
-    numResults: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
-    moderation: Type.Optional(Type.Boolean()),
+    includeDomains: Type.Optional(
+      Type.Array(Type.String({ minLength: 1 }), {
+        maxItems: 1200,
+        description: "Domains allowed in results; when set, results come only from these domains.",
+      }),
+    ),
+    excludeDomains: Type.Optional(
+      Type.Array(Type.String({ minLength: 1 }), {
+        maxItems: 1200,
+        description: "Domains excluded from results.",
+      }),
+    ),
+    startPublishedDate: Type.Optional(
+      Type.String({ description: "Return pages published after this ISO 8601 timestamp." }),
+    ),
+    endPublishedDate: Type.Optional(
+      Type.String({ description: "Return pages published before this ISO 8601 timestamp." }),
+    ),
+    numResults: Type.Optional(
+      Type.Integer({
+        minimum: 1,
+        maximum: 100,
+        description: "Number of results to return. Defaults to 10; accepts 1–100, with lower limits for some search modes.",
+      }),
+    ),
+    moderation: Type.Optional(
+      Type.Boolean({ description: "Whether to filter unsafe content. Defaults to false." }),
+    ),
     contents: Type.Optional(ExaContentOptionsSchema),
-    additionalQueries: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1, maxItems: 10 })),
-    category: Type.Optional(Type.String({ minLength: 1 })),
-    userLocation: Type.Optional(Type.String({ minLength: 2, maxLength: 2 })),
+    additionalQueries: Type.Optional(
+      Type.Array(Type.String({ minLength: 1 }), {
+        minItems: 1,
+        maxItems: 10,
+        description: "Additional query variants for deep search. Accepts 1–10.",
+      }),
+    ),
+    category: Type.Optional(
+      Type.String({ minLength: 1, description: "Optional Exa result-category filter." }),
+    ),
+    userLocation: Type.Optional(
+      Type.String({ minLength: 2, maxLength: 2, description: "Two-letter country code for location-aware search." }),
+    ),
     compliance: Type.Optional(ExaComplianceSchema),
-    systemPrompt: Type.Optional(Type.String({ minLength: 1 })),
+    systemPrompt: Type.Optional(
+      Type.String({ minLength: 1, description: "Additional instructions controlling deep-search behavior." }),
+    ),
   },
   { $id: "WebSearchExaParams", additionalProperties: false },
 );
 
-const CrawlingExaParamsSchema = Type.Object(
+export const CrawlingExaParamsSchema = Type.Object(
   {
-    ids: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 2048 }), { minItems: 1, maxItems: 100 })),
-    urls: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 2048 }), { minItems: 1, maxItems: 100 })),
+    ids: Type.Optional(
+      Type.Array(Type.String({ minLength: 1, maxLength: 2048 }), {
+        minItems: 1,
+        maxItems: 100,
+        description: "Exa document IDs to fetch. Accepts 1–100.",
+      }),
+    ),
+    urls: Type.Optional(
+      Type.Array(Type.String({ minLength: 1, maxLength: 2048 }), {
+        minItems: 1,
+        maxItems: 100,
+        description: "Page URLs to fetch. Accepts 1–100.",
+      }),
+    ),
     compliance: Type.Optional(ExaComplianceSchema),
-    text: Type.Optional(Type.Union([Type.Boolean(), ExaTextOptionsSchema])),
-    highlights: Type.Optional(Type.Union([Type.Boolean(), ExaHighlightsOptionsSchema])),
+    text: Type.Optional(
+      Type.Union([Type.Boolean(), ExaTextOptionsSchema], {
+        description: "Whether to return page text. Use an options object to limit returned characters.",
+      }),
+    ),
+    highlights: Type.Optional(
+      Type.Union([Type.Boolean(), ExaHighlightsOptionsSchema], {
+        description:
+          "Whether to return relevant page excerpts. Use an options object to control excerpt selection.",
+      }),
+    ),
     summary: Type.Optional(ExaSummaryOptionsSchema),
-    maxAgeHours: Type.Optional(Type.Integer({ minimum: -1, maximum: 720 })),
-    subpages: Type.Optional(Type.Integer({ minimum: 0, maximum: 100 })),
-    subpageTarget: Type.Optional(Type.Union([Type.String({ minLength: 1, maxLength: 100 }), stringArray])),
+    maxAgeHours: Type.Optional(
+      Type.Integer({
+        minimum: -1,
+        maximum: 720,
+        description:
+          "Maximum cached-content age in hours: positive values accept cache younger than the limit, 0 fetches fresh content, -1 uses cache only, and omission uses fallback fetching.",
+      }),
+    ),
+    subpages: Type.Optional(
+      Type.Integer({
+        minimum: 0,
+        maximum: 100,
+        description: "Number of linked subpages to crawl per result. Defaults to 0; accepts 0–100.",
+      }),
+    ),
+    subpageTarget: Type.Optional(
+      Type.Union([Type.String({ minLength: 1, maxLength: 100 }), stringArray], {
+        description: "Keyword or keywords used to prioritize which subpages to crawl.",
+      }),
+    ),
   },
   { $id: "CrawlingExaParams", additionalProperties: false },
 );
 
-const GetCodeContextExaParamsSchema = Type.Object(
+export const GetCodeContextExaParamsSchema = Type.Object(
   {
-    query: Type.String({ minLength: 1, maxLength: 2000 }),
-    tokensNum: Type.Optional(Type.Union([
-      Type.Literal("dynamic"),
-      Type.Integer({ minimum: 50, maximum: 100000 }),
-    ])),
+    query: Type.String({
+      minLength: 1,
+      maxLength: 2000,
+      description:
+        "Code or API question to research. Include relevant language, framework, library, symbols, and desired examples. Maximum 2,000 characters.",
+    }),
+    tokensNum: Type.Optional(
+      Type.Union(
+        [
+          Type.Literal("dynamic"),
+          Type.Integer({ minimum: 50, maximum: 100000 }),
+        ],
+        {
+          description: "Approximate output-token budget, or dynamic to let Exa choose. Accepts 50–100,000.",
+        },
+      ),
+    ),
   },
   { $id: "GetCodeContextExaParams", additionalProperties: false },
 );
 
-const ExaAgentCreateRunParamsSchema = Type.Object(
+export const ExaAgentCreateRunParamsSchema = Type.Object(
   {
-    query: Type.String({ minLength: 1 }),
-    systemPrompt: Type.Optional(Type.String({ minLength: 1 })),
-    input: Type.Optional(ExaJsonObjectSchema),
-    outputSchema: Type.Optional(ExaJsonObjectSchema),
-    effort: Type.Optional(Type.Union([
-      Type.Literal("minimal"),
-      Type.Literal("low"),
-      Type.Literal("medium"),
-      Type.Literal("high"),
-      Type.Literal("xhigh"),
-      Type.Literal("auto"),
-    ])),
-    previousRunId: Type.Optional(ExaRunIdSchema),
-    metadata: Type.Optional(ExaJsonObjectSchema),
+    query: Type.String({
+      minLength: 1,
+      description:
+        "Research or extraction task for the Exa Agent. State the desired outcome, scope, source expectations, and completion criteria.",
+    }),
+    systemPrompt: Type.Optional(
+      Type.String({ minLength: 1, description: "Optional additional instructions governing the research run." }),
+    ),
+    input: Type.Optional(
+      Type.Record(Type.String(), Type.Unknown(), { description: "Optional structured JSON input for the run." }),
+    ),
+    outputSchema: Type.Optional(
+      Type.Record(Type.String(), Type.Unknown(), {
+        description: "Optional JSON Schema constraining the run's structured output.",
+      }),
+    ),
+    effort: Type.Optional(
+      Type.Union(
+        [
+          Type.Literal("minimal"),
+          Type.Literal("low"),
+          Type.Literal("medium"),
+          Type.Literal("high"),
+          Type.Literal("xhigh"),
+          Type.Literal("auto"),
+        ],
+        { description: "Research effort tier. Prefer low or medium unless deep research is explicitly needed." },
+      ),
+    ),
+    previousRunId: Type.Optional(
+      Type.String({
+        minLength: 1,
+        maxLength: 200,
+        pattern: "^[A-Za-z0-9_.:-]+$",
+        description: "Optional prior Exa Agent run ID to continue or refine.",
+      }),
+    ),
+    metadata: Type.Optional(
+      Type.Record(Type.String(), Type.Unknown(), { description: "Optional JSON metadata to attach to the run." }),
+    ),
   },
   { $id: "ExaAgentCreateRunParams", additionalProperties: false },
 );
 
-const ExaAgentRunIdParamsSchema = Type.Object(
+export const ExaAgentRunIdParamsSchema = Type.Object(
   {
-    id: ExaRunIdSchema,
+    id: Type.String({
+      minLength: 1,
+      maxLength: 200,
+      pattern: "^[A-Za-z0-9_.:-]+$",
+      description: "Exa Agent run ID returned by exa_agent_create_run or exa_agent_list_runs.",
+    }),
   },
   { $id: "ExaAgentRunIdParams", additionalProperties: false },
 );
 
-const ExaAgentListRunsParamsSchema = Type.Object(
+export const ExaAgentListRunsParamsSchema = Type.Object(
   {
-    limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
-    cursor: Type.Optional(ExaRunIdSchema),
+    limit: Type.Optional(
+      Type.Integer({
+        minimum: 1,
+        maximum: 100,
+        description: "Maximum runs to return. Accepts 1–100.",
+      }),
+    ),
+    cursor: Type.Optional(
+      Type.String({
+        minLength: 1,
+        maxLength: 200,
+        pattern: "^[A-Za-z0-9_.:-]+$",
+        description: "Opaque cursor returned by a previous run-list response.",
+      }),
+    ),
   },
   { $id: "ExaAgentListRunsParams", additionalProperties: false },
 );
 
-const ExaAgentListEventsParamsSchema = Type.Object(
+export const ExaAgentListEventsParamsSchema = Type.Object(
   {
-    id: ExaRunIdSchema,
-    limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
-    cursor: Type.Optional(Type.String({ minLength: 1 })),
-    lastEventId: Type.Optional(Type.String({ minLength: 1 })),
+    id: Type.String({
+      minLength: 1,
+      maxLength: 200,
+      pattern: "^[A-Za-z0-9_.:-]+$",
+      description: "Exa Agent run ID whose events to list.",
+    }),
+    limit: Type.Optional(
+      Type.Integer({
+        minimum: 1,
+        maximum: 100,
+        description: "Maximum events to return. Accepts 1–100.",
+      }),
+    ),
+    cursor: Type.Optional(
+      Type.String({ minLength: 1, description: "Opaque cursor returned by a previous event-list response." }),
+    ),
+    lastEventId: Type.Optional(
+      Type.String({ minLength: 1, description: "Return events after this event ID for incremental reading." }),
+    ),
   },
   { $id: "ExaAgentListEventsParams", additionalProperties: false },
 );
 
-const AgentEffortSchema = Type.Union(
+export const AgentEffortSchema = Type.Union(
   [Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")],
   { description: "The agent's model and reasoning effort tier. Defaults to `medium`." },
 );
 
-const AgentSpawnParamsSchema = Type.Object(
+export const AgentSpawnParamsSchema = Type.Object(
   {
     message: Type.String({
       minLength: 1,
@@ -349,7 +724,7 @@ const AgentSpawnParamsSchema = Type.Object(
   { $id: "AgentSpawnParams", additionalProperties: false },
 );
 
-const FinderParamsSchema = Type.Object(
+export const FinderParamsSchema = Type.Object(
   {
     query: Type.String({
       minLength: 1,
@@ -365,7 +740,7 @@ const FinderParamsSchema = Type.Object(
   { $id: "FinderParams", additionalProperties: false },
 );
 
-const OracleParamsSchema = Type.Object(
+export const OracleParamsSchema = Type.Object(
   {
     message: Type.String({
       minLength: 1,
@@ -381,7 +756,7 @@ const OracleParamsSchema = Type.Object(
   { $id: "OracleParams", additionalProperties: false },
 );
 
-const AgentSendParamsSchema = Type.Object(
+export const AgentSendParamsSchema = Type.Object(
   {
     agent_id: Type.String({ minLength: 1, description: "The owner-scoped handle returned by a start or `agent_list`." }),
     message: Type.Optional(Type.String({
@@ -399,7 +774,7 @@ const AgentSendParamsSchema = Type.Object(
   { $id: "AgentSendParams", additionalProperties: false },
 );
 
-const AgentWaitParamsSchema = Type.Object(
+export const AgentWaitParamsSchema = Type.Object(
   {
     run_ids: Type.Array(Type.String({ minLength: 1 }), {
       minItems: 1,
@@ -414,7 +789,7 @@ const AgentWaitParamsSchema = Type.Object(
   { $id: "AgentWaitParams", additionalProperties: false },
 );
 
-const AgentCloseParamsSchema = Type.Object(
+export const AgentCloseParamsSchema = Type.Object(
   {
     agent_id: Type.String({ minLength: 1, description: "The owner-scoped handle of the identity to close permanently." }),
   },
@@ -583,376 +958,4 @@ export function parseToolParams(toolName: string, rawParams: unknown): ParseTool
   return { ok: true, params: params as ParsedToolParams };
 }
 
-export type ToolContract = {
-  readonly name: string;
-  readonly label: string;
-  readonly description: string;
-  readonly promptSnippet: string;
-  readonly promptGuidelines?: readonly string[];
-  readonly parameters: object;
-};
-
-type JsonSchemaObject = {
-  [key: string]: unknown;
-  type?: unknown;
-  enum?: unknown;
-  anyOf?: unknown;
-};
-
-function schemaObject(value: unknown): JsonSchemaObject | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as JsonSchemaObject
-    : undefined;
-}
-
-const schemaMetaKeys = new Set([
-  "$schema",
-  "$id",
-  "$anchor",
-  "$dynamicAnchor",
-  "$vocabulary",
-  "$comment",
-  "$defs",
-  "definitions",
-]);
-
-function primitiveType(value: unknown): string | undefined {
-  switch (typeof value) {
-    case "string":
-      return "string";
-    case "number":
-      return Number.isInteger(value) ? "integer" : "number";
-    case "boolean":
-      return "boolean";
-    default:
-      return undefined;
-  }
-}
-
-function collapseAnyOfEnum(anyOf: unknown): { type: string; enum: unknown[] } | undefined {
-  if (!Array.isArray(anyOf) || anyOf.length === 0) return undefined;
-  const values: unknown[] = [];
-  const types = new Set<string>();
-  for (const item of anyOf) {
-    const schema = schemaObject(item);
-    if (schema === undefined || !Array.isArray(schema.enum) || schema.enum.length !== 1) {
-      return undefined;
-    }
-    const value = schema.enum[0];
-    const type = typeof schema.type === "string" ? schema.type : primitiveType(value);
-    if (type === undefined) return undefined;
-    values.push(value);
-    types.add(type);
-  }
-  if (types.size !== 1) return undefined;
-  return { type: [...types][0], enum: values };
-}
-
-function modelToolSchema(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map((item) => modelToolSchema(item));
-  }
-  const schema = schemaObject(value);
-  if (schema !== undefined) {
-    const result: JsonSchemaObject = {};
-    const constValue = schema["const"];
-    for (const [key, item] of Object.entries(schema)) {
-      if (schemaMetaKeys.has(key) || key === "const") continue;
-      result[key] = modelToolSchema(item);
-    }
-    if (constValue !== undefined) {
-      result["enum"] = [constValue];
-      if (result["type"] === undefined) {
-        const type = primitiveType(constValue);
-        if (type !== undefined) result["type"] = type;
-      }
-    }
-    const collapsedAnyOf = collapseAnyOfEnum(result["anyOf"]);
-    if (collapsedAnyOf !== undefined) {
-      delete result["anyOf"];
-      result["type"] = collapsedAnyOf["type"];
-      result["enum"] = collapsedAnyOf["enum"];
-    }
-    return result;
-  }
-  return value;
-}
-
-function toolParameters(schema: unknown): object {
-  const modeled = modelToolSchema(schema);
-  return typeof modeled === "object" && modeled !== null ? modeled : {};
-}
-
-export const toolContracts: readonly ToolContract[] = [
-  {
-    name: "exec_command",
-    label: "exec_command",
-    description: "Runs a command in a PTY, returning output or a session ID for ongoing interaction.",
-    promptSnippet: "Run shell commands, returning output or a session ID for ongoing interaction.",
-    promptGuidelines: [
-      "Use exec_command for file operations like ls, rg, find, builds, tests, and development commands.",
-      "Call write_stdin only when exec_command returns `Process running with session ID N`, and use that exact ID.",
-      "If exec_command returns `Process exited with code N`, the command is complete; do not call write_stdin for it.",
-      "Use write_stdin output_mode=status for quiet passive waits; use delta only to inspect output or send input.",
-    ],
-    parameters: toolParameters(ExecCommandParamsSchema),
-  },
-  {
-    name: "write_stdin",
-    label: "write_stdin",
-    description:
-      "Writes characters to an existing unified exec session and returns recent output. Use output_mode=status for passive waits that should not add process output to model context; use delta only to inspect progress or interact.",
-    promptSnippet: "Send input to or poll an active shell session.",
-    parameters: toolParameters(WriteStdinParamsSchema),
-  },
-  {
-    name: "apply_patch",
-    label: "apply_patch",
-    description: "Use the apply_patch tool to edit files.",
-    promptSnippet: "Apply a patch to files in the workspace.",
-    parameters: toolParameters(ApplyPatchParamsSchema),
-  },
-  {
-    name: "read",
-    label: "read",
-    description:
-      "Read a UTF-8 text file. Output is line-numbered and truncated to 2000 lines / 50KB total and 2000 chars per line; use offset/limit to page (a negative offset reads the tail). Not for images or binary files.",
-    promptSnippet: "Read the contents of a text file (line-numbered).",
-    promptGuidelines: [
-      "Use read to examine files instead of cat or sed.",
-      "Output lines are prefixed with 'lineNo<TAB>'; this prefix is for navigation only. When calling edit, oldText must be the file content WITHOUT the line-number prefix.",
-      "Use offset/limit to page large files; a negative offset (e.g. -50) reads the last N lines.",
-    ],
-    parameters: toolParameters(ReadParamsSchema),
-  },
-  {
-    name: "view_media",
-    label: "view_media",
-    description:
-      "Read an image file, resize it if needed, and present it to the model visually.",
-    promptSnippet: "Read images (PNG, JPEG, GIF, or WebP) and present them to the model visually.",
-    promptGuidelines: [
-      "Use view_media to inspect image files instead of read.",
-      "Supports PNG, JPEG, GIF, and WebP images. Other binary files are not supported.",
-    ],
-    parameters: toolParameters(ViewMediaParamsSchema),
-  },
-  {
-    name: "write",
-    label: "write",
-    description: "Write content to a file. Creates the file if it doesn't exist, overwrites if it does.",
-    promptSnippet: "Create or overwrite files",
-    promptGuidelines: ["Use write only for new files or complete rewrites."],
-    parameters: toolParameters(WriteParamsSchema),
-  },
-  {
-    name: "edit",
-    label: "edit",
-    description: "Edit a single file using exact text replacement.",
-    promptSnippet: "Make precise file edits with exact text replacement, including multiple disjoint edits in one call",
-    promptGuidelines: [
-      "Use edit for precise changes (edits[].oldText must match exactly)",
-      "When changing multiple separate locations in one file, use one edit call with multiple entries in edits[] instead of multiple edit calls",
-      "Each edits[].oldText is matched against the original file, not after earlier edits are applied. Do not emit overlapping or nested edits. Merge nearby changes into one edit.",
-      "Keep edits[].oldText as small as possible while still being unique in the file. Do not pad with large unchanged regions.",
-    ],
-    parameters: toolParameters(EditParamsSchema),
-  },
-  {
-    name: "get_goal",
-    label: "get_goal",
-    description: "Get the current goal for this thread, including status, automation state, token telemetry, elapsed active time, and optional time limit.",
-    promptSnippet: "",
-    parameters: toolParameters(EmptyParamsSchema),
-  },
-  {
-    name: "create_goal",
-    label: "create_goal",
-    description: "Create a goal only when explicitly requested by the user or system/developer instructions. Set time_limit_seconds only when the user explicitly requests a time limit; do not invent or extend a time limit yourself.",
-    promptSnippet: "",
-    parameters: toolParameters(CreateGoalParamsSchema),
-  },
-  {
-    name: "update_goal",
-    label: "update_goal",
-    description: "Update the existing goal only to mark it complete or genuinely blocked.",
-    promptSnippet: "",
-    parameters: toolParameters(UpdateGoalParamsSchema),
-  },
-  {
-    name: "cron_create",
-    label: "cron.create",
-    description: "Schedule a prompt to run later in this Pi session using a 5-field cron expression.",
-    promptSnippet: "Create a recurring or one-shot cron task. Tell the user the returned task id and that /cron manages crons.",
-    parameters: toolParameters(CronCreateParamsSchema),
-  },
-  {
-    name: "cron_list",
-    label: "cron.list",
-    description: "List scheduled cron tasks for this Pi session.",
-    promptSnippet: "List cron tasks.",
-    parameters: toolParameters(EmptyParamsSchema),
-  },
-  {
-    name: "cron_delete",
-    label: "cron.delete",
-    description: "Delete a scheduled cron task by id.",
-    promptSnippet: "Delete a cron task.",
-    parameters: toolParameters(CronDeleteParamsSchema),
-  },
-  {
-    name: "query_threads",
-    label: "query_threads",
-    description: "Search persisted thread ids, titles, visible messages, summaries, tool calls, tool results, and notifications.",
-    promptSnippet: "",
-    parameters: toolParameters(QueryThreadsParamsSchema),
-  },
-  {
-    name: "read_thread",
-    label: "read_thread",
-    description: "Read a persisted thread by exact id, unique id prefix, or a locator returned by query_threads.",
-    promptSnippet: "",
-    parameters: toolParameters(ReadThreadParamsSchema),
-  },
-  {
-    name: "ralph_continue",
-    label: "ralph_continue",
-    description: "Advance an owned Ralph child session by one iteration.",
-    promptSnippet: "",
-    parameters: toolParameters(RalphTaskParamsSchema),
-  },
-  {
-    name: "ralph_finish",
-    label: "ralph_finish",
-    description: "Finish an owned Ralph child session.",
-    promptSnippet: "",
-    parameters: toolParameters(RalphTaskParamsSchema),
-  },
-  {
-    name: "web_search_exa",
-    label: "exa.web_search",
-    description:
-      "Search Exa's web index and optionally extract highlights, summaries, or text from the results.",
-    promptSnippet: "Search Exa's web index for current web, paper, company, people, and news results.",
-    promptGuidelines: [
-      "Keep numResults small unless broad coverage is necessary.",
-      "Use contents.highlights or contents.summary before requesting full text.",
-      "Use crawling_exa when you already have URLs or Exa document IDs.",
-    ],
-    parameters: toolParameters(WebSearchExaParamsSchema),
-  },
-  {
-    name: "crawling_exa",
-    label: "exa.contents",
-    description:
-      "Fetch page contents, summaries, highlights, and metadata for URLs or Exa document IDs.",
-    promptSnippet: "Fetch page contents with Exa when URLs or document IDs are already known.",
-    promptGuidelines: [
-      "Provide either urls or ids, not both.",
-      "Request only the content fields needed for the task.",
-    ],
-    parameters: toolParameters(CrawlingExaParamsSchema),
-  },
-  {
-    name: "get_code_context_exa",
-    label: "exa.code_context",
-    description:
-      "Get relevant code snippets and examples from Exa Code Context.",
-    promptSnippet: "Search code, docs, GitHub, and Stack Overflow examples with Exa Code Context.",
-    parameters: toolParameters(GetCodeContextExaParamsSchema),
-  },
-  {
-    name: "exa_agent_create_run",
-    label: "exa.agent.create_run",
-    description:
-      "Create an asynchronous Exa Agent research run. This always requires explicit user approval before the request is sent.",
-    promptSnippet: "Create a long-running Exa Agent research or extraction run after user approval.",
-    promptGuidelines: [
-      "Use this only when a normal Exa search or contents fetch is not enough.",
-      "Prefer low or medium effort unless the user explicitly needs deep research.",
-    ],
-    parameters: toolParameters(ExaAgentCreateRunParamsSchema),
-  },
-  {
-    name: "exa_agent_get_run",
-    label: "exa.agent.get_run",
-    description: "Retrieve an Exa Agent run by ID.",
-    promptSnippet: "Poll or inspect an Exa Agent run by ID.",
-    parameters: toolParameters(ExaAgentRunIdParamsSchema),
-  },
-  {
-    name: "exa_agent_list_runs",
-    label: "exa.agent.list_runs",
-    description: "List Exa Agent runs for the configured team.",
-    promptSnippet: "List recent Exa Agent runs.",
-    parameters: toolParameters(ExaAgentListRunsParamsSchema),
-  },
-  {
-    name: "exa_agent_cancel_run",
-    label: "exa.agent.cancel_run",
-    description: "Cancel a queued or running Exa Agent run.",
-    promptSnippet: "Cancel an Exa Agent run by ID.",
-    parameters: toolParameters(ExaAgentRunIdParamsSchema),
-  },
-  {
-    name: "exa_agent_list_events",
-    label: "exa.agent.list_events",
-    description: "List stored events for an Exa Agent run.",
-    promptSnippet: "List Exa Agent run events.",
-    parameters: toolParameters(ExaAgentListEventsParamsSchema),
-  },
-  {
-    name: "agent_spawn",
-    label: "agent.spawn",
-    description:
-      "Create a durable agent and start an asynchronous run for substantial delegated work that benefits from independent execution. The agent can be steered later with `agent_send`.",
-    promptSnippet: "Spawn a durable, steerable agent for substantial asynchronous work.",
-    parameters: toolParameters(AgentSpawnParamsSchema),
-  },
-  {
-    name: "finder",
-    label: "finder",
-    description:
-      "Start an asynchronous Finder specialist for conceptual, behavior-based, or multi-step codebase searches that require correlating findings across files. Use direct read or search tools when you already know the path, symbol, or exact text.",
-    promptSnippet: "Start an asynchronous Finder for conceptual or multi-step codebase search.",
-    parameters: toolParameters(FinderParamsSchema),
-  },
-  {
-    name: "oracle",
-    label: "oracle",
-    description:
-      "Start an asynchronous Oracle specialist for architecture or code review, root-cause analysis from code and runtime evidence, complex planning, or a second opinion on technical decisions. Use Oracle selectively when the problem warrants expensive independent reasoning.",
-    promptSnippet:
-      "Start an asynchronous Oracle for architecture, planning, review, or a technical second opinion. Use it selectively when the problem warrants expensive independent reasoning.",
-    parameters: toolParameters(OracleParamsSchema),
-  },
-  {
-    name: "agent_send",
-    label: "agent.send",
-    description: "Send an instruction to an existing open agent, resume a suspended run, steer or replace active work, or interrupt execution. A message requires a short user-facing description.",
-    promptSnippet: "Send, steer, resume, or interrupt a durable agent.",
-    parameters: toolParameters(AgentSendParamsSchema),
-  },
-  {
-    name: "agent_wait",
-    label: "agent.wait",
-    description:
-      "Race selected agent runs and return every result ready at the observation point. Omitted timeout waits indefinitely; a timeout bounds only this call and never stops the runs. Call again with returned pending_run_ids to await later completions.",
-    promptSnippet: "Wait for one or more agent runs by run_id.",
-    parameters: toolParameters(AgentWaitParamsSchema),
-  },
-  {
-    name: "agent_list",
-    label: "agent.list",
-    description: "List all open agent identities owned by the current session. Returns lifecycle status, per-run turn count, and observable activity phase and timing for progress inspection. Activity describes observable execution, not inferred health or a time-based stall.",
-    promptSnippet: "List owned agent identities.",
-    parameters: toolParameters(EmptyParamsSchema),
-  },
-  {
-    name: "agent_close",
-    label: "agent.close",
-    description: "Permanently close one agent identity, interrupt active execution, and remove all of its runs from current Taumel state. Closed identities cannot be resumed; use agent_send interruption for a reversible stop.",
-    promptSnippet: "Close and forget one agent identity.",
-    parameters: toolParameters(AgentCloseParamsSchema),
-  },
-];
+export type { ToolContract } from "./tool-contract-model.ts";

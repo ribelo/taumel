@@ -142,9 +142,7 @@ let edit_request_from_params params =
 let patch_request_from_params params =
   let params = Tool_contracts.ApplyPatchParams.t_of_js (ojs_of_js params) in
   Taumel.Mutation_plan.patch_request_of_values
-    ?input:(Tool_contracts.ApplyPatchParams.get_input params)
-    ?patch:(Tool_contracts.ApplyPatchParams.get_patch params)
-    ()
+    (Tool_contracts.ApplyPatchParams.get_input params)
 
 let prepare_exec_command params =
   with_gateway_authorized "exec_command" (fun sandbox ->

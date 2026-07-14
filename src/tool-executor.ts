@@ -12,9 +12,9 @@ import type {
 } from "./types.ts";
 import {
   parseToolParams,
-  toolContracts,
   toolNames,
 } from "./tool-contracts.ts";
+import { toolContracts } from "./tool-contract-catalog.ts";
 
 import {
   execHostFacts,

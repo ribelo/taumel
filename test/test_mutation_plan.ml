@@ -163,7 +163,7 @@ let test_apply_patch_plan () =
   in
   let request =
     expect_ok "apply patch decode"
-      (Mutation.patch_request_of_values ~input:patch ())
+      (Mutation.patch_request_of_values patch)
   in
   let plan =
     match Mutation.plan_apply_patch sandbox request with
@@ -188,8 +188,8 @@ let test_apply_patch_plan () =
   assert_equal "patch write path" "/repo/inside.txt" path;
   assert_equal "patch write contents" "hello\n" contents;
   expect_error "apply patch missing input"
-    "apply_patch.input or apply_patch.patch is required"
-    (Mutation.patch_request_of_values ())
+    "apply_patch.input is required"
+    (Mutation.patch_request_of_values "")
 
 let () =
   test_exec_plan ();

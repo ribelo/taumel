@@ -671,6 +671,8 @@ let test_goal_turn_accounting () =
   assert_int "goal accounting dedupe time" 10 repeated_goal.time_used_seconds
 
 let test_permissions_active_resolution () =
+  assert_bool "sandbox-md05 default profile approval never"
+    (Capability.default.approval_policy = Capability.Never);
   let resolved =
     Permissions.resolve_active
       ~host_sandbox_preset:None ~host_network_mode:None ~host_no_sandbox:None
@@ -679,8 +681,8 @@ let test_permissions_active_resolution () =
   in
   assert_bool "missing permissions defaults to full access"
     (resolved.profile.sandbox_preset = Capability.Danger_full_access);
-  assert_bool "missing permissions defaults to on-request approval"
-    (resolved.profile.approval_policy = Capability.On_request);
+  assert_bool "sandbox-md07 missing permissions uses never approval"
+    (resolved.profile.approval_policy = Capability.Never);
   assert_bool "missing permissions enables network"
     (resolved.network_mode = Sandbox.Network_enabled);
   assert_bool "missing permissions leaves no-sandbox disabled"
@@ -689,6 +691,18 @@ let test_permissions_active_resolution () =
     (not resolved.isolated_child);
   assert_equal "missing permissions filesystem mode" "danger-full-access"
     resolved.filesystem_mode;
+  (* sandbox-md07: invalid persisted permissions fall back to workspace-write, network disabled, profile default approval never *)
+  let invalid =
+    Permissions.resolve_active
+      ~host_sandbox_preset:None ~host_network_mode:None ~host_no_sandbox:None
+      ~session_isolated_child:false Permissions.Invalid
+  in
+  assert_bool "sandbox-md07 invalid fallback uses workspace-write"
+    (invalid.profile.sandbox_preset = Capability.Workspace_write);
+  assert_bool "sandbox-md07 invalid fallback uses never approval"
+    (invalid.profile.approval_policy = Capability.Never);
+  assert_bool "sandbox-md07 invalid fallback disables network"
+    (invalid.network_mode = Sandbox.Network_disabled);
   let flagged =
     Permissions.resolve_active
       ~host_sandbox_preset:(Some Capability.Read_only)
@@ -699,7 +713,7 @@ let test_permissions_active_resolution () =
   assert_bool "flags override default sandbox"
     (flagged.profile.sandbox_preset = Capability.Read_only);
   assert_bool "flags preserve default approval"
-    (flagged.profile.approval_policy = Capability.On_request);
+    (flagged.profile.approval_policy = Capability.Never);
   assert_bool "flags override default network"
     (flagged.network_mode = Sandbox.Network_enabled);
   assert_bool "flags override default no-sandbox" flagged.no_sandbox;

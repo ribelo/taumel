@@ -81,15 +81,8 @@ type patch_output = {
 let approval ?(message = "") prompt =
   { message; title = prompt.Sandbox.title; prompt = prompt.prompt; timeout_ms = prompt.timeout_ms }
 
-let patch_request_of_values ?input ?patch () =
-  let patch =
-    match input with
-    | Some value when value <> "" -> Some value
-    | _ -> patch
-  in
-  match patch with
-  | Some patch -> Ok { patch }
-  | None -> Error "apply_patch.input or apply_patch.patch is required"
+let patch_request_of_values input =
+  if input = "" then Error "apply_patch.input is required" else Ok { patch = input }
 
 let plan_exec ?policy_decision ?policy_message (sandbox : Sandbox.config) (request : exec_request) =
   let cmd = request.cmd in

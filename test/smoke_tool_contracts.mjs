@@ -1,4 +1,5 @@
-import { parseToolParams, toolContracts } from "../src/tool-contracts.ts";
+import { parseToolParams } from "../src/tool-contracts.ts";
+import { toolContracts } from "../src/tool-contract-catalog.ts";
 
 const assert = (condition, message) => {
   if (!condition) throw new Error(message);
@@ -47,3 +48,25 @@ for (const removed of ["tty", "sandbox_permissions", "prefix_rule", "shell", "lo
   assert(!parseToolParams("exec_command", { cmd: "printf ok", [removed]: removed === "tty" ? true : "x" }).ok, `exec_command should reject removed parameter ${removed}`);
 }
 assert(parseToolParams("write_stdin", { session_id: 1, max_output_tokens: 10000 }).ok, "write_stdin should accept max_output_tokens");
+
+const expectOk = (name, params) => {
+  const parsed = parseToolParams(name, params);
+  assert(parsed.ok === true, `${name} should parse: ${JSON.stringify(parsed)}`);
+};
+const expectError = (name, params, text) => {
+  const parsed = parseToolParams(name, params);
+  assert(parsed.ok === false, `${name} should reject: ${JSON.stringify(params)}`);
+  assert(parsed.error.includes(text), `${name} error did not include ${text}: ${parsed.error}`);
+};
+
+const patch = "*** Begin Patch\n*** End Patch\n";
+expectOk("apply_patch", { input: patch });
+expectError("apply_patch", { input: "*** Begin Patch\n*** End Patch\n", patch: "x" }, "additional");
+expectError("apply_patch", {}, "required");
+
+const cronSnippet = toolContracts.find((t) => t.name === "cron_create");
+assert(
+  cronSnippet?.description.includes("local timezone"),
+  "cron_create description should mention local timezone",
+);
+assert(cronSnippet?.promptSnippet.includes("/cron"), "cron_create prompt snippet should mention /cron");

@@ -31,9 +31,9 @@ patch parsing stay separate from each other and from execution.
 - **sandbox-md02** (ubiquitous): The system shall provide the network modes `disabled` and `enabled`.
 - **sandbox-md03** (ubiquitous): The system shall provide the approval policies `never`, `on-request`, `on-failure`, and `untrusted`.
 - **sandbox-md04** (ubiquitous): The system shall derive the active sandbox config from the capability profile, taking filesystem mode from the profile's sandbox preset and approval policy from the profile's approval policy.
-- **sandbox-md05** (ubiquitous): The system shall default a profile to `workspace-write`, `on-request`, and `noSandboxAllowed = false`.
+- **sandbox-md05** (ubiquitous): The system shall default a profile to `workspace-write`, `never`, and `noSandboxAllowed = false`.
 - **sandbox-md06** (state-driven): While the sandbox preset is `danger-full-access`, the system shall force network `enabled`; while the preset is `read-only` or `workspace-write`, network shall default to `disabled` and stay user-controlled.
-- **sandbox-md07** (event-driven): When no persisted permissions exist, the system shall start a top-level session at `danger-full-access` with network enabled and approval `on-request`; when persisted permissions are invalid, it shall fall back to `workspace-write` with network disabled.
+- **sandbox-md07** (event-driven): When no persisted permissions exist, the system shall start a top-level session at `danger-full-access` with network enabled and approval `never`; when persisted permissions are invalid, it shall fall back to `workspace-write` with network disabled.
 - **sandbox-md09** (ubiquitous): The system shall treat approval policy and sandbox preset as orthogonal: the preset governs OS enforcement and the approval policy governs only the human-in-the-loop cadence, so `danger-full-access` composes with any approval policy — `never` runs unsandboxed with no prompts, and `on-request` runs unsandboxed while still asking before destructive commands.
 
 ### Effect authorization
