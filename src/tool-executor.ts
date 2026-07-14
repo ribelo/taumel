@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 
@@ -25,12 +25,12 @@ import {
   sessionInfoFromContext,
   threadSources,
   validateWorkspaceMutationPaths,
-  writeFileAtomically,
   writePatchFiles,
   appendToFile,
   contextWithOverrides,
 } from "./util.ts";
 import { goalContinuationMessageRenderer, notificationMessageRenderer, renderersForTool } from "./tool-renderer.ts";
+import { bindHarnessApprovalUi, clearHarnessApprovalUi, requestHarnessApproval, type ApprovalOutcome, type ApprovalResolution, type ApprovalUi } from "./approval-coordinator.ts";
 import {
   applyChildSessionUpdate,
   childSessionCacheKeyScopeFromContext,
@@ -56,8 +56,7 @@ import {
 } from "./tool-results.ts";
 
 type SettingsObject = { [key: string]: unknown };
-type ToolContext = { readonly cwd?: unknown; readonly model?: unknown; readonly ui?: unknown; readonly sessionManager?: unknown };
-type ToolUi = { readonly confirm?: (...args: unknown[]) => Promise<unknown>; readonly select?: (...args: unknown[]) => Promise<unknown> };
+type ToolContext = { readonly cwd?: unknown; readonly model?: unknown; readonly ui?: unknown; readonly hasUI?: unknown; readonly sessionManager?: unknown };
 type SessionManagerHost = { readonly getEntries?: () => unknown };
 type SessionEntry = { readonly type?: unknown; readonly customType?: unknown; readonly data?: unknown };
 type ChildMetadata = {
@@ -73,6 +72,7 @@ type PreparedExaAction = Extract<PreparedSuccess, { action: "exa_fetch" | "exa_a
 type PreparedOpenAiAction = Extract<PreparedSuccess, { action: "openai_usage_fetch" }>;
 type PreparedApprovalAction = Extract<PreparedSuccess, { action: "exec_command_approval" | "write_approval" | "edit_approval" | "apply_patch_approval" | "exa_agent_create_run_approval" }>;
 type PreparedMutationAction = Extract<PreparedSuccess, { action: "write" | "write_approval" | "edit" | "edit_approval" | "apply_patch" | "apply_patch_approval" }>;
+type GatewayToolResult = ToolResultEnvelope | ReturnType<typeof decodeViewMediaResultEnvelope>;
 
 function settingsObject(value: unknown): SettingsObject | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value as SettingsObject : undefined;
@@ -98,14 +98,6 @@ async function withGoalClockPaused<T>(core: CoreBridge, run: () => Promise<T>): 
   }
 }
 
-type ApprovalOutcome =
-  | "approved"
-  | "approved_always"
-  | "denied_by_user"
-  | "timed_out"
-  | "unavailable"
-  | "interrupted";
-
 function approvalOutcomeMessage(action: string, outcome: ApprovalOutcome): string {
   switch (outcome) {
     case "denied_by_user":
@@ -122,11 +114,11 @@ function approvalOutcomeMessage(action: string, outcome: ApprovalOutcome): strin
   }
 }
 
-async function appendExecPolicyAllowRule(core: CoreBridge, tokens: readonly string[]): Promise<void> {
+function appendExecPolicyAllowRule(core: CoreBridge, tokens: readonly string[]): void {
   const settingsPath = join(getAgentDir(), "settings.json");
   let settings: unknown = {};
   try {
-    settings = JSON.parse(await readFile(settingsPath, "utf8")) as unknown;
+    settings = JSON.parse(readFileSync(settingsPath, "utf8")) as unknown;
   } catch {
     settings = {};
   }
@@ -139,7 +131,14 @@ async function appendExecPolicyAllowRule(core: CoreBridge, tokens: readonly stri
   execPolicy["rules"] = rules;
   taumel["execPolicy"] = execPolicy;
   root["taumel"] = taumel;
-  await writeFileAtomically(settingsPath, `${JSON.stringify(root, null, 2)}\n`);
+  mkdirSync(getAgentDir(), { recursive: true });
+  const temporaryPath = `${settingsPath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    writeFileSync(temporaryPath, `${JSON.stringify(root, null, 2)}\n`, "utf8");
+    renameSync(temporaryPath, settingsPath);
+  } finally {
+    rmSync(temporaryPath, { force: true });
+  }
   decodeExecPolicyAllowRuleResult(core.call("appendExecPolicyAllowRule", [{ tokens: pattern }]));
 }
 
@@ -148,6 +147,7 @@ function mutationApprovalDenied(core: CoreBridge, action: string, outcome: Appro
     ok: false,
     approvalRequired: true,
     approvalOutcome: outcome,
+    ...(outcome === "unavailable" ? { reason: "approval_unavailable" } : {}),
   });
 }
 
@@ -188,6 +188,15 @@ function childApprovalOwnerIsLoaded(ctx: unknown): boolean {
   return parentSessionId !== "" && parentSessionId === loadedMainSessionId;
 }
 
+function approvalOwnerId(ctx: unknown): string | undefined {
+  const metadata = childSessionMetadataFromContext(ctx);
+  if (metadata !== undefined) {
+    const owner = typeof metadata.parentSessionId === "string" ? metadata.parentSessionId.trim() : "";
+    return owner === "" ? undefined : owner;
+  }
+  return sessionInfoFromContext(ctx).sessionId;
+}
+
 function installIsolatedChildOwnershipLifecycle(
   pi: PiLike,
   childSessions: Map<string, ChildSessionBridge>,
@@ -195,6 +204,7 @@ function installIsolatedChildOwnershipLifecycle(
   const loadParent = (ctx: unknown) => {
     if (childSessionMetadataFromContext(ctx) !== undefined) return;
     loadedMainSessionId = sessionInfoFromContext(ctx).sessionId;
+    bindHarnessApprovalUi(loadedMainSessionId, toolContext(ctx)?.hasUI === true, toolContext(ctx)?.ui);
     refreshOwnedChildPermissions(childSessions, ctx);
   };
   // A newly spawned child starts while its parent is still loaded, so its
@@ -204,6 +214,7 @@ function installIsolatedChildOwnershipLifecycle(
   const replaceLoadedSession = (_event: unknown, ctx: unknown) => {
     if (childSessionMetadataFromContext(ctx) !== undefined) {
       loadedMainSessionId = undefined;
+      clearHarnessApprovalUi();
       return;
     }
     loadParent(ctx);
@@ -212,7 +223,10 @@ function installIsolatedChildOwnershipLifecycle(
   pi.on("session_switch", replaceLoadedSession);
   pi.on("session_shutdown", (_event, ctx) => {
     const ownerId = sessionInfoFromContext(ctx).sessionId;
-    if (ownerId !== undefined && ownerId === loadedMainSessionId) loadedMainSessionId = undefined;
+    if (ownerId !== undefined && ownerId === loadedMainSessionId) {
+      loadedMainSessionId = undefined;
+      clearHarnessApprovalUi(ownerId);
+    }
   });
 }
 
@@ -220,6 +234,13 @@ function boundedApprovalEvidence(prepared: PreparedApprovalAction): string {
   const limit = 4_000;
   const action = prepared.action;
   const lines: string[] = [];
+  const sandbox = "sandbox" in prepared ? prepared.sandbox : undefined;
+  if (sandbox !== undefined) {
+    lines.push(`Sandbox boundary: ${sandbox.filesystemMode || "active sandbox"}; roots: ${sandbox.workspaceRoots.join(", ")}`);
+  } else {
+    const roots = "workspaceRoots" in prepared ? prepared.workspaceRoots : undefined;
+    if (roots !== undefined) lines.push(`Sandbox boundary: workspace roots: ${roots.join(", ")}`);
+  }
   if (action === "exec_command_approval") {
     lines.push(`Command: ${prepared.cmd}`);
     lines.push(`Working directory: ${prepared.workdir}`);
@@ -243,16 +264,6 @@ function boundedApprovalEvidence(prepared: PreparedApprovalAction): string {
         })
         .join("\n");
     if (effect !== undefined && effect !== "") lines.push(`Bounded effect diff:\n${effect}`);
-  }
-  const sandbox = "sandbox" in prepared ? prepared.sandbox : undefined;
-  if (sandbox !== undefined) {
-    const mode =
-      sandbox.filesystemMode;
-    const roots = sandbox.workspaceRoots;
-    lines.push(`Sandbox boundary: ${mode || "active sandbox"}; roots: ${roots.join(", ")}`);
-  } else {
-    const roots = "workspaceRoots" in prepared ? prepared.workspaceRoots : undefined;
-    if (roots !== undefined) lines.push(`Sandbox boundary: workspace roots: ${roots.join(", ")}`);
   }
   const evidence = lines.join("\n\n");
   return evidence.length <= limit ? evidence : `${evidence.slice(0, limit)}\n… effect diff truncated`;
@@ -344,6 +355,37 @@ function resolveBashPath(): string {
   return resolved;
 }
 
+async function requestSandboxRetryApproval(
+  core: CoreBridge,
+  prepared: Extract<PreparedSuccess, { action: "exec_command" }>,
+  ctx: unknown,
+  signal?: AbortSignal,
+  validate?: () => boolean,
+): Promise<ApprovalResolution> {
+  if (!childApprovalOwnerIsLoaded(ctx)) return "unavailable";
+  const metadata = childSessionMetadataFromContext(ctx);
+  const agentId = typeof metadata?.agentId === "string" ? metadata.agentId.trim() : "";
+  const requester = metadata?.kind === "agent" && agentId !== "" ? `Agent ${agentId}: ` : "";
+  return requestHarnessApproval({
+    ownerSessionId: approvalOwnerId(ctx),
+    origin: requester === "" ? "top-level" : "agent",
+    ...(agentId === "" ? {} : { agentId }),
+    signal,
+    validate,
+    run: async (ui, requestSignal) => {
+      const approved = await withGoalClockPaused(core, async () =>
+        await ui.confirm(
+          `${requester}Command requires approval`,
+          `command failed; retry without sandbox?\n\n${prepared.cmd}`,
+          { signal: requestSignal },
+        )
+      );
+      if (requestSignal.aborted) return "interrupted";
+      return approved === true ? "approved" : "denied_by_user";
+    },
+  });
+}
+
 async function runPreparedExec(
   pi: PiLike,
   core: CoreBridge,
@@ -351,6 +393,8 @@ async function runPreparedExec(
   ctx: unknown,
   signal: AbortSignal | undefined,
   forceUnsandboxed = false,
+  validateApproval?: () => boolean,
+  replan?: () => Promise<GatewayToolResult>,
 ) {
   const ownerId = sessionInfoFromContext(ctx).sessionId ?? "current";
   const result = decodeExecToolResult(await core.call("runExecCommand", [
@@ -365,22 +409,14 @@ async function runPreparedExec(
     forceUnsandboxed,
   ]));
   if (!forceUnsandboxed && shouldOfferSandboxRetry(prepared, result)) {
-    const rawUi = toolContext(ctx)?.ui;
-    const ui = typeof rawUi === "object" && rawUi !== null ? rawUi as ToolUi : undefined;
-    if (typeof ui?.confirm === "function") {
-      const approved = await withGoalClockPaused(core, async () =>
-        await ui.confirm?.call(
-          ui,
-          "Command requires approval",
-          `command failed; retry without sandbox?\n\n${prepared.cmd}`,
-          { signal },
-        )
-      );
-      if (approved === true) {
-        return runPreparedExec(pi, core, prepared, ctx, signal, true);
-      }
-      throw new Error("rejected by user");
+    const outcome = await requestSandboxRetryApproval(core, prepared, ctx, signal, validateApproval);
+    if (outcome === "replan") {
+      if (replan !== undefined) return replan();
+      throw new Error("approval policy changed; retry the command");
     }
+    if (outcome === "approved") return runPreparedExec(pi, core, prepared, ctx, signal, true);
+    if (outcome === "denied_by_user") throw new Error("rejected by user");
+    throw new Error(approvalOutcomeMessage("command retry", outcome));
   }
   // The command outlived the first yield window and is now a background session.
   // Start a detached waiter that delivers its completion if the parent is idle
@@ -463,98 +499,77 @@ async function confirmExecApproval(
   prepared: PreparedApprovalAction,
   ctx: unknown,
   signal?: AbortSignal,
-): Promise<ApprovalOutcome> {
-  if (!childApprovalOwnerIsLoaded(ctx)) return "unavailable";
-  const rawUi = toolContext(ctx)?.ui;
-  const ui = typeof rawUi === "object" && rawUi !== null ? rawUi as ToolUi : undefined;
-  const confirm = ui?.confirm;
+  validate?: () => boolean,
+): Promise<ApprovalResolution> {
   const childMetadata = childSessionMetadataFromContext(ctx);
   const agentId = typeof childMetadata?.agentId === "string" ? childMetadata.agentId.trim() : "";
   const requester = childMetadata?.kind === "agent" && agentId !== ""
     ? `Agent ${agentId}: `
     : "";
-  const plan = decodeExecApprovalPromptPlan(core.call("planExecApprovalPrompt", [{
-    approvalTitle: `${requester}${prepared.approvalTitle}`,
-    approvalPrompt: `${requester}${prepared.approvalPrompt}`,
-    approvalTimeoutMs: prepared.approvalTimeoutMs,
-    uiAvailable: typeof confirm === "function",
-  }]));
-  if (plan.kind === "unavailable") {
-    return "unavailable";
-  }
-  if (typeof confirm !== "function") {
-    throw new Error("Invalid Taumel exec approval prompt plan");
-  }
-  if (signal?.aborted === true) return "interrupted";
-
-  const allowAlwaysTokens = prepared.action === "exec_command_approval"
-    ? prepared.execPolicyAllowAlwaysTokens
-    : undefined;
-  const select = ui?.select;
-
-  const timeoutMs = plan.timeoutMs;
-  const controller = new AbortController();
-  let outcome: ApprovalOutcome | undefined;
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  let removeAbortListener: (() => void) | undefined;
-
-  if (timeoutMs !== undefined && timeoutMs > 0) {
-    timeoutId = setTimeout(() => {
-      outcome = "timed_out";
-      controller.abort();
-    }, timeoutMs);
-  }
-
-  if (signal !== undefined) {
-    const abort = () => {
-      if (outcome === undefined) outcome = "interrupted";
-      controller.abort();
-    };
-    signal.addEventListener("abort", abort, { once: true });
-    removeAbortListener = () => signal.removeEventListener("abort", abort);
-  }
-
-  const confirmOptions = { signal: controller.signal };
-
-  try {
-    const requester = undefined;
-    const title =
-      requester === undefined
-        ? plan.title
-        : `${plan.title} - ${requester}`;
-    const prompt =
-      requester === undefined
-        ? `${plan.prompt}\n\n${boundedApprovalEvidence(prepared)}`
-        : `Requesting ${requester}\n\n${plan.prompt}\n\n${boundedApprovalEvidence(prepared)}`;
-    if (allowAlwaysTokens !== undefined && allowAlwaysTokens.length > 0 && typeof select === "function") {
-      const selected = await withGoalClockPaused(core, async () =>
-        await select.call(ui, title, ["Deny", "Allow once", "Allow always"])
-      );
-      if (selected === "Allow once") return "approved";
-      if (selected === "Allow always") {
-        await appendExecPolicyAllowRule(core, allowAlwaysTokens);
-        return "approved_always";
+  if (!childApprovalOwnerIsLoaded(ctx)) return "unavailable";
+  const outcome = await requestHarnessApproval({
+    ownerSessionId: approvalOwnerId(ctx),
+    origin: requester === "" ? "top-level" : "agent",
+    ...(agentId === "" ? {} : { agentId }),
+    signal,
+    validate,
+    commit: async (committedOutcome) => {
+      if (committedOutcome !== "approved_always") return;
+      const allowAlwaysTokens = prepared.action === "exec_command_approval"
+        ? prepared.execPolicyAllowAlwaysTokens
+        : undefined;
+      if (allowAlwaysTokens !== undefined) appendExecPolicyAllowRule(core, allowAlwaysTokens);
+    },
+    run: async (ui: ApprovalUi, requestSignal: AbortSignal) => {
+      const plan = decodeExecApprovalPromptPlan(core.call("planExecApprovalPrompt", [{
+        approvalTitle: `${requester}${prepared.approvalTitle}`,
+        approvalPrompt: `${requester}${prepared.approvalPrompt}`,
+        approvalTimeoutMs: prepared.approvalTimeoutMs,
+        uiAvailable: true,
+      }]));
+      if (plan.kind === "unavailable") return "unavailable";
+      const allowAlwaysTokens = prepared.action === "exec_command_approval"
+        ? prepared.execPolicyAllowAlwaysTokens
+        : undefined;
+      const timeoutMs = plan.timeoutMs;
+      const controller = new AbortController();
+      let outcome: ApprovalOutcome | undefined;
+      const abort = () => {
+        if (outcome === undefined) outcome = "interrupted";
+        controller.abort();
+      };
+      requestSignal.addEventListener("abort", abort, { once: true });
+      const timeoutId = timeoutMs !== undefined && timeoutMs > 0
+        ? setTimeout(() => {
+          outcome = "timed_out";
+          controller.abort();
+        }, timeoutMs)
+        : undefined;
+      try {
+        const prompt = `${plan.prompt}\n\n${boundedApprovalEvidence(prepared)}`;
+        if (allowAlwaysTokens !== undefined && allowAlwaysTokens.length > 0 && typeof ui.select === "function") {
+          const selected = await withGoalClockPaused(core, async () =>
+            await ui.select?.(`${plan.title}\n\n${prompt}`, ["Deny", "Allow once", "Allow always"], { signal: controller.signal })
+          );
+          if (selected === "Allow once") return "approved";
+          if (selected === "Allow always") return "approved_always";
+          return controller.signal.aborted ? outcome ?? "interrupted" : "denied_by_user";
+        }
+        const approved = await withGoalClockPaused(core, async () =>
+          await ui.confirm(plan.title, prompt, { signal: controller.signal })
+        );
+        if (approved === true) return "approved";
+        return controller.signal.aborted ? outcome ?? "interrupted" : "denied_by_user";
+      } catch (error) {
+        if (controller.signal.aborted) return outcome ?? "interrupted";
+        throw error;
+      } finally {
+        if (timeoutId !== undefined) clearTimeout(timeoutId);
+        requestSignal.removeEventListener("abort", abort);
       }
-      return controller.signal.aborted ? outcome ?? "interrupted" : "denied_by_user";
-    }
-    const approved = await withGoalClockPaused(core, async () =>
-      await confirm.call(
-        ui,
-        title,
-        prompt,
-        confirmOptions,
-      )
-    );
-    if (approved === true) return "approved";
-    if (controller.signal.aborted) return outcome ?? "interrupted";
-    return "denied_by_user";
-  } catch (error) {
-    if (controller.signal.aborted) return outcome ?? "interrupted";
-    throw error;
-  } finally {
-    if (timeoutId !== undefined) clearTimeout(timeoutId);
-    removeAbortListener?.();
-  }
+    },
+  });
+  return outcome;
 }
 
 async function withMutationApproval(
@@ -563,9 +578,12 @@ async function withMutationApproval(
   prepared: PreparedApprovalAction,
   ctx: unknown,
   signal: AbortSignal | undefined,
+  validate: () => boolean,
+  replan: () => Promise<GatewayToolResult>,
   run: () => Promise<ToolResultEnvelope> | ToolResultEnvelope,
-): Promise<ToolResultEnvelope> {
-  const outcome = await confirmExecApproval(core, prepared, ctx, signal);
+): Promise<GatewayToolResult> {
+  const outcome = await confirmExecApproval(core, prepared, ctx, signal, validate);
+  if (outcome === "replan") return replan();
   if (outcome !== "approved") {
     return mutationApprovalDenied(core, action, outcome);
   }
@@ -712,7 +730,7 @@ export async function executeTool(
   rawParams: unknown,
   ctx: unknown,
   signal?: AbortSignal,
-) {
+): Promise<GatewayToolResult> {
   const parsed = parseToolParams(name, rawParams);
   if (!parsed.ok) {
     if (["agent_spawn", "finder", "oracle", "agent_send", "agent_wait", "agent_list", "agent_close"].includes(name)) {
@@ -766,6 +784,14 @@ export async function executeTool(
     }
     return errorToolResult(core, prepared.error, { ...prepared });
   }
+  const approvalStillCurrent = () => {
+    try {
+      return JSON.stringify(preparedAction(core, name, parsed.params, ctx)) === JSON.stringify(prepared);
+    } catch {
+      return false;
+    }
+  };
+  const replan = () => executeTool(pi, core, childSessions, name, parsed.params, ctx, signal);
   switch (prepared.action) {
     case "tool_result":
       return preparedToolResult(core, prepared);
@@ -787,7 +813,7 @@ export async function executeTool(
     case "exa_fetch":
       return executeExaInCore(core, prepared);
     case "exa_agent_create_run_approval":
-      return withMutationApproval(core, "exa_agent_create_run", prepared, ctx, signal, () =>
+      return withMutationApproval(core, "exa_agent_create_run", prepared, ctx, signal, approvalStillCurrent, replan, () =>
         executeExaInCore(core, prepared)
       );
     case "query_threads":
@@ -796,9 +822,10 @@ export async function executeTool(
       return result;
     }
     case "exec_command":
-      return runPreparedExec(pi, core, prepared, ctx, signal);
+      return runPreparedExec(pi, core, prepared, ctx, signal, false, approvalStillCurrent, replan);
     case "exec_command_approval": {
-      const outcome = await confirmExecApproval(core, prepared, ctx, signal);
+      const outcome = await confirmExecApproval(core, prepared, ctx, signal, approvalStillCurrent);
+      if (outcome === "replan") return replan();
       const approvalPlan = decodeExecApprovalResult(core.call("finishExecApproval", [{
         outcome: outcome === "approved_always" ? "approved" : outcome,
       }]));
@@ -808,7 +835,7 @@ export async function executeTool(
     case "write_stdin":
       return writePreparedStdin(core, prepared, ctx, signal);
     case "write_approval":
-      return withMutationApproval(core, "write", prepared, ctx, signal, () =>
+      return withMutationApproval(core, "write", prepared, ctx, signal, approvalStillCurrent, replan, () =>
         executeLegacyWrite(core, {
           ...prepared,
           action: "write",
@@ -817,7 +844,7 @@ export async function executeTool(
         })
       );
     case "edit_approval":
-      return withMutationApproval(core, "edit", prepared, ctx, signal, () =>
+      return withMutationApproval(core, "edit", prepared, ctx, signal, approvalStillCurrent, replan, () =>
         executeLegacyEdit(core, {
           ...prepared,
           action: "edit",
@@ -826,7 +853,7 @@ export async function executeTool(
         })
       );
     case "apply_patch_approval":
-      return withMutationApproval(core, "apply_patch", prepared, ctx, signal, () =>
+      return withMutationApproval(core, "apply_patch", prepared, ctx, signal, approvalStillCurrent, replan, () =>
         executeApplyPatch(core, parsed.params, {
           ...prepared,
           action: "apply_patch",

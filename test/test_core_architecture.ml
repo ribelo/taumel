@@ -204,14 +204,19 @@ let test_sandbox_workspace_metadata_protection () =
     match Sandbox.exec_approval_outcome ~outcome with
     | Sandbox.Approval_denied denied ->
         assert_equal (label ^ " text") expected_message denied.message;
-        assert_bool (label ^ " details")
-          (denied.details
-          = Shared.Object
-              [
-                ("ok", Shared.Bool false);
-                ("approvalRequired", Shared.Bool true);
-                ("approvalOutcome", Shared.String expected_outcome);
-              ])
+        let fields =
+          [
+            ("ok", Shared.Bool false);
+            ("approvalRequired", Shared.Bool true);
+            ("approvalOutcome", Shared.String expected_outcome);
+          ]
+        in
+        let fields =
+          if expected_outcome = "unavailable" then
+            fields @ [ ("reason", Shared.String "approval_unavailable") ]
+          else fields
+        in
+        assert_bool (label ^ " details") (denied.details = Shared.Object fields)
     | Sandbox.Approval_granted ->
         fail (label ^ " outcome") "expected denied result"
   in

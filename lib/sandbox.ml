@@ -509,17 +509,24 @@ let exec_approval_outcome ~outcome =
   | Approval_approved -> Approval_granted
   | Approval_denied_by_user | Approval_timed_out | Approval_unavailable
   | Approval_interrupted ->
+      let details =
+        [
+          ("ok", Shared.Bool false);
+          ("approvalRequired", Shared.Bool true);
+          ( "approvalOutcome",
+            Shared.String (approval_prompt_outcome_to_string outcome) );
+        ]
+      in
+      let details =
+        match outcome with
+        | Approval_unavailable ->
+            details @ [ ("reason", Shared.String "approval_unavailable") ]
+        | _ -> details
+      in
       Approval_denied
         {
           message = approval_denial_message outcome;
-          details =
-            Shared.Object
-              [
-                ("ok", Shared.Bool false);
-                ("approvalRequired", Shared.Bool true);
-                ( "approvalOutcome",
-                  Shared.String (approval_prompt_outcome_to_string outcome) );
-              ];
+          details = Shared.Object details;
         }
 
 let filesystem_approval_prompt ~tool ~path =

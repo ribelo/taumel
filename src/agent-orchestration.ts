@@ -14,6 +14,7 @@ import {
   sendToChildSession,
 } from "./child-sessions.ts";
 import { agentErrorToolResult, preparedToolResult } from "./tool-results.ts";
+import { cancelAgentApprovals } from "./approval-coordinator.ts";
 import {
   decodeAgentActiveCountResult,
   decodeAgentCleanupPlan,
@@ -490,6 +491,7 @@ export async function executeAgentPrepared(
     }
     case "agent_close": {
       const agentId = stringField(prepared, "agentId");
+      cancelAgentApprovals(sessionInfoFromContext(ctx).sessionId, agentId);
       const runIds = Array.isArray(prepared.runIds)
         ? prepared.runIds.filter((value): value is string => typeof value === "string")
         : [];
