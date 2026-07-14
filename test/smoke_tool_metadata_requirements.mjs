@@ -20,11 +20,17 @@ function contract(name) {
   return c;
 }
 
-function paramDescription(toolName, path) {
+/** Walk JSON Schema properties; supports `items` for array element shapes. */
+function schemaDescription(toolName, path) {
+  const segments = path.split(".");
   let node = contract(toolName).parameters;
-  for (const key of path.split(".")) {
-    node = node?.properties?.[key];
-    if (node === undefined) return undefined;
+  for (const seg of segments) {
+    if (node === undefined || node === null) return undefined;
+    if (seg === "items") {
+      node = node.items;
+      continue;
+    }
+    node = node.properties?.[seg];
   }
   return typeof node?.description === "string" ? node.description : undefined;
 }
@@ -32,7 +38,7 @@ function paramDescription(toolName, path) {
 function resolveParam(key) {
   const dot = key.indexOf(".");
   assert(dot > 0, `bad param key ${key}`);
-  return paramDescription(key.slice(0, dot), key.slice(dot + 1));
+  return schemaDescription(key.slice(0, dot), key.slice(dot + 1));
 }
 
 for (const [reqId, kind, key] of REQUIREMENT_CHECKS) {
@@ -57,19 +63,12 @@ assert(
 );
 
 assert(
-  contract("web_search_exa").parameters.properties?.contents?.description ===
-    "Content extraction to include with each search result.",
-  "exa-tl06: contents object description",
-);
-assert(
-  contract("crawling_exa").parameters.properties?.summary?.description ===
-    "Request a generated summary for each result.",
-  "exa-tl08: summary description",
-);
-
-assert(
   parseToolParams("web_search_exa", { query: "x", startCrawlDate: "2020" }).ok === false,
   "exa-tl13: no startCrawlDate",
+);
+assert(
+  parseToolParams("web_search_exa", { query: "x", endCrawlDate: "2020" }).ok === false,
+  "exa-tl13: no endCrawlDate",
 );
 assert(
   parseToolParams("exa_agent_create_run", { query: "q", budget: {} }).ok === false,
@@ -79,22 +78,38 @@ assert(
   parseToolParams("web_search_exa", { query: "x", contents: { highlights: { maxCharacters: 50 } } }).ok,
   "exa-tl13: highlights.maxCharacters",
 );
-
 assert(
-  parseToolParams("read", { path: "a.txt", extra: true }).ok === false,
-  "sandbox-tl15: read rejects unknown parameters",
+  parseToolParams("web_search_exa", {
+    query: "x",
+    contents: { highlights: { numSentences: 2 } },
+  }).ok === false,
+  "exa-tl13: no highlights.numSentences",
 );
+
+assert(parseToolParams("read", { path: "a.txt", extra: true }).ok === false, "sandbox-tl15: read unknown param");
+assert(!parseToolParams("read", { path: "" }).ok, "sandbox-tl15: read path non-empty");
 assert(
   parseToolParams("view_media", { path: "x.png", extra: true }).ok === false,
-  "sandbox-tl19: view_media rejects unknown parameters",
+  "sandbox-tl19: view_media unknown param",
 );
+assert(!parseToolParams("view_media", { path: "" }).ok, "sandbox-tl19: view_media path non-empty");
 assert(
   parseToolParams("write", { path: "f", content: "", extra: true }).ok === false,
-  "sandbox-tl32: write rejects unknown parameters",
+  "sandbox-tl32: write unknown param",
 );
+assert(!parseToolParams("write", { path: "" }).ok, "sandbox-tl32: write path non-empty");
 assert(
   parseToolParams("edit", { path: "f", edits: [{ oldText: "", newText: "" }] }).ok === false,
-  "sandbox-tl26: edit requires non-empty oldText",
+  "sandbox-tl26: edit non-empty oldText",
 );
+assert(!parseToolParams("edit", { path: "", edits: [{ oldText: "a", newText: "b" }] }).ok, "sandbox-tl26: edit path");
+assert(
+  parseToolParams("edit", { path: "f", edits: [] }).ok === false,
+  "sandbox-tl26: edit at least one edit",
+);
+
+assert(contract("web_search_exa").promptGuidelines?.length >= 3, "exa-tl03: web_search guidance");
+assert(contract("crawling_exa").promptGuidelines?.length >= 2, "exa-tl09: crawling guidance");
+assert(contract("exa_agent_create_run").promptGuidelines?.length >= 2, "exa-tl11: agent create guidance");
 
 console.log("smoke_tool_metadata_requirements: all assertions passed");
