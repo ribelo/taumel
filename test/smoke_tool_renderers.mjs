@@ -514,7 +514,7 @@ assert(failedPatchExpanded.includes("at line 3"), `failed apply_patch expanded s
   }
 }
 
-// read — collapsed is a single header line; expanded shows the body head-oriented.
+// read — collapsed is a single header line; expanded shows the body head-oriented (render-rd01).
 const readResult = {
   content: [{ type: "text", text: "1\talpha\n2\tbeta\n3\tgamma" }],
   details: { ok: true, path: "src/x.ts", totalLines: 3, startLine: 1, shownLines: 3, truncated: false },
@@ -524,12 +524,18 @@ const compactRead = renderText(readRenderer.renderResult(readResult, { expanded:
 const expandedRead = renderText(readRenderer.renderResult(readResult, { expanded: true, isPartial: false }, theme, { args: { path: "src/x.ts" } }));
 assert(/• read · src\/x\.ts \(3 lines\)/.test(compactRead) && !compactRead.includes("\n"), `read collapsed should be a single header line: ${compactRead}`);
 assert(expandedRead.includes("alpha") && expandedRead.includes("gamma") && expandedRead.length > compactRead.length, `read expanded should show the body: ${expandedRead}`);
-// Truncated read → compact shows shown/total, expanded preserves the returned text exactly.
+// Truncated read → compact shows the returned range, expanded preserves the returned text exactly.
 const truncatedRead = renderText(readRenderer.renderResult(
-  { content: [{ type: "text", text: "1\talpha\n2\tbeta\n\n[8 more lines in file. Use offset=3 to continue.]" }], details: { ok: true, path: "big.ts", totalLines: 10, shownLines: 2 } },
+  { content: [{ type: "text", text: "1\talpha\n2\tbeta\n\n[8 more lines in file. Use offset=3 to continue.]" }], details: { ok: true, path: "big.ts", totalLines: 10, startLine: 1, shownLines: 2 } },
   { expanded: true, isPartial: false }, theme, { args: { path: "big.ts" } },
 ));
+assert(truncatedRead.includes("(lines 1–2 of 10)"), `truncated read should show the returned line range: ${truncatedRead}`);
 assert(truncatedRead.includes("[8 more lines in file. Use offset=3 to continue.]"), `truncated read should preserve the returned footer exactly: ${truncatedRead}`);
+const largeRead = renderText(readRenderer.renderResult(
+  { content: [{ type: "text", text: "1\talpha" }], details: { ok: true, path: "big.ts", totalLines: 2898, startLine: 1, shownLines: 1230 } },
+  { expanded: false, isPartial: false }, theme, { args: { path: "big.ts" } },
+));
+assert(largeRead.includes("(lines 1–1230 of 2898)"), `large read should show its actual returned line range: ${largeRead}`);
 
 const mediaCompact = renderText(renderersForTool("view_media").renderResult(resultFor("view_media"), { expanded: false, isPartial: false }, theme, { args: { path: "/tmp/pi-clipboard-6e6a501780841a8c.png" } }));
 const mediaExpanded = renderText(renderersForTool("view_media").renderResult(resultFor("view_media"), { expanded: true, isPartial: false }, theme, { args: { path: "/tmp/pi-clipboard-6e6a501780841a8c.png" } }));

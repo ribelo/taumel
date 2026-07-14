@@ -291,12 +291,13 @@ function buildRead(result: unknown, options: unknown, theme: unknown, args: Tool
   const details = detailsRecord(result);
   const path = stringFieldOrUndefined(details, "path") ?? stringFieldOrUndefined(args, "path") ?? "";
   const total = numberFieldOrUndefined(details, "totalLines");
+  const start = numberFieldOrUndefined(details, "startLine");
   const shown = numberFieldOrUndefined(details, "shownLines");
   const lineFact =
     total === undefined
       ? ""
-      : shown !== undefined && shown < total
-        ? `(${shown}/${total} lines)`
+      : start !== undefined && shown !== undefined && shown < total
+        ? `(lines ${start}–${start + shown - 1} of ${total})`
         : `(${total} line${total === 1 ? "" : "s"})`;
   const header = pathHeaderSpec("read", path, dotFromDetails(details), theme, lineFact === "" ? "" : themeFg(theme, "dim", lineFact));
   if (!expanded) return { header, body: undefined };
