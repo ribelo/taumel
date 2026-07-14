@@ -6,6 +6,8 @@ function makeHarness() {
   const levels = [];
   const notifications = [];
   const shortcuts = new Map();
+  const eventHandlers = new Map();
+  const footerRefreshes = [];
   let currentLevel = "off";
 
   const pi = {
@@ -14,12 +16,15 @@ function makeHarness() {
     },
     getThinkingLevel() { return currentLevel; },
     setThinkingLevel(level) { currentLevel = level; },
-    on() {}, // installThinkingFooterRefresh uses pi.on
+    on(event, handler) { eventHandlers.set(event, handler); },
   };
   const core = {
     init: () => undefined,
     call: (name, args) => {
-      if (name === "refreshFooterState") return undefined;
+      if (name === "refreshFooterState") {
+        footerRefreshes.push(args[0]);
+        return undefined;
+      }
       throw new Error(`unexpected core call: ${name}`);
     },
   };
@@ -32,12 +37,12 @@ function makeHarness() {
     },
   };
 
-  return { pi, core, ctx, shortcuts, levels, notifications };
+  return { pi, core, ctx, shortcuts, eventHandlers, footerRefreshes, levels, notifications };
 }
 
 // Four shortcuts should be registered.
 {
-  const { pi, core, shortcuts } = makeHarness();
+  const { pi, core, ctx, shortcuts, eventHandlers, footerRefreshes } = makeHarness();
   registerThinkingShortcuts(pi);
   installThinkingFooterRefresh(pi, core);
   assert.equal(shortcuts.size, 4, "should register 4 shortcuts");
@@ -46,6 +51,8 @@ function makeHarness() {
   assert(shortcuts.has("alt+."), "should register alt+.");
   assert(shortcuts.has("shift+up"), "should register shift+up");
   assert.equal(typeof shortcuts.get("alt+,").handler, "function", "alt+, should have a handler function");
+  eventHandlers.get("thinking_level_select")({ level: "high", previousLevel: "medium" }, ctx);
+  assert.deepEqual(footerRefreshes, [ctx], "thinking changes should immediately refresh footer state");
 }
 
 // alt+, decreases thinking level.

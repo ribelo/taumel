@@ -82,6 +82,7 @@ let register_handlers host =
                 let isolated_child =
                   Session_sync.persisted_session_snapshot_is_isolated_child snapshot
                 in
+                if not isolated_child then capture_loaded_footer_permissions ();
                 if state.cwd <> previous_cwd then (
                   state.git_delta <- Model.empty_git_delta;
                   state.git_repo <- false;
@@ -114,6 +115,8 @@ let register_handlers host =
 	                   with
 	                   | None -> ()
 	                   | Some _ ->
+	                       if not (Session_sync.session_is_isolated_child ctx) then
+	                         capture_loaded_footer_permissions ();
 	                       ignore
 	                         (Session_sync.try_account_goal_turn_end
 	                            ~scope:"footer goal accounting" ctx);
@@ -138,6 +141,7 @@ let register_handlers host =
                  | None -> !active_network_mode);
                if has_property payload "noSandbox" then
                  active_no_sandbox := get_bool payload "noSandbox";
+               if not !active_isolated_child then capture_loaded_footer_permissions ();
                emit_changed host))))
 
 let init host =

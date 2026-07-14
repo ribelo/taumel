@@ -53,6 +53,8 @@ let apply_and_persist permissions update ctx =
   | Error message -> error_obj message
   | Ok next ->
       apply_state next;
+      if not next.Taumel.Permissions.sandbox.isolated_child then
+        capture_loaded_footer_permissions ();
       Session_sync.save_permissions_state ctx;
       (match !active_host with Some host -> emit_changed host | None -> ());
       command_result (Taumel.Permissions.summary next)

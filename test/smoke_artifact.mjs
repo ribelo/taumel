@@ -36,6 +36,7 @@ let renderRequests = 0;
 let firstCostReads = 0;
 let tailCostReads = 0;
 let appendedCostReads = 0;
+const renderedPermissionTokens = [];
 
 const pushHandler = (event, handler) => {
   const list = handlers.get(event) ?? [];
@@ -110,7 +111,10 @@ core.init({
   requestRender: () => {
     renderRequests += 1;
   },
-  themeFg: (_theme, _color, value) => value,
+  themeFg: (_theme, color, value) => {
+    if (value === "•") renderedPermissionTokens.push(color);
+    return value;
+  },
 });
 
 const preparedWrite = core.call("prepareTool", [{
@@ -178,6 +182,23 @@ const childCtx = {
       type: "custom",
       customType: "taumel.childSession",
       data: { kind: "agent", isolated_child: true },
+    }, {
+      type: "custom",
+      customType: "taumel.permissions",
+      data: {
+        version: 1,
+        profile: {
+          modelId: "inherit",
+          thinkingLevel: "low",
+          sandboxPreset: "read-only",
+          approvalPolicy: "untrusted",
+          tools: { kind: "all" },
+          noSandboxAllowed: false,
+        },
+        networkMode: "disabled",
+        noSandbox: false,
+        isolated_child: true,
+      },
     }],
     getBranch: () => [],
   },
@@ -194,6 +215,19 @@ if (!childLines[0].includes("gpt-test") || childLines[0].includes("amazon-bedroc
 }
 if (footerInstallSessionIds.includes("artifact-child-session")) {
   throw new Error(`isolated_child session_start reinstalled the parent footer: ${JSON.stringify(footerInstallSessionIds)}`);
+}
+
+renderedPermissionTokens.length = 0;
+component.render(120);
+const parentPermissionTokens = renderedPermissionTokens.slice(0, 3);
+core.call("prepareTool", [{ name: "get_goal", params: {}, ctx: childCtx }]);
+renderedPermissionTokens.length = 0;
+component.render(120);
+const permissionTokensAfterChildTool = renderedPermissionTokens.slice(0, 3);
+if (JSON.stringify(permissionTokensAfterChildTool) !== JSON.stringify(parentPermissionTokens)) {
+  throw new Error(
+    `isolated_child tool sync overwrote parent footer permissions: ${JSON.stringify({ parentPermissionTokens, permissionTokensAfterChildTool })}`,
+  );
 }
 
 const firstReadsAfterStart = firstCostReads;

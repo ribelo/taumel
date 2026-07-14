@@ -16,6 +16,13 @@ type state = {
   mutable context_window : float;
 }
 
+type footer_permissions = {
+  footer_filesystem_mode : string;
+  footer_network_mode : Taumel.Sandbox.network_mode;
+  footer_approval_policy : Taumel.Capability_profile.approval_policy;
+  footer_no_sandbox : bool;
+}
+
 let state =
   {
     cwd = "";
@@ -43,6 +50,14 @@ let active_profile_state = ref Taumel.Capability_profile.default
 let active_network_mode = ref Taumel.Sandbox.Network_disabled
 let active_no_sandbox = ref false
 let active_isolated_child = ref false
+let loaded_footer_permissions =
+  ref
+    {
+      footer_filesystem_mode = state.filesystem_mode;
+      footer_network_mode = !active_network_mode;
+      footer_approval_policy = !active_profile_state.approval_policy;
+      footer_no_sandbox = !active_no_sandbox;
+    }
 let host_sandbox_preset : Taumel.Capability_profile.sandbox_preset option ref = ref None
 let host_network_mode : Taumel.Sandbox.network_mode option ref = ref None
 let host_no_sandbox : bool option ref = ref None
@@ -68,6 +83,15 @@ let active_host_or_empty () =
 
 let emit_changed host =
   ignore (call2 host "emit" (js_string footer_event) (Unsafe.inject Js.null))
+
+let capture_loaded_footer_permissions () =
+  loaded_footer_permissions :=
+    {
+      footer_filesystem_mode = state.filesystem_mode;
+      footer_network_mode = !active_network_mode;
+      footer_approval_policy = !active_profile_state.approval_policy;
+      footer_no_sandbox = !active_no_sandbox;
+    }
 
 let now_seconds () =
   let date = Unsafe.get Unsafe.global "Date" in

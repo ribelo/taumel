@@ -77,8 +77,7 @@ let colorize host theme color value =
       | None -> value)
   | _ -> value
 
-let active_network_mode_string () =
-  match !active_network_mode with
+let network_mode_string = function
   | Taumel.Sandbox.Network_enabled -> "enabled"
   | Taumel.Sandbox.Network_disabled -> "disabled"
 
@@ -88,6 +87,7 @@ let goal_presentation () =
     !current_goal
 
 let snapshot_for_render host footer_data =
+  let permissions = !loaded_footer_permissions in
   let branch =
     match function_field host "getGitBranch" with
     | Some _ -> (
@@ -99,12 +99,12 @@ let snapshot_for_render host footer_data =
   {
     Model.cwd = state.cwd;
     branch;
-    filesystem_mode = state.filesystem_mode;
-    network_mode = active_network_mode_string ();
+    filesystem_mode = permissions.footer_filesystem_mode;
+    network_mode = network_mode_string permissions.footer_network_mode;
     approval_policy =
       Taumel.Capability_profile.approval_to_string
-        !active_profile_state.approval_policy;
-    no_sandbox = !active_no_sandbox;
+        permissions.footer_approval_policy;
+    no_sandbox = permissions.footer_no_sandbox;
     git_delta = state.git_delta;
     git_repo = state.git_repo;
     git_error = state.git_error;
