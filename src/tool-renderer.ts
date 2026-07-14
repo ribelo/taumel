@@ -587,12 +587,33 @@ function buildNotificationBlock(message: unknown, options: unknown, theme: unkno
   const subject = execMatch !== null
     ? `session ${execMatch[1]} ready`
     : agent !== undefined
-      ? `${stringFieldOrUndefined(agent, "agent_id")} · ${stringFieldOrUndefined(agent, "kind")} · ${stringFieldOrUndefined(agent, "run_id")} ready`
+      ? [stringFieldOrUndefined(agent, "agent_id"), stringFieldOrUndefined(agent, "description")]
+          .filter((part) => part !== undefined && part !== "").join(" · ")
       : "ready";
+  const status = agent === undefined ? undefined : stringFieldOrUndefined(agent, "status");
+  const dot = agent === undefined
+    ? "muted"
+    : status === "completed"
+      ? "success"
+      : status === "failed" || status === "lost"
+        ? "error"
+        : "muted";
+  const agentEntries: Entry[] = agent === undefined
+    ? []
+    : [
+        ["Agent", stringFieldOrUndefined(agent, "agent_id")],
+        ["Run", stringFieldOrUndefined(agent, "run_id")],
+        ["Description", stringFieldOrUndefined(agent, "description")],
+        ["Status", status],
+      ].flatMap(([label, value]) => value === undefined || value === ""
+        ? []
+        : [{ text: `${themeFg(theme, "dim", `${label}:`)} ${themeFg(theme, "toolOutput", value)}` }]);
 
   return {
-    header: headerSpec(name, subject, "muted", theme),
-    body: expanded ? { mode: "rail", entries: tailEntries(content, true, theme, 6, 100000) } : undefined,
+    header: headerSpec(name, subject, dot, theme),
+    body: expanded
+      ? { mode: "rail", entries: agent === undefined ? tailEntries(content, true, theme, 6, 100000) : agentEntries }
+      : undefined,
   };
 }
 

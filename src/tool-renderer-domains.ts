@@ -345,7 +345,7 @@ function buildAgent(name: string, result: unknown, options: unknown, theme: unkn
   } else if (name === "finder" || name === "oracle") {
     subject = [agentId, stringFieldOrUndefined(args, "description")].filter((part) => part !== undefined && part !== "").join(" · ");
   } else if (name === "agent_send") {
-    subject = [agentId, stringFieldOrUndefined(args, "description"), status].filter((part) => part !== undefined && part !== "").join(" · ");
+    subject = [agentId, stringFieldOrUndefined(args, "description")].filter((part) => part !== undefined && part !== "").join(" · ");
   } else {
     subject = [agentId, runId, kind, status].filter((part) => part !== "").join(" · ");
   }

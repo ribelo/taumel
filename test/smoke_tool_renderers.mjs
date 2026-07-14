@@ -244,7 +244,16 @@ const spawnedFinder = renderText(renderersForTool("finder").renderResult(
   theme,
   { args: argsFor("finder") },
 ));
+// agentui-s0qm: compact Finder uses the handle and task description.
 assert(/^• finder · finder-2sk2 · Locate renderer coverage$/.test(spawnedFinder), `finder compact slot wrong: ${spawnedFinder}`);
+const sentAgent = renderText(renderersForTool("agent_send").renderResult(
+  resultFor("agent_send"),
+  { expanded: false, isPartial: false },
+  theme,
+  { args: argsFor("agent_send") },
+));
+// agentui-u65i: accepted sends omit the redundant running label.
+assert(/^• agent_send · worker-1 · Continue renderer work$/.test(sentAgent), `agent_send compact slot wrong: ${sentAgent}`);
 // agent-rn15: expanded wait rendering includes routing only on the user-facing surface.
 const expandedWait = renderText(renderersForTool("agent_wait").renderResult(
   resultFor("agent_wait"),
@@ -262,6 +271,32 @@ for (const expected of [
   "Response: done",
 ]) {
   assert(expandedWait.includes(expected), `expanded agent_wait missing ${expected}: ${expandedWait}`);
+}
+const compactWait = renderText(renderersForTool("agent_wait").renderResult(
+  resultFor("agent_wait"),
+  { expanded: false, isPartial: false },
+  theme,
+  { args: argsFor("agent_wait") },
+));
+// agentui-hdst: compact wait preserves ready and pending counts.
+assert(/^• agent_wait · 1 ready · 0 pending$/.test(compactWait), `agent_wait compact slot wrong: ${compactWait}`);
+
+const longAgentText = "first agent presentation words must remain visible through the middle and finish with final words";
+const wrappedFinder = renderersForTool("finder").renderResult(
+  resultFor("finder"),
+  { expanded: true, isPartial: false },
+  theme,
+  { args: { query: longAgentText, description: "Locate renderer coverage" } },
+).render(40).join("\n");
+const wrappedWait = renderersForTool("agent_wait").renderResult(
+  { ...resultFor("agent_wait"), details: { ...resultFor("agent_wait").details, results: [{ ...resultFor("agent_wait").details.results[0], output: longAgentText }] } },
+  { expanded: true, isPartial: false },
+  theme,
+  { args: argsFor("agent_wait") },
+).render(40).join("\n");
+// agentui-kjx2: expanded instructions and responses wrap without truncation.
+for (const [label, rendered] of [["Finder query", wrappedFinder], ["agent_wait response", wrappedWait]]) {
+  assert(rendered.replace(/\s+/g, " ").includes(longAgentText) && !rendered.includes("…"), `${label} was not fully wrapped: ${rendered}`);
 }
 
 const shell = renderersForTool("exec_command");
@@ -631,10 +666,43 @@ assert(!compactExecNote.includes("\n") && !compactExecNote.includes("write_stdin
 assert(expandedExecNote.includes("Command session 3 has finished") && expandedExecNote.includes("yield_time_ms=5000"), `expanded exec notification should preserve visible body: ${expandedExecNote}`);
 const agentNote = JSON.stringify({
   event: "agent_completion", agent_id: "agent-7k2m", run_id: "agent-7k2m-run-1", kind: "generic",
+  description: "Inspect renderer coverage", status: "completed",
   next_action: { tool: "agent_wait", arguments: { run_ids: ["agent-7k2m-run-1"], timeout_seconds: 0 } },
 });
 const compactAgentNote = renderText(renderNotification({ customType: "notification", content: agentNote }, { expanded: false }, theme));
-assert(/• agent_completion · agent-7k2m · generic · agent-7k2m-run-1 ready/.test(compactAgentNote), `agent completion JSON rendering wrong: ${compactAgentNote}`);
+// agentui-i40y/agentui-ald0/agentui-4lce: compact completion is handle + description only.
+assert(/^• agent_completion · agent-7k2m · Inspect renderer coverage$/.test(compactAgentNote), `agent completion compact rendering wrong: ${compactAgentNote}`);
+const expandedAgentNote = renderText(renderNotification({ customType: "notification", content: agentNote }, { expanded: true }, theme));
+// agentui-go7t/agentui-3txs/agentui-pz83/agentui-e5yj: expanded completion is labeled, human-readable metadata only.
+for (const expected of [
+  "Agent: agent-7k2m",
+  "Run: agent-7k2m-run-1",
+  "Description: Inspect renderer coverage",
+  "Status: completed",
+]) {
+  assert(expandedAgentNote.includes(expected), `expanded agent completion missing ${expected}: ${expandedAgentNote}`);
+}
+assert(!expandedAgentNote.includes('{"event"') && !expandedAgentNote.includes("next_action") && !expandedAgentNote.includes("Response:"), `expanded agent completion leaked protocol or response data: ${expandedAgentNote}`);
+
+const statusTheme = {
+  ...theme,
+  fg: (color, value) => `<${color}>${value}</${color}>`,
+};
+function completionForStatus(status) {
+  const content = JSON.stringify({
+    event: "agent_completion",
+    agent_id: "agent-7k2m",
+    run_id: "agent-7k2m-run-1",
+    description: "Inspect renderer coverage",
+    status,
+  });
+  return renderText(renderNotification({ customType: "notification", content }, { expanded: false }, statusTheme));
+}
+// agentui-f545/agentui-8elv/agentui-svxd/agentui-vr2p: completion dots encode terminal outcome.
+assert(completionForStatus("completed").startsWith("<success>•</success>"), "completed agent notification must use a success dot");
+assert(completionForStatus("failed").startsWith("<error>•</error>"), "failed agent notification must use an error dot");
+assert(completionForStatus("lost").startsWith("<error>•</error>"), "lost agent notification must use an error dot");
+assert(completionForStatus("cancelled").startsWith("<muted>•</muted>"), "cancelled agent notification must use a muted dot");
 const strictTheme = {
   ...theme,
   fg: (color, value) => {

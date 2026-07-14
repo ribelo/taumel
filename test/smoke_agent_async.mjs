@@ -114,13 +114,15 @@ assert.equal(core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }])
 
 settle();
 await new Promise((resolve) => setTimeout(resolve, 0));
-// agent-nt04: completion is an opaque attributed JSON instruction, never child output.
+// agent-nt04/agentui-3txs: completion carries attributed presentation metadata, never child output.
 const pendingNotification = core.call("pendingAgentNotifications", [ctx]).notifications[0];
 assert.deepEqual(JSON.parse(pendingNotification.content), {
   event: "agent_completion",
   agent_id: prepared.agentId,
   run_id: prepared.runId,
   kind: "generic",
+  description: "Run asynchronous work",
+  status: "completed",
   next_action: { tool: "agent_wait", arguments: { run_ids: [prepared.runId], timeout_seconds: 0 } },
 });
 assert.equal(pendingNotification.content.includes("async answer"), false);
@@ -135,6 +137,9 @@ assert.deepEqual(Object.keys(waitedJson).sort(), ["pending_run_ids", "results", 
 assert.deepEqual(Object.keys(waitedJson.results[0]).sort(), ["agent_id", "ended_at", "kind", "output", "run_id", "started_at", "status"]);
 assert.equal("model" in waitedJson.results[0], false);
 assert.equal("thinking" in waitedJson.results[0], false);
+// agentui-oqzy: model-facing results omit routing diagnostics.
+assert.equal("model" in JSON.parse(prepared.text), false);
+assert.equal("thinking" in JSON.parse(prepared.text), false);
 
 const failedSend = core.call("prepareTool", [{
   name: "agent_send", params: { agent_id: prepared.agentId, message: "fail", description: "Trigger failed work" }, ctx,
@@ -142,6 +147,9 @@ const failedSend = core.call("prepareTool", [{
 await executeAgentPrepared(pi, core, childSessions, pendingWaits, failedSend, ctx);
 settle({ role: "assistant", content: [], stopReason: "error", errorMessage: "provider failed" });
 await new Promise((resolve) => setTimeout(resolve, 0));
+const failedNotification = JSON.parse(core.call("pendingAgentNotifications", [ctx]).notifications[0].content);
+assert.equal(failedNotification.description, "Trigger failed work");
+assert.equal(failedNotification.status, "failed");
 const failedWait = core.call("prepareTool", [{
   name: "agent_wait", params: { run_ids: [failedSend.runId], timeout_seconds: 0 }, ctx,
 }]);

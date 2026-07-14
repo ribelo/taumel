@@ -33,6 +33,8 @@ let completion_message identity run =
          ("agent_id", Shared.String identity.identity_agent_id);
          ("run_id", Shared.String run.run_id);
          ("kind", Shared.String (agent_kind_to_string identity.identity_kind));
+         ("description", Shared.String run.run_description);
+         ("status", Shared.String (run_status_to_string run.run_status));
          ( "next_action",
            Shared.Object
              [
