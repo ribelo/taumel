@@ -55,6 +55,7 @@ let settle;
 const subscribers = new Set();
 let streaming = false;
 let allocatedSessionFile;
+let allocatedAppendPrompt;
 const sessionMessages = [];
 const model = { provider: "test", id: "model", reasoning: true };
 const pi = {
@@ -65,6 +66,7 @@ const pi = {
   getAllTools: () => ["read", "exec_command", "write_stdin"],
   createAgentSession: async (options) => {
     allocatedSessionFile = options.sessionManager.getSessionFile();
+    allocatedAppendPrompt = options.resourceLoader.getAppendSystemPrompt();
     return ({
     session: {
       sessionId: "async-child", sessionFile: childFile, sessionManager: childManager,
@@ -104,6 +106,12 @@ assert.deepEqual(JSON.parse(invalidStart.content[0].text), {
 });
 const result = await executeAgentPrepared(pi, core, childSessions, pendingWaits, prepared, ctx);
 assert.equal(result.details.status, "running");
+const commonSubagentPrompt = allocatedAppendPrompt.join("\n\n");
+// subprompt-3yl1/subprompt-4f06/subprompt-3fcs: every child receives the common role, handoff, and Git instructions.
+assert.match(commonSubagentPrompt, /You are now running as a subagent\./);
+assert.match(commonSubagentPrompt, /Your final message is the entire handoff/);
+assert.match(commonSubagentPrompt, /Use version control only for read-only inspection\./);
+assert.match(commonSubagentPrompt, /resetting, and pushing to the parent agent\./);
 assert.equal(
   allocatedSessionFile.startsWith(join(root, "taumel", "agents", "owners", createHash("sha256").update("async-parent").digest("hex"), prepared.agentId)),
   true,

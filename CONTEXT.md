@@ -201,6 +201,18 @@ The side-effect authority within which tools execute, including sandbox,
 approval, network, and no-sandbox constraints.
 _Avoid_: Tool surface, active tools
 
+**Protected workspace metadata**:
+Version-control control data under `.git`, `.hg`, or `.svn` that remains
+non-mutable in restricted filesystem modes even when ordinary workspace files
+are writable.
+_Avoid_: Read-only workspace, ordinary workspace file
+
+**Subagent instructions**:
+Common system-prompt instructions applied to every isolated child, defining the
+parent as caller, the final response as handoff, and state-changing
+version-control work as parent-owned.
+_Avoid_: Agent instruction, specialist prompt, tool prompt guideline
+
 **Agent approval request**:
 A request attributed to an agent handle for user authorization of one concrete
 side effect outside the agent's current permission envelope, presented by the Pi

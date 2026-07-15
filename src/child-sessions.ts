@@ -85,6 +85,15 @@ function loadSpecialistPrompt(kind: string): string | undefined {
   }
 }
 
+function loadSubagentPrompt(): string | undefined {
+  try {
+    const text = readFileSync(join(specialistResourcesDir(), "subagent.md"), "utf8").trim();
+    return text === "" ? undefined : text;
+  } catch {
+    return undefined;
+  }
+}
+
 function specialistPromptForMetadata(metadata: Partial<{ readonly kind?: unknown; readonly agentKind?: unknown }> | undefined): string | undefined {
   const agentKind = typeof metadata?.agentKind === "string" ? metadata.agentKind.trim() : "";
   const kind = typeof metadata?.kind === "string" ? metadata.kind.trim() : "";
@@ -542,14 +551,16 @@ export async function createChildSession(
   if ((agentKind === "finder" || agentKind === "oracle") && specialistPrompt === undefined) {
     return { error: `specialist_prompt_unavailable: ${agentKind}` };
   }
-  const resourceLoader =
-    specialistPrompt === undefined
-      ? undefined
-      : new DefaultResourceLoader({
-        cwd,
-        agentDir: getAgentDir(),
-        appendSystemPromptOverride: (base) => [...base, specialistPrompt],
-      });
+  const subagentPrompt = loadSubagentPrompt();
+  if (subagentPrompt === undefined) return { error: "subagent_prompt_unavailable" };
+  const appendedPrompts = specialistPrompt === undefined
+    ? [subagentPrompt]
+    : [subagentPrompt, specialistPrompt];
+  const resourceLoader = new DefaultResourceLoader({
+    cwd,
+    agentDir: getAgentDir(),
+    appendSystemPromptOverride: (base) => [...base, ...appendedPrompts],
+  });
   let createdSessionManager: unknown;
   try {
     const sessionManager = usePrivatePersistentSession
@@ -567,14 +578,14 @@ export async function createChildSession(
     } else {
       appendSetupEntries(sessionManager, setupEntries);
     }
-    await resourceLoader?.reload();
+    await resourceLoader.reload();
     const options = {
       cwd,
       sessionManager,
       ...(model.model !== undefined ? { model: model.model } : {}),
       ...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
       ...(activeTools !== undefined ? { tools: [...activeTools] } : {}),
-      ...(resourceLoader !== undefined ? { resourceLoader } : {}),
+      resourceLoader,
     };
     const result =
       typeof pi.createAgentSession === "function"
