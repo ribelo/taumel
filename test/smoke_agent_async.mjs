@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
@@ -56,6 +56,7 @@ const subscribers = new Set();
 let streaming = false;
 let allocatedSessionFile;
 let allocatedAppendPrompt;
+let allocatedResourceLoader;
 const sessionMessages = [];
 const model = { provider: "test", id: "model", reasoning: true };
 const pi = {
@@ -66,6 +67,7 @@ const pi = {
   getAllTools: () => ["read", "exec_command", "write_stdin"],
   createAgentSession: async (options) => {
     allocatedSessionFile = options.sessionManager.getSessionFile();
+    allocatedResourceLoader = options.resourceLoader;
     allocatedAppendPrompt = options.resourceLoader.getAppendSystemPrompt();
     return ({
     session: {
@@ -106,6 +108,8 @@ assert.deepEqual(JSON.parse(invalidStart.content[0].text), {
 });
 const result = await executeAgentPrepared(pi, core, childSessions, pendingWaits, prepared, ctx);
 assert.equal(result.details.status, "running");
+// agent-kd03: generic children leave base-system-prompt selection to Pi's ordinary loader behavior.
+assert.equal(allocatedResourceLoader.getSystemPrompt(), undefined);
 const commonSubagentPrompt = allocatedAppendPrompt.join("\n\n");
 // subprompt-3yl1/subprompt-4f06/subprompt-3fcs: every child receives the common role, handoff, and Git instructions.
 assert.match(commonSubagentPrompt, /You are now running as a subagent\./);
@@ -163,6 +167,27 @@ const failedWait = core.call("prepareTool", [{
 }]);
 assert.equal(failedWait.details.results[0].status, "failed");
 assert.equal(failedWait.details.results[0].error, "provider failed");
+
+// agent-ki03/agent-xe88/agent-kd05: specialists supply their own base prompts through Pi's resource loader.
+for (const [toolName, params, promptFile, requirementId] of [
+  ["finder", { query: "locate prompt ownership", description: "Locate prompt ownership" }, "finder.md", "agent-ki03"],
+  ["oracle", { message: "review prompt ownership", description: "Review prompt ownership" }, "oracle.md", "agent-xe88"],
+]) {
+  const specialist = core.call("prepareTool", [{ name: toolName, params, ctx }]);
+  const started = await executeAgentPrepared(pi, core, childSessions, pendingWaits, specialist, ctx);
+  assert.equal(started.details.status, "running");
+  const expectedPrompt = readFileSync(new URL(`../resources/agents/${promptFile}`, import.meta.url), "utf8").trim();
+  assert.equal(allocatedResourceLoader.getSystemPrompt(), expectedPrompt, `${requirementId}: specialist owns its base system prompt`);
+  assert.equal(
+    allocatedResourceLoader.getAppendSystemPrompt().includes(expectedPrompt),
+    false,
+    `${requirementId}: specialist prompt is not appended to Pi's base prompt`,
+  );
+  settle();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const specialistClose = core.call("prepareTool", [{ name: "agent_close", params: { agent_id: specialist.agentId }, ctx }]);
+  await executeAgentPrepared(pi, core, childSessions, pendingWaits, specialistClose, ctx);
+}
 
 // A close must cancel an indefinite wait for a run it removes.
 const send = core.call("prepareTool", [{

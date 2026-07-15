@@ -553,13 +553,13 @@ export async function createChildSession(
   }
   const subagentPrompt = loadSubagentPrompt();
   if (subagentPrompt === undefined) return { error: "subagent_prompt_unavailable" };
-  const appendedPrompts = specialistPrompt === undefined
-    ? [subagentPrompt]
-    : [subagentPrompt, specialistPrompt];
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir: getAgentDir(),
-    appendSystemPromptOverride: (base) => [...base, ...appendedPrompts],
+    ...(specialistPrompt === undefined
+      ? {}
+      : { systemPromptOverride: () => specialistPrompt }),
+    appendSystemPromptOverride: (base) => [...base, subagentPrompt],
   });
   let createdSessionManager: unknown;
   try {
