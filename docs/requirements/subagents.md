@@ -107,6 +107,8 @@ agents, goal-mode continuation, Librarian, Review, and Painter.
 - When Taumel creates a Finder child, Taumel shall use the content of `resources/agents/finder.md` as the child's base system prompt. ^agent-ki03
 - When Taumel creates an Oracle child, Taumel shall use the content of `resources/agents/oracle.md` as the child's base system prompt. ^agent-xe88
 - Taumel shall provide the Finder and Oracle base system prompts to Pi through Pi's resource/context mechanism. ^agent-kd05
+- The Taumel build shall import and embed each agent prompt Markdown resource—`resources/agents/subagent.md`, `resources/agents/finder.md`, and `resources/agents/oracle.md`—in the shipped extension build output. ^agent-8wra
+- At runtime, Taumel shall obtain the common subagent, Finder, and Oracle prompts from the embedded Markdown resource imports produced by the build. ^agent-um6s
 - Finder shall specialize in local conceptual and multi-step discovery across files rather than mutation or external research. ^agent-kd07
 - Oracle shall specialize in advisory tasks whose primary outcome is independent reasoning, judgment, critique, or a recommendation rather than carrying out the resulting action, including architecture, root-cause analysis, planning, review, and technical second opinions. ^agent-kd08
 - Finder and Oracle shall use the same internal identity and run lifecycle as generic agents rather than separate orchestration implementations. ^agent-kd09
