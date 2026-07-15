@@ -63,7 +63,7 @@ function argsFor(name) {
     case "read_thread":
       return { threadID: "thread-1" };
     case "agent_spawn":
-      return { message: "inspect renderer coverage", description: "Inspect renderer coverage", effort: "medium" };
+      return { message: "inspect renderer coverage", description: "Inspect renderer coverage", tier: "medium" };
     case "finder":
       return { query: "inspect renderer coverage", description: "Locate renderer coverage" };
     case "oracle":
@@ -130,7 +130,7 @@ function resultFor(name) {
   if (name === "agent_spawn" || name === "finder" || name === "oracle") {
     const kind = name === "agent_spawn" ? "generic" : name;
     const agentId = name === "agent_spawn" ? "agent-7k2m" : `${kind}-2sk2`;
-    return { content: [{ type: "text", text: "agent started" }], details: { ok: true, kind, agent_id: agentId, run_id: `${agentId}-run-1`, effort: name === "agent_spawn" ? "medium" : undefined, model: "provider/model", thinking: kind === "oracle" ? "high" : "low", status: "running" } };
+    return { content: [{ type: "text", text: "agent started" }], details: { ok: true, kind, agent_id: agentId, run_id: `${agentId}-run-1`, tier: name === "agent_spawn" ? "medium" : undefined, model: "provider/model", thinking: kind === "oracle" ? "high" : "low", status: "running" } };
   }
   if (name === "agent_send") {
     return { content: [{ type: "text", text: "agent message sent" }], details: { ok: true, agent_id: "worker-1", outcome: "message_sent", run_id: "worker-1-run-1", status: "running" } };
@@ -248,7 +248,8 @@ const spawnedAgent = renderText(renderersForTool("agent_spawn").renderResult(
   theme,
   { args: argsFor("agent_spawn") },
 ));
-assert(/^• agent_spawn · agent-7k2m · Inspect renderer coverage$/.test(spawnedAgent), `generic spawn compact slot wrong: ${spawnedAgent}`);
+// agentui-weo6: generic spawn compact presentation includes the selected tier.
+assert(/^• agent_spawn · agent-7k2m · medium · Inspect renderer coverage$/.test(spawnedAgent), `generic spawn compact slot wrong: ${spawnedAgent}`);
 const expandedSpawnedAgent = renderText(renderersForTool("agent_spawn").renderResult(
   resultFor("agent_spawn"),
   { expanded: true, isPartial: false },

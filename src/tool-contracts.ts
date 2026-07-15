@@ -702,9 +702,9 @@ export const ExaAgentListEventsParamsSchema = Type.Object(
   { $id: "ExaAgentListEventsParams", additionalProperties: false },
 );
 
-export const AgentEffortSchema = Type.Union(
+export const AgentTierSchema = Type.Union(
   [Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")],
-  { description: "The agent's model and reasoning effort tier. Defaults to `medium`." },
+  { description: "The generic agent's capacity tier. Defaults to medium." },
 );
 
 export const AgentSpawnParamsSchema = Type.Object(
@@ -712,14 +712,14 @@ export const AgentSpawnParamsSchema = Type.Object(
     message: Type.String({
       minLength: 1,
       description:
-        "The agent's initial task. State the desired outcome, scope, relevant context, constraints, validation, and expected result.",
+        "The agent's initial instruction. Include the desired outcome, scope, relevant context, constraints, validation, and expected result.",
     }),
     description: Type.String({
       minLength: 1,
       description:
         "A specific, action-oriented three-to-five-word label written for the user and used for compact TUI display. This label is not sent to the child.",
     }),
-    effort: Type.Optional(AgentEffortSchema),
+    tier: Type.Optional(AgentTierSchema),
   },
   { $id: "AgentSpawnParams", additionalProperties: false },
 );
@@ -729,7 +729,7 @@ export const FinderParamsSchema = Type.Object(
     query: Type.String({
       minLength: 1,
       description:
-        "The codebase search query. Be specific and include relevant technical terms, file types, expected code patterns, and clear success criteria.",
+        "The discovery query. Be specific and include relevant terms, file types, expected content or naming patterns, and clear success criteria.",
     }),
     description: Type.String({
       minLength: 1,
@@ -745,7 +745,7 @@ export const OracleParamsSchema = Type.Object(
     message: Type.String({
       minLength: 1,
       description:
-        "The Oracle's initial instruction. Include the guidance or decision needed, relevant context and constraints, available evidence, and attempted approaches.",
+        "The Oracle's initial instruction. Include the guidance, decision, or review needed, relevant context and constraints, available evidence, and attempted approaches.",
     }),
     description: Type.String({
       minLength: 1,
@@ -758,9 +758,13 @@ export const OracleParamsSchema = Type.Object(
 
 export const AgentSendParamsSchema = Type.Object(
   {
-    agent_id: Type.String({ minLength: 1, description: "The owner-scoped handle returned by a start or `agent_list`." }),
+    agent_id: Type.String({
+      minLength: 1,
+      description: "The owner-scoped agent handle returned by agent_spawn, finder, oracle, or agent_list.",
+    }),
     message: Type.Optional(Type.String({
-      description: "The instruction for idle start, active steering, suspended resume, or interruption replacement; omit only for interruption without replacement work.",
+      description:
+        "The instruction to start idle work, steer active work, resume suspended work, or replace interrupted work. Omit only to interrupt without replacement.",
     })),
     description: Type.Optional(Type.String({
       minLength: 1,
@@ -768,7 +772,8 @@ export const AgentSendParamsSchema = Type.Object(
         "A required three-to-five-word user-facing label for the message, used in compact TUI display and not sent to the child.",
     })),
     interrupt: Type.Optional(Type.Boolean({
-      description: "Replace active work before sending, suspend without a message, or have no additional effect when no execution exists.",
+      description:
+        "When true, interrupt active work before sending a message, suspend active work when message is omitted, and have no additional effect when no active execution exists.",
     })),
   },
   { $id: "AgentSendParams", additionalProperties: false },

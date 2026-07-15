@@ -196,7 +196,7 @@ export async function executeAgentRunsManager(
       : undefined;
   if (action === "Inspect") {
     const latest = agentRuns[0];
-    return commandResult(true, `${agentLabel(agent)}\nmodel=${agent.model}\nthinking=${agent.thinking}\nworkspace=${agent.workspace}\ncreated_at=${agent.createdAt}\nchild_session_file=${agent.childSessionFile ?? ""}\nlatest_run_id=${latest?.runId ?? ""}\nlatest_status=${latest?.status ?? ""}\nactivity_state=${latest?.activityState ?? ""}\nrecommendation=${latest?.recommendation ?? ""}\nstarted_at=${latest?.startedAt ?? ""}\nlast_activity_at=${latest?.lastActivityAt ?? ""}\nended_at=${latest?.endedAt ?? ""}\nsuspended_at=${latest?.suspendedAt ?? ""}\nturn_count=${latest?.turnCount ?? 0}\ndescription=${latest?.description ?? ""}\nreason=${latest?.reasonCode ?? ""}\nerror=${latest?.error ?? ""}\nnotification=${latest?.announcement ?? ""}`, {
+    return commandResult(true, `${agentLabel(agent)}\ntier=${agent.tier ?? ""}\nmodel=${agent.model}\nthinking=${agent.thinking}\nworkspace=${agent.workspace}\ncreated_at=${agent.createdAt}\nchild_session_file=${agent.childSessionFile ?? ""}\nlatest_run_id=${latest?.runId ?? ""}\nlatest_status=${latest?.status ?? ""}\nactivity_state=${latest?.activityState ?? ""}\nrecommendation=${latest?.recommendation ?? ""}\nstarted_at=${latest?.startedAt ?? ""}\nlast_activity_at=${latest?.lastActivityAt ?? ""}\nended_at=${latest?.endedAt ?? ""}\nsuspended_at=${latest?.suspendedAt ?? ""}\nturn_count=${latest?.turnCount ?? 0}\ndescription=${latest?.description ?? ""}\nreason=${latest?.reasonCode ?? ""}\nerror=${latest?.error ?? ""}\nnotification=${latest?.announcement ?? ""}`, {
       agent,
       runs: agentRuns,
     });

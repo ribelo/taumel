@@ -304,7 +304,7 @@ function agentLine(item: ToolRenderFields, theme: unknown): string {
     stringFieldOrUndefined(item, "run_id") ?? "",
     turns, activitySummary,
     stringFieldOrUndefined(item, "workspace") ?? "",
-    stringFieldOrUndefined(item, "effort") ?? "",
+    stringFieldOrUndefined(item, "tier") ?? "",
     model, thinking,
   ]
     .filter((part) => part !== "")
@@ -341,7 +341,11 @@ function buildAgent(name: string, result: unknown, options: unknown, theme: unkn
     const pending = Array.isArray(details["pending_run_ids"]) ? details["pending_run_ids"].length : 0;
     subject = `${results.length} ready · ${pending} pending`;
   } else if (name === "agent_spawn") {
-    subject = [agentId, stringFieldOrUndefined(args, "description")].filter((part) => part !== undefined && part !== "").join(" · ");
+    subject = [
+      agentId,
+      stringFieldOrUndefined(args, "tier") ?? stringFieldOrUndefined(details, "tier") ?? "medium",
+      stringFieldOrUndefined(args, "description"),
+    ].filter((part) => part !== undefined && part !== "").join(" · ");
   } else if (name === "finder" || name === "oracle") {
     subject = [agentId, stringFieldOrUndefined(args, "description")].filter((part) => part !== undefined && part !== "").join(" · ");
   } else if (name === "agent_send") {

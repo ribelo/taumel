@@ -161,8 +161,12 @@ function subjectFromArgs(name: string, args: ToolRenderFields): string {
       return stringFieldOrUndefined(args, "id") ?? "";
     case "exa_agent_list_runs":
       return args["limit"] === undefined ? "recent runs" : `limit ${args["limit"]}`;
-    case "agent_spawn":
-      return `${stringFieldOrUndefined(args, "effort") ?? "medium"} agent`;
+    case "agent_spawn": {
+      const handle = stringFieldOrUndefined(args, "agent_id") ?? "";
+      const tier = stringFieldOrUndefined(args, "tier") ?? "medium";
+      const description = stringFieldOrUndefined(args, "description") ?? "";
+      return [handle, tier, description].filter((part) => part !== "").join(" · ");
+    }
     case "finder":
     case "oracle":
       return oneLine(stringFieldOrUndefined(args, "message") ?? name);

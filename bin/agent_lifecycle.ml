@@ -330,8 +330,14 @@ let manager_snapshot ctx =
           ~workspace:identity.identity_workspace
           ~createdAt:(float_of_int identity.identity_created_at)
           ?childSessionFile:identity.identity_child_session_file
-          ?effort:
-            (Option.map Taumel.Agents.effort_to_string identity.identity_effort)
+          ?tier:
+            (Option.map
+               (function
+                 | Taumel.Agents.Low -> `V_low
+                 | Taumel.Agents.Medium -> `V_medium
+                 | Taumel.Agents.High -> `V_high)
+               identity.identity_effort
+            |> Option.map Boundary_contracts.AgentManagerIdentity.tier_to_contract)
           ())
       identities
   in

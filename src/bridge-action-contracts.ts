@@ -294,7 +294,8 @@ export const AgentManagerIdentitySchema = Type.Object(
   {
     agentId: Type.String({ minLength: 1 }), kind: Type.String({ minLength: 1 }),
     model: Type.String({ minLength: 1 }), thinking: Type.String({ minLength: 1 }),
-    workspace: Type.String({ minLength: 1 }), effort: Type.Optional(Type.String({ minLength: 1 })),
+    workspace: Type.String({ minLength: 1 }),
+    tier: Type.Optional(Type.Union([Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")])),
     createdAt: Type.Integer(), childSessionFile: Type.Optional(Type.String({ minLength: 1 })),
   },
   { $id: "AgentManagerIdentity", additionalProperties: false },

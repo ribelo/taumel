@@ -5,6 +5,8 @@ import { parseToolParams } from "../src/tool-contracts.ts";
 import { toolContracts } from "../src/tool-contract-catalog.ts";
 import {
   PARAM_DESCRIPTIONS,
+  PROMPT_GUIDELINES,
+  PROMPT_GUIDELINE_REQUIREMENTS,
   PROMPT_SNIPPETS,
   REQUIREMENT_CHECKS,
   TOOL_DESCRIPTIONS,
@@ -48,6 +50,22 @@ for (const [reqId, kind, key] of REQUIREMENT_CHECKS) {
     assert(contract(key).promptSnippet === PROMPT_SNIPPETS[key], `${reqId}: ${key} promptSnippet`);
   } else if (kind === "param") {
     assert(resolveParam(key) === PARAM_DESCRIPTIONS[key], `${reqId}: ${key} param description`);
+  }
+}
+
+for (const [toolName, expected] of Object.entries(PROMPT_GUIDELINES)) {
+  const actual = contract(toolName).promptGuidelines;
+  const requirementIds = PROMPT_GUIDELINE_REQUIREMENTS[toolName] ?? [];
+  assert(requirementIds.length === expected.length, `${toolName}: prompt guideline requirement IDs`);
+  assert(
+    JSON.stringify(actual) === JSON.stringify(expected),
+    `${requirementIds.join("/")}: ${toolName} promptGuidelines: ${JSON.stringify(actual)}`,
+  );
+}
+
+for (const name of ["agent_spawn", "finder", "oracle", "agent_send", "agent_wait", "agent_list", "agent_close"]) {
+  for (const line of contract(name).promptGuidelines ?? []) {
+    assert(line.includes(name), `agent-1xfj: ${name} guideline must name the tool: ${line}`);
   }
 }
 

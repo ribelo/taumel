@@ -57,19 +57,19 @@ core.init({
 
 const start = core.call("prepareTool", [{
   name: "agent_spawn",
-  params: { message: "investigate", description: "Investigate agent lifecycle", effort: "high" },
+  params: { message: "investigate", description: "Investigate agent lifecycle", tier: "high" },
   ctx,
 }]);
 assert.equal(start.ok, true);
 assert.equal(start.action, "agent_start");
 assert.equal(start.details.status, "running");
-assert.equal(start.details.effort, "high");
+assert.equal(start.details.tier, "high");
 assert.deepEqual(JSON.parse(start.text), {
   agent_id: start.details.agent_id,
   run_id: start.details.run_id,
   kind: "generic",
   status: "running",
-  effort: "high",
+  tier: "high",
 });
 
 const { agentId: agentId, runId, submissionId } = start;
@@ -263,7 +263,7 @@ assert.equal(core.call("prepareTool", [{
 
 const replacement = core.call("prepareTool", [{
   name: "agent_spawn",
-  params: { message: "replacement", description: "Start replacement agent", effort: "low" },
+  params: { message: "replacement", description: "Start replacement agent", tier: "low" },
   ctx,
 }]);
 assert.equal(replacement.ok, true);

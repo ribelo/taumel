@@ -13,7 +13,7 @@ const ctx = {
 const snapshot = {
   agents: [{
     agentId: "agent-abcd", kind: "generic", model: "provider/model", thinking: "high",
-    workspace: "/repo", effort: "high", createdAt: 100,
+    workspace: "/repo", tier: "high", createdAt: 100,
     childSessionFile: "/private/agent-abcd/session.jsonl",
   }],
   runs: [{
@@ -36,6 +36,7 @@ const result = await executeAgentRunsManager({}, core, new Map(), "", ctx);
 assert.match(selections[0][0], /agent-abcd · generic · completed · Inspect agent lifecycle · 3 turns/);
 assert.equal(selections[0][0].includes("inactive"), false);
 assert.match(result.message, /child_session_file=\/private\/agent-abcd\/session.jsonl/);
+assert.match(result.message, /tier=high/);
 assert.match(result.message, /model=provider\/model/);
 assert.match(result.message, /recommendation=call_agent_wait/);
 assert.match(result.message, /description=Inspect agent lifecycle/);

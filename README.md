@@ -98,9 +98,9 @@ Use slash commands for local inspection and configuration.
 Model-facing agent workflow:
 
 ```text
-agent_spawn({ message: "Inspect the failing build", effort: "medium" })
+agent_spawn({ message: "Inspect the failing build", description: "Inspect failing build", tier: "medium" })
 agent_wait({ run_ids: ["agent-ab12-run-1"], timeout_seconds: 30 })
-agent_send({ agent_id: "agent-ab12", message: "Check the parser next" })
+agent_send({ agent_id: "agent-ab12", message: "Check the parser next", description: "Check parser next" })
 agent_close({ agent_id: "agent-ab12" })
 ```
 

@@ -36,6 +36,20 @@ export const TOOL_DESCRIPTIONS = {
   exa_agent_list_runs: "List Exa Agent runs for the configured team.",
   exa_agent_cancel_run: "Cancel a queued or running Exa Agent run.",
   exa_agent_list_events: "List stored events for an Exa Agent run.",
+  agent_spawn:
+    "Create a durable generic agent for substantial delegated execution and start its first asynchronous run. The identity retains its conversation across later agent_send calls. The call returns after the initial instruction is accepted, without waiting for completion.",
+  finder:
+    "Create a durable, read-only Finder specialist and start an asynchronous run for conceptual, behavior-based, or multi-step discovery that correlates findings across files. The identity can be continued with agent_send; the call returns after the query is accepted, without waiting for completion.",
+  oracle:
+    "Create a durable, read-only Oracle advisory specialist and start an asynchronous run for independent technical reasoning, judgment, critique, diagnosis, planning, review, or recommendations. The identity can be continued with agent_send; the call returns after the instruction is accepted, without waiting for completion.",
+  agent_send:
+    "Send an instruction to an existing open agent in its retained conversation. Depending on current state, the call starts new work, steers active work, resumes suspended work, interrupts and replaces active execution, or interrupts without replacement. A message requires a short user-facing description.",
+  agent_wait:
+    "Race selected agent runs and return every result ready at the observation point. Omitted timeout waits indefinitely; a timeout bounds only this call and never stops the runs. Call again with returned pending_run_ids to await later completions.",
+  agent_list:
+    "List all open agent identities owned by the current session, including lifecycle status, per-run turn count, and observable activity phase, timing, and recommended next action.",
+  agent_close:
+    "Permanently close one agent identity, interrupt active execution, and remove all of its runs from current Taumel state. Closed identities cannot be resumed; use agent_send interruption for a reversible stop.",
 };
 
 export const PROMPT_SNIPPETS = {
@@ -65,6 +79,13 @@ export const PROMPT_SNIPPETS = {
   exa_agent_list_runs: "List recent Exa Agent runs.",
   exa_agent_cancel_run: "Cancel an Exa Agent run by ID.",
   exa_agent_list_events: "List Exa Agent run events.",
+  agent_spawn: "Start a durable generic agent for substantial asynchronous execution.",
+  finder: "Start a read-only Finder for conceptual, multi-file discovery.",
+  oracle: "Start a read-only Oracle for independent technical reasoning and advice.",
+  agent_send: "Continue, steer, resume, or interrupt an existing agent.",
+  agent_wait: "Wait for selected agent runs and retrieve ready outcomes.",
+  agent_list: "Inspect open agent identities and their latest run activity.",
+  agent_close: "Close and forget one agent identity.",
 };
 
 export const PARAM_DESCRIPTIONS = {
@@ -210,6 +231,70 @@ export const PARAM_DESCRIPTIONS = {
   "write.content": "UTF-8 text to write exactly as provided.",
   "write.mode":
     "Write behavior: overwrite (default) replaces the file; append adds content at the end without inserting a newline.",
+  "agent_spawn.message":
+    "The agent's initial instruction. Include the desired outcome, scope, relevant context, constraints, validation, and expected result.",
+  "agent_spawn.description":
+    "A specific, action-oriented three-to-five-word label written for the user and used for compact TUI display. This label is not sent to the child.",
+  "agent_spawn.tier": "The generic agent's capacity tier. Defaults to medium.",
+  "finder.query":
+    "The discovery query. Be specific and include relevant terms, file types, expected content or naming patterns, and clear success criteria.",
+  "finder.description":
+    "A specific, action-oriented three-to-five-word label written for the user and used for compact TUI display. This label is not sent to the child.",
+  "oracle.message":
+    "The Oracle's initial instruction. Include the guidance, decision, or review needed, relevant context and constraints, available evidence, and attempted approaches.",
+  "oracle.description":
+    "A specific, action-oriented three-to-five-word label written for the user and used for compact TUI display. This label is not sent to the child.",
+  "agent_send.agent_id":
+    "The owner-scoped agent handle returned by agent_spawn, finder, oracle, or agent_list.",
+  "agent_send.message":
+    "The instruction to start idle work, steer active work, resume suspended work, or replace interrupted work. Omit only to interrupt without replacement.",
+  "agent_send.description":
+    "A required three-to-five-word user-facing label for the message, used in compact TUI display and not sent to the child.",
+  "agent_send.interrupt":
+    "When true, interrupt active work before sending a message, suspend active work when message is omitted, and have no additional effect when no active execution exists.",
+  "agent_wait.run_ids": "Unique owner-scoped run IDs that all belong to the current session.",
+  "agent_wait.timeout_seconds":
+    "Maximum seconds to wait. Omit to wait indefinitely; use 0 to poll once. Timing out leaves all pending runs active.",
+  "agent_close.agent_id": "The owner-scoped handle of the identity to close permanently.",
+};
+
+export const PROMPT_GUIDELINES = {
+  agent_spawn: [
+    "For agent_spawn, choose tier by task complexity and scope. Use low for straightforward, well-defined work: a one-file change or simple mechanical refactor across the codebase; bounded delegated internet research; or one known check or bounded evidence collection. Use medium for well-scoped work requiring reasoning across several files; focused independent research across multiple sources; or reproducing and verifying a workflow across several components. Use high for difficult, open-ended, or repository-wide work: broad cross-cutting changes; comprehensive independent research requiring broad source synthesis; or repository-wide failure investigation and validation. Medium is the default.",
+    "Use agent_spawn for substantial delegated execution that does not fit finder or oracle, especially independent multi-step work, parallel disjoint work, or work with extensive intermediate output that the parent does not need.",
+    "Use agent_spawn to create a new identity when substantial delegated execution has a materially different objective, files, component, or constraints and an existing agent's retained context would not help.",
+    "When using agent_spawn, remember that the child has its own conversation and does not inherit the parent conversation. Include all relevant decisions, context, constraints, and validation instructions in message, or reference paths to files that contain them.",
+  ],
+  finder: [
+    "Use finder for conceptual, behavior-based, or multi-file discovery that requires correlating findings across files. Do not use finder when the path, symbol, or exact text is known; use direct read or search tools instead.",
+  ],
+  oracle: [
+    "Use oracle when the primary outcome is independent reasoning, judgment, critique, diagnosis, planning, review, or a recommendation rather than carrying out the resulting action.",
+  ],
+  agent_send: [
+    "Use agent_send when new instructions, steering, interruption, or resumed work should target an existing open agent and retain its context.",
+    "Prefer agent_send over starting a new agent when an existing agent's retained context is relevant to the next task, such as work on the same objective, files, component, or constraints.",
+  ],
+  agent_wait: [
+    "Use agent_wait to retrieve outcomes and child output from selected runs, or to pause until at least one selected run is ready.",
+    "Prefer one indefinite agent_wait call over repeated polling or agent_list checks when no useful work can proceed until a selected run finishes.",
+  ],
+  agent_list: [
+    "Use agent_list when you need an overview of open agents before deciding which identity or run to wait for, continue, interrupt, resume, or close. Treat activity as observed progress, not a health or stall judgment.",
+  ],
+  agent_close: [
+    "Use agent_close when an open agent is no longer expected to receive related follow-up work.",
+  ],
+};
+
+export const PROMPT_GUIDELINE_REQUIREMENTS = {
+  agent_spawn: ["agent-cqyx", "agent-wdfo", "agent-mqpf", "agent-4zay"],
+  finder: ["agent-84os"],
+  oracle: ["agent-pkzt"],
+  agent_send: ["agent-lfet", "agent-dw6e"],
+  agent_wait: ["agent-f0iv", "agent-88sp"],
+  agent_list: ["agent-hx8f"],
+  agent_close: ["agent-wgj7"],
 };
 
 /** requirement ID -> kind -> key in TOOL_DESCRIPTIONS / PROMPT_SNIPPETS / PARAM_DESCRIPTIONS */
@@ -357,4 +442,31 @@ export const REQUIREMENT_CHECKS = [
   ["exa-tl12", "param", "exa_agent_list_events.limit"],
   ["exa-tl12", "param", "exa_agent_list_events.cursor"],
   ["exa-tl12", "param", "exa_agent_list_events.lastEventId"],
+  ["agent-pqmy", "tool", "agent_spawn"],
+  ["agent-todp", "snippet", "agent_spawn"],
+  ["agent-7i3j", "param", "agent_spawn.message"],
+  ["agent-us77", "param", "agent_spawn.tier"],
+  ["agent-tc15", "param", "agent_spawn.description"],
+  ["agent-s58q", "tool", "finder"],
+  ["agent-ub6w", "snippet", "finder"],
+  ["agent-9s9b", "param", "finder.query"],
+  ["agent-tc15", "param", "finder.description"],
+  ["agent-tc22", "tool", "oracle"],
+  ["agent-4mcx", "snippet", "oracle"],
+  ["agent-tc22", "param", "oracle.message"],
+  ["agent-tc15", "param", "oracle.description"],
+  ["agent-tc23", "tool", "agent_send"],
+  ["agent-44uh", "snippet", "agent_send"],
+  ["agent-tc23", "param", "agent_send.agent_id"],
+  ["agent-tc23", "param", "agent_send.message"],
+  ["agent-tc23", "param", "agent_send.description"],
+  ["agent-tc23", "param", "agent_send.interrupt"],
+  ["agent-tc24", "tool", "agent_wait"],
+  ["agent-lbc5", "snippet", "agent_wait"],
+  ["agent-tc24", "param", "agent_wait.run_ids"],
+  ["agent-tc24", "param", "agent_wait.timeout_seconds"],
+  ["agent-tc25", "tool", "agent_list"],
+  ["agent-p9k1", "snippet", "agent_list"],
+  ["agent-tc26", "tool", "agent_close"],
+  ["agent-tc26", "param", "agent_close.agent_id"],
 ];

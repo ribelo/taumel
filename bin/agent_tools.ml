@@ -40,7 +40,7 @@ let js_run_status status =
 
 let js_kind kind = js_string (Taumel.Agents.agent_kind_to_string kind)
 
-let js_effort = function
+let js_tier = function
   | None -> Unsafe.inject Js.null
   | Some effort -> js_string (Taumel.Agents.effort_to_string effort)
 
@@ -238,8 +238,8 @@ let kind_of_tool = function
   | "oracle" -> Ok Taumel.Agents.Oracle
   | name -> Error ("unknown agent start tool: " ^ name)
 
-let effort_of_params params =
-  match optional_string_field params "effort" with
+let tier_of_params params =
+  match optional_string_field params "tier" with
   | None -> Ok None
   | Some value -> (
       match Taumel.Agents.effort_of_string (String.trim value) with
@@ -276,7 +276,7 @@ let start_details ~(identity : Taumel.Agents.identity) ~(run : Taumel.Agents.age
     match identity.identity_effort with
     | None -> fields
     | Some effort ->
-        fields @ [ ("effort", js_string (Taumel.Agents.effort_to_string effort)) ]
+        fields @ [ ("tier", js_string (Taumel.Agents.effort_to_string effort)) ]
   in
   Unsafe.obj (Array.of_list fields)
 
@@ -300,7 +300,7 @@ let prepare_start name params ctx =
                   Taumel.Shared.trim_non_empty,
                 Option.bind (optional_string_field params "description")
                   Taumel.Shared.trim_non_empty,
-                effort_of_params params )
+                tier_of_params params )
             with
             | None, _, _ -> error_obj (name ^ "." ^ message_field ^ " is required")
             | _, None, _ -> error_obj (name ^ ".description is required")
@@ -364,7 +364,7 @@ let prepare_start name params ctx =
                       | None -> result_fields
                       | Some value ->
                           result_fields
-                          @ [ ("effort", Taumel.Shared.String (Taumel.Agents.effort_to_string value)) ]
+                          @ [ ("tier", Taumel.Shared.String (Taumel.Agents.effort_to_string value)) ]
                     in
                     let text = json_success result_fields in
                     let details =
@@ -802,7 +802,7 @@ let prepare_list ctx =
           let fields =
             match identity.identity_effort with
             | None -> fields
-            | Some value -> fields @ [ ("effort", Taumel.Shared.String (Taumel.Agents.effort_to_string value)) ]
+            | Some value -> fields @ [ ("tier", Taumel.Shared.String (Taumel.Agents.effort_to_string value)) ]
           in
           match latest with
           | None -> Taumel.Shared.Object fields
@@ -857,7 +857,7 @@ let prepare_list ctx =
                    | Some effort ->
                        fields
                        @ [
-                           ( "effort",
+                           ( "tier",
                              js_string (Taumel.Agents.effort_to_string effort) );
                          ]
                  in
