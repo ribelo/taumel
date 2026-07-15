@@ -21,9 +21,30 @@ policing, or replacing it.
 _Avoid_: Taumel requirement, host compatibility requirement
 
 **Model-facing tool contract**:
-The tool name, description, parameter schema, and result text presented to the
-agent model, independent of hidden result details and user-facing rendering.
+The tool name, tool description, prompt snippet, parameter schema, optional
+prompt guidelines, and result text presented to the agent model, independent of
+hidden result details and user-facing rendering.
 _Avoid_: Tool rendering, tool implementation, structured details
+
+**Tool description**:
+The complete model-facing account of one tool's capability and important
+operational semantics.
+_Avoid_: Prompt snippet, parameter description, routing guideline
+
+**Prompt snippet**:
+The concise, distinctive one-line orientation for a tool in Pi's available-tool
+catalog.
+_Avoid_: Tool description, routing guideline
+
+**Parameter description**:
+The field-local account of one tool input's meaning, units, defaults,
+constraints, or examples.
+_Avoid_: Tool description, cross-tool routing policy
+
+**Tool prompt guideline**:
+Model-facing usage policy that identifies its relevant tool explicitly, such as
+when to select that tool instead of another, and is active only with that tool.
+_Avoid_: Tool description, prompt snippet, parameter description
 
 **Tool slot**:
 The single visible TUI unit occupied by one tool invocation throughout its
@@ -134,21 +155,34 @@ message for a run. The independent conversations share no other conversation sta
 _Avoid_: Shared context, transcript inheritance, hidden handoff
 
 **Subagent task**:
-A general objective delegated to a durable agent identity without selecting a
-named behavioral profile.
+A general objective delegated to a durable agent identity because neither
+Finder's discovery purpose nor Oracle's advisory purpose fits; it does not
+select a named behavioral profile.
 _Avoid_: Specialist task, persona, agent run
 
-**Agent effort**:
+**Agent execution task**:
+Delegated work whose primary outcome is an action or artifact, such as gathering
+evidence, running verification, implementing a change, or producing repository
+work. Reasoning may support the work without being its primary deliverable.
+_Avoid_: Advisory task, routine direct-tool operation
+
+**Agent advisory task**:
+Delegated work whose primary outcome is independent reasoning, judgment,
+critique, diagnosis, planning, review, or a recommendation rather than carrying
+out the resulting action.
+_Avoid_: Execution task, implementation task, review-only task
+
+**Agent tier**:
 The low, medium, or high capacity requested when creating a generic agent. By
 default it selects the matching thinking level on the parent's model, while
 configuration may route it to a different model and thinking level.
-_Avoid_: Persona, model name, raw thinking level, specialist task
+_Avoid_: Agent effort, reasoning effort, persona, model name, raw thinking level, specialist task
 
 **Agent routing**:
 The model and thinking level resolved for an agent identity when it is created.
 Routing is either inherited as declared or concrete and exact; unavailable
 concrete routing fails rather than falling back silently.
-_Avoid_: Best-effort model selection, model fallback, agent effort
+_Avoid_: Best-effort model selection, model fallback, agent tier
 
 **Specialist task**:
 A model-backed objective with a fixed purpose and policy, such as Finder or

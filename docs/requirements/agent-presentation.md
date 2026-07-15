@@ -10,6 +10,7 @@ human-readable expanded view and a separate model-facing tool contract.
 
 ## Requirements
 
+- When `agent_spawn` accepts a new run, the compact agent presentation shall show the tool name, agent handle, selected tier, and agent task description in that order. ^agentui-weo6
 - When Finder accepts a new run, the compact agent presentation shall show the agent handle and agent task description. ^agentui-s0qm
 - When an agent completion notification is displayed compactly, the agent presentation shall show the agent handle and agent task description. ^agentui-i40y
 - When an agent completion notification is displayed compactly, the agent presentation shall omit the agent kind and a readiness label. ^agentui-ald0
