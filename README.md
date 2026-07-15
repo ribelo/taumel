@@ -194,7 +194,7 @@ maintain a separate global database.
 | Pi session entries for state | Preserve state with the conversation that owns it | Maintain a competing global session database |
 | Durable asynchronous agents | Support waiting, continuation, and explicit closure | Treat every delegated task as a disposable process |
 
-See [`CONTEXT.md`](CONTEXT.md) for the domain vocabulary and `plans/` for the
+See [`CONTEXT.md`](CONTEXT.md) for the domain vocabulary and `docs/requirements/` for the
 behavioral requirement sets.
 
 ## Development

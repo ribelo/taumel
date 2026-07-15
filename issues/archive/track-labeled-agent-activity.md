@@ -2,10 +2,10 @@
 kind: issue
 status: done
 requirements:
-  - "[[plans/subagents#^agent-tc01|agent-tc01]]"
-  - "[[plans/subagents#^agent-id20|agent-id20]]"
-  - "[[plans/subagents#^agent-ps18|agent-ps18]]"
-  - "[[plans/subagents#^agent-ls02|agent-ls02]]"
+  - "[[docs/requirements/subagents#^agent-tc01|agent-tc01]]"
+  - "[[docs/requirements/subagents#^agent-id20|agent-id20]]"
+  - "[[docs/requirements/subagents#^agent-ps18|agent-ps18]]"
+  - "[[docs/requirements/subagents#^agent-ls02|agent-ls02]]"
 blocked_by: []
 ---
 # Track labeled agent activity

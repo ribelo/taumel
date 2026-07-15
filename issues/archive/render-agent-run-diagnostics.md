@@ -2,8 +2,8 @@
 kind: issue
 status: done
 requirements:
-  - "[[plans/subagents#^agent-ui07|agent-ui07]]"
-  - "[[plans/subagents#^agent-rn15|agent-rn15]]"
+  - "[[docs/requirements/subagents#^agent-ui07|agent-ui07]]"
+  - "[[docs/requirements/subagents#^agent-rn15|agent-rn15]]"
 blocked_by:
   - "[[track-labeled-agent-activity]]"
   - "[[deliver-portable-agent-results]]"

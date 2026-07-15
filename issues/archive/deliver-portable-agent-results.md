@@ -2,9 +2,9 @@
 kind: issue
 status: done
 requirements:
-  - "[[plans/subagents#^agent-tc17|agent-tc17]]"
-  - "[[plans/subagents#^agent-rs17|agent-rs17]]"
-  - "[[plans/subagents#^agent-nt04|agent-nt04]]"
+  - "[[docs/requirements/subagents#^agent-tc17|agent-tc17]]"
+  - "[[docs/requirements/subagents#^agent-rs17|agent-rs17]]"
+  - "[[docs/requirements/subagents#^agent-nt04|agent-nt04]]"
 blocked_by:
   - "[[track-labeled-agent-activity]]"
 ---

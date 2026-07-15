@@ -6,3 +6,5 @@ dist/
 bin/generated/*.d.ts
 bin/generated/*.ml
 bin/generated/*.mli
+
+.pi/settings.json
