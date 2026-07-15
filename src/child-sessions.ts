@@ -5,9 +5,11 @@ import {
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { statSync } from "node:fs";
+import { join } from "node:path";
+import finderPromptResource from "../resources/agents/finder.md" with { type: "text" };
+import oraclePromptResource from "../resources/agents/oracle.md" with { type: "text" };
+import subagentPromptResource from "../resources/agents/subagent.md" with { type: "text" };
 import type { ChildDispatchCompletion, ChildDispatchResult, ChildSessionCustomEntry, ChildSessionMetadata } from "./bridge-contracts.ts";
 import { decodeChildDispatchPlan } from "./bridge-contracts.ts";
 
@@ -71,27 +73,18 @@ function hostObject<T extends object>(value: unknown): Partial<T> | undefined {
   return typeof value === "object" && value !== null ? value as Partial<T> : undefined;
 }
 
-function specialistResourcesDir(): string {
-  return join(dirname(fileURLToPath(import.meta.url)), "..", "resources", "agents");
-}
-
 function loadSpecialistPrompt(kind: string): string | undefined {
-  if (kind !== "finder" && kind !== "oracle") return undefined;
-  try {
-    const text = readFileSync(join(specialistResourcesDir(), `${kind}.md`), "utf8").trim();
-    return text === "" ? undefined : text;
-  } catch {
-    return undefined;
-  }
+  const text = kind === "finder"
+    ? finderPromptResource.trim()
+    : kind === "oracle"
+      ? oraclePromptResource.trim()
+      : "";
+  return text === "" ? undefined : text;
 }
 
 function loadSubagentPrompt(): string | undefined {
-  try {
-    const text = readFileSync(join(specialistResourcesDir(), "subagent.md"), "utf8").trim();
-    return text === "" ? undefined : text;
-  } catch {
-    return undefined;
-  }
+  const text = subagentPromptResource.trim();
+  return text === "" ? undefined : text;
 }
 
 function specialistPromptForMetadata(metadata: Partial<{ readonly kind?: unknown; readonly agentKind?: unknown }> | undefined): string | undefined {

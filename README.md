@@ -62,8 +62,8 @@ mkdir -p ~/.pi/agent/extensions
 ln -sfn "$PWD" ~/.pi/agent/extensions/taumel
 ```
 
-Restart Pi after the first installation. The extension entry point is
-`src/index.ts`; the compiled OCaml artifact is `dist/taumel.cjs`.
+Restart Pi after the first installation. The built extension entry point is
+`dist/extension.js`; the compiled OCaml artifact is `dist/taumel.cjs`.
 
 Inside Pi, initialize Taumel's global defaults and inspect the installation:
 
@@ -181,8 +181,8 @@ maintain a separate global database.
   and prompt overrides are not supported.
 - `npm run ocaml:init` pins Eta packages from the configured local checkout. A
   missing or incompatible Eta checkout stops initialization.
-- Pi cannot load Taumel without `dist/taumel.cjs`. Rebuild after changing OCaml
-  code.
+- Pi cannot load Taumel without `dist/extension.js` and `dist/taumel.cjs`.
+  Rebuild after changing TypeScript, embedded Markdown resources, or OCaml code.
 
 ## Design choices
 
@@ -233,12 +233,12 @@ export TAUMEL_ETA_PATH=/absolute/path/to/Eta
 npm run ocaml:init
 ```
 
-### Pi cannot load `dist/taumel.cjs`
+### Pi cannot load the built extension
 
-Build the OCaml artifact, then restart or reload Pi:
+Build the extension and OCaml artifact, then restart or reload Pi:
 
 ```bash
-npm run build:ocaml
+npm run build
 ```
 
 ### Taumel commands are missing
