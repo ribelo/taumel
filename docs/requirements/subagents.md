@@ -103,11 +103,12 @@ agents, goal-mode continuation, Librarian, Review, and Painter.
 ### Agent kinds and definitions
 
 - The system shall support exactly three agent kinds: `generic`, `finder`, and `oracle`. ^agent-kd01
-- Generic agents shall have no named profile or persona and shall receive no Taumel-authored prompt instructions. ^agent-kd02
-- Pi shall build a generic child's prompt through its ordinary agent-session machinery for the child's model, tools, workspace, and project guidance; Taumel shall not copy or rewrite the main agent's effective prompt. ^agent-kd03
-- Finder and Oracle shall be Taumel-owned built-ins whose extra instructions live in body-only Markdown resources with no YAML frontmatter. ^agent-kd04
-- The system shall add Finder and Oracle instructions through Pi's existing resource/context mechanism and shall not implement a general prompt assembler, profile parser, or agent-definition file format. ^agent-kd05
-- The system shall not discover user-authored agent files or allow configuration to replace Finder or Oracle prompts, tools, purpose, or sandbox policy. ^agent-kd06
+- When Taumel creates a generic child, Pi shall provide the child's base system prompt through its ordinary agent-session machinery for the child's model, tools, workspace, and project guidance. ^agent-kd03
+- When Taumel creates a Finder child, Taumel shall use the content of `resources/agents/finder.md` as the child's base system prompt. ^agent-ki03
+- When Taumel creates an Oracle child, Taumel shall use the content of `resources/agents/oracle.md` as the child's base system prompt. ^agent-xe88
+- Taumel shall provide the Finder and Oracle base system prompts to Pi through Pi's resource/context mechanism. ^agent-kd05
+- When Pi constructs the effective system prompt of a Finder or Oracle child, Pi shall include the prompt snippet of each active tool that defines one. ^agent-40aa
+- When Pi constructs the effective system prompt of a Finder or Oracle child, Pi shall include the prompt guidelines of each active tool that defines them. ^agent-r8es
 - Finder shall specialize in local conceptual and multi-step discovery across files rather than mutation or external research. ^agent-kd07
 - Oracle shall specialize in advisory tasks whose primary outcome is independent reasoning, judgment, critique, or a recommendation rather than carrying out the resulting action, including architecture, root-cause analysis, planning, review, and technical second opinions. ^agent-kd08
 - Finder and Oracle shall use the same internal identity and run lifecycle as generic agents rather than separate orchestration implementations. ^agent-kd09
