@@ -133,6 +133,7 @@ export const PARAM_DESCRIPTIONS = {
     "Terminal status to set. Use complete only when every required outcome is satisfied; use blocked only at a genuine impasse requiring user input or an external-state change.",
   "ralph_continue.task_id": "Ralph task ID from the Ralph session prompt.",
   "ralph_finish.task_id": "Ralph task ID from the Ralph session prompt.",
+  "exec_command.cmd": "The bash command to run.",
   "exec_command.workdir": "Working directory for the command. Omit to use the current turn working directory.",
   "exec_command.yield_time_ms":
     "Milliseconds to wait for output before yielding. Defaults to 10000; rounded to an integer; minimum 250; maximum 30000. Yielding leaves a live command running.",
@@ -301,6 +302,7 @@ export const PROMPT_GUIDELINE_REQUIREMENTS = {
 export const REQUIREMENT_CHECKS = [
   ["exec-tc10", "tool", "exec_command"],
   ["exec-tc20", "snippet", "exec_command"],
+  ["exec-47ew", "param", "exec_command.cmd"],
   ["exec-tc11", "tool", "write_stdin"],
   ["exec-tc26", "snippet", "write_stdin"],
   ["exec-tc16", "param", "exec_command.workdir"],

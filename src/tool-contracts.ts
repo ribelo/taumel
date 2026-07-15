@@ -125,7 +125,7 @@ export const EmptyParamsSchema = Type.Object({}, { $id: "EmptyParams", additiona
 
 export const ExecCommandParamsSchema = Type.Object(
   {
-    cmd: Type.String({ minLength: 1, pattern: "\\S", description: "Shell command to execute." }),
+    cmd: Type.String({ minLength: 1, pattern: "\\S", description: "The bash command to run." }),
     workdir: Type.Optional(
       Type.String({
         description: "Working directory for the command. Omit to use the current turn working directory.",

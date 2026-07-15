@@ -26,6 +26,7 @@ and user-facing rendering remains Taumel-owned.
 - The system shall describe `exec_command` to the model as `Run a shell command in a PTY. Returns completed output, or a session ID when the command is still running so it can be continued with write_stdin. Yielding does not stop the command.` ^exec-tc10
 - The system shall describe `write_stdin` to the model as `Send characters to or wait on an exec_command session and return recent output. Use output_mode=status for passive waits that should not add process output to your context; use delta only when you need to inspect the process’s progress or interact with it.` ^exec-tc11
 - The system shall expose an optional model-facing `workdir` parameter, default it to the current turn working directory, and treat an empty string as omitted. ^exec-tc12
+- The system shall describe the model-facing `exec_command.cmd` parameter as `The bash command to run.` ^exec-47ew
 - When `exec_command` returns `Process running with session ID N`, the system shall instruct the agent to call `write_stdin` only with that exact id. ^exec-tc13
 - When `exec_command` returns `Process exited with code N`, the system shall state that the command is complete and that `write_stdin` must not be called for it. ^exec-tc14
 - The system shall direct agents to use status mode for quiet passive waits and delta mode only to inspect output or send input. ^exec-tc15
