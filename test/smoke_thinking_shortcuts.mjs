@@ -7,7 +7,7 @@ function makeHarness() {
   const notifications = [];
   const shortcuts = new Map();
   const eventHandlers = new Map();
-  const footerRefreshes = [];
+  const footerThinkingUpdates = [];
   let currentLevel = "off";
 
   const pi = {
@@ -21,8 +21,8 @@ function makeHarness() {
   const core = {
     init: () => undefined,
     call: (name, args) => {
-      if (name === "refreshFooterState") {
-        footerRefreshes.push(args[0]);
+      if (name === "updateFooterThinking") {
+        footerThinkingUpdates.push(args[0]);
         return undefined;
       }
       throw new Error(`unexpected core call: ${name}`);
@@ -37,13 +37,13 @@ function makeHarness() {
     },
   };
 
-  return { pi, core, ctx, shortcuts, eventHandlers, footerRefreshes, levels, notifications };
+  return { pi, core, ctx, shortcuts, eventHandlers, footerThinkingUpdates, levels, notifications };
 }
 
 // Four shortcuts should be registered.
 {
-  const { pi, core, ctx, shortcuts, eventHandlers, footerRefreshes } = makeHarness();
-  registerThinkingShortcuts(pi);
+  const { pi, core, ctx, shortcuts, eventHandlers, footerThinkingUpdates } = makeHarness();
+  registerThinkingShortcuts(pi, core);
   installThinkingFooterRefresh(pi, core);
   assert.equal(shortcuts.size, 4, "should register 4 shortcuts");
   assert(shortcuts.has("alt+,"), "should register alt+,");
@@ -52,41 +52,26 @@ function makeHarness() {
   assert(shortcuts.has("shift+up"), "should register shift+up");
   assert.equal(typeof shortcuts.get("alt+,").handler, "function", "alt+, should have a handler function");
   eventHandlers.get("thinking_level_select")({ level: "high", previousLevel: "medium" }, ctx);
-  assert.deepEqual(footerRefreshes, [ctx], "thinking changes should immediately refresh footer state");
+  assert.deepEqual(footerThinkingUpdates, ["high"], "thinking events should write the selected footer level directly");
 }
 
 // alt+, decreases thinking level.
 {
-  const { pi, ctx, notifications } = makeHarness();
+  const { pi, core, ctx, shortcuts, footerThinkingUpdates, notifications } = makeHarness();
   pi.setThinkingLevel("high");
-  registerThinkingShortcuts(pi);
-  const shortcuts = new Map();
-  const origReg = pi.registerShortcut;
-  pi.registerShortcut = (name, def) => shortcuts.set(name, def);
-  origReg.call(pi, "alt+,", { description: "Decrease", handler: (ctx) => shortcuts.get("alt+,").handler(ctx) });
-  // Re-register for test harness
-  const handler = (ctx) => {
-    const delta = -1;
-    const before = pi.getThinkingLevel();
-    const levels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-    const index = levels.indexOf(before);
-    const nextIndex = Math.max(0, Math.min(levels.length - 1, index + delta));
-    pi.setThinkingLevel(levels[nextIndex]);
-    const after = pi.getThinkingLevel();
-    const notify = ctx?.ui?.notify;
-    if (typeof notify === "function") notify.call(ctx.ui, `Thinking level: ${after}`, "info");
-  };
-  handler(ctx);
+  registerThinkingShortcuts(pi, core);
+  shortcuts.get("alt+,").handler(ctx);
   assert.equal(pi.getThinkingLevel(), "medium", "alt+, should decrease from high to medium");
+  assert.deepEqual(footerThinkingUpdates, ["medium"], "shortcut should write the footer level without waiting for Pi's async event");
   assert.equal(notifications.length, 1, "should notify on level change");
   assert.equal(notifications[0].message, "Thinking level: medium", "notification should show level");
 }
 
 // alt+. increases thinking level.
 {
-  const { pi, ctx, notifications } = makeHarness();
+  const { pi, core, ctx, notifications } = makeHarness();
   pi.setThinkingLevel("low");
-  registerThinkingShortcuts(pi);
+  registerThinkingShortcuts(pi, core);
   const handler = (ctx) => {
     const delta = 1;
     const before = pi.getThinkingLevel();

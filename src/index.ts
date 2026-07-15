@@ -168,7 +168,7 @@ export default async function taumel(pi: PiLike) {
 
   core.init(makeHost(pi));
   installThinkingFooterRefresh(pi, core);
-  registerThinkingShortcuts(pi);
+  registerThinkingShortcuts(pi, core);
   installVisibilityLifecycle(pi, core);
   const childSessions = new Map<string, ChildSessionBridge>();
   const composer = await createComposerController(pi);

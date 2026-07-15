@@ -2,6 +2,7 @@ import type { CoreBridge, PiLike } from "./types.ts";
 
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 type ThinkingNotificationContext = { ui?: { notify?: (message: string, level: "info") => unknown } };
+type ThinkingSelectEvent = { level?: unknown };
 
 const thinkingLevels: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
@@ -14,13 +15,18 @@ function currentThinkingLevel(pi: PiLike): ThinkingLevel {
   return isThinkingLevel(level) ? level : "off";
 }
 
-function stepThinkingLevel(pi: PiLike, ctx: unknown, delta: -1 | 1): void {
+function updateFooterThinking(core: CoreBridge, level: ThinkingLevel): void {
+  core.call("updateFooterThinking", [level]);
+}
+
+function stepThinkingLevel(pi: PiLike, core: CoreBridge, ctx: unknown, delta: -1 | 1): void {
   if (typeof pi.setThinkingLevel !== "function") return;
   const before = currentThinkingLevel(pi);
   const index = thinkingLevels.indexOf(before);
   const nextIndex = Math.max(0, Math.min(thinkingLevels.length - 1, index + delta));
   pi.setThinkingLevel(thinkingLevels[nextIndex]);
   const after = currentThinkingLevel(pi);
+  updateFooterThinking(core, after);
   const context = typeof ctx === "object" && ctx !== null ? ctx as ThinkingNotificationContext : undefined;
   const ui = context?.ui;
   const notify = ui?.notify;
@@ -28,27 +34,30 @@ function stepThinkingLevel(pi: PiLike, ctx: unknown, delta: -1 | 1): void {
 }
 
 export function installThinkingFooterRefresh(pi: PiLike, core: CoreBridge): void {
-  pi.on("thinking_level_select", (_event: unknown, ctx?: unknown) => {
-    core.call("refreshFooterState", [ctx]);
+  pi.on("thinking_level_select", (event: unknown) => {
+    const level = typeof event === "object" && event !== null
+      ? (event as ThinkingSelectEvent).level
+      : undefined;
+    if (isThinkingLevel(level)) updateFooterThinking(core, level);
   });
 }
 
-export function registerThinkingShortcuts(pi: PiLike): void {
+export function registerThinkingShortcuts(pi: PiLike, core: CoreBridge): void {
   if (typeof pi.registerShortcut !== "function") return;
   pi.registerShortcut("alt+,", {
     description: "Decrease thinking level",
-    handler: (ctx: unknown) => stepThinkingLevel(pi, ctx, -1),
+    handler: (ctx: unknown) => stepThinkingLevel(pi, core, ctx, -1),
   });
   pi.registerShortcut("shift+down", {
     description: "Decrease thinking level",
-    handler: (ctx: unknown) => stepThinkingLevel(pi, ctx, -1),
+    handler: (ctx: unknown) => stepThinkingLevel(pi, core, ctx, -1),
   });
   pi.registerShortcut("alt+.", {
     description: "Increase thinking level",
-    handler: (ctx: unknown) => stepThinkingLevel(pi, ctx, 1),
+    handler: (ctx: unknown) => stepThinkingLevel(pi, core, ctx, 1),
   });
   pi.registerShortcut("shift+up", {
     description: "Increase thinking level",
-    handler: (ctx: unknown) => stepThinkingLevel(pi, ctx, 1),
+    handler: (ctx: unknown) => stepThinkingLevel(pi, core, ctx, 1),
   });
 }

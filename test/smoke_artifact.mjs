@@ -166,6 +166,11 @@ if (!lines[0].includes("$0.125")) {
 if (!lines[0].includes("gpt-test")) {
   throw new Error(`footer did not render parent model: ${JSON.stringify(lines)}`);
 }
+core.call("updateFooterThinking", ["high"]);
+const thinkingLines = component.render(120);
+if (!thinkingLines[0].includes("gpt-test • high")) {
+  throw new Error(`footer did not render the directly updated thinking level: ${JSON.stringify(thinkingLines)}`);
+}
 if (firstCostReads === 0 || tailCostReads === 0) {
   throw new Error(`artifact smoke did not exercise branch cost reads: ${JSON.stringify({ firstCostReads, tailCostReads })}`);
 }

@@ -153,3 +153,8 @@ let refresh_state ctx =
   ignore (Session_sync.try_refresh_session_state_from_host ~scope:"footer refresh" ctx);
   emit_changed host;
   core_ack ()
+
+let update_thinking thinking =
+  state.thinking <- thinking;
+  emit_changed (active_host_or_empty ());
+  core_ack ()
