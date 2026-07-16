@@ -268,19 +268,32 @@ let list_source_entries ~source_workspace =
   in
   Ok paths
 
-let source_fingerprint ~source_workspace =
-  let ( let* ) = Result.bind in
-  let* head = run_git ~cwd:source_workspace [ "rev-parse"; "HEAD" ] in
-  let* entries = list_source_entries ~source_workspace in
+let fingerprint_entries ~root entries =
   let rec loop acc = function
     | [] -> Ok (List.rev acc)
     | relative :: rest -> (
-        match file_entry_fingerprint ~root:source_workspace relative with
+        match file_entry_fingerprint ~root relative with
         | Error _ as error -> error
         | Ok entry -> loop (entry :: acc) rest)
   in
+  let ( let* ) = Result.bind in
   let* entry_lines = loop [] entries in
+  let* head = run_git ~cwd:root [ "rev-parse"; "HEAD" ] in
   Ok (sha256_hex (head ^ "\n" ^ String.concat "\n" entry_lines))
+
+let capture_source_manifest ~source_workspace =
+  let ( let* ) = Result.bind in
+  let* entries = list_source_entries ~source_workspace in
+  let* first = fingerprint_entries ~root:source_workspace entries in
+  let* second = fingerprint_entries ~root:source_workspace entries in
+  if first <> second then
+    Error Taumel.Agent_worktree.workspace_unavailable_source_changed
+  else Ok (entries, second)
+
+let source_fingerprint ~source_workspace =
+  let ( let* ) = Result.bind in
+  let* entries = list_source_entries ~source_workspace in
+  fingerprint_entries ~root:source_workspace entries
 
 let write_marker marker ~agent_home =
   let owner_component =
@@ -324,7 +337,7 @@ let path_or_branch_exists ~main_repository_root ~worktree_path ~branch =
   path_exists || branch_exists
 
 let create_worktree ~source_workspace ~main_repository_root ~worktree_path ~branch
-    ~head =
+    ~head ~entries =
   mkdir_p (Filename.dirname worktree_path);
   match
     run_git ~cwd:main_repository_root
@@ -332,7 +345,8 @@ let create_worktree ~source_workspace ~main_repository_root ~worktree_path ~bran
   with
   | Error message -> Error message
   | Ok _ ->
-      match list_source_entries ~source_workspace with
+      let files = entries in
+      match Ok files with
       | Error message -> Error message
       | Ok files ->
           let fs = Lazy.force fs_mod in
@@ -559,19 +573,9 @@ let provision ~owner_session_id ~agent_id ~source_workspace =
                 | Taumel.Sandbox.Allow ->
                 (* Double-fingerprint the source before mutation; the second matching
                    fingerprint is the accepted source snapshot point (agent-ne9r/y6kl). *)
-                (match
-                   ( source_fingerprint ~source_workspace,
-                     source_fingerprint ~source_workspace )
-                 with
-                | Error message, _ | _, Error message ->
-                    Error ("workspace_unavailable", message)
-                | Ok fingerprint_first, Ok fingerprint_second ->
-                    if fingerprint_first <> fingerprint_second then
-                      Error
-                        ( "workspace_unavailable",
-                          Taumel.Agent_worktree.workspace_unavailable_source_changed )
-                    else
-                      let accepted_fingerprint = fingerprint_second in
+                (match capture_source_manifest ~source_workspace with
+                | Error message -> Error ("workspace_unavailable", message)
+                | Ok (entries, accepted_fingerprint) ->
                       let marker =
                         {
                           Taumel.Agent_worktree.owner_session_id;
@@ -587,7 +591,7 @@ let provision ~owner_session_id ~agent_id ~source_workspace =
                       ignore (write_marker marker ~agent_home);
                       match
                         create_worktree ~source_workspace ~main_repository_root
-                          ~worktree_path ~branch ~head
+                          ~worktree_path ~branch ~head ~entries
                       with
                       | Error message ->
                           rollback_provisional ~main_repository_root ~worktree_path
@@ -607,9 +611,20 @@ let provision ~owner_session_id ~agent_id ~source_workspace =
                             }
                           in
                           ignore (write_marker marker ~agent_home);
-                          (* Source mutations after the accepted snapshot belong to a
-                             later source state and do not invalidate this baseline. *)
-                          ignore accepted_fingerprint;
+                          (match fingerprint_entries ~root:worktree_path entries with
+                          | Error message ->
+                              rollback_provisional ~main_repository_root
+                                ~worktree_path ~branch;
+                              clear_marker ~agent_home ~owner_session_id ~agent_id;
+                              Error ("workspace_unavailable", message)
+                          | Ok reproduced when reproduced <> accepted_fingerprint ->
+                              rollback_provisional ~main_repository_root
+                                ~worktree_path ~branch;
+                              clear_marker ~agent_home ~owner_session_id ~agent_id;
+                              Error
+                                ( "workspace_unavailable",
+                                  "reproduced worktree does not match accepted source snapshot" )
+                          | Ok _ ->
                           match create_baseline ~worktree_path with
                           | Error message ->
                               rollback_provisional ~main_repository_root
@@ -639,7 +654,7 @@ let provision ~owner_session_id ~agent_id ~source_workspace =
                                     }
                                   in
                                   ignore (write_marker marker ~agent_home);
-                                  Ok (binding, derived, marker_path)))))
+                                  Ok (binding, derived, marker_path))))))
 
 let accept_provisional ~owner_session_id ~agent_id =
   let agent_home = pi_agent_dir () in
@@ -648,20 +663,32 @@ let accept_provisional ~owner_session_id ~agent_id =
     Taumel.Agent_worktree.provisional_marker_path ~agent_home ~owner_component
       ~agent_id
   in
-  (match read_marker path with
-  | Ok marker ->
-      let marker =
-        {
-          marker with
-          completed_steps =
-            if List.mem Taumel.Agent_worktree.Identity_accepted marker.completed_steps
-            then marker.completed_steps
-            else marker.completed_steps @ [ Identity_accepted ];
-        }
-      in
-      ignore (write_marker marker ~agent_home)
-  | Error _ -> ());
-  clear_marker ~agent_home ~owner_session_id ~agent_id
+  match read_marker path with
+  | Error _ when not (path_exists path) -> Ok ()
+  | Error message -> Error ("workspace_unavailable: " ^ message)
+  | Ok marker -> (
+      try
+        let marker =
+          {
+            marker with
+            completed_steps =
+              if
+                List.mem Taumel.Agent_worktree.Identity_accepted
+                  marker.completed_steps
+              then marker.completed_steps
+              else marker.completed_steps @ [ Identity_accepted ];
+          }
+        in
+        ignore (write_marker marker ~agent_home);
+        clear_marker ~agent_home ~owner_session_id ~agent_id;
+        if path_exists path then
+          Error
+            "workspace_unavailable: failed to clear provisional marker after acceptance"
+        else Ok ()
+      with error ->
+        Error
+          ("workspace_unavailable: acceptance marker update failed: "
+         ^ Printexc.to_string error))
 
 let rollback_failed_start ~owner_session_id ~agent_id ~main_repository_root
     ~worktree_path ~branch =
@@ -797,6 +824,44 @@ let reconcile_provisional_markers () =
                  ~worktree_path:marker.worktree_path ~branch:marker.branch;
                ignore (remove_path path)))
 
+let preflight_broker_add ~worktree_path argv =
+  let pathspecs =
+    let rec after_sep = function
+      | [] -> []
+      | "--" :: rest -> rest
+      | _ :: rest -> after_sep rest
+    in
+    after_sep argv
+  in
+  let has_sub haystack needle =
+    let h = String.length haystack in
+    let n = String.length needle in
+    let rec loop i = i + n <= h && (String.sub haystack i n = needle || loop (i + 1)) in
+    n = 0 || loop 0
+  in
+  let rec check = function
+    | [] -> Ok ()
+    | relative :: rest ->
+        if path_exists (Filename.concat (Filename.concat worktree_path relative) ".git")
+        then Error ("brokered git add rejects nested repository: " ^ relative)
+        else
+          match run_git ~cwd:worktree_path [ "ls-files"; "-s"; "--"; relative ] with
+          | Ok output when String.length output >= 6 && String.sub output 0 6 = "160000" ->
+              Error ("brokered git add rejects gitlink: " ^ relative)
+          | _ -> (
+              match run_git ~cwd:worktree_path [ "check-attr"; "-a"; "--"; relative ] with
+              | Error _ -> check rest
+              | Ok attrs ->
+                  let lowered = String.lowercase_ascii attrs in
+                  if
+                    (has_sub lowered "filter:" && not (has_sub lowered "filter: unspecified"))
+                    || (has_sub lowered "clean:" && not (has_sub lowered "clean: unspecified"))
+                    || has_sub lowered "process:"
+                  then Error ("brokered git add rejects executable filter: " ^ relative)
+                  else check rest)
+  in
+  check pathspecs
+
 let verify_broker_registration ~worktree_path ~main_repository_root ~branch =
   if not (is_directory worktree_path) then
     Error "agent worktree path is unavailable"
@@ -840,10 +905,23 @@ let effective_workspace_for_identity ~(identity : Taumel.Agents.identity) =
       ~agent_id:identity.identity_agent_id identity.identity_workspace_binding
   with
   | Error message -> Error message
-  | Ok derived ->
-      Ok
-        ( Taumel.Agent_workspace.effective_workspace_of_derived derived,
-          derived )
+  | Ok derived -> (
+      match derived.isolation with
+      | Taumel.Agent_workspace.None ->
+          Ok
+            ( Taumel.Agent_workspace.effective_workspace_of_derived derived,
+              derived )
+      | Taumel.Agent_workspace.Worktree -> (
+          match
+            verify_broker_registration ~worktree_path:derived.worktree_path
+              ~main_repository_root:derived.main_repository_root
+              ~branch:derived.branch
+          with
+          | Error message -> Error message
+          | Ok _git_dir ->
+              Ok
+                ( Taumel.Agent_workspace.effective_workspace_of_derived derived,
+                  derived )))
 
 let identity_metadata ~(identity : Taumel.Agents.identity) ?child_session_file () =
   let source = Taumel.Agents.identity_source_workspace identity in

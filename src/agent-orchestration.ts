@@ -325,7 +325,14 @@ export async function executeAgentPrepared(
           : "initial message was not accepted";
         return agentErrorToolResult(core, "dispatch_failed", reason);
       }
-      try { decodeCoreAck(core.call("acceptAgentWorktreeStart", [prepared, ctx])); } catch { /* marker clear is best-effort */ }
+      try {
+        decodeCoreAck(core.call("acceptAgentWorktreeStart", [prepared, ctx]));
+      } catch (error) {
+        await rollbackUnacceptedStart(core, childSessions, prepared, ctx, bridge);
+        try { decodeCoreAck(core.call("rollbackAgentWorktreeStart", [prepared, ctx])); } catch { /* retain incident marker if cleanup fails */ }
+        const message = error instanceof Error ? error.message : String(error);
+        return agentErrorToolResult(core, childFailureCode(message), message || "failed to accept agent worktree");
+      }
       return preparedToolResult(core, {
         text: stringField(prepared, "text"),
         details: prepared.details,
@@ -510,13 +517,23 @@ export async function executeAgentPrepared(
       const key = childSessionCacheKey(agentId, keyScope);
       const bridge = childSessions.get(key);
       try {
+        // Cancel identity-owned broker sessions before cleanliness/removal inspection.
+        try {
+          decodeCoreAck(core.call("cancelAgentBrokerSessions", [{ agent_id: agentId }]));
+        } catch (error) {
+          decodeCoreAck(core.call("releaseAgentClose", [{ agent_id: agentId }]));
+          const message = error instanceof Error ? error.message : String(error);
+          return agentErrorToolResult(core, "cleanup_failed", message || "broker session cancellation failed");
+        }
         // Stop child execution first, but keep private session files until worktree
         // cleanup succeeds so close remains retryable on cleanup_failed.
         if (bridge?.stop !== undefined) {
           try {
             await bridge.stop("agent_closed");
-          } catch {
-            /* continue to cleanup; failure is surfaced below if needed */
+          } catch (error) {
+            decodeCoreAck(core.call("releaseAgentClose", [{ agent_id: agentId }]));
+            const message = error instanceof Error ? error.message : String(error);
+            return agentErrorToolResult(core, "cleanup_failed", `agent stop failed: ${message}`);
           }
         }
         if (prepared.deleteWorktree === true) {

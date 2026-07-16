@@ -140,6 +140,11 @@ let core_call name_js args_js =
   | "rollbackAgentWorktreeStart" -> Agent_tools.rollback_worktree_start (arg 0) (arg 1)
   | "deleteAgentWorktree" -> Agent_tools.delete_worktree (arg 0) (arg 1)
   | "reconcileProvisionalAgentWorktrees" -> Agent_tools.reconcile_provisional_worktrees ()
+  | "cancelAgentBrokerSessions" ->
+      let agent_id = get_string (arg 0) "agent_id" in
+      let clean = Exec_session.cancel_broker_sessions_for_agent agent_id in
+      if clean then core_ack ()
+      else error_obj "cleanup_failed: could not terminate identity-owned broker sessions"
   | "handleCommand" -> Command_bridge.handle (arg 0)
   | "handleComposerCommand" -> Composer_commands.handle (arg 0)
    | "planCommandNotification" ->

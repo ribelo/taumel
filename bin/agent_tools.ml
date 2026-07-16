@@ -68,12 +68,10 @@ let current_active_tools ctx =
 let parent_model () =
   if state.provider = "" || state.model = "" then None
   else Some (state.provider ^ "/" ^ state.model)
-
 let provider_of_model_id model =
   match String.index_opt model '/' with
   | Some index when index > 0 -> Some (String.sub model 0 index)
   | _ -> None
-
 let node_require name =
   let process = Unsafe.get Unsafe.global "process" in
   match function_field process "getBuiltinModule" with
@@ -81,11 +79,9 @@ let node_require name =
   | None ->
       let require = Unsafe.get Unsafe.global "require" in
       Unsafe.fun_call require [| js_string name |]
-
 let pi_agent_dir = Agent_worktree_host.pi_agent_dir
 let resolve_routing = Agent_routing_host.resolve_routing
 let routing_diagnostics = Agent_routing_host.routing_diagnostics
-
 let truncate_output ?owner_session_id ?agent_id ?run_id text =
   Agent_output.truncate ~agent_dir:(pi_agent_dir ()) ?owner_session_id ?agent_id
     ?run_id text
@@ -922,14 +918,18 @@ let release_close facts =
 
 let accept_worktree_start facts _ctx =
   let agent_id = get_string facts "agentId" in
-  let owner =
-    match Taumel.Agents.find_identity !agent_state agent_id with
-    | Some identity -> identity.identity_owner_session_id
-    | None -> ""
-  in
-  if owner <> "" then
-    Agent_worktree_host.accept_provisional ~owner_session_id:owner ~agent_id;
-  core_ack ()
+  match Taumel.Agents.find_identity !agent_state agent_id with
+  | None -> core_ack ()
+  | Some identity -> (
+      match Taumel.Agents.identity_isolation identity with
+      | Taumel.Agent_workspace.None -> core_ack ()
+      | Taumel.Agent_workspace.Worktree -> (
+          match
+            Agent_worktree_host.accept_provisional
+              ~owner_session_id:identity.identity_owner_session_id ~agent_id
+          with
+          | Ok () -> core_ack ()
+          | Error message -> error_obj message))
 
 let rollback_worktree_start facts _ctx =
   let agent_id = get_string facts "agentId" in

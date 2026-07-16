@@ -293,11 +293,26 @@ let prepare_exec_command params ctx =
                               with
                               | Error message -> Error message
                               | Ok git_dir ->
-                                  Ok
-                                    ( worktree,
-                                      git_dir,
-                                      authorized.argv,
-                                      agent_id )))))
+                                  (match authorized.subcommand with
+                                  | Taumel.Agent_git_broker.Add -> (
+                                      match
+                                        Agent_worktree_host.preflight_broker_add
+                                          ~worktree_path:worktree
+                                          authorized.argv
+                                      with
+                                      | Error message -> Error message
+                                      | Ok () ->
+                                          Ok
+                                            ( worktree,
+                                              git_dir,
+                                              authorized.argv,
+                                              agent_id ))
+                                  | _ ->
+                                      Ok
+                                        ( worktree,
+                                          git_dir,
+                                          authorized.argv,
+                                          agent_id ))))))
       in
       match brokered with
       | Ok (worktree, git_dir, argv, agent_id) ->

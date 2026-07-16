@@ -192,7 +192,6 @@ let path_join a b =
   with
   | Some p -> p
   | None -> a ^ "/" ^ b
-(* Lazily open the full-output temp file on first output. *)
 let ensure_temp_file (session : session) =
   match session.temp_fd with
   | Some _ -> ()
@@ -689,7 +688,24 @@ let release_broker_lease session =
   | Some agent_id ->
       Taumel.Agent_git_broker.Lease.release agent_id;
       session.broker_agent_id <- None
-
+let cancel_broker_sessions_for_agent agent_id =
+  let agent_id = String.trim agent_id in
+  let live = ref [] in
+  Hashtbl.iter
+    (fun _ session ->
+      match session.broker_agent_id with
+      | Some id when id = agent_id ->
+          kill_session session;
+          live := session :: !live
+      | _ -> ())
+    sessions;
+  List.iter
+    (fun session ->
+      if not session.exited then kill_session session;
+      release_broker_lease session)
+    !live;
+  Taumel.Agent_git_broker.Lease.release agent_id;
+  List.for_all (fun session -> session.exited) !live
 let spawn_session session ~file ~args ~cwd ?env () =
   let fs = js_require "node:fs" in
   let exists = Unsafe.fun_call (Unsafe.get fs "existsSync") [| js_string cwd |] in
@@ -900,14 +916,10 @@ let run_exec_command prepared host runtime owner_id signal force_unsandboxed =
                    ("GIT_EDITOR", js_string "true");
                    ("GIT_ASKPASS", js_string "true");
                    ("GIT_CONFIG_COUNT", js_string "4");
-                   ("GIT_CONFIG_KEY_0", js_string "core.hooksPath");
-                   ("GIT_CONFIG_VALUE_0", js_string "/dev/null");
-                   ("GIT_CONFIG_KEY_1", js_string "commit.gpgsign");
-                   ("GIT_CONFIG_VALUE_1", js_string "false");
-                   ("GIT_CONFIG_KEY_2", js_string "submodule.recurse");
-                   ("GIT_CONFIG_VALUE_2", js_string "false");
-                   ("GIT_CONFIG_KEY_3", js_string "core.useBuiltinFSMonitor");
-                   ("GIT_CONFIG_VALUE_3", js_string "false");
+                   ("GIT_CONFIG_KEY_0", js_string "core.hooksPath"); ("GIT_CONFIG_VALUE_0", js_string "/dev/null");
+                   ("GIT_CONFIG_KEY_1", js_string "commit.gpgsign"); ("GIT_CONFIG_VALUE_1", js_string "false");
+                   ("GIT_CONFIG_KEY_2", js_string "submodule.recurse"); ("GIT_CONFIG_VALUE_2", js_string "false");
+                   ("GIT_CONFIG_KEY_3", js_string "core.useBuiltinFSMonitor"); ("GIT_CONFIG_VALUE_3", js_string "false");
                  ]
              in
              List.iter
