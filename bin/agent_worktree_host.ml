@@ -407,28 +407,7 @@ let path_has_executable_filter ~worktree_path relative =
      || List.exists dangerous processes
   then Error ("brokered git add rejects executable filter: " ^ relative)
   else Ok ()
-let install_filter_denial ~worktree_path =
-  (* $GIT_DIR/info/attributes has highest precedence and can unset filter for all
-     paths without renaming tracked worktree files. *)
-  match run_git ~cwd:worktree_path [ "rev-parse"; "--git-path"; "info/attributes" ] with
-  | Error message -> Error message
-  | Ok attr_path ->
-      let previous =
-        if path_exists attr_path then
-          match read_file attr_path with Ok contents -> Some contents | Error _ -> Some ""
-        else None
-      in
-      (try
-         mkdir_p (Filename.dirname attr_path);
-         write_file attr_path "* -filter\n";
-         Ok (attr_path, previous)
-       with error -> Error (Printexc.to_string error))
-let restore_filter_denial (attr_path, previous) =
-  match previous with
-  | None -> ignore (remove_path attr_path)
-  | Some contents -> (try write_file attr_path contents with _ -> ())
-let preflight_broker_add ~worktree_path argv =
-  let ( let* ) = Result.bind in
+let expand_broker_add_paths ~worktree_path argv =
   let has_all = List.mem "--all" argv in
   let pathspecs =
     let rec after_sep = function
@@ -438,19 +417,18 @@ let preflight_broker_add ~worktree_path argv =
     in
     after_sep argv
   in
-  let* expanded =
-    if has_all then
-      run_git ~trim:false ~cwd:worktree_path
-        [ "ls-files"; "-z"; "-c"; "-o"; "--exclude-standard" ]
-      |> Result.map nul_paths
-    else if pathspecs = [] then
-      Error "brokered git add requires --all or pathspecs after --"
-    else
-      run_git ~trim:false ~cwd:worktree_path
-        ("ls-files" :: "-z" :: "-c" :: "-o" :: "--exclude-standard" :: "--"
-       :: pathspecs)
-      |> Result.map nul_paths
-  in
+  if has_all then
+    run_git ~trim:false ~cwd:worktree_path
+      [ "ls-files"; "-z"; "-c"; "-o"; "--exclude-standard" ]     |> Result.map nul_paths
+  else if pathspecs = [] then
+    Error "brokered git add requires --all or pathspecs after --"
+  else
+    run_git ~trim:false ~cwd:worktree_path
+      ("ls-files" :: "-z" :: "-c" :: "-o" :: "--exclude-standard" :: "--" :: pathspecs)
+    |> Result.map nul_paths
+let preflight_broker_add ~worktree_path argv =
+  let ( let* ) = Result.bind in
+  let* expanded = expand_broker_add_paths ~worktree_path argv in
   let rec check = function
     | [] -> Ok ()
     | relative :: rest ->
@@ -470,29 +448,10 @@ let preflight_broker_add ~worktree_path argv =
               | Ok () -> check rest)
   in
   check expanded
-let registration_present ~main_repository_root ~worktree_path =
-  match
-    run_git ~cwd:main_repository_root [ "worktree"; "list"; "--porcelain" ]
-  with
-  | Error message -> Error message
-  | Ok listing ->
-      let needle = "worktree " ^ worktree_path in
-      let rec contains haystack =
-        let h = String.length haystack in
-        let n = String.length needle in
-        let rec loop i =
-          i + n <= h && (String.sub haystack i n = needle || loop (i + 1))
-        in
-        n = 0 || loop 0
-      in
-      Ok (List.exists contains (String.split_on_char '\n' listing))
-let create_baseline ~worktree_path =
+let perform_secure_broker_add ?(preflight = true) ~worktree_path argv =
   let ( let* ) = Result.bind in
-  let* dirty =
-    run_git ~trim:false ~cwd:worktree_path
-      [ "ls-files"; "-z"; "-m"; "-d"; "-o"; "--exclude-standard" ]
-    |> Result.map nul_paths
-  in
+  let* () = if preflight then preflight_broker_add ~worktree_path argv else Ok () in
+  let* paths = expand_broker_add_paths ~worktree_path argv in
   let stage_path relative =
     let full = Filename.concat worktree_path relative in
     let fs = Lazy.force fs_mod in
@@ -537,7 +496,34 @@ let create_baseline ~worktree_path =
     | relative :: rest -> (
         match stage_path relative with Error _ as e -> e | Ok () -> stage_all rest)
   in
-  let* () = stage_all dirty in
+  stage_all paths
+let registration_present ~main_repository_root ~worktree_path =
+  match
+    run_git ~cwd:main_repository_root [ "worktree"; "list"; "--porcelain" ]
+  with
+  | Error message -> Error message
+  | Ok listing ->
+      let needle = "worktree " ^ worktree_path in
+      let rec contains haystack =
+        let h = String.length haystack in
+        let n = String.length needle in
+        let rec loop i =
+          i + n <= h && (String.sub haystack i n = needle || loop (i + 1))
+        in
+        n = 0 || loop 0
+      in
+      Ok (List.exists contains (String.split_on_char '\n' listing))
+let create_baseline ~worktree_path =
+  let ( let* ) = Result.bind in
+  let* dirty =
+    run_git ~trim:false ~cwd:worktree_path
+      [ "ls-files"; "-z"; "-m"; "-d"; "-o"; "--exclude-standard" ]
+    |> Result.map nul_paths
+  in
+  let* () =
+    if dirty = [] then Ok ()
+    else perform_secure_broker_add ~preflight:false ~worktree_path ("add" :: "--" :: dirty)
+  in
   let child_process = Lazy.force child_process_mod in
   try
     ignore

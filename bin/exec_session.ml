@@ -26,7 +26,6 @@ type session = {
   mutable waiters : (int * (unit -> unit)) list;
   mutable next_waiter_id : int;
   mutable broker_agent_id : string option;
-  mutable broker_filter_denial : (string * string option) option;
 }
 type retained_session = {
   retained_id : int;
@@ -676,11 +675,6 @@ let wire_stream session child name =
                     notify session));
            |])
 let release_broker_lease session =
-  (match session.broker_filter_denial with
-  | None -> ()
-  | Some denial ->
-      Agent_worktree_host.restore_filter_denial denial;
-      session.broker_filter_denial <- None);
   match session.broker_agent_id with
   | None -> ()
   | Some agent_id ->
@@ -774,7 +768,6 @@ let new_session owner_id tty =
     waiters = [];
     next_waiter_id = 1;
     broker_agent_id = None;
-    broker_filter_denial = None;
   }
 let retained_session_cap_per_owner = 128
 let prune_retained_sessions owner_id =
@@ -906,18 +899,19 @@ let run_exec_command prepared host runtime owner_id signal force_unsandboxed =
            if has_property prepared "directArgv" then get_string_array prepared "directArgv"
            else []
          in
-         match Agent_worktree_host.install_filter_denial ~worktree_path:worktree with
+         match Agent_worktree_host.perform_secure_broker_add ~worktree_path:worktree argv with
          | Error message ->
              release_broker_lease session;
              failwith message
-         | Ok denial ->
-             session.broker_filter_denial <- Some denial;
-             match Agent_worktree_host.preflight_broker_add ~worktree_path:worktree argv with
-             | Error message ->
-                 release_broker_lease session;
-                 failwith message
-             | Ok () -> ());
+         | Ok () ->
+             (* Staging completed via filter-free plumbing; mark session exited
+                successfully without spawning git add. *)
+             session.exited <- true;
+             session.exit_code <- Some 0);
+
       (try
+         if session.exited then ()
+         else
          let env =
            if not (get_bool prepared "brokeredGit") then None
            else
