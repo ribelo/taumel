@@ -407,6 +407,26 @@ let path_has_executable_filter ~worktree_path relative =
      || List.exists dangerous processes
   then Error ("brokered git add rejects executable filter: " ^ relative)
   else Ok ()
+let install_filter_denial ~worktree_path =
+  (* $GIT_DIR/info/attributes has highest precedence and can unset filter for all
+     paths without renaming tracked worktree files. *)
+  match run_git ~cwd:worktree_path [ "rev-parse"; "--git-path"; "info/attributes" ] with
+  | Error message -> Error message
+  | Ok attr_path ->
+      let previous =
+        if path_exists attr_path then
+          match read_file attr_path with Ok contents -> Some contents | Error _ -> Some ""
+        else None
+      in
+      (try
+         mkdir_p (Filename.dirname attr_path);
+         write_file attr_path "* -filter\n";
+         Ok (attr_path, previous)
+       with error -> Error (Printexc.to_string error))
+let restore_filter_denial (attr_path, previous) =
+  match previous with
+  | None -> ignore (remove_path attr_path)
+  | Some contents -> (try write_file attr_path contents with _ -> ())
 let preflight_broker_add ~worktree_path argv =
   let ( let* ) = Result.bind in
   let has_all = List.mem "--all" argv in
@@ -467,7 +487,7 @@ let registration_present ~main_repository_root ~worktree_path =
       in
       Ok (List.exists contains (String.split_on_char '\n' listing))
 let create_baseline ~worktree_path =
-    let ( let* ) = Result.bind in
+  let ( let* ) = Result.bind in
   let* dirty =
     run_git ~trim:false ~cwd:worktree_path
       [ "ls-files"; "-z"; "-m"; "-d"; "-o"; "--exclude-standard" ]
@@ -482,33 +502,29 @@ let create_baseline ~worktree_path =
     else
       try
         let st = Unsafe.meth_call fs "lstatSync" [| js_string full |] in
-        if Js.to_bool (Unsafe.meth_call st "isSymbolicLink" [||]) then
-          let target =
-            Js.to_string (Unsafe.meth_call fs "readlinkSync" [| js_string full |])
+        if Js.to_bool (Unsafe.meth_call st "isSymbolicLink" [||]) then (
+          let target = Js.to_string (Unsafe.meth_call fs "readlinkSync" [| js_string full |]) in
+          let tmp =
+            match run_git ~cwd:worktree_path [ "rev-parse"; "--git-path"; "taumel-link-bytes" ] with
+            | Ok path -> path
+            | Error _ -> Filename.concat (Filename.get_temp_dir_name ()) "taumel-link-bytes"
           in
-          let tmp = Filename.concat (Filename.concat worktree_path ".git") "taumel-link-bytes" in
           write_file tmp target;
-          let hashed =
-            run_git ~cwd:worktree_path
-              [ "hash-object"; "-w"; "--no-filters"; tmp ]
-          in
+          let hashed = run_git ~cwd:worktree_path [ "hash-object"; "-w"; "--no-filters"; tmp ] in
           ignore (remove_path tmp);
           match hashed with
           | Error message -> Error message
           | Ok blob ->
               run_git ~cwd:worktree_path
                 [ "update-index"; "--add"; "--cacheinfo"; "120000," ^ blob ^ "," ^ relative ]
-              |> Result.map ignore
+              |> Result.map ignore)
         else
           let mode =
             match float_value (Unsafe.get st "mode") with
             | Some m when int_of_float m land 0o111 <> 0 -> "100755"
             | _ -> "100644"
           in
-          match
-            run_git ~cwd:worktree_path
-              [ "hash-object"; "-w"; "--no-filters"; "--path"; relative; full ]
-          with
+          match run_git ~cwd:worktree_path [ "hash-object"; "-w"; "--no-filters"; full ] with
           | Error message -> Error message
           | Ok blob ->
               run_git ~cwd:worktree_path
@@ -519,9 +535,7 @@ let create_baseline ~worktree_path =
   let rec stage_all = function
     | [] -> Ok ()
     | relative :: rest -> (
-        match stage_path relative with
-        | Error _ as error -> error
-        | Ok () -> stage_all rest)
+        match stage_path relative with Error _ as e -> e | Ok () -> stage_all rest)
   in
   let* () = stage_all dirty in
   let child_process = Lazy.force child_process_mod in
@@ -530,16 +544,7 @@ let create_baseline ~worktree_path =
       (Unsafe.meth_call child_process "execFileSync"
          [|
            js_string "git";
-           js_array
-             (List.map js_string
-                [
-                  "-c";
-                  "core.hooksPath=/dev/null";
-                  "commit";
-                  "--allow-empty";
-                  "-m";
-                  "pi agent baseline";
-                ]);
+           js_array (List.map js_string [ "-c"; "core.hooksPath=/dev/null"; "commit"; "--allow-empty"; "-m"; "pi agent baseline" ]);
            Unsafe.obj
              [|
                ("cwd", js_string worktree_path);
@@ -547,18 +552,12 @@ let create_baseline ~worktree_path =
                ( "env",
                  trusted_git_env
                    [
-                     ( "GIT_AUTHOR_NAME",
-                       js_string Taumel.Agent_worktree.baseline_author_name );
-                     ( "GIT_AUTHOR_EMAIL",
-                       js_string Taumel.Agent_worktree.baseline_author_email );
-                     ( "GIT_COMMITTER_NAME",
-                       js_string Taumel.Agent_worktree.baseline_committer_name );
-                     ( "GIT_COMMITTER_EMAIL",
-                       js_string Taumel.Agent_worktree.baseline_committer_email );
+                     ("GIT_AUTHOR_NAME", js_string Taumel.Agent_worktree.baseline_author_name);
+                     ("GIT_AUTHOR_EMAIL", js_string Taumel.Agent_worktree.baseline_author_email);
+                     ("GIT_COMMITTER_NAME", js_string Taumel.Agent_worktree.baseline_committer_name);
+                     ("GIT_COMMITTER_EMAIL", js_string Taumel.Agent_worktree.baseline_committer_email);
                    ] );
-               ( "stdio",
-                 js_array
-                   [ js_string "ignore"; js_string "pipe"; js_string "pipe" ] );
+               ("stdio", js_array [ js_string "ignore"; js_string "pipe"; js_string "pipe" ]);
              |];
          |]);
     Ok ()

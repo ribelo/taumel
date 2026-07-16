@@ -26,6 +26,7 @@ type session = {
   mutable waiters : (int * (unit -> unit)) list;
   mutable next_waiter_id : int;
   mutable broker_agent_id : string option;
+  mutable broker_filter_denial : (string * string option) option;
 }
 type retained_session = {
   retained_id : int;
@@ -101,8 +102,6 @@ let max_display_bytes = 50 * 1024
 let default_max_output_tokens = 10_000
 let approximate_bytes_per_token = 4
 let total_output_limit_bytes = 16 * 1024 * 1024
-(* In-memory bound for the unread (pending) buffer. The full output always lives
-   in the temp file, so trimming the oldest unread bytes never loses data. *)
 let pending_cap = total_output_limit_bytes
 let count_newlines s =
   let n = ref 0 in
@@ -218,8 +217,6 @@ let write_temp (session : session) text =
         let fs = js_require "node:fs" in
         ignore (Unsafe.fun_call (Unsafe.get fs "writeSync") [| fd; js_string text |])
       with _ -> ())
-(* stdout and stderr are merged into one ordered stream (Pi semantics). The full
-   stream goes to the temp file; only a bounded rolling tail stays in memory. *)
 let add_output (session : session) text =
   if text = "" || session.output_limit_exceeded then false
   else begin
@@ -374,8 +371,6 @@ let truncation_footer ?(last_line_partial = false) ~start_line ~end_line
         "[Showing lines %d-%d of %d (limited by %s; max %d lines / %d bytes). Full output: %s]"
         start_line end_line total_lines reason max_display_lines max_display_bytes
         path
-(* Compute the display output without mutating the session. Shared by the inline
-   drain (make_result) and notifications. *)
 let display_output (session : session) =
   let raw = Buffer.contents session.pending in
   let total_lines =
@@ -503,8 +498,6 @@ let codex_display_output session max_output_tokens =
         ~truncated_by:"tokens" ~total_lines ~total_bytes
         ~output_lines:(line_count output) ~output_bytes:(String.length output)
         ~max_lines:max_int ~max_bytes:budget () )
-(* Drain the unread chunk for display and reset accounting so the next call
-   returns only new output. *)
 let make_result ?(output_mode = "delta") ?(max_output_tokens = default_max_output_tokens)
     (session : session) =
   let delta_output, delta_truncation = codex_display_output session max_output_tokens in
@@ -683,6 +676,11 @@ let wire_stream session child name =
                     notify session));
            |])
 let release_broker_lease session =
+  (match session.broker_filter_denial with
+  | None -> ()
+  | Some denial ->
+      Agent_worktree_host.restore_filter_denial denial;
+      session.broker_filter_denial <- None);
   match session.broker_agent_id with
   | None -> ()
   | Some agent_id ->
@@ -776,6 +774,7 @@ let new_session owner_id tty =
     waiters = [];
     next_waiter_id = 1;
     broker_agent_id = None;
+    broker_filter_denial = None;
   }
 let retained_session_cap_per_owner = 128
 let prune_retained_sessions owner_id =
@@ -895,8 +894,7 @@ let run_exec_command prepared host runtime owner_id signal force_unsandboxed =
           match Taumel.Agent_git_broker.Lease.try_acquire agent_id with
           | Error message -> failwith message
           | Ok () -> session.broker_agent_id <- Some agent_id));
-      (* Final add preflight under the exclusive lease, immediately before spawn. *)
-      (if get_bool prepared "brokeredGit"
+            (if get_bool prepared "brokeredGit"
           && optional_string_field prepared "brokerSubcommand" = Some "add"
        then
          let worktree =
@@ -908,17 +906,21 @@ let run_exec_command prepared host runtime owner_id signal force_unsandboxed =
            if has_property prepared "directArgv" then get_string_array prepared "directArgv"
            else []
          in
-         match Agent_worktree_host.preflight_broker_add ~worktree_path:worktree argv with
+         match Agent_worktree_host.install_filter_denial ~worktree_path:worktree with
          | Error message ->
              release_broker_lease session;
              failwith message
-         | Ok () -> ());
+         | Ok denial ->
+             session.broker_filter_denial <- Some denial;
+             match Agent_worktree_host.preflight_broker_add ~worktree_path:worktree argv with
+             | Error message ->
+                 release_broker_lease session;
+                 failwith message
+             | Ok () -> ());
       (try
          let env =
            if not (get_bool prepared "brokeredGit") then None
            else
-             (* Scrub inherited GIT_* by building a minimal environment rather
-                than extending process.env wholesale. *)
              let process = node_process () in
              let process_env = Unsafe.get process "env" in
              let path = Unsafe.get process_env "PATH" in
@@ -1084,13 +1086,6 @@ let shutdown_owner owner_id =
       if retained.retained_owner_id = owner_id then None else Some retained)
     retained_sessions;
   core_ack ()
-(* Background completion notification (mirrors isolated_child completion delivery).
-   An async session (one that returned a sessionId) that exits while no call is
-   consuming its terminal result is left in [sessions] with [exited = true].
-   Notification delivery marks only [notification_sent]; an explicit
-   write_stdin poll is still required to consume and remove the terminal
-   result. Synchronous commands, aborted commands, and owner-shutdown kills are
-   removed, so they never appear here. *)
 let exec_notification_content (session : session) =
   Printf.sprintf
     "Command session %d has finished. To read and consume the result, call write_stdin with session_id=%d, chars=\"\", yield_time_ms=5000."
@@ -1105,10 +1100,6 @@ let exec_notification_obj session =
   Tool_contracts.ExecNotification.create ~sessionId:(float_of_int session.id)
     ~customType:"notification" ~content:(exec_notification_content session)
     ~display:true ()
-(* Pending deliverable background completions for [owner_id]: terminal sessions
-   that have not yet been consumed, are not currently claimed by write_stdin,
-   and whose completion notification has not been sent. Read-only; successful
-   delivery updates only notification state. *)
 let pending_exec_notifications owner_id =
   let pending =
     Hashtbl.fold
@@ -1151,11 +1142,6 @@ let mark_exec_notification_delivered session_id =
       session.notification_sent <- true
   | None -> ());
   core_ack ()
-(* Resolves when the session has exited (or is already gone/drained), without
-   draining or removing it, so the turn_end/idle flush can deliver its output.
-   The TS layer starts this detached for each async session and, on resolution,
-   does an idle flush (triggerTurn) - the exec analogue of the isolated_child
-   onCompletion -> deliverCompletionIfParentIdle path. *)
 let await_exec_completion session_id =
   Unsafe.new_obj (Unsafe.get Unsafe.global "Promise")
     [|
