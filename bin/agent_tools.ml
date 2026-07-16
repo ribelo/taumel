@@ -11,12 +11,11 @@ let is_agent_child ctx =
       | "agent" | "generic" | "finder" | "oracle" -> true
       | _ -> false)
   | None -> false
-
 let reject_nested name =
   error_obj (name ^ " is unavailable inside a child agent")
 
 let save_agent_state ctx =
-  Session_store.append_custom_entry ctx "taumel.agents.v3"
+  Session_store.append_custom_entry ctx "taumel.agents.v4"
     (Taumel.Agents_codec.encode !agent_state)
 
 let commit_agent_state ctx next =
@@ -97,117 +96,9 @@ let node_require name =
       let require = Unsafe.get Unsafe.global "require" in
       Unsafe.fun_call require [| js_string name |]
 
-let pi_agent_dir () =
-  let home =
-    try Js.to_string (Unsafe.meth_call (node_require "os") "homedir" [||])
-    with _ -> ""
-  in
-  let process = Unsafe.get Unsafe.global "process" in
-  let env = Unsafe.get process "env" in
-  match string_value (Unsafe.get env "PI_CODING_AGENT_DIR") with
-  | Some value when String.trim value <> "" ->
-      let value = String.trim value in
-      if String.length value >= 2 && String.sub value 0 2 = "~/" then
-        home ^ String.sub value 1 (String.length value - 1)
-      else value
-  | _ -> home ^ "/.pi/agent"
-
-let read_settings_json path =
-  let fs = node_require "fs" in
-  try
-    if not (Js.to_bool (Unsafe.meth_call fs "existsSync" [| js_string path |])) then Ok None
-    else
-      let raw = Js.to_string (Unsafe.meth_call fs "readFileSync" [| js_string path; js_string "utf8" |]) in
-      match Taumel.Shared.decode_json_string raw with
-      | Ok json -> Ok (Some json)
-      | Error message -> Error (path ^ ": " ^ message)
-  with error -> Error (path ^ ": " ^ Printexc.to_string error)
-
-let taumel_object_from_settings = function
-  | Taumel.Shared.Object fields -> (
-      match List.assoc_opt "taumel" fields with
-      | Some value -> value
-      | None -> Taumel.Shared.Object [])
-  | _ -> Taumel.Shared.Object []
-
-let load_routing_catalog () =
-  let global_path = pi_agent_dir () ^ "/settings.json" in
-  let project_path =
-    if state.cwd = "" then "" else state.cwd ^ "/.pi/settings.json"
-  in
-  let from_path path =
-    match read_settings_json path with
-    | Ok None -> Taumel.Agent_routing.empty
-    | Error message ->
-        { Taumel.Agent_routing.empty with diagnostics = [ message ] }
-    | Ok (Some root) -> (
-        match Taumel.Agent_routing.of_taumel_json (taumel_object_from_settings root) with
-        | Ok catalog -> catalog
-        | Error message ->
-            {
-              Taumel.Agent_routing.empty with
-              diagnostics = [ message ];
-            })
-  in
-  let global = from_path global_path in
-  let project = if project_path = "" then Taumel.Agent_routing.empty else from_path project_path in
-  Taumel.Agent_routing.merge ~base:global ~override:project
-
-let string_starts_with ~prefix value =
-  let prefix_length = String.length prefix in
-  String.length value >= prefix_length
-  && String.sub value 0 prefix_length = prefix
-
-let routing_key kind effort =
-  match (kind, effort) with
-  | Taumel.Agents.Generic, Some value ->
-      "taumel.agents.generic." ^ Taumel.Agents.effort_to_string value
-  | Taumel.Agents.Generic, None -> "taumel.agents.generic.medium"
-  | Taumel.Agents.Finder, _ -> "taumel.agents.finder"
-  | Taumel.Agents.Oracle, _ -> "taumel.agents.oracle"
-
-let resolve_routing ~kind ?effort () =
-  let parent = parent_model () in
-  let catalog = load_routing_catalog () in
-  let key = routing_key kind effort in
-  let relevant_diagnostic =
-    List.find_opt
-      (fun message ->
-        string_starts_with ~prefix:key message
-        || string_starts_with ~prefix:"taumel.agents must" message
-        || not (string_starts_with ~prefix:"taumel." message)
-        ||
-        match kind with
-        | Taumel.Agents.Generic ->
-            string_starts_with ~prefix:"taumel.agents.generic must" message
-        | Taumel.Agents.Finder | Taumel.Agents.Oracle -> false)
-      catalog.diagnostics
-  in
-  match relevant_diagnostic with
-  | Some message -> Error message
-  | None ->
-      let default_model, default_thinking, effort =
-        Taumel.Agent_routing.default_routing ~kind ~effort ~parent_model:parent
-      in
-      let entry = Taumel.Agent_routing.entry_for catalog ~kind ~effort in
-      let model, thinking =
-        match entry with
-        | Some entry -> (entry.model, entry.thinking)
-        | None -> (default_model, default_thinking)
-      in
-      let model =
-        match model with
-        | "inherit" -> Option.value parent ~default:state.model
-        | value -> value
-      in
-      if model = "" then Error "resolved agent model is empty"
-      else Ok (model, thinking, effort)
-
-let routing_diagnostics () =
-  let catalog = load_routing_catalog () in
-  Tool_contracts.AgentRoutingDiagnosticsResult.create
-    ~diagnostics:catalog.diagnostics ()
-  |> Tool_contracts.AgentRoutingDiagnosticsResult.t_to_js |> inject
+let pi_agent_dir = Agent_worktree_host.pi_agent_dir
+let resolve_routing = Agent_routing_host.resolve_routing
+let routing_diagnostics = Agent_routing_host.routing_diagnostics
 
 let truncate_output ?owner_session_id ?agent_id ?run_id text =
   Agent_output.truncate ~agent_dir:(pi_agent_dir ()) ?owner_session_id ?agent_id
@@ -246,6 +137,13 @@ let tier_of_params params =
       | Ok effort -> Ok (Some effort)
       | Error _ as error -> error)
 
+let isolation_of_params params =
+  match optional_string_field params "isolation" with
+  | None -> Ok Taumel.Agent_workspace.default_isolation
+  | Some value -> Taumel.Agent_workspace.isolation_of_string (String.trim value)
+
+let identity_metadata = Agent_worktree_host.identity_metadata
+
 let tool_result text details =
   Boundary_contracts.BridgeToolResult.create ~text
     ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details)) ()
@@ -269,7 +167,11 @@ let start_details ~(identity : Taumel.Agents.identity) ~(run : Taumel.Agents.age
       ("prompt", js_string prompt);
       ("agentId", js_string identity.identity_agent_id);
       ("activeTools", js_string_array identity.identity_active_tools);
-      ("workspace", js_string identity.identity_workspace);
+      ("workspace", js_string (Taumel.Agents.identity_source_workspace identity));
+      ( "isolation",
+        js_string
+          (Taumel.Agent_workspace.isolation_to_string
+             (Taumel.Agents.identity_isolation identity)) );
     ]
   in
   let fields =
@@ -300,12 +202,14 @@ let prepare_start name params ctx =
                   Taumel.Shared.trim_non_empty,
                 Option.bind (optional_string_field params "description")
                   Taumel.Shared.trim_non_empty,
-                tier_of_params params )
+                tier_of_params params,
+                isolation_of_params params )
             with
-            | None, _, _ -> error_obj (name ^ "." ^ message_field ^ " is required")
-            | _, None, _ -> error_obj (name ^ ".description is required")
-            | _, _, Error message -> error_obj message
-            | Some message, Some description, Ok effort -> (
+            | None, _, _, _ -> error_obj (name ^ "." ^ message_field ^ " is required")
+            | _, None, _, _ -> error_obj (name ^ ".description is required")
+            | _, _, Error message, _ -> error_obj message
+            | _, _, _, Error message -> error_obj message
+            | Some message, Some description, Ok effort, Ok isolation -> (
                 match
                   resolve_routing ~kind ?effort:
                     (match effort with Some value -> Some value | None -> None)
@@ -334,19 +238,79 @@ let prepare_start name params ctx =
                   | Taumel.Sandbox.Network_enabled -> true
                   | Taumel.Sandbox.Network_disabled -> false
                 in
+                let owner = owner_id ctx in
+                let workspace_binding =
+                  match isolation with
+                  | Taumel.Agent_workspace.None ->
+                      Ok (Taumel.Agent_workspace.shared ~source_root:state.cwd)
+                  | Taumel.Agent_workspace.Worktree -> (
+                      match Agent_worktree_host.resolve_repository state.cwd with
+                      | Error (_code, message) -> Error message
+                      | Ok (_toplevel, main_repository_root, main_repository_id, _head)
+                        ->
+                          Ok
+                            (Taumel.Agent_workspace.worktree
+                               ~source_origin:state.cwd ~main_repository_root
+                               ~main_repository_id))
+                in
+                match workspace_binding with
+                | Error message -> error_obj message
+                | Ok workspace_binding -> (
                 match
                   Taumel.Agents.record_spawn !agent_state ~now
-                    ~owner_session_id:(owner_id ctx) ~kind ?effort ~model
-                    ~thinking ~description ~active_tools ~permission_ceiling:ceiling
-                    ~network_allowed
-                    ~workspace:state.cwd ()
+                    ~owner_session_id:owner ~kind ?effort ~model ~thinking
+                    ~description ~active_tools ~permission_ceiling:ceiling
+                    ~network_allowed ~workspace_binding ()
                 with
                 | Error message -> error_obj message
                 | Ok
                     ( next,
                       (identity : Taumel.Agents.identity),
                       (run : Taumel.Agents.agent_run) ) ->
-                    (match commit_agent_state ctx next with
+                    let rollback () =
+                      match
+                        Taumel.Agents.rollback_unaccepted_spawn next
+                          ~owner_session_id:owner
+                          ~agent_id:identity.identity_agent_id ~run_id:run.run_id
+                          ~submission_id:run.run_submission_id
+                      with
+                      | Ok rolled -> agent_state := rolled
+                      | Error _ -> ()
+                    in
+                    let identity_result =
+                      match isolation with
+                      | Taumel.Agent_workspace.None -> Ok (next, identity)
+                      | Taumel.Agent_workspace.Worktree -> (
+                          match
+                            Agent_worktree_host.provision
+                              ~owner_session_id:owner
+                              ~agent_id:identity.identity_agent_id
+                              ~source_workspace:state.cwd
+                          with
+                          | Error (_code, message) -> Error message
+                          | Ok (binding, _derived, _marker) ->
+                              let identity =
+                                {
+                                  identity with
+                                  identity_workspace_binding = binding;
+                                }
+                              in
+                              let next =
+                                {
+                                  next with
+                                  identities =
+                                    Taumel.Agents.replace_identity identity
+                                      next.identities;
+                                }
+                              in
+                              Ok (next, identity))
+                    in
+                    match identity_result with
+                    | Error message ->
+                        rollback ();
+                        error_obj message
+                    | Ok (next, identity) -> (
+                    match commit_agent_state ctx next with
                     | Error message -> error_obj message
                     | Ok () ->
                     let result_fields =
@@ -371,41 +335,14 @@ let prepare_start name params ctx =
                       start_details ~identity ~run ~prompt:message
                     in
                     let metadata =
-                      json_to_js
-                        (Taumel.Shared.Object
-                               [
-                                 ("kind", Taumel.Shared.String "agent");
-                                 ( "agentKind",
-                                   Taumel.Shared.String
-                                     (Taumel.Agents.agent_kind_to_string
-                                        identity.identity_kind) );
-                                 ("agentId", Taumel.Shared.String identity.identity_agent_id);
-                                 ("modelId", Taumel.Shared.String identity.identity_model);
-                                 ( "thinkingLevel",
-                                   Taumel.Shared.String identity.identity_thinking );
-                                 ( "activeTools",
-                                   Taumel.Shared.Array
-                                     (List.map
-                                        (fun value -> Taumel.Shared.String value)
-                                        identity.identity_active_tools) );
-                                 ( "capabilityProfile",
-                                   Taumel.Capability_profile.to_json
-                                     identity.identity_permission_ceiling );
-                                 ( "networkMode",
-                                   Taumel.Shared.String
-                                     (if identity.identity_network_allowed then
-                                        "enabled"
-                                      else "disabled") );
-                                 ("isolated_child", Taumel.Shared.Bool true);
-                                 ("workspaceDirectory", Taumel.Shared.String identity.identity_workspace);
-                               ])
+                      json_to_js (identity_metadata ~identity ())
                     in
                     Boundary_contracts.PreparedAgentStart.create ~text
                       ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details))
                       ~prompt:message ~agentId:identity.identity_agent_id
                       ~runId:run.run_id ~submissionId:run.run_submission_id
                       ~metadata:(Ts2ocaml.unknown_of_js (ojs_of_js metadata)) ()
-                    |> Tool_contracts.PreparedAgentStart.t_to_js |> inject))))
+                    |> Tool_contracts.PreparedAgentStart.t_to_js |> inject)))))
 
 let prepare_send params ctx =
   if is_agent_child ctx then reject_nested "agent_send"
@@ -493,38 +430,11 @@ let prepare_send params ctx =
                   | None -> Unsafe.inject Js.null
                   | Some identity ->
                       json_to_js
-                        (Taumel.Shared.Object
-                           [
-                             ("kind", Taumel.Shared.String "agent");
-                             ( "agentKind",
-                               Taumel.Shared.String
-                                 (Taumel.Agents.agent_kind_to_string
-                                    identity.identity_kind) );
-                             ("agentId", Taumel.Shared.String identity.identity_agent_id);
-                             ("modelId", Taumel.Shared.String identity.identity_model);
-                             ( "thinkingLevel",
-                               Taumel.Shared.String identity.identity_thinking );
-                             ( "activeTools",
-                               Taumel.Shared.Array
-                                 (List.map
-                                    (fun value -> Taumel.Shared.String value)
-                                    identity.identity_active_tools) );
-                             ( "capabilityProfile",
-                               Taumel.Capability_profile.to_json
-                                 identity.identity_permission_ceiling );
-                             ( "networkMode",
-                               Taumel.Shared.String
-                                 (if identity.identity_network_allowed then
-                                    "enabled"
-                                  else "disabled") );
-                             ("isolated_child", Taumel.Shared.Bool true);
-                             ( "workspaceDirectory",
-                               Taumel.Shared.String identity.identity_workspace );
-                             ( "childSessionFile",
-                               match identity.identity_child_session_file with
-                               | None -> Taumel.Shared.Null
-                               | Some value -> Taumel.Shared.String value );
-                           ])
+                        (match identity.identity_child_session_file with
+                        | Some file ->
+                            identity_metadata ~identity ~child_session_file:file
+                              ()
+                        | None -> identity_metadata ~identity ())
                 in
                 let result_fields =
                   [
@@ -796,7 +706,13 @@ let prepare_list ctx =
               ("agent_id", Taumel.Shared.String identity.identity_agent_id);
               ("created_at", Taumel.Shared.String (local_timestamp identity.identity_created_at));
               ("kind", Taumel.Shared.String (Taumel.Agents.agent_kind_to_string identity.identity_kind));
-              ("workspace", Taumel.Shared.String identity.identity_workspace);
+              ( "workspace",
+                Taumel.Shared.String
+                  (Taumel.Agents.identity_source_workspace identity) );
+              ( "isolation",
+                Taumel.Shared.String
+                  (Taumel.Agent_workspace.isolation_to_string
+                     (Taumel.Agents.identity_isolation identity)) );
             ]
           in
           let fields =
@@ -848,7 +764,13 @@ let prepare_list ctx =
                      ("kind", js_kind identity.identity_kind);
                      ("model", js_string identity.identity_model);
                      ("thinking", js_string identity.identity_thinking);
-                     ("workspace", js_string identity.identity_workspace);
+                     ( "workspace",
+                       js_string
+                         (Taumel.Agents.identity_source_workspace identity) );
+                     ( "isolation",
+                       js_string
+                         (Taumel.Agent_workspace.isolation_to_string
+                            (Taumel.Agents.identity_isolation identity)) );
                    ]
                  in
                  let fields =
@@ -909,12 +831,20 @@ let prepare_close params ctx =
         with
         | None -> error_obj "agent_close.agent_id is required"
         | Some agent_id -> (
+            let delete_worktree = get_bool params "delete_worktree" in
             match
               Taumel.Agents.owned_identity !agent_state
                 ~owner_session_id:(owner_id ctx) agent_id
             with
             | Error message -> error_obj message
             | Ok (identity : Taumel.Agents.identity) ->
+                let isolation = Taumel.Agents.identity_isolation identity in
+                if
+                  delete_worktree
+                  && isolation = Taumel.Agent_workspace.None
+                then
+                  error_obj Taumel.Agent_worktree.delete_worktree_on_none_message
+                else (
                 agent_closing_ids :=
                   if List.mem agent_id !agent_closing_ids then !agent_closing_ids
                   else agent_id :: !agent_closing_ids;
@@ -929,6 +859,15 @@ let prepare_close params ctx =
                   Taumel.Agents.runs_for_agent !agent_state agent_id
                   |> List.map (fun (run : Taumel.Agents.agent_run) -> run.run_id)
                 in
+                let worktree_fields =
+                  match
+                    Agent_worktree_host.effective_workspace_for_identity ~identity
+                  with
+                  | Ok (_path, derived)
+                    when derived.isolation = Taumel.Agent_workspace.Worktree ->
+                      Some derived
+                  | _ -> None
+                in
                 Boundary_contracts.PreparedAgentClose.create
                   ~text:
                     (json_success
@@ -938,8 +877,28 @@ let prepare_close params ctx =
                        ])
                   ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details))
                   ~agentId:agent_id ~runIds:run_ids
-                  ?childSessionFile:identity.identity_child_session_file ()
-                |> Tool_contracts.PreparedAgentClose.t_to_js |> inject))
+                  ?childSessionFile:identity.identity_child_session_file
+                  ~deleteWorktree:delete_worktree
+                  ?worktreePath:
+                    (Option.map
+                       (fun d -> d.Taumel.Agent_workspace.worktree_path)
+                       worktree_fields)
+                  ?worktreeBranch:
+                    (Option.map
+                       (fun d -> d.Taumel.Agent_workspace.branch)
+                       worktree_fields)
+                  ?mainRepositoryRoot:
+                    (Option.map
+                       (fun d -> d.Taumel.Agent_workspace.main_repository_root)
+                       worktree_fields)
+                  ?isolation:
+                    (Some
+                       (Boundary_contracts.PreparedAgentClose.isolation_to_contract
+                          (match isolation with
+                          | Taumel.Agent_workspace.None -> `V_none
+                          | Taumel.Agent_workspace.Worktree -> `V_worktree)))
+                  ()
+                |> Tool_contracts.PreparedAgentClose.t_to_js |> inject)))
 
 let finish_close facts ctx =
   Session_sync.sync_persisted_session ctx;
@@ -973,6 +932,59 @@ let release_close facts =
   agent_closing_ids :=
     List.filter (fun value -> value <> agent_id) !agent_closing_ids;
   core_ack ()
+
+let accept_worktree_start facts _ctx =
+  let agent_id = get_string facts "agentId" in
+  let owner =
+    match Taumel.Agents.find_identity !agent_state agent_id with
+    | Some identity -> identity.identity_owner_session_id
+    | None -> ""
+  in
+  if owner <> "" then
+    Agent_worktree_host.accept_provisional ~owner_session_id:owner ~agent_id;
+  core_ack ()
+
+let rollback_worktree_start facts _ctx =
+  let agent_id = get_string facts "agentId" in
+  match Taumel.Agents.find_identity !agent_state agent_id with
+  | None -> core_ack ()
+  | Some identity -> (
+      match
+        Agent_worktree_host.effective_workspace_for_identity ~identity
+      with
+      | Error _ -> core_ack ()
+      | Ok (_path, derived) ->
+          if derived.isolation = Taumel.Agent_workspace.Worktree then
+            Agent_worktree_host.rollback_failed_start
+              ~owner_session_id:identity.identity_owner_session_id
+              ~agent_id ~main_repository_root:derived.main_repository_root
+              ~worktree_path:derived.worktree_path ~branch:derived.branch;
+          core_ack ())
+
+let delete_worktree facts _ctx =
+  let worktree_path =
+    match optional_string_field facts "worktree_path" with
+    | Some value -> String.trim value
+    | None -> ""
+  in
+  let main_repository_root =
+    match optional_string_field facts "main_repository_root" with
+    | Some value -> String.trim value
+    | None -> ""
+  in
+  if worktree_path = "" || main_repository_root = "" then core_ack ()
+  else if not (Agent_worktree_host.path_exists worktree_path) then core_ack ()
+  else
+    match Agent_worktree_host.worktree_is_clean ~worktree_path with
+    | Error message -> error_obj message
+    | Ok false -> error_obj "agent worktree has uncommitted changes"
+    | Ok true -> (
+        match
+          Agent_worktree_host.remove_worktree ~main_repository_root
+            ~worktree_path
+        with
+        | Ok () -> core_ack ()
+        | Error message -> error_obj message)
 
 let prepare name params ctx =
   match !agent_state_load_error with

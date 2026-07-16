@@ -313,7 +313,7 @@ export const toolContracts: readonly ToolContract[] = [
     name: "agent_close",
     label: "agent.close",
     description:
-      "Permanently close one agent identity, interrupt active execution, and remove all of its runs from current Taumel state. Closed identities cannot be resumed; use agent_send interruption for a reversible stop.",
+      "Permanently close one agent identity, interrupt active execution, and remove all of its runs from current Taumel state. By default, an agent worktree and its dedicated branch are preserved; optional worktree deletion removes only a clean, verified worktree and preserves its branch. Closed identities cannot be resumed; use agent_send interruption for a reversible stop.",
     promptSnippet: "Close and forget one agent identity.",
     promptGuidelines: [
       "Use agent_close when an open agent is no longer expected to receive related follow-up work.",

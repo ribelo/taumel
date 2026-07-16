@@ -16,14 +16,19 @@ for (const name of [
 // agent-tc01: start calls require a parent-facing description.
 assert.equal(parseToolParams("agent_spawn", { message: "investigate", description: "Investigate agent work" }).ok, true);
 assert.equal(parseToolParams("agent_spawn", { message: "investigate", description: "Investigate agent work", tier: "high" }).ok, true);
+assert.equal(parseToolParams("agent_spawn", { message: "investigate", description: "Investigate agent work", isolation: "worktree" }).ok, true);
+assert.equal(parseToolParams("agent_spawn", { message: "investigate", description: "Investigate agent work", isolation: "none" }).ok, true);
 assert.equal(parseToolParams("agent_spawn", { message: "investigate" }).ok, false);
 assert.equal(parseToolParams("agent_spawn", { message: "x", tier: "extreme" }).ok, false);
 assert.equal(parseToolParams("agent_spawn", { message: "x", effort: "high" }).ok, false);
 assert.equal(parseToolParams("agent_spawn", { message: "x", profile: "finder" }).ok, false);
+assert.equal(parseToolParams("agent_spawn", { message: "investigate", description: "x", isolation: "tmp" }).ok, false);
 assert.equal(parseToolParams("agent_spawn", { message: "   " }).ok, false);
 
 assert.equal(parseToolParams("finder", { query: "find auth", description: "Locate authentication code" }).ok, true);
+assert.equal(parseToolParams("finder", { query: "find auth", description: "Locate authentication code", isolation: "worktree" }).ok, true);
 assert.equal(parseToolParams("oracle", { message: "review architecture", description: "Review system architecture" }).ok, true);
+assert.equal(parseToolParams("oracle", { message: "review architecture", description: "Review system architecture", isolation: "none" }).ok, true);
 assert.equal(parseToolParams("finder", { query: "x", tier: "low" }).ok, false);
 
 assert.equal(parseToolParams("agent_send", { agent_id: "a1", message: "continue", description: "Continue agent work" }).ok, true);
@@ -41,6 +46,7 @@ assert.equal(parseToolParams("agent_list", {}).ok, true);
 assert.equal(parseToolParams("agent_list", { include_closed: true }).ok, false);
 
 assert.equal(parseToolParams("agent_close", { agent_id: "a1" }).ok, true);
+assert.equal(parseToolParams("agent_close", { agent_id: "a1", delete_worktree: true }).ok, true);
 assert.equal(parseToolParams("agent_close", { agent_ids: ["a1"] }).ok, false);
 assert.equal(parseToolParams("agent_close", { all: true }).ok, false);
 

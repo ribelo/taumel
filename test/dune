@@ -83,6 +83,24 @@
  (libraries taumel))
 
 (test
+ (name test_agent_workspace)
+ (modules test_agent_workspace)
+ (package taumel)
+ (libraries taumel))
+
+(test
+ (name test_agent_git_broker)
+ (modules test_agent_git_broker)
+ (package taumel)
+ (libraries taumel))
+
+(test
+ (name test_agent_worktree_lifecycle)
+ (modules test_agent_worktree_lifecycle)
+ (package taumel)
+ (libraries taumel))
+
+(test
  (name test_exec_policy)
  (modules test_exec_policy)
  (package taumel)

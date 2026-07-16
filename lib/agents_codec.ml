@@ -55,7 +55,8 @@ let encode_identity (identity : identity) =
       ( "permission_ceiling",
         Capability_profile.to_json identity.identity_permission_ceiling );
       ("network_allowed", Shared.Bool identity.identity_network_allowed);
-      ("workspace", Shared.String identity.identity_workspace);
+      ( "workspace_binding",
+        Agent_workspace.binding_to_json identity.identity_workspace_binding );
       ("child_session_file", option_string identity.identity_child_session_file);
       ("child_session_id", option_string identity.identity_child_session_id);
       ("created_at", Shared.Number (float_of_int identity.identity_created_at));
@@ -140,7 +141,11 @@ let decode_identity path fields =
     | Some value -> Capability_profile.of_json value
   in
   let* network_allowed = Shared.json_required_bool path fields "network_allowed" in
-  let* workspace = Shared.json_required_string path fields "workspace" in
+  let* workspace_binding =
+    match List.assoc_opt "workspace_binding" fields with
+    | None -> Error (Shared.json_path path "workspace_binding" ^ " is required")
+    | Some value -> Agent_workspace.binding_of_json value
+  in
   let* child_session_file = required_nullable_string path fields "child_session_file" in
   let* child_session_id = required_nullable_string path fields "child_session_id" in
   let* created_at = Shared.json_required_int path fields "created_at" in
@@ -156,7 +161,7 @@ let decode_identity path fields =
       identity_active_tools = active_tools;
       identity_permission_ceiling = permission_ceiling;
       identity_network_allowed = network_allowed;
-      identity_workspace = workspace;
+      identity_workspace_binding = workspace_binding;
       identity_child_session_file = child_session_file;
       identity_child_session_id = child_session_id;
       identity_created_at = created_at;

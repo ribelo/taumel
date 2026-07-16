@@ -294,6 +294,7 @@ export async function executeAgentPrepared(
       const bridge = await createAgentChildSession(pi, core, childSessions, prepared, ctx);
       if (bridge?.error !== undefined || bridge?.missingSessionIdentifier) {
         await rollbackUnacceptedStart(core, childSessions, prepared, ctx, bridge);
+        try { decodeCoreAck(core.call("rollbackAgentWorktreeStart", [prepared, ctx])); } catch { /* best-effort provisional cleanup */ }
         const message = bridge?.error ?? "failed to create child session";
         return agentErrorToolResult(core, childFailureCode(message), message);
       }
@@ -301,6 +302,7 @@ export async function executeAgentPrepared(
         recordDispatchBoundary(core, prepared, ctx, bridge);
       } catch (error) {
         await rollbackUnacceptedStart(core, childSessions, prepared, ctx, bridge);
+        try { decodeCoreAck(core.call("rollbackAgentWorktreeStart", [prepared, ctx])); } catch { /* best-effort provisional cleanup */ }
         return agentErrorToolResult(core, "persistence_failed", error instanceof Error ? error.message : String(error));
       }
       const dispatch = await sendToChildSession(
@@ -317,11 +319,13 @@ export async function executeAgentPrepared(
       );
       if (dispatch.dispatched !== true) {
         await rollbackUnacceptedStart(core, childSessions, prepared, ctx, bridge);
+        try { decodeCoreAck(core.call("rollbackAgentWorktreeStart", [prepared, ctx])); } catch { /* best-effort provisional cleanup */ }
         const reason = typeof dispatch.reason === "string"
           ? dispatch.reason
           : "initial message was not accepted";
         return agentErrorToolResult(core, "dispatch_failed", reason);
       }
+      try { decodeCoreAck(core.call("acceptAgentWorktreeStart", [prepared, ctx])); } catch { /* marker clear is best-effort */ }
       return preparedToolResult(core, {
         text: stringField(prepared, "text"),
         details: prepared.details,
@@ -520,6 +524,20 @@ export async function executeAgentPrepared(
             await fs.rm(directory, { recursive: true, force: true });
           } else {
             await fs.rm(sessionFile, { force: true });
+          }
+        }
+        if (prepared.deleteWorktree === true) {
+          try {
+            decodeCoreAck(core.call("deleteAgentWorktree", [{
+              agent_id: agentId,
+              worktree_path: prepared.worktreePath,
+              main_repository_root: prepared.mainRepositoryRoot,
+              branch: prepared.worktreeBranch,
+            }, ctx]));
+          } catch (error) {
+            decodeCoreAck(core.call("releaseAgentClose", [{ agent_id: agentId }]));
+            const message = error instanceof Error ? error.message : String(error);
+            return agentErrorToolResult(core, "cleanup_failed", message || "worktree deletion failed");
           }
         }
       } catch (error) {

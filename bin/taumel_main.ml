@@ -136,6 +136,9 @@ let core_call name_js args_js =
   | "finishAgentWait" -> Agent_lifecycle.finish_wait (arg 0) (arg 1)
   | "finishAgentClose" -> Agent_tools.finish_close (arg 0) (arg 1)
   | "releaseAgentClose" -> Agent_tools.release_close (arg 0)
+  | "acceptAgentWorktreeStart" -> Agent_tools.accept_worktree_start (arg 0) (arg 1)
+  | "rollbackAgentWorktreeStart" -> Agent_tools.rollback_worktree_start (arg 0) (arg 1)
+  | "deleteAgentWorktree" -> Agent_tools.delete_worktree (arg 0) (arg 1)
   | "handleCommand" -> Command_bridge.handle (arg 0)
   | "handleComposerCommand" -> Composer_commands.handle (arg 0)
    | "planCommandNotification" ->

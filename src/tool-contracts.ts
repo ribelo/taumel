@@ -707,6 +707,14 @@ export const AgentTierSchema = Type.Union(
   { description: "The generic agent's capacity tier. Defaults to medium." },
 );
 
+export const AgentIsolationSchema = Type.Union(
+  [Type.Literal("none"), Type.Literal("worktree")],
+  {
+    description:
+      "Workspace isolation for the new identity: none (default) uses the bound parent workspace; worktree creates a dedicated Git worktree.",
+  },
+);
+
 export const AgentSpawnParamsSchema = Type.Object(
   {
     message: Type.String({
@@ -720,6 +728,7 @@ export const AgentSpawnParamsSchema = Type.Object(
         "A specific, action-oriented three-to-five-word label written for the user and used for compact TUI display. This label is not sent to the child.",
     }),
     tier: Type.Optional(AgentTierSchema),
+    isolation: Type.Optional(AgentIsolationSchema),
   },
   { $id: "AgentSpawnParams", additionalProperties: false },
 );
@@ -736,6 +745,7 @@ export const FinderParamsSchema = Type.Object(
       description:
         "A specific, action-oriented three-to-five-word label written for the user and used for compact TUI display. This label is not sent to the child.",
     }),
+    isolation: Type.Optional(AgentIsolationSchema),
   },
   { $id: "FinderParams", additionalProperties: false },
 );
@@ -752,6 +762,7 @@ export const OracleParamsSchema = Type.Object(
       description:
         "A specific, action-oriented three-to-five-word label written for the user and used for compact TUI display. This label is not sent to the child.",
     }),
+    isolation: Type.Optional(AgentIsolationSchema),
   },
   { $id: "OracleParams", additionalProperties: false },
 );
@@ -797,6 +808,10 @@ export const AgentWaitParamsSchema = Type.Object(
 export const AgentCloseParamsSchema = Type.Object(
   {
     agent_id: Type.String({ minLength: 1, description: "The owner-scoped handle of the identity to close permanently." }),
+    delete_worktree: Type.Optional(Type.Boolean({
+      description:
+        "When true, remove the agent's clean, verified worktree while preserving its dedicated branch. Defaults to false.",
+    })),
   },
   { $id: "AgentCloseParams", additionalProperties: false },
 );

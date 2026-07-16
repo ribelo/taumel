@@ -25,7 +25,8 @@ let spawn ?(kind = Agents.Generic) ?(effort = Agents.Medium) state =
   Agents.record_spawn state ~now:1 ~owner_session_id:"parent-1" ~kind ~effort
     ~model:"anthropic/claude" ~thinking:"medium" ~description:"Investigate agent work"
     ~active_tools:[ "read"; "bash"; "edit"; "agent_spawn" ]
-    ~permission_ceiling:ceiling ~workspace:"/tmp/project" ()
+    ~permission_ceiling:ceiling
+    ~workspace_binding:(Agent_workspace.shared ~source_root:"/tmp/project") ()
 
 let test_spawn_strips_agent_tools_and_returns_running () =
   match spawn Agents.empty_session_state with

@@ -1,0 +1,616 @@
+open Jsoo_bridge
+
+(* Trusted host adapter for agent-worktree provision, broker verification, and cleanup. *)
+
+let node_require name =
+  let process = Unsafe.get Unsafe.global "process" in
+  match function_field process "getBuiltinModule" with
+  | Some get_builtin -> Unsafe.fun_call get_builtin [| js_string name |]
+  | None ->
+      let require = Unsafe.get Unsafe.global "require" in
+      Unsafe.fun_call require [| js_string name |]
+
+let fs_mod = lazy (node_require "fs")
+let path_mod = lazy (node_require "path")
+let child_process_mod = lazy (node_require "child_process")
+let crypto_mod = lazy (node_require "crypto")
+let os_mod = lazy (node_require "os")
+
+let pi_agent_dir () =
+  let home =
+    try Js.to_string (Unsafe.meth_call (Lazy.force os_mod) "homedir" [||])
+    with _ -> ""
+  in
+  let process = Unsafe.get Unsafe.global "process" in
+  let env = Unsafe.get process "env" in
+  match string_value (Unsafe.get env "PI_CODING_AGENT_DIR") with
+  | Some value when String.trim value <> "" ->
+      let value = String.trim value in
+      if String.length value >= 2 && String.sub value 0 2 = "~/" then
+        home ^ String.sub value 1 (String.length value - 1)
+      else value
+  | _ -> home ^ "/.pi/agent"
+
+let trusted_git_env ?git_dir ?git_work_tree extra =
+  let process_env = Unsafe.get (Unsafe.get Unsafe.global "process") "env" in
+  let base =
+    [
+      ("PATH", Unsafe.get process_env "PATH");
+      ("HOME", Unsafe.get process_env "HOME");
+      ("GIT_CONFIG_NOSYSTEM", js_string "1");
+      ("GIT_CONFIG_GLOBAL", js_string "/dev/null");
+      ("GIT_CONFIG_SYSTEM", js_string "/dev/null");
+      ("GIT_TERMINAL_PROMPT", js_string "0");
+      ("GIT_OPTIONAL_LOCKS", js_string "0");
+      ("GIT_PAGER", js_string "cat");
+      ("GIT_EDITOR", js_string "true");
+      ("GIT_ASKPASS", js_string "true");
+      ("GCM_INTERACTIVE", js_string "never");
+      ("LC_ALL", js_string "C");
+      ("GIT_CONFIG_COUNT", js_string "8");
+      ("GIT_CONFIG_KEY_0", js_string "core.hooksPath");
+      ("GIT_CONFIG_VALUE_0", js_string "/dev/null");
+      ("GIT_CONFIG_KEY_1", js_string "alias.x");
+      ("GIT_CONFIG_VALUE_1", js_string "");
+      ("GIT_CONFIG_KEY_2", js_string "core.useBuiltinFSMonitor");
+      ("GIT_CONFIG_VALUE_2", js_string "false");
+      ("GIT_CONFIG_KEY_3", js_string "advice.detachedHead");
+      ("GIT_CONFIG_VALUE_3", js_string "false");
+      ("GIT_CONFIG_KEY_4", js_string "commit.gpgsign");
+      ("GIT_CONFIG_VALUE_4", js_string "false");
+      ("GIT_CONFIG_KEY_5", js_string "core.editor");
+      ("GIT_CONFIG_VALUE_5", js_string "true");
+      ("GIT_CONFIG_KEY_6", js_string "protocol.file.allow");
+      ("GIT_CONFIG_VALUE_6", js_string "always");
+      ("GIT_CONFIG_KEY_7", js_string "submodule.recurse");
+      ("GIT_CONFIG_VALUE_7", js_string "false");
+    ]
+  in
+  let base =
+    match git_dir with
+    | Some value when value <> "" -> ("GIT_DIR", js_string value) :: base
+    | _ -> base
+  in
+  let base =
+    match git_work_tree with
+    | Some value when value <> "" -> ("GIT_WORK_TREE", js_string value) :: base
+    | _ -> base
+  in
+  Unsafe.obj (Array.of_list (base @ extra))
+
+let run_git ~cwd ?git_dir ?git_work_tree args =
+  let child_process = Lazy.force child_process_mod in
+  try
+    let stdout =
+      Unsafe.meth_call child_process "execFileSync"
+        [|
+          js_string "git";
+          js_array (List.map js_string args);
+          Unsafe.obj
+            [|
+              ("cwd", js_string cwd);
+              ("encoding", js_string "utf8");
+              ("env", trusted_git_env ?git_dir ?git_work_tree []);
+              ("stdio", js_array [ js_string "ignore"; js_string "pipe"; js_string "pipe" ]);
+            |];
+        |]
+    in
+    Ok (String.trim (Js.to_string stdout))
+  with error ->
+    let message =
+      try
+        let err = Obj.magic error in
+        match string_value (Unsafe.get err "stderr") with
+        | Some stderr when String.trim stderr <> "" -> String.trim stderr
+        | _ ->
+            (match string_value (Unsafe.get err "message") with
+            | Some message -> message
+            | None -> Printexc.to_string error)
+      with _ -> Printexc.to_string error
+    in
+    Error message
+
+let path_exists path =
+  let fs = Lazy.force fs_mod in
+  try Js.to_bool (Unsafe.meth_call fs "existsSync" [| js_string path |])
+  with _ -> false
+
+let is_directory path =
+  let fs = Lazy.force fs_mod in
+  try
+    let stats = Unsafe.meth_call fs "statSync" [| js_string path |] in
+    Js.to_bool (Unsafe.meth_call stats "isDirectory" [||])
+  with _ -> false
+
+let mkdir_p path =
+  let fs = Lazy.force fs_mod in
+  ignore
+    (Unsafe.meth_call fs "mkdirSync"
+       [|
+         js_string path;
+         Unsafe.obj [| ("recursive", js_bool true) |];
+       |])
+
+let write_file path contents =
+  let fs = Lazy.force fs_mod in
+  ignore
+    (Unsafe.meth_call fs "writeFileSync"
+       [| js_string path; js_string contents; js_string "utf8" |])
+
+let read_file path =
+  let fs = Lazy.force fs_mod in
+  try
+    Ok
+      (Js.to_string
+         (Unsafe.meth_call fs "readFileSync"
+            [| js_string path; js_string "utf8" |]))
+  with error -> Error (Printexc.to_string error)
+
+let remove_path path =
+  let fs = Lazy.force fs_mod in
+  try
+    ignore
+      (Unsafe.meth_call fs "rmSync"
+         [|
+           js_string path;
+           Unsafe.obj
+             [| ("recursive", js_bool true); ("force", js_bool true) |];
+         |]);
+    Ok ()
+  with error -> Error (Printexc.to_string error)
+
+let resolve_repository source_workspace =
+  match run_git ~cwd:source_workspace [ "rev-parse"; "--is-inside-work-tree" ] with
+  | Error _ ->
+      Error
+        ( "workspace_unavailable",
+          Taumel.Agent_worktree.workspace_unavailable_not_git )
+  | Ok value when String.trim value <> "true" ->
+      Error
+        ( "workspace_unavailable",
+          Taumel.Agent_worktree.workspace_unavailable_not_git )
+  | Ok _ -> (
+      match run_git ~cwd:source_workspace [ "rev-parse"; "--show-toplevel" ] with
+      | Error message -> Error ("workspace_unavailable", message)
+      | Ok toplevel -> (
+          match run_git ~cwd:source_workspace [ "rev-parse"; "--verify"; "HEAD" ] with
+          | Error _ ->
+              Error
+                ( "workspace_unavailable",
+                  Taumel.Agent_worktree.workspace_unavailable_no_head )
+          | Ok head -> (
+              match
+                run_git ~cwd:source_workspace
+                  [ "rev-parse"; "--path-format=absolute"; "--git-common-dir" ]
+              with
+              | Error message -> Error ("workspace_unavailable", message)
+              | Ok common_dir ->
+                  let main_repository_root =
+                    if Filename.basename common_dir = ".git" then
+                      Filename.dirname common_dir
+                    else toplevel
+                  in
+                  let main_repository_id =
+                    match
+                      run_git ~cwd:source_workspace
+                        [ "rev-parse"; "--path-format=absolute"; "--git-dir" ]
+                    with
+                    | Ok git_dir -> git_dir ^ "\000" ^ head
+                    | Error _ -> head
+                  in
+                  Ok
+                    ( toplevel,
+                      main_repository_root,
+                      main_repository_id,
+                      head ))))
+
+let source_fingerprint ~source_workspace =
+  let tracked =
+    match
+      run_git ~cwd:source_workspace
+        [ "ls-files"; "-z"; "-m"; "-d"; "--exclude-standard" ]
+    with
+    | Ok value -> value
+    | Error message -> message
+  in
+  let untracked =
+    match
+      run_git ~cwd:source_workspace
+        [ "ls-files"; "-z"; "-o"; "--exclude-standard" ]
+    with
+    | Ok value -> value
+    | Error message -> message
+  in
+  let head =
+    match run_git ~cwd:source_workspace [ "rev-parse"; "HEAD" ] with
+    | Ok value -> value
+    | Error message -> message
+  in
+  let crypto = Lazy.force crypto_mod in
+  let hash = Unsafe.fun_call (Unsafe.get crypto "createHash") [| js_string "sha256" |] in
+  ignore (Unsafe.meth_call hash "update" [| js_string (head ^ "\n" ^ tracked ^ "\n" ^ untracked) |]);
+  Js.to_string (Unsafe.meth_call hash "digest" [| js_string "hex" |])
+
+let write_marker marker ~agent_home =
+  let owner_component =
+    Taumel.Agent_workspace.owner_component marker.Taumel.Agent_worktree.owner_session_id
+  in
+  let path =
+    Taumel.Agent_worktree.provisional_marker_path ~agent_home ~owner_component
+      ~agent_id:marker.agent_id
+  in
+  mkdir_p (Filename.dirname path);
+  write_file path
+    (Taumel.Shared.encode_json (Taumel.Agent_worktree.marker_to_json marker));
+  path
+
+let read_marker path =
+  match read_file path with
+  | Error message -> Error message
+  | Ok contents -> (
+      match Taumel.Shared.decode_json_string contents with
+      | Error message -> Error message
+      | Ok json -> Taumel.Agent_worktree.marker_of_json json)
+
+let clear_marker ~agent_home ~owner_session_id ~agent_id =
+  let owner_component = Taumel.Agent_workspace.owner_component owner_session_id in
+  let path =
+    Taumel.Agent_worktree.provisional_marker_path ~agent_home ~owner_component
+      ~agent_id
+  in
+  ignore (remove_path path)
+
+let path_or_branch_exists ~main_repository_root ~worktree_path ~branch =
+  let path_exists = path_exists worktree_path in
+  let branch_exists =
+    match
+      run_git ~cwd:main_repository_root
+        [ "show-ref"; "--verify"; "--quiet"; "refs/heads/" ^ branch ]
+    with
+    | Ok _ -> true
+    | Error _ -> false
+  in
+  path_exists || branch_exists
+
+let create_worktree ~source_workspace ~main_repository_root ~worktree_path ~branch
+    ~head =
+  mkdir_p (Filename.dirname worktree_path);
+  match
+    run_git ~cwd:main_repository_root
+      [ "worktree"; "add"; "-b"; branch; worktree_path; head ]
+  with
+  | Error message -> Error message
+  | Ok _ ->
+      (* Reproduce dirty source state into the agent worktree. *)
+      (match
+         run_git ~cwd:source_workspace
+           [
+             "ls-files";
+             "-z";
+             "-m";
+             "-d";
+             "-o";
+             "--exclude-standard";
+           ]
+       with
+      | Error _ -> ()
+      | Ok listing ->
+          if listing <> "" then
+            let files =
+              String.split_on_char '\x00' listing
+              |> List.filter (fun value -> value <> "")
+            in
+            List.iter
+              (fun relative ->
+                let source = Filename.concat source_workspace relative in
+                let target = Filename.concat worktree_path relative in
+                if path_exists source then (
+                  mkdir_p (Filename.dirname target);
+                  let fs = Lazy.force fs_mod in
+                  ignore
+                    (Unsafe.meth_call fs "copyFileSync"
+                       [| js_string source; js_string target |]))
+                else ignore (remove_path target))
+              files);
+      Ok ()
+
+let create_baseline ~worktree_path =
+  let env_identity =
+    [
+      ("GIT_AUTHOR_NAME", Taumel.Agent_worktree.baseline_author_name);
+      ("GIT_AUTHOR_EMAIL", Taumel.Agent_worktree.baseline_author_email);
+      ("GIT_COMMITTER_NAME", Taumel.Agent_worktree.baseline_committer_name);
+      ("GIT_COMMITTER_EMAIL", Taumel.Agent_worktree.baseline_committer_email);
+      ("GIT_CONFIG_NOSYSTEM", "1");
+      ("GIT_TERMINAL_PROMPT", "0");
+    ]
+  in
+  let child_process = Lazy.force child_process_mod in
+  let run args =
+    try
+      let process_env = Unsafe.get (Unsafe.get Unsafe.global "process") "env" in
+      let env_fields =
+        Array.append
+          [|
+            ("PATH", Unsafe.get process_env "PATH");
+            ("HOME", Unsafe.get process_env "HOME");
+          |]
+          (Array.of_list
+             (List.map (fun (name, value) -> (name, js_string value)) env_identity))
+      in
+      ignore
+        (Unsafe.meth_call child_process "execFileSync"
+           [|
+             js_string "git";
+             js_array (List.map js_string args);
+             Unsafe.obj
+               [|
+                 ("cwd", js_string worktree_path);
+                 ("encoding", js_string "utf8");
+                 ("env", Unsafe.obj env_fields);
+                 ( "stdio",
+                   js_array
+                     [ js_string "ignore"; js_string "pipe"; js_string "pipe" ] );
+               |];
+           |]);
+      Ok ()
+    with error -> Error (Printexc.to_string error)
+  in
+  match run [ "add"; "-A" ] with
+  | Error message -> Error message
+  | Ok () -> (
+      match
+        run
+          [
+            "-c";
+            "user.useConfigOnly=true";
+            "commit";
+            "--allow-empty";
+            "-m";
+            "pi agent baseline";
+          ]
+      with
+      | Error message -> Error message
+      | Ok () -> Ok ())
+
+let rollback_provisional ~main_repository_root ~worktree_path ~branch =
+  ignore (run_git ~cwd:main_repository_root [ "worktree"; "remove"; "--force"; worktree_path ]);
+  ignore (remove_path worktree_path);
+  ignore
+    (run_git ~cwd:main_repository_root
+       [ "branch"; "-D"; branch ])
+
+let provision ~owner_session_id ~agent_id ~source_workspace =
+  let agent_home = pi_agent_dir () in
+  match resolve_repository source_workspace with
+  | Error _ as error -> error
+  | Ok (_toplevel, main_repository_root, main_repository_id, head) -> (
+      let binding =
+        Taumel.Agent_workspace.worktree ~source_origin:source_workspace
+          ~main_repository_root ~main_repository_id
+      in
+      match
+        Taumel.Agent_workspace.derive ~agent_home ~owner_session_id ~agent_id
+          binding
+      with
+      | Error message -> Error ("workspace_unavailable", message)
+      | Ok derived ->
+          let worktree_path = derived.worktree_path in
+          let branch = derived.branch in
+          let marker_path =
+            Taumel.Agent_worktree.provisional_marker_path ~agent_home
+              ~owner_component:derived.owner_component ~agent_id
+          in
+          let existing_marker =
+            if path_exists marker_path then
+              match read_marker marker_path with Ok marker -> Some marker | _ -> None
+            else None
+          in
+          if
+            path_or_branch_exists ~main_repository_root ~worktree_path ~branch
+            && existing_marker = None
+          then
+            Error
+              ( "workspace_unavailable",
+                Taumel.Agent_worktree.workspace_unavailable_collision )
+          else
+            let auth =
+              Taumel.Agent_worktree.authorize_mutation ~operation:Provision
+                ~main_repository_root ~main_repository_id ~worktree_path ~branch
+                ~trusted_adapter:true
+            in
+            match auth with
+            | Denied message -> Error ("workspace_unavailable", message)
+            | Authorized auth_effect -> (
+                let sandbox_effect =
+                  {
+                    Taumel.Sandbox.operation = Taumel.Sandbox.Agent_worktree_provision;
+                    main_repository_root = auth_effect.main_repository_root;
+                    main_repository_id = auth_effect.main_repository_id;
+                    worktree_path = auth_effect.worktree_path;
+                    worktree_admin_path = auth_effect.worktree_admin_path;
+                    branch = auth_effect.branch;
+                    branch_ref = auth_effect.branch_ref;
+                    object_store_path = auth_effect.object_store_path;
+                  }
+                in
+                match
+                  Taumel.Sandbox.authorize_agent_worktree_mutation
+                    ~trusted_adapter:true sandbox_effect
+                with
+                | Taumel.Sandbox.Deny message ->
+                    Error ("workspace_unavailable", message)
+                | Taumel.Sandbox.Requires_approval message ->
+                    Error ("workspace_unavailable", message)
+                | Taumel.Sandbox.Allow ->
+                (* Double-fingerprint the source before mutation; the second matching
+                   fingerprint is the accepted source snapshot point (agent-ne9r/y6kl). *)
+                let fingerprint_first = source_fingerprint ~source_workspace in
+                let fingerprint_second = source_fingerprint ~source_workspace in
+                if fingerprint_first <> fingerprint_second then
+                  Error
+                    ( "workspace_unavailable",
+                      Taumel.Agent_worktree.workspace_unavailable_source_changed )
+                else
+                let accepted_fingerprint = fingerprint_second in
+                let marker =
+                  {
+                    Taumel.Agent_worktree.owner_session_id;
+                    agent_id;
+                    main_repository_root;
+                    main_repository_id;
+                    worktree_path;
+                    branch;
+                    completed_steps = [ Marker_recorded ];
+                    cleanup_incident_id = None;
+                  }
+                in
+                ignore (write_marker marker ~agent_home);
+                match
+                  create_worktree ~source_workspace ~main_repository_root
+                    ~worktree_path ~branch ~head
+                with
+                | Error message ->
+                    rollback_provisional ~main_repository_root ~worktree_path
+                      ~branch;
+                    clear_marker ~agent_home ~owner_session_id ~agent_id;
+                    Error ("workspace_unavailable", message)
+                | Ok () ->
+                    let marker =
+                      {
+                        marker with
+                        completed_steps =
+                          [ Marker_recorded; Worktree_created; Source_reproduced ];
+                      }
+                    in
+                    ignore (write_marker marker ~agent_home);
+                    let fingerprint_after = source_fingerprint ~source_workspace in
+                    if accepted_fingerprint <> fingerprint_after then (
+                      (* Mutation after the second fingerprint belongs to a later
+                         source state and does not invalidate the accepted baseline. *)
+                      ());
+                    match create_baseline ~worktree_path with
+                    | Error message ->
+                        rollback_provisional ~main_repository_root ~worktree_path
+                          ~branch;
+                        clear_marker ~agent_home ~owner_session_id ~agent_id;
+                        Error ("workspace_unavailable", message)
+                    | Ok () ->
+                        let marker =
+                          {
+                            marker with
+                            completed_steps =
+                              [
+                                Marker_recorded;
+                                Worktree_created;
+                                Source_reproduced;
+                                Baseline_created;
+                                Baseline_verified;
+                              ];
+                          }
+                        in
+                        ignore (write_marker marker ~agent_home);
+                        Ok (binding, derived, marker_path)))
+
+let accept_provisional ~owner_session_id ~agent_id =
+  clear_marker ~agent_home:(pi_agent_dir ()) ~owner_session_id ~agent_id
+
+let rollback_failed_start ~owner_session_id ~agent_id ~main_repository_root
+    ~worktree_path ~branch =
+  let agent_home = pi_agent_dir () in
+  rollback_provisional ~main_repository_root ~worktree_path ~branch;
+  clear_marker ~agent_home ~owner_session_id ~agent_id
+
+let worktree_is_clean ~worktree_path =
+  match
+    run_git ~cwd:worktree_path
+      [ "status"; "--porcelain=v1"; "--untracked-files=normal" ]
+  with
+  | Error message -> Error message
+  | Ok output -> Ok (String.trim output = "")
+
+let remove_worktree ~main_repository_root ~worktree_path =
+  let auth =
+    Taumel.Agent_worktree.authorize_mutation ~operation:Cleanup
+      ~main_repository_root ~main_repository_id:"verified" ~worktree_path
+      ~branch:"verified" ~trusted_adapter:true
+  in
+  match auth with
+  | Denied message -> Error message
+  | Authorized _ -> (
+      match
+        run_git ~cwd:main_repository_root
+          [ "worktree"; "remove"; worktree_path ]
+      with
+      | Ok _ -> Ok ()
+      | Error message -> Error message)
+
+let effective_workspace_for_identity ~(identity : Taumel.Agents.identity) =
+  let agent_home = pi_agent_dir () in
+  match
+    Taumel.Agent_workspace.derive ~agent_home
+      ~owner_session_id:identity.identity_owner_session_id
+      ~agent_id:identity.identity_agent_id identity.identity_workspace_binding
+  with
+  | Error message -> Error message
+  | Ok derived ->
+      Ok
+        ( Taumel.Agent_workspace.effective_workspace_of_derived derived,
+          derived )
+
+let identity_metadata ~(identity : Taumel.Agents.identity) ?child_session_file () =
+  let source = Taumel.Agents.identity_source_workspace identity in
+  let isolation =
+    Taumel.Agent_workspace.isolation_to_string
+      (Taumel.Agents.identity_isolation identity)
+  in
+  let effective, derived =
+    match effective_workspace_for_identity ~identity with
+    | Ok (path, derived) -> (path, Some derived)
+    | Error _ -> (source, None)
+  in
+  let fields =
+    [
+      ("kind", Taumel.Shared.String "agent");
+      ( "agentKind",
+        Taumel.Shared.String
+          (Taumel.Agents.agent_kind_to_string identity.identity_kind) );
+      ("agentId", Taumel.Shared.String identity.identity_agent_id);
+      ("modelId", Taumel.Shared.String identity.identity_model);
+      ("thinkingLevel", Taumel.Shared.String identity.identity_thinking);
+      ( "activeTools",
+        Taumel.Shared.Array
+          (List.map
+             (fun value -> Taumel.Shared.String value)
+             identity.identity_active_tools) );
+      ( "capabilityProfile",
+        Taumel.Capability_profile.to_json identity.identity_permission_ceiling );
+      ( "networkMode",
+        Taumel.Shared.String
+          (if identity.identity_network_allowed then "enabled" else "disabled") );
+      ("isolated_child", Taumel.Shared.Bool true);
+      ("workspaceDirectory", Taumel.Shared.String effective);
+      ("sourceWorkspace", Taumel.Shared.String source);
+      ("isolation", Taumel.Shared.String isolation);
+      ( "workspaceBinding",
+        Taumel.Agent_workspace.binding_to_json identity.identity_workspace_binding );
+    ]
+  in
+  let fields =
+    match derived with
+    | Some derived when derived.isolation = Taumel.Agent_workspace.Worktree ->
+        fields
+        @ [
+            ("worktreePath", Taumel.Shared.String derived.worktree_path);
+            ("worktreeBranch", Taumel.Shared.String derived.branch);
+            ( "mainRepositoryRoot",
+              Taumel.Shared.String derived.main_repository_root );
+          ]
+    | _ -> fields
+  in
+  let fields =
+    match child_session_file with
+    | Some value -> fields @ [ ("childSessionFile", Taumel.Shared.String value) ]
+    | None -> fields
+  in
+  Taumel.Shared.Object fields

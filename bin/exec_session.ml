@@ -1,5 +1,4 @@
 open Jsoo_bridge
-
 type session = {
   id : int;
   owner_id : string;
@@ -27,13 +26,11 @@ type session = {
   mutable waiters : (int * (unit -> unit)) list;
   mutable next_waiter_id : int;
 }
-
 type retained_session = {
   retained_id : int;
   retained_owner_id : string;
   retained_exit_code : int option;
 }
-
 type truncation = {
   trunc_truncated : bool;
   trunc_truncated_by : string;
@@ -47,7 +44,6 @@ type truncation = {
   trunc_first_line_exceeds_limit : bool;
   trunc_full_output_path : string option;
 }
-
 type run_result = {
   chunk_id : string;
   original_token_count : int;
@@ -62,37 +58,30 @@ type run_result = {
   output_limit_exceeded : bool;
   timeout_exceeded : bool;
 }
-
 let exec_default_yield_time_ms = 10_000.
 let write_stdin_default_yield_time_ms = 250.
 let min_yield_time_ms = 250.
 let max_yield_time_ms = 30_000.
 let min_empty_write_stdin_yield_time_ms = 5_000.
 let max_empty_write_stdin_yield_time_ms = 300_000.
-
 let sessions : (int, session) Hashtbl.t = Hashtbl.create 16
 let retained_sessions : (int, retained_session) Hashtbl.t = Hashtbl.create 16
 let next_session_id = ref 1
 let next_chunk_id = ref 0
-
 let generate_chunk_id () =
   let value = !next_chunk_id land 0xffffff in
   next_chunk_id := (!next_chunk_id + 1) land 0xffffff;
   Printf.sprintf "%06x" value
-
 let now_ms () =
   let date = Unsafe.get Unsafe.global "Date" in
   match function_field date "now" with
   | None -> 0.0
   | Some now -> Option.value (float_value (Unsafe.fun_call now [||])) ~default:0.0
-
 let clamp value lower upper = min (max value lower) upper
-
 let normalize_exec_yield_ms = function
   | Some value when value >= 0. ->
       clamp (Float.round value) min_yield_time_ms max_yield_time_ms
   | _ -> exec_default_yield_time_ms
-
 let normalize_write_yield_ms value input_is_empty output_mode =
   let normalized =
     match value with
@@ -106,35 +95,29 @@ let normalize_write_yield_ms value input_is_empty output_mode =
     clamp responsive min_empty_write_stdin_yield_time_ms
       max_empty_write_stdin_yield_time_ms
   else min responsive max_yield_time_ms
-
 let max_display_lines = 2000
 let max_display_bytes = 50 * 1024
 let default_max_output_tokens = 10_000
 let approximate_bytes_per_token = 4
 let total_output_limit_bytes = 16 * 1024 * 1024
-
 (* In-memory bound for the unread (pending) buffer. The full output always lives
    in the temp file, so trimming the oldest unread bytes never loses data. *)
 let pending_cap = total_output_limit_bytes
-
 let count_newlines s =
   let n = ref 0 in
   String.iter (fun c -> if c = '\n' then incr n) s;
   !n
-
 let line_count text =
   if text = "" then 0
   else
     count_newlines text
     + if text.[String.length text - 1] = '\n' then 0 else 1
-
 let split_display_lines text =
   if text = "" then []
   else
     match List.rev (String.split_on_char '\n' text) with
     | "" :: rest -> List.rev rest
     | rest -> List.rev rest
-
 let safe_suffix max_bytes text =
   let len = String.length text in
   if len <= max_bytes then text
@@ -149,7 +132,6 @@ let safe_suffix max_bytes text =
     in
     let start = boundary raw_start in
     String.sub text start (len - start)
-
 let safe_prefix max_bytes text =
   let len = String.length text in
   if len <= max_bytes then text
@@ -163,28 +145,21 @@ let safe_prefix max_bytes text =
     in
     let stop = boundary max_bytes in
     String.sub text 0 stop
-
 let truncation_reason ~by_lines ~by_bytes =
   match (by_lines, by_bytes) with
   | false, false -> "none"
   | true, false -> "lines"
   | false, true -> "bytes"
   | true, true -> "lines,bytes"
-
 let js_require name =
   Unsafe.fun_call (Unsafe.js_expr "require") [| js_string name |]
-
 let node_process () = Unsafe.get Unsafe.global "process"
-
 let js_error message =
   Unsafe.new_obj (Unsafe.get Unsafe.global "Error") [| js_string message |]
-
 let reject_error reject message =
   ignore (Unsafe.fun_call reject [| inject (js_error message) |])
-
 let property obj name =
   optional_field obj name
-
 let data_to_string data =
   match string_value data with
   | Some value -> value
@@ -196,22 +171,18 @@ let data_to_string data =
             (string_value
                (Unsafe.meth_call data "toString" [| js_string "utf8" |]))
             ~default:"")
-
 let int_from_js_default value default =
   match float_value value with
   | Some value -> int_of_float value
   | None -> default
-
 let math_random () =
   let m = Unsafe.get Unsafe.global "Math" in
   Option.value (float_value (Unsafe.fun_call (Unsafe.get m "random") [||])) ~default:0.
-
 let os_tmpdir () =
   let os = js_require "node:os" in
   match string_value (Unsafe.fun_call (Unsafe.get os "tmpdir") [||]) with
   | Some dir when dir <> "" -> dir
   | _ -> "/tmp"
-
 let path_join a b =
   let path = js_require "node:path" in
   match
@@ -220,7 +191,6 @@ let path_join a b =
   with
   | Some p -> p
   | None -> a ^ "/" ^ b
-
 (* Lazily open the full-output temp file on first output. *)
 let ensure_temp_file (session : session) =
   match session.temp_fd with
@@ -240,7 +210,6 @@ let ensure_temp_file (session : session) =
         session.temp_path <- Some path;
         session.temp_fd <- Some fd
       with _ -> ())
-
 let write_temp (session : session) text =
   match session.temp_fd with
   | None -> ()
@@ -249,7 +218,6 @@ let write_temp (session : session) text =
         let fs = js_require "node:fs" in
         ignore (Unsafe.fun_call (Unsafe.get fs "writeSync") [| fd; js_string text |])
       with _ -> ())
-
 (* stdout and stderr are merged into one ordered stream (Pi semantics). The full
    stream goes to the temp file; only a bounded rolling tail stays in memory. *)
 let add_output (session : session) text =
@@ -280,21 +248,17 @@ let add_output (session : session) text =
     end;
     crossed
   end
-
 let notify (session : session) =
   let waiters = session.waiters in
   session.waiters <- [];
   List.iter (fun (_, waiter) -> waiter ()) waiters
-
 let add_waiter (session : session) waiter =
   let id = session.next_waiter_id in
   session.next_waiter_id <- id + 1;
   session.waiters <- (id, waiter) :: session.waiters;
   id
-
 let remove_waiter (session : session) id =
   session.waiters <- List.filter (fun (waiter_id, _) -> waiter_id <> id) session.waiters
-
 let process_pid (session : session) =
   match session.child with
   | None -> None
@@ -302,7 +266,6 @@ let process_pid (session : session) =
       (match int_field child "pid" with
       | Some pid when pid > 0 -> Some pid
       | _ -> None)
-
 let kill_pid pid =
   let process = node_process () in
   ignore
@@ -311,7 +274,6 @@ let kill_pid pid =
   ignore
     (Unsafe.meth_call process "kill"
        [| js_number (float_of_int pid); js_string "SIGTERM" |])
-
 let kill_session (session : session) =
   match session.child with
   | Some child when session.tty -> (
@@ -320,19 +282,15 @@ let kill_session (session : session) =
       match process_pid session with
       | None -> ()
       | Some pid -> kill_pid pid)
-
 let timer_set callback delay_ms =
   Unsafe.fun_call (Unsafe.get Unsafe.global "setTimeout")
     [| inject (Js.wrap_callback callback); js_number delay_ms |]
-
 let timer_clear timer =
   match function_field Unsafe.global "clearTimeout" with
   | None -> ()
   | Some clear_timeout -> ignore (Unsafe.fun_call clear_timeout [| timer |])
-
 let signal_aborted signal =
   (not (is_nullish signal)) && get_bool signal "aborted"
-
 let add_abort_listener signal callback =
   if is_nullish signal then fun () -> ()
   else
@@ -345,7 +303,6 @@ let add_abort_listener signal callback =
       ignore
         (Unsafe.meth_call signal "removeEventListener"
            [| js_string "abort"; inject wrapped |])
-
 let wait_for_notification session wait_ms signal ~on_wake ~on_abort =
   if session.exited || wait_ms <= 0. then on_wake ()
   else if signal_aborted signal then on_abort ()
@@ -369,7 +326,6 @@ let wait_for_notification session wait_ms signal ~on_wake ~on_abort =
     waiter_id := Some (add_waiter session (finish on_wake));
     timeout := Some (timer_set (finish on_wake) wait_ms);
     remove_abort := add_abort_listener signal (finish on_abort)
-
 let wait_for_settle session yield_ms signal ~on_done ~on_abort =
   let deadline = now_ms () +. yield_ms in
   let rec loop () =
@@ -379,7 +335,6 @@ let wait_for_settle session yield_ms signal ~on_done ~on_abort =
         ~on_wake:loop ~on_abort
   in
   loop ()
-
 let close_temp (session : session) =
   (match session.temp_fd with
   | None -> ()
@@ -389,7 +344,6 @@ let close_temp (session : session) =
         ignore (Unsafe.fun_call (Unsafe.get fs "closeSync") [| fd |])
       with _ -> ()));
   session.temp_fd <- None
-
 let make_truncation ?full_output_path ?(last_line_partial = false)
     ?(first_line_exceeds_limit = false) ?(max_lines = max_display_lines)
     ?(max_bytes = max_display_bytes) ~truncated ~truncated_by ~total_lines
@@ -407,7 +361,6 @@ let make_truncation ?full_output_path ?(last_line_partial = false)
     trunc_first_line_exceeds_limit = first_line_exceeds_limit;
     trunc_full_output_path = full_output_path;
   }
-
 let truncation_footer ?(last_line_partial = false) ~start_line ~end_line
     ~total_lines ~shown_bytes ~line_bytes ~reason full_output_path =
   match full_output_path with
@@ -421,7 +374,6 @@ let truncation_footer ?(last_line_partial = false) ~start_line ~end_line
         "[Showing lines %d-%d of %d (limited by %s; max %d lines / %d bytes). Full output: %s]"
         start_line end_line total_lines reason max_display_lines max_display_bytes
         path
-
 (* Compute the display output without mutating the session. Shared by the inline
    drain (make_result) and notifications. *)
 let display_output (session : session) =
@@ -520,7 +472,6 @@ let display_output (session : session) =
             ~output_lines:selected_count ~output_bytes:selected_bytes ()
         in
         (output, truncation)
-
 let codex_display_output session max_output_tokens =
   let source = Buffer.contents session.pending in
   let total_bytes = String.length source in
@@ -552,7 +503,6 @@ let codex_display_output session max_output_tokens =
         ~truncated_by:"tokens" ~total_lines ~total_bytes
         ~output_lines:(line_count output) ~output_bytes:(String.length output)
         ~max_lines:max_int ~max_bytes:budget () )
-
 (* Drain the unread chunk for display and reset accounting so the next call
    returns only new output. *)
 let make_result ?(output_mode = "delta") ?(max_output_tokens = default_max_output_tokens)
@@ -600,7 +550,6 @@ let make_result ?(output_mode = "delta") ?(max_output_tokens = default_max_outpu
   else (
     session.session_id_exposed <- true;
     { base with session_id = Some session.id })
-
 let shell_result_text result =
   let body = result.output in
   let append status = if body = "" then status else body ^ "\n\n" ^ status in
@@ -635,7 +584,6 @@ let shell_result_text result =
       "Chunk ID: %s\nWall time: %.4f seconds\n%s\nOriginal token count: %d\nOutput:\n%s"
       result.chunk_id (result.wall_time_ms /. 1000.) lifecycle
       result.original_token_count body
-
 let typed_truncation truncation =
   Tool_contracts.ExecTruncation.create
     ~truncated:truncation.trunc_truncated
@@ -649,7 +597,6 @@ let typed_truncation truncation =
     ~lastLinePartial:truncation.trunc_last_line_partial
     ~firstLineExceedsLimit:truncation.trunc_first_line_exceeds_limit
     ?fullOutputPath:truncation.trunc_full_output_path ()
-
 let shell_result_details result extra =
   let optional_bool name =
     if has_property extra name then Some (get_bool extra name) else None
@@ -675,7 +622,6 @@ let shell_result_details result extra =
     ?session_id ?sandboxed:(optional_bool "sandboxed")
     ?escalated:(optional_bool "escalated") ?kind:(optional_string "kind")
     ?alreadyCompleted:(optional_bool "alreadyCompleted") ()
-
 let shell_tool_result result extra =
   let content =
     Boundary_contracts.ToolResultTextContent.create
@@ -684,7 +630,6 @@ let shell_tool_result result extra =
   Tool_contracts.ExecToolResult.create ~content:[ content ]
     ~details:(shell_result_details result extra) ()
   |> Tool_contracts.ExecToolResult.t_to_js |> inject
-
 let node_env _tty ~shell =
   let process = node_process () in
   let env = Unsafe.get process "env" in
@@ -707,7 +652,6 @@ let node_env _tty ~shell =
              ("SHELL", js_string shell);
            |]);
     |]
-
 let spawn_options cwd tty ~shell =
   let process = node_process () in
   Unsafe.obj
@@ -724,7 +668,6 @@ let spawn_options cwd tty ~shell =
           ] );
       ("windowsHide", js_bool true);
     |]
-
 let wire_stream session child name =
   match property child name with
   | None -> ()
@@ -739,8 +682,7 @@ let wire_stream session child name =
                     if crossed then kill_session session;
                     notify session));
            |])
-
-let spawn_session session ~file ~args ~cwd =
+let spawn_session session ~file ~args ~cwd ?env () =
   let fs = js_require "node:fs" in
   let exists = Unsafe.fun_call (Unsafe.get fs "existsSync") [| js_string cwd |] in
   if not (Js.to_bool (Unsafe.coerce exists)) then
@@ -753,7 +695,7 @@ let spawn_session session ~file ~args ~cwd =
         ("cols", js_number 80.);
         ("rows", js_number 24.);
         ("cwd", js_string cwd);
-        ("env", node_env true ~shell:file);
+        ("env", Option.value env ~default:(node_env true ~shell:file));
       |]
   in
   let child =
@@ -773,7 +715,6 @@ let spawn_session session ~file ~args ~cwd =
             session.exited <- true;
             session.exit_code <- Some (int_field_default event "exitCode" 1);
             notify session)) |])
-
 let new_session owner_id tty =
   let id = !next_session_id in
   incr next_session_id;
@@ -804,9 +745,7 @@ let new_session owner_id tty =
     waiters = [];
     next_waiter_id = 1;
   }
-
 let retained_session_cap_per_owner = 128
-
 let prune_retained_sessions owner_id =
   let owned =
     Hashtbl.fold
@@ -820,7 +759,6 @@ let prune_retained_sessions owner_id =
   |> List.iter (fun (index, retained) ->
          if index >= retained_session_cap_per_owner then
            Hashtbl.remove retained_sessions retained.retained_id)
-
 let retain_completed_session session =
   Hashtbl.replace retained_sessions session.id
     {
@@ -829,7 +767,6 @@ let retain_completed_session session =
       retained_exit_code = session.exit_code;
     };
   prune_retained_sessions session.owner_id
-
 let finish_session ?(output_mode = "delta") ?max_output_tokens session extra resolve =
   let result = make_result ~output_mode ?max_output_tokens session in
   if session.exited then (
@@ -838,14 +775,12 @@ let finish_session ?(output_mode = "delta") ?max_output_tokens session extra res
     if session.session_id_exposed then retain_completed_session session;
     Hashtbl.remove sessions session.id);
   ignore (Unsafe.fun_call resolve [| inject (shell_tool_result result extra) |])
-
 let rejected_promise message =
   Unsafe.new_obj (Unsafe.get Unsafe.global "Promise")
     [|
       inject
         (Js.wrap_callback (fun _resolve reject -> reject_error reject message));
     |]
-
 let resolved_promise value =
   Unsafe.new_obj (Unsafe.get Unsafe.global "Promise")
     [|
@@ -853,7 +788,6 @@ let resolved_promise value =
         (Js.wrap_callback (fun resolve _reject ->
              ignore (Unsafe.fun_call resolve [| inject value |])));
     |]
-
 let promise_of_session session yield_ms ?timeout_ms
     ?(abort_disposition = `Kill_session) ?(write_stdin_waiter = false)
     ?(output_mode = "delta") ?max_output_tokens signal
@@ -913,15 +847,46 @@ let promise_of_session session yield_ms ?timeout_ms
                  ~on_abort;
                ())));
     |]
-
 let run_exec_command prepared host runtime owner_id signal force_unsandboxed =
   match Sandbox_bridge.planned_exec_host_call prepared host runtime force_unsandboxed with
   | Error message -> rejected_promise message
   | Ok call ->
       let session = new_session owner_id call.tty in
       (try
+         let env =
+           if not (get_bool prepared "brokeredGit") then None
+           else
+             let base = node_env false ~shell:call.invocation.command in
+             let extra =
+               List.filter_map
+                 (fun (field, key) ->
+                   match optional_string_field prepared field with
+                   | Some v when String.trim v <> "" ->
+                       Some (key, js_string (String.trim v))
+                   | _ -> None)
+                 [ ("gitDir", "GIT_DIR"); ("gitWorkTree", "GIT_WORK_TREE") ]
+             in
+             let harden =
+               [
+                 ("GIT_CONFIG_NOSYSTEM", js_string "1");
+                 ("GIT_CONFIG_GLOBAL", js_string "/dev/null");
+                 ("GIT_CONFIG_SYSTEM", js_string "/dev/null");
+                 ("GIT_OPTIONAL_LOCKS", js_string "0");
+                 ("GIT_EDITOR", js_string "true");
+                 ("GIT_ASKPASS", js_string "true");
+               ]
+             in
+             Some
+               (Unsafe.fun_call
+                  (Unsafe.get (Unsafe.get Unsafe.global "Object") "assign")
+                  [|
+                    inject (Unsafe.obj [||]);
+                    inject base;
+                    inject (Unsafe.obj (Array.of_list (extra @ harden)));
+                  |])
+         in
          spawn_session session ~file:call.invocation.command
-           ~args:call.invocation.args ~cwd:call.cwd
+           ~args:call.invocation.args ~cwd:call.cwd ?env ()
        with exn ->
          let message = Printexc.to_string exn ^ "\n" in
          ignore (add_output session message);
@@ -939,7 +904,6 @@ let run_exec_command prepared host runtime owner_id signal force_unsandboxed =
         (normalize_exec_yield_ms call.yield_time_ms)
         ?timeout_ms:call.timeout_ms
         ?max_output_tokens:(int_field prepared "maxOutputTokens") signal extra
-
 let write_stdin raw_facts =
   let facts = Tool_contracts.WriteStdinFacts.t_of_js (ojs_of_js raw_facts) in
   let session_id = Tool_contracts.WriteStdinFacts.get_sessionId facts |> int_of_float in
@@ -1031,7 +995,6 @@ let write_stdin raw_facts =
               (Option.map int_of_float
                  (Tool_contracts.WriteStdinFacts.get_maxOutputTokens facts))
             signal extra)
-
 let shutdown_owner owner_id =
   Hashtbl.filter_map_inplace
     (fun _ session ->
@@ -1046,33 +1009,27 @@ let shutdown_owner owner_id =
       if retained.retained_owner_id = owner_id then None else Some retained)
     retained_sessions;
   core_ack ()
-
 (* Background completion notification (mirrors isolated_child completion delivery).
-
    An async session (one that returned a sessionId) that exits while no call is
    consuming its terminal result is left in [sessions] with [exited = true].
    Notification delivery marks only [notification_sent]; an explicit
    write_stdin poll is still required to consume and remove the terminal
    result. Synchronous commands, aborted commands, and owner-shutdown kills are
    removed, so they never appear here. *)
-
 let exec_notification_content (session : session) =
   Printf.sprintf
     "Command session %d has finished. To read and consume the result, call write_stdin with session_id=%d, chars=\"\", yield_time_ms=5000."
     session.id session.id
-
 let exec_notification_deliverable owner_id session =
   session.owner_id = owner_id && session.exited
   && (not session.terminal_consumed)
   && session.active_write_stdin_waiters = 0
   && (not session.notification_sent)
   && not session.notification_delivery_claimed
-
 let exec_notification_obj session =
   Tool_contracts.ExecNotification.create ~sessionId:(float_of_int session.id)
     ~customType:"notification" ~content:(exec_notification_content session)
     ~display:true ()
-
 (* Pending deliverable background completions for [owner_id]: terminal sessions
    that have not yet been consumed, are not currently claimed by write_stdin,
    and whose completion notification has not been sent. Read-only; successful
@@ -1091,7 +1048,6 @@ let pending_exec_notifications owner_id =
       ~notifications:(List.map exec_notification_obj pending) ()
   in
   Tool_contracts.PendingExecNotificationsResult.t_to_js result |> inject
-
 let claim_exec_notification_delivery owner_id session_id =
   match Hashtbl.find_opt sessions session_id with
   | Some session when exec_notification_deliverable owner_id session ->
@@ -1107,14 +1063,12 @@ let claim_exec_notification_delivery owner_id session_id =
         Boundary_contracts.ExecNotificationUnavailable.create ()
       in
       Tool_contracts.ExecNotificationUnavailable.t_to_js claim |> inject
-
 let release_exec_notification_delivery session_id =
   (match Hashtbl.find_opt sessions session_id with
   | Some session when not session.notification_sent ->
       session.notification_delivery_claimed <- false
   | _ -> ());
   core_ack ()
-
 let mark_exec_notification_delivered session_id =
   (match Hashtbl.find_opt sessions session_id with
   | Some session ->
@@ -1122,7 +1076,6 @@ let mark_exec_notification_delivered session_id =
       session.notification_sent <- true
   | None -> ());
   core_ack ()
-
 (* Resolves when the session has exited (or is already gone/drained), without
    draining or removing it, so the turn_end/idle flush can deliver its output.
    The TS layer starts this detached for each async session and, on resolution,

@@ -774,8 +774,10 @@ export async function executeTool(
         : /unknown agent|not owned.*agent|closing/.test(message) ? "agent_not_found"
         : /64 agents|namespace is exhausted/.test(message) ? "agent_limit_reached"
         : /routing|model|thinking|authentication/.test(message) ? "routing_unavailable"
+        : /delete_worktree is only valid/.test(message) ? "invalid_arguments"
         : /workspace/.test(message) ? "workspace_unavailable"
         : /state is unavailable/.test(message) ? "persistence_failed"
+        : /cleanup|worktree has uncommitted|worktree deletion/.test(message) ? "cleanup_failed"
         : "internal_error";
       const safeMessage = code === "run_not_found" ? "run not found"
         : code === "agent_not_found" ? "agent not found"

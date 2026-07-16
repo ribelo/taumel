@@ -242,6 +242,26 @@ let authorize_effect (config : config) = function
       | Network_enabled -> Ok ()
       | Network_disabled -> Error "network is disabled by sandbox policy")
 
+let agent_worktree_operation_to_string = function
+  | Agent_worktree_provision -> "provision"
+  | Agent_worktree_broker -> "broker"
+  | Agent_worktree_cleanup -> "cleanup"
+
+let authorize_agent_worktree_mutation ~trusted_adapter mutation =
+  (* Authorization is unforgeable only when the trusted worktree adapter asks
+     for it. Model-facing tools and child shells cannot construct this effect. *)
+  let mutation = (mutation : agent_worktree_mutation) in
+  if not trusted_adapter then
+    Deny
+      "agent_worktree_mutation is only available to the trusted worktree adapter"
+  else if String.trim mutation.worktree_path = "" then
+    Deny "agent_worktree_mutation requires a worktree path"
+  else if String.trim mutation.main_repository_root = "" then
+    Deny "agent_worktree_mutation requires a main repository"
+  else if String.trim mutation.branch = "" then
+    Deny "agent_worktree_mutation requires a dedicated branch"
+  else Allow
+
 let decision_rank = function Allow -> 0 | Requires_approval _ -> 1 | Deny _ -> 2
 
 let strictest_decision left right =

@@ -267,7 +267,7 @@ let persisted_session_snapshot ctx =
     permissions = Session_store.custom_entry_data ctx "taumel.permissions";
     ralph = Session_store.custom_entry_data ctx "taumel.ralph";
     visibility = Session_store.custom_entry_data ctx "taumel.visibility";
-    agents = Session_store.custom_entry_data ctx "taumel.agents.v3";
+    agents = Session_store.custom_entry_data ctx "taumel.agents.v4";
   }
 
 let load_goal_state_data ~session_id = function

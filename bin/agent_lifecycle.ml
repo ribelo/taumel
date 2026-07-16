@@ -323,11 +323,24 @@ let manager_snapshot ctx =
   let agents =
     List.map
       (fun (identity : Taumel.Agents.identity) ->
+        let isolation = Taumel.Agents.identity_isolation identity in
+        let effective_workspace =
+          match Agent_worktree_host.effective_workspace_for_identity ~identity with
+          | Ok (path, _) -> Some path
+          | Error _ -> None
+        in
         Tool_contracts.AgentManagerIdentity.create
           ~agentId:identity.identity_agent_id
           ~kind:(Taumel.Agents.agent_kind_to_string identity.identity_kind)
           ~model:identity.identity_model ~thinking:identity.identity_thinking
-          ~workspace:identity.identity_workspace
+          ~workspace:(Taumel.Agents.identity_source_workspace identity)
+          ?isolation:
+            (Some
+               (Boundary_contracts.AgentManagerIdentity.isolation_to_contract
+                  (match isolation with
+                  | Taumel.Agent_workspace.None -> `V_none
+                  | Taumel.Agent_workspace.Worktree -> `V_worktree)))
+          ?effectiveWorkspace:effective_workspace
           ~createdAt:(float_of_int identity.identity_created_at)
           ?childSessionFile:identity.identity_child_session_file
           ?tier:
@@ -437,7 +450,8 @@ let agent_identity_line (identity : Taumel.Agents.identity) latest =
   Printf.sprintf "%s [%s] %s thinking=%s workspace=%s latest=%s"
     identity.identity_agent_id
     (Taumel.Agents.agent_kind_to_string identity.identity_kind)
-    identity.identity_model identity.identity_thinking identity.identity_workspace
+    identity.identity_model identity.identity_thinking
+    (Taumel.Agents.identity_source_workspace identity)
     status
 
 let agent_runs_summary owner_id =

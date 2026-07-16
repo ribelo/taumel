@@ -3,7 +3,7 @@
 
 module String_set = Shared.String_set
 
-let schema_version = 3
+let schema_version = 4
 let max_identities_per_owner = 64
 let max_error_chars = 4096
 let nano_id_alphabet = "abcdefghjkmnpqrstuvwxyz23456789"
@@ -71,7 +71,7 @@ type identity = {
   identity_active_tools : string list;
   identity_permission_ceiling : Capability_profile.t;
   identity_network_allowed : bool;
-  identity_workspace : string;
+  identity_workspace_binding : Agent_workspace.workspace_binding;
   identity_child_session_file : string option;
   identity_child_session_id : string option;
   identity_created_at : int;
@@ -514,15 +514,24 @@ let validate_unique_ids label ids =
   in
   loop [] ids
 
+let identity_source_workspace identity =
+  Agent_workspace.source_workspace identity.identity_workspace_binding
+
+let identity_isolation identity =
+  Agent_workspace.isolation_of_binding identity.identity_workspace_binding
+
 let record_spawn state ~now ~owner_session_id ~kind ?effort ~model ~thinking
     ~description
-    ~active_tools ~permission_ceiling ?(network_allowed = false) ~workspace () =
+    ~active_tools ~permission_ceiling ?(network_allowed = false)
+    ~workspace_binding () =
   let owner_session_id = String.trim owner_session_id in
-  let workspace = String.trim workspace in
   let model = String.trim model in
   let thinking = String.trim thinking in
+  let source_workspace =
+    String.trim (Agent_workspace.source_workspace workspace_binding)
+  in
   if owner_session_id = "" then Error "owner session id is required"
-  else if workspace = "" then Error "workspace is required"
+  else if source_workspace = "" then Error "workspace is required"
   else if model = "" then Error "model is required"
   else if thinking = "" then Error "thinking level is required"
   else if identity_count_for_owner state ~owner_session_id >= max_identities_per_owner
@@ -550,7 +559,7 @@ let record_spawn state ~now ~owner_session_id ~kind ?effort ~model ~thinking
         identity_permission_ceiling = permission_ceiling;
         identity_network_allowed =
           (match kind with Finder -> false | Generic | Oracle -> network_allowed);
-        identity_workspace = workspace;
+        identity_workspace_binding = workspace_binding;
         identity_child_session_file = None;
         identity_child_session_id = None;
         identity_created_at = now;

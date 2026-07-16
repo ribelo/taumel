@@ -15,7 +15,7 @@ let prepare raw_facts =
   match name with
   | "agent_spawn" | "agent_send" | "agent_wait" | "agent_list" | "agent_close"
   | "finder" | "oracle" -> Agent_tools.prepare name params ctx
-  | "exec_command" -> Mutation_tools.prepare_exec_command params
+  | "exec_command" -> Mutation_tools.prepare_exec_command params ctx
   | "write_stdin" -> Mutation_tools.prepare_write_stdin params
   | "apply_patch" -> Mutation_tools.prepare_apply_patch params
   | "write" -> Mutation_tools.prepare_write params

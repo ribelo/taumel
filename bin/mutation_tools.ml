@@ -144,9 +144,119 @@ let patch_request_from_params params =
   Taumel.Mutation_plan.patch_request_of_values
     (Tool_contracts.ApplyPatchParams.get_input params)
 
-let prepare_exec_command params =
+let child_worktree_context ctx =
+  match Session_store.custom_entry_data ctx "taumel.childSession" with
+  | None -> None
+  | Some data -> (
+      match data with
+      | Taumel.Shared.Object fields ->
+          let isolation =
+            match List.assoc_opt "isolation" fields with
+            | Some (Taumel.Shared.String value) -> value
+            | _ -> "none"
+          in
+          if isolation <> "worktree" then None
+          else
+            let worktree =
+              match List.assoc_opt "worktreePath" fields with
+              | Some (Taumel.Shared.String value) -> value
+              | _ ->
+                  (match List.assoc_opt "workspaceDirectory" fields with
+                  | Some (Taumel.Shared.String value) -> value
+                  | _ -> "")
+            in
+            let main_repo =
+              match List.assoc_opt "mainRepositoryRoot" fields with
+              | Some (Taumel.Shared.String value) -> value
+              | _ -> ""
+            in
+            let branch =
+              match List.assoc_opt "worktreeBranch" fields with
+              | Some (Taumel.Shared.String value) -> value
+              | _ -> ""
+            in
+            if worktree = "" then None else Some (worktree, main_repo, branch)
+      | _ -> None)
+
+let simple_git_tokens cmd =
+  let trimmed = String.trim cmd in
+  if trimmed = "" then None
+  else if
+    List.exists
+      (fun operator ->
+        let needle = " " ^ operator ^ " " in
+        let rec contains haystack =
+          let hlen = String.length haystack in
+          let nlen = String.length needle in
+          nlen = 0
+          || (hlen >= nlen
+             && (String.sub haystack 0 nlen = needle
+                || contains (String.sub haystack 1 (hlen - 1))))
+        in
+        contains (" " ^ trimmed ^ " "))
+      [ "&&"; "||"; "|"; ";"; "`"; "$("; "<"; ">"; ">>" ]
+  then None
+  else
+    let tokens =
+      trimmed |> String.split_on_char ' '
+      |> List.filter (fun token -> token <> "")
+    in
+    match tokens with "git" :: _ -> Some tokens | _ -> None
+
+let prepare_exec_command params ctx =
   with_gateway_authorized "exec_command" (fun sandbox ->
       let request = exec_request_from_params params in
+      let worktree_ctx = child_worktree_context ctx in
+      let brokered =
+        match (worktree_ctx, simple_git_tokens request.cmd) with
+        | Some (worktree, main_repo, branch), Some tokens -> (
+            match request.sandbox_permissions with
+            | Taumel.Sandbox.Require_escalated _ ->
+                Error
+                  "brokered agent Git rejects with_escalated_permissions"
+            | Taumel.Sandbox.Use_default -> (
+                match Taumel.Agent_git_broker.parse_tokens tokens with
+                | Error error ->
+                    Error (Taumel.Agent_git_broker.error_message error)
+                | Ok parsed ->
+                    let read_only =
+                      match sandbox.filesystem_mode with
+                      | Taumel.Sandbox.Read_only -> true
+                      | _ -> false
+                    in
+                    (match Taumel.Agent_git_broker.authorize ~read_only parsed with
+                    | Error error ->
+                        Error (Taumel.Agent_git_broker.error_message error)
+                    | Ok authorized ->
+                        let auth =
+                          Taumel.Agent_worktree.authorize_mutation
+                            ~operation:Broker ~main_repository_root:main_repo
+                            ~main_repository_id:"verified" ~worktree_path:worktree
+                            ~branch ~trusted_adapter:true
+                        in
+                        (match auth with
+                        | Denied message -> Error message
+                        | Authorized _ ->
+                            Ok
+                              ( worktree,
+                                main_repo ^ "/.git",
+                                authorized.argv )))))
+        | _ -> Error ""
+      in
+      match brokered with
+      | Ok (worktree, git_dir, argv) ->
+          let sandbox_cfg = typed_sandbox_config sandbox in
+          let workdir =
+            if request.workdir = "" then worktree else request.workdir
+          in
+          Boundary_contracts.PreparedExec.create ~cmd:request.cmd ~workdir
+            ~tty:true ~sandbox:sandbox_cfg ~brokeredGit:true ~directCommand:"git"
+            ~directArgv:argv ~gitDir:git_dir ~gitWorkTree:worktree ()
+          |> Tool_contracts.PreparedExec.t_to_js |> inject
+      | Error message when message <> "" && worktree_ctx <> None
+        && simple_git_tokens request.cmd <> None ->
+          error_obj message
+      | Error _ ->
       let policy_decision =
         Exec_policy_bridge.policy_decision_for_command sandbox request.sandbox_permissions
           request.cmd

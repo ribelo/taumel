@@ -39,6 +39,22 @@ type path_access =
   | Write
   | Delete
 
+type agent_worktree_operation =
+  | Agent_worktree_provision
+  | Agent_worktree_broker
+  | Agent_worktree_cleanup
+
+type agent_worktree_mutation = {
+  operation : agent_worktree_operation;
+  main_repository_root : string;
+  main_repository_id : string;
+  worktree_path : string;
+  worktree_admin_path : string;
+  branch : string;
+  branch_ref : string;
+  object_store_path : string;
+}
+
 type resolved_mutation_path = { requested_path : string; resolved_path : string }
 
 type exec_request = {

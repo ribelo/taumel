@@ -49,7 +49,7 @@ export const TOOL_DESCRIPTIONS = {
   agent_list:
     "List all open agent identities owned by the current session, including lifecycle status, per-run turn count, and observable activity phase, timing, and recommended next action.",
   agent_close:
-    "Permanently close one agent identity, interrupt active execution, and remove all of its runs from current Taumel state. Closed identities cannot be resumed; use agent_send interruption for a reversible stop.",
+    "Permanently close one agent identity, interrupt active execution, and remove all of its runs from current Taumel state. By default, an agent worktree and its dedicated branch are preserved; optional worktree deletion removes only a clean, verified worktree and preserves its branch. Closed identities cannot be resumed; use agent_send interruption for a reversible stop.",
 };
 
 export const PROMPT_SNIPPETS = {
@@ -237,14 +237,20 @@ export const PARAM_DESCRIPTIONS = {
   "agent_spawn.description":
     "A specific, action-oriented three-to-five-word label written for the user and used for compact TUI display. This label is not sent to the child.",
   "agent_spawn.tier": "The generic agent's capacity tier. Defaults to medium.",
+  "agent_spawn.isolation":
+    "Workspace isolation for the new identity: none (default) uses the bound parent workspace; worktree creates a dedicated Git worktree.",
   "finder.query":
     "The discovery query. Be specific and include relevant terms, file types, expected content or naming patterns, and clear success criteria.",
   "finder.description":
     "A specific, action-oriented three-to-five-word label written for the user and used for compact TUI display. This label is not sent to the child.",
+  "finder.isolation":
+    "Workspace isolation for the new identity: none (default) uses the bound parent workspace; worktree creates a dedicated Git worktree.",
   "oracle.message":
     "The Oracle's initial instruction. Include the guidance, decision, or review needed, relevant context and constraints, available evidence, and attempted approaches.",
   "oracle.description":
     "A specific, action-oriented three-to-five-word label written for the user and used for compact TUI display. This label is not sent to the child.",
+  "oracle.isolation":
+    "Workspace isolation for the new identity: none (default) uses the bound parent workspace; worktree creates a dedicated Git worktree.",
   "agent_send.agent_id":
     "The owner-scoped agent handle returned by agent_spawn, finder, oracle, or agent_list.",
   "agent_send.message":
@@ -257,6 +263,8 @@ export const PARAM_DESCRIPTIONS = {
   "agent_wait.timeout_seconds":
     "Maximum seconds to wait. Omit to wait indefinitely; use 0 to poll once. Timing out leaves all pending runs active.",
   "agent_close.agent_id": "The owner-scoped handle of the identity to close permanently.",
+  "agent_close.delete_worktree":
+    "When true, remove the agent's clean, verified worktree while preserving its dedicated branch. Defaults to false.",
 };
 
 export const PROMPT_GUIDELINES = {
@@ -448,15 +456,18 @@ export const REQUIREMENT_CHECKS = [
   ["agent-todp", "snippet", "agent_spawn"],
   ["agent-7i3j", "param", "agent_spawn.message"],
   ["agent-us77", "param", "agent_spawn.tier"],
+  ["agent-w981", "param", "agent_spawn.isolation"],
   ["agent-tc15", "param", "agent_spawn.description"],
   ["agent-s58q", "tool", "finder"],
   ["agent-ub6w", "snippet", "finder"],
   ["agent-9s9b", "param", "finder.query"],
   ["agent-tc15", "param", "finder.description"],
+  ["agent-w981", "param", "finder.isolation"],
   ["agent-tc22", "tool", "oracle"],
   ["agent-4mcx", "snippet", "oracle"],
   ["agent-tc22", "param", "oracle.message"],
   ["agent-tc15", "param", "oracle.description"],
+  ["agent-w981", "param", "oracle.isolation"],
   ["agent-tc23", "tool", "agent_send"],
   ["agent-44uh", "snippet", "agent_send"],
   ["agent-tc23", "param", "agent_send.agent_id"],
@@ -471,4 +482,5 @@ export const REQUIREMENT_CHECKS = [
   ["agent-p9k1", "snippet", "agent_list"],
   ["agent-tc26", "tool", "agent_close"],
   ["agent-tc26", "param", "agent_close.agent_id"],
+  ["agent-tc26", "param", "agent_close.delete_worktree"],
 ];

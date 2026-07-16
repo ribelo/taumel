@@ -143,6 +143,38 @@ let js_exec_host_call (call : Taumel.Sandbox.exec_host_call) =
   |> Tool_contracts.ExecHostCall.t_to_js |> inject
 
 let planned_exec_host_call prepared host runtime force_unsandboxed =
+  if get_bool prepared "brokeredGit" then
+    if Js.to_bool (Unsafe.coerce force_unsandboxed) then
+      Error "brokered agent Git rejects escalated unsandboxed execution"
+    else
+    let command =
+      match optional_string_field prepared "directCommand" with
+      | Some value when String.trim value <> "" -> String.trim value
+      | _ -> "git"
+    in
+    let args =
+      if has_property prepared "directArgv" then get_string_array prepared "directArgv"
+      else []
+    in
+    let cwd =
+      match optional_string_field prepared "workdir" with
+      | Some value when String.trim value <> "" -> String.trim value
+      | _ -> get_string runtime "defaultCwd"
+    in
+    (* Brokered Git is invoked as a direct argv against the trusted git
+       executable; the shell is never used. GIT_DIR / GIT_WORK_TREE come from
+       verified registration fields on the prepared action. *)
+    Ok
+      {
+        Taumel.Sandbox.invocation =
+          { command; args; sandboxed = true };
+        cwd;
+        timeout_ms = positive_float_option prepared "timeout";
+        yield_time_ms = positive_float_option prepared "yieldTimeMs";
+        tty = false;
+        escalated = false;
+      }
+  else
   let sandbox = sandbox_config_from_js (Unsafe.get prepared "sandbox") in
   let host = exec_host_facts_from_js host in
   let options = exec_host_options_from_js prepared runtime in
