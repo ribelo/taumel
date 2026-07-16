@@ -82,10 +82,12 @@ let delete_worktree facts _ctx =
     error_obj "cleanup_failed: worktree deletion requires path, repository, and branch"
   else
     let path_present = Agent_worktree_host.path_exists worktree_path in
-    let registered =
+    match
       Agent_worktree_host.registration_present ~main_repository_root
         ~worktree_path
-    in
+    with
+    | Error message -> error_obj ("cleanup_failed: " ^ message)
+    | Ok registered -> (
     match (path_present, registered) with
     | false, false -> core_ack ()
     | false, true ->
@@ -108,7 +110,7 @@ let delete_worktree facts _ctx =
                     ~branch
                 with
                 | Ok () -> core_ack ()
-                | Error message -> error_obj ("cleanup_failed: " ^ message))))
+                | Error message -> error_obj ("cleanup_failed: " ^ message)))))
 let reconcile_provisional_worktrees () =
   Agent_worktree_host.reconcile_provisional_markers ();
   core_ack ()

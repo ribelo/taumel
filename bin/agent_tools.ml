@@ -825,13 +825,17 @@ let prepare_close params ctx =
                   |> List.map (fun (run : Taumel.Agents.agent_run) -> run.run_id)
                 in
                 let worktree_fields =
-                  match
-                    Agent_worktree_host.effective_workspace_for_identity ~identity
-                  with
-                  | Ok (_path, derived)
-                    when derived.isolation = Taumel.Agent_workspace.Worktree ->
-                      Some derived
-                  | _ -> None
+                  match identity.identity_workspace_binding with
+                  | Taumel.Agent_workspace.Shared _ -> None
+                  | Taumel.Agent_workspace.Worktree _ as binding -> (
+                      match
+                        Taumel.Agent_workspace.derive
+                          ~agent_home:(Agent_worktree_host.pi_agent_dir ())
+                          ~owner_session_id:identity.identity_owner_session_id
+                          ~agent_id:identity.identity_agent_id binding
+                      with
+                      | Ok derived -> Some derived
+                      | Error _ -> None)
                 in
                 Boundary_contracts.PreparedAgentClose.create
                   ~text:

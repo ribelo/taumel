@@ -1,7 +1,4 @@
 open Jsoo_bridge
-
-(* Trusted host adapter for agent-worktree provision, broker verification, and cleanup. *)
-
 let node_require name =
   let process = Unsafe.get Unsafe.global "process" in
   match function_field process "getBuiltinModule" with
@@ -9,13 +6,11 @@ let node_require name =
   | None ->
       let require = Unsafe.get Unsafe.global "require" in
       Unsafe.fun_call require [| js_string name |]
-
 let fs_mod = lazy (node_require "fs")
 let path_mod = lazy (node_require "path")
 let child_process_mod = lazy (node_require "child_process")
 let crypto_mod = lazy (node_require "crypto")
 let os_mod = lazy (node_require "os")
-
 let pi_agent_dir () =
   let home =
     try Js.to_string (Unsafe.meth_call (Lazy.force os_mod) "homedir" [||])
@@ -30,7 +25,6 @@ let pi_agent_dir () =
         home ^ String.sub value 1 (String.length value - 1)
       else value
   | _ -> home ^ "/.pi/agent"
-
 let trusted_git_env ?git_dir ?git_work_tree extra =
   let process_env = Unsafe.get (Unsafe.get Unsafe.global "process") "env" in
   let base =
@@ -77,8 +71,7 @@ let trusted_git_env ?git_dir ?git_work_tree extra =
     | _ -> base
   in
   Unsafe.obj (Array.of_list (base @ extra))
-
-let run_git ~cwd ?git_dir ?git_work_tree args =
+let run_git ?(trim = true) ~cwd ?git_dir ?git_work_tree args =
   let child_process = Lazy.force child_process_mod in
   try
     let stdout =
@@ -95,7 +88,8 @@ let run_git ~cwd ?git_dir ?git_work_tree args =
             |];
         |]
     in
-    Ok (String.trim (Js.to_string stdout))
+    let text = Js.to_string stdout in
+    Ok (if trim then String.trim text else text)
   with error ->
     let message =
       try
@@ -109,19 +103,16 @@ let run_git ~cwd ?git_dir ?git_work_tree args =
       with _ -> Printexc.to_string error
     in
     Error message
-
 let path_exists path =
   let fs = Lazy.force fs_mod in
   try Js.to_bool (Unsafe.meth_call fs "existsSync" [| js_string path |])
   with _ -> false
-
 let is_directory path =
   let fs = Lazy.force fs_mod in
   try
     let stats = Unsafe.meth_call fs "statSync" [| js_string path |] in
     Js.to_bool (Unsafe.meth_call stats "isDirectory" [||])
   with _ -> false
-
 let mkdir_p path =
   let fs = Lazy.force fs_mod in
   ignore
@@ -130,13 +121,11 @@ let mkdir_p path =
          js_string path;
          Unsafe.obj [| ("recursive", js_bool true) |];
        |])
-
 let write_file path contents =
   let fs = Lazy.force fs_mod in
   ignore
     (Unsafe.meth_call fs "writeFileSync"
        [| js_string path; js_string contents; js_string "utf8" |])
-
 let read_file path =
   let fs = Lazy.force fs_mod in
   try
@@ -145,7 +134,6 @@ let read_file path =
          (Unsafe.meth_call fs "readFileSync"
             [| js_string path; js_string "utf8" |]))
   with error -> Error (Printexc.to_string error)
-
 let remove_path path =
   let fs = Lazy.force fs_mod in
   try
@@ -158,7 +146,6 @@ let remove_path path =
          |]);
     Ok ()
   with error -> Error (Printexc.to_string error)
-
 let resolve_repository source_workspace =
   match run_git ~cwd:source_workspace [ "rev-parse"; "--is-inside-work-tree" ] with
   | Error _ ->
@@ -203,13 +190,11 @@ let resolve_repository source_workspace =
                       main_repository_root,
                       main_repository_id,
                       head ))))
-
 let sha256_hex value =
   let crypto = Lazy.force crypto_mod in
   let hash = Unsafe.fun_call (Unsafe.get crypto "createHash") [| js_string "sha256" |] in
   ignore (Unsafe.meth_call hash "update" [| js_string value |]);
   Js.to_string (Unsafe.meth_call hash "digest" [| js_string "hex" |])
-
 let file_entry_fingerprint ~root relative =
   let fs = Lazy.force fs_mod in
   let path = Filename.concat root relative in
@@ -242,28 +227,28 @@ let file_entry_fingerprint ~root relative =
         Ok ("file\000" ^ relative ^ "\000" ^ string_of_int mode ^ "\000" ^ digest)
       else Error ("unsupported source entry type: " ^ relative)
   with error -> Error (relative ^ ": " ^ Printexc.to_string error)
-
 let nul_paths listing =
   String.split_on_char '\x00' listing |> List.filter (fun value -> value <> "")
-
 let list_source_entries ~source_workspace =
   let ( let* ) = Result.bind in
-  (* Complete snapshot of every tracked path and every untracked non-ignored path,
-     including tracked deletions. Content/mode/link are re-read for fingerprints. *)
-  let* tracked = run_git ~cwd:source_workspace [ "ls-files"; "-z" ] in
-  let* deleted =
-    run_git ~cwd:source_workspace [ "ls-files"; "-z"; "-d"; "--exclude-standard" ]
+  (* Complete snapshot: HEAD tree paths (covers staged deletions), current index
+     paths, and untracked non-ignored paths. Content/mode/link are re-read. *)
+  let* head_paths =
+    run_git ~trim:false ~cwd:source_workspace
+      [ "ls-tree"; "-r"; "--name-only"; "-z"; "HEAD" ]
+  in
+  let* index_paths =
+    run_git ~trim:false ~cwd:source_workspace [ "ls-files"; "-z" ]
   in
   let* untracked =
-    run_git ~cwd:source_workspace
+    run_git ~trim:false ~cwd:source_workspace
       [ "ls-files"; "-z"; "-o"; "--exclude-standard" ]
   in
   let paths =
-    nul_paths tracked @ nul_paths deleted @ nul_paths untracked
+    nul_paths head_paths @ nul_paths index_paths @ nul_paths untracked
     |> List.sort_uniq String.compare
   in
   Ok paths
-
 let fingerprint_entries ~root entries =
   let rec loop acc = function
     | [] -> Ok (List.rev acc)
@@ -276,7 +261,6 @@ let fingerprint_entries ~root entries =
   let* entry_lines = loop [] entries in
   let* head = run_git ~cwd:root [ "rev-parse"; "HEAD" ] in
   Ok (sha256_hex (head ^ "\n" ^ String.concat "\n" entry_lines))
-
 let capture_source_manifest ~source_workspace =
   let ( let* ) = Result.bind in
   let* first_entries = list_source_entries ~source_workspace in
@@ -286,12 +270,10 @@ let capture_source_manifest ~source_workspace =
   if first_entries <> second_entries || first <> second then
     Error Taumel.Agent_worktree.workspace_unavailable_source_changed
   else Ok (second_entries, second)
-
 let source_fingerprint ~source_workspace =
   let ( let* ) = Result.bind in
   let* entries = list_source_entries ~source_workspace in
   fingerprint_entries ~root:source_workspace entries
-
 let write_marker marker ~agent_home =
   let owner_component =
     Taumel.Agent_workspace.owner_component marker.Taumel.Agent_worktree.owner_session_id
@@ -304,7 +286,6 @@ let write_marker marker ~agent_home =
   write_file path
     (Taumel.Shared.encode_json (Taumel.Agent_worktree.marker_to_json marker));
   path
-
 let read_marker path =
   match read_file path with
   | Error message -> Error message
@@ -312,7 +293,6 @@ let read_marker path =
       match Taumel.Shared.decode_json_string contents with
       | Error message -> Error message
       | Ok json -> Taumel.Agent_worktree.marker_of_json json)
-
 let clear_marker ~agent_home ~owner_session_id ~agent_id =
   let owner_component = Taumel.Agent_workspace.owner_component owner_session_id in
   let path =
@@ -320,7 +300,6 @@ let clear_marker ~agent_home ~owner_session_id ~agent_id =
       ~agent_id
   in
   ignore (remove_path path)
-
 let path_or_branch_exists ~main_repository_root ~worktree_path ~branch =
   let path_exists = path_exists worktree_path in
   let branch_exists =
@@ -332,7 +311,6 @@ let path_or_branch_exists ~main_repository_root ~worktree_path ~branch =
     | Error _ -> false
   in
   path_exists || branch_exists
-
 let create_worktree ~source_workspace ~main_repository_root ~worktree_path ~branch
     ~head ~entries =
   mkdir_p (Filename.dirname worktree_path);
@@ -390,7 +368,107 @@ let create_worktree ~source_workspace ~main_repository_root ~worktree_path ~bran
                   with error -> Error (relative ^ ": " ^ Printexc.to_string error))
           in
           copy files
-
+let attr_values_for ~worktree_path ~attr relative =
+  match
+    run_git ~trim:false ~cwd:worktree_path
+      [ "check-attr"; "-z"; attr; "--"; relative ]
+  with
+  | Error message -> Error message
+  | Ok output ->
+      let parts =
+        match output with
+        | "" -> []
+        | text when text.[String.length text - 1] = '\x00' ->
+            nul_paths text
+        | text -> nul_paths (text ^ "\x00")
+      in
+      let rec values acc = function
+        | [] -> Ok (List.rev acc)
+        | path :: name :: value :: rest ->
+            if path = relative && name = attr then values (value :: acc) rest
+            else
+              Error
+                ("malformed check-attr record for " ^ relative ^ "/" ^ attr)
+        | _ ->
+            Error ("truncated check-attr output for " ^ relative ^ "/" ^ attr)
+      in
+      match values [] parts with
+      | Error _ as error -> error
+      | Ok [] ->
+          Error ("missing check-attr record for " ^ relative ^ "/" ^ attr)
+      | Ok vals -> Ok vals
+let path_has_executable_filter ~worktree_path relative =
+  let ( let* ) = Result.bind in
+  let* filters = attr_values_for ~worktree_path ~attr:"filter" relative in
+  let* cleans = attr_values_for ~worktree_path ~attr:"clean" relative in
+  let* processes = attr_values_for ~worktree_path ~attr:"process" relative in
+  let dangerous value =
+    let value = String.trim (String.lowercase_ascii value) in
+    value <> "" && value <> "unspecified" && value <> "unset"
+  in
+  if List.exists dangerous filters || List.exists dangerous cleans
+     || List.exists dangerous processes
+  then Error ("brokered git add rejects executable filter: " ^ relative)
+  else Ok ()
+let preflight_broker_add ~worktree_path argv =
+  let ( let* ) = Result.bind in
+  let has_all = List.mem "--all" argv in
+  let pathspecs =
+    let rec after_sep = function
+      | [] -> []
+      | "--" :: rest -> rest
+      | _ :: rest -> after_sep rest
+    in
+    after_sep argv
+  in
+  let* expanded =
+    if has_all then
+      run_git ~cwd:worktree_path
+        [ "ls-files"; "-z"; "-c"; "-o"; "--exclude-standard" ]
+      |> Result.map nul_paths
+    else if pathspecs = [] then
+      Error "brokered git add requires --all or pathspecs after --"
+    else
+      run_git ~cwd:worktree_path
+        ("ls-files" :: "-z" :: "-c" :: "-o" :: "--exclude-standard" :: "--"
+       :: pathspecs)
+      |> Result.map nul_paths
+  in
+  let rec check = function
+    | [] -> Ok ()
+    | relative :: rest ->
+        if
+          path_exists
+            (Filename.concat (Filename.concat worktree_path relative) ".git")
+        then Error ("brokered git add rejects nested repository: " ^ relative)
+        else
+          match run_git ~cwd:worktree_path [ "ls-files"; "-s"; "--"; relative ] with
+          | Error message -> Error message
+          | Ok output
+            when String.length output >= 6 && String.sub output 0 6 = "160000" ->
+              Error ("brokered git add rejects gitlink: " ^ relative)
+          | Ok _ -> (
+              match path_has_executable_filter ~worktree_path relative with
+              | Error _ as error -> error
+              | Ok () -> check rest)
+  in
+  check expanded
+let registration_present ~main_repository_root ~worktree_path =
+  match
+    run_git ~cwd:main_repository_root [ "worktree"; "list"; "--porcelain" ]
+  with
+  | Error message -> Error message
+  | Ok listing ->
+      let needle = "worktree " ^ worktree_path in
+      let rec contains haystack =
+        let h = String.length haystack in
+        let n = String.length needle in
+        let rec loop i =
+          i + n <= h && (String.sub haystack i n = needle || loop (i + 1))
+        in
+        n = 0 || loop 0
+      in
+      Ok (List.exists contains (String.split_on_char '\n' listing))
 let create_baseline ~worktree_path =
   let child_process = Lazy.force child_process_mod in
   let run args =
@@ -424,6 +502,9 @@ let create_baseline ~worktree_path =
       Ok ()
     with error -> Error (Printexc.to_string error)
   in
+  match preflight_broker_add ~worktree_path [ "add"; "--all" ] with
+  | Error message -> Error message
+  | Ok () ->
   match
     run
       [
@@ -452,14 +533,12 @@ let create_baseline ~worktree_path =
       with
       | Error message -> Error message
       | Ok () -> Ok ())
-
 let rollback_provisional ~main_repository_root ~worktree_path ~branch =
   ignore (run_git ~cwd:main_repository_root [ "worktree"; "remove"; "--force"; worktree_path ]);
   ignore (remove_path worktree_path);
   ignore
     (run_git ~cwd:main_repository_root
        [ "branch"; "-D"; branch ])
-
 let unfinished_operation ~worktree_path =
   let git_dir =
     match run_git ~cwd:worktree_path [ "rev-parse"; "--git-dir" ] with
@@ -479,7 +558,6 @@ let unfinished_operation ~worktree_path =
   List.exists
     (fun name -> path_exists (Filename.concat git_dir name))
     markers
-
 let worktree_is_clean ~worktree_path =
   if unfinished_operation ~worktree_path then
     Error "agent worktree has an unfinished repository operation"
@@ -508,7 +586,6 @@ let worktree_is_clean ~worktree_path =
             if dirty then
               Error "agent worktree has dirty or uninitialized submodules"
             else Ok ())
-
 let provision ~owner_session_id ~agent_id ~source_workspace =
   let agent_home = pi_agent_dir () in
   match resolve_repository source_workspace with
@@ -664,7 +741,6 @@ let provision ~owner_session_id ~agent_id ~source_workspace =
                                   in
                                   ignore (write_marker marker ~agent_home);
                                   Ok (binding, derived, marker_path))))))
-
 let accept_provisional ~owner_session_id ~agent_id =
   let agent_home = pi_agent_dir () in
   let owner_component = Taumel.Agent_workspace.owner_component owner_session_id in
@@ -700,7 +776,6 @@ let accept_provisional ~owner_session_id ~agent_id =
         Error
           ("workspace_unavailable: acceptance marker update failed: "
          ^ Printexc.to_string error))
-
 let rollback_failed_start ~owner_session_id ~agent_id ~main_repository_root
     ~worktree_path ~branch =
   let agent_home = pi_agent_dir () in
@@ -740,7 +815,6 @@ let rollback_failed_start ~owner_session_id ~agent_id ~main_repository_root
   else (
     clear_marker ~agent_home ~owner_session_id ~agent_id;
     Ok ())
-
 let remove_worktree ~main_repository_root ~worktree_path ~main_repository_id
     ~branch =
   let auth =
@@ -773,7 +847,6 @@ let remove_worktree ~main_repository_root ~worktree_path ~main_repository_id
           with
           | Ok _ -> Ok ()
           | Error message -> Error message))
-
 let list_provisional_marker_files ~agent_home =
   let root =
     Taumel.Agent_workspace.join_path
@@ -806,7 +879,6 @@ let list_provisional_marker_files ~agent_home =
             with _ -> [])
         owners
     with _ -> []
-
 let reconcile_provisional_markers () =
   let agent_home = pi_agent_dir () in
   list_provisional_marker_files ~agent_home
@@ -834,99 +906,6 @@ let reconcile_provisional_markers () =
                  ~main_repository_root:marker.main_repository_root
                  ~worktree_path:marker.worktree_path ~branch:marker.branch;
                ignore (remove_path path)))
-
-let attr_values_for ~worktree_path ~attr relative =
-  match
-    run_git ~cwd:worktree_path
-      [ "check-attr"; "-z"; attr; "--"; relative ]
-  with
-  | Error message -> Error message
-  | Ok output ->
-      (* NUL records: path\0attr\0value\0 ... *)
-      let parts = nul_paths output in
-      let rec values acc = function
-        | path :: name :: value :: rest when path = relative && name = attr ->
-            values (value :: acc) rest
-        | _ :: rest -> values acc rest
-        | [] -> List.rev acc
-      in
-      Ok (values [] parts)
-
-let path_has_executable_filter ~worktree_path relative =
-  let ( let* ) = Result.bind in
-  let* filters = attr_values_for ~worktree_path ~attr:"filter" relative in
-  let* cleans = attr_values_for ~worktree_path ~attr:"clean" relative in
-  let* processes = attr_values_for ~worktree_path ~attr:"process" relative in
-  let dangerous value =
-    let value = String.trim (String.lowercase_ascii value) in
-    value <> "" && value <> "unspecified" && value <> "unset"
-  in
-  if List.exists dangerous filters || List.exists dangerous cleans
-     || List.exists dangerous processes
-  then Error ("brokered git add rejects executable filter: " ^ relative)
-  else Ok ()
-
-let preflight_broker_add ~worktree_path argv =
-  let ( let* ) = Result.bind in
-  let has_all = List.mem "--all" argv in
-  let pathspecs =
-    let rec after_sep = function
-      | [] -> []
-      | "--" :: rest -> rest
-      | _ :: rest -> after_sep rest
-    in
-    after_sep argv
-  in
-  let* expanded =
-    if has_all then
-      run_git ~cwd:worktree_path
-        [ "ls-files"; "-z"; "-c"; "-o"; "--exclude-standard" ]
-      |> Result.map nul_paths
-    else if pathspecs = [] then
-      Error "brokered git add requires --all or pathspecs after --"
-    else
-      run_git ~cwd:worktree_path
-        ("ls-files" :: "-z" :: "-c" :: "-o" :: "--exclude-standard" :: "--"
-       :: pathspecs)
-      |> Result.map nul_paths
-  in
-  let rec check = function
-    | [] -> Ok ()
-    | relative :: rest ->
-        if
-          path_exists
-            (Filename.concat (Filename.concat worktree_path relative) ".git")
-        then Error ("brokered git add rejects nested repository: " ^ relative)
-        else
-          match run_git ~cwd:worktree_path [ "ls-files"; "-s"; "--"; relative ] with
-          | Error message -> Error message
-          | Ok output
-            when String.length output >= 6 && String.sub output 0 6 = "160000" ->
-              Error ("brokered git add rejects gitlink: " ^ relative)
-          | Ok _ -> (
-              match path_has_executable_filter ~worktree_path relative with
-              | Error _ as error -> error
-              | Ok () -> check rest)
-  in
-  check expanded
-
-let registration_present ~main_repository_root ~worktree_path =
-  match
-    run_git ~cwd:main_repository_root [ "worktree"; "list"; "--porcelain" ]
-  with
-  | Error _ -> false
-  | Ok listing ->
-      let needle = "worktree " ^ worktree_path in
-      let rec contains haystack =
-        let h = String.length haystack in
-        let n = String.length needle in
-        let rec loop i =
-          i + n <= h && (String.sub haystack i n = needle || loop (i + 1))
-        in
-        n = 0 || loop 0
-      in
-      List.exists contains (String.split_on_char '\n' listing)
-
 let verify_broker_registration ~worktree_path ~main_repository_root ~branch =
   if not (is_directory worktree_path) then
     Error "agent worktree path is unavailable"
@@ -961,7 +940,6 @@ let verify_broker_registration ~worktree_path ~main_repository_root ~branch =
                   with
                   | Error message -> Error message
                   | Ok git_dir -> Ok git_dir))
-
 let effective_workspace_for_identity ~(identity : Taumel.Agents.identity) =
   let agent_home = pi_agent_dir () in
   match
@@ -987,5 +965,3 @@ let effective_workspace_for_identity ~(identity : Taumel.Agents.identity) =
               Ok
                 ( Taumel.Agent_workspace.effective_workspace_of_derived derived,
                   derived )))
-
-
