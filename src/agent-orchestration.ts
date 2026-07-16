@@ -294,19 +294,29 @@ export async function executeAgentPrepared(
       const bridge = await createAgentChildSession(pi, core, childSessions, prepared, ctx);
       const rollbackWorktreeThenState = async () => {
         // Physical worktree rollback must run while identity/binding still exists.
-        try { decodeCoreAck(core.call("rollbackAgentWorktreeStart", [prepared, ctx])); } catch { /* retain incident marker if cleanup fails */ }
+        let cleanupError: string | undefined;
+        try {
+          decodeCoreAck(core.call("rollbackAgentWorktreeStart", [prepared, ctx]));
+        } catch (error) {
+          cleanupError = error instanceof Error ? error.message : String(error);
+        }
         await rollbackUnacceptedStart(core, childSessions, prepared, ctx, bridge);
+        return cleanupError;
       };
       if (bridge?.error !== undefined || bridge?.missingSessionIdentifier) {
-        await rollbackWorktreeThenState();
-        const message = bridge?.error ?? "failed to create child session";
+        const cleanupError = await rollbackWorktreeThenState();
+        const message = cleanupError
+          ?? bridge?.error
+          ?? "failed to create child session";
         return agentErrorToolResult(core, childFailureCode(message), message);
       }
       try {
         recordDispatchBoundary(core, prepared, ctx, bridge);
       } catch (error) {
-        await rollbackWorktreeThenState();
-        return agentErrorToolResult(core, "persistence_failed", error instanceof Error ? error.message : String(error));
+        const cleanupError = await rollbackWorktreeThenState();
+        const message = cleanupError
+          ?? (error instanceof Error ? error.message : String(error));
+        return agentErrorToolResult(core, cleanupError ? childFailureCode(cleanupError) : "persistence_failed", message);
       }
       const dispatch = await sendToChildSession(
         pi,
@@ -321,18 +331,21 @@ export async function executeAgentPrepared(
         },
       );
       if (dispatch.dispatched !== true) {
-        await rollbackWorktreeThenState();
-        const reason = typeof dispatch.reason === "string"
-          ? dispatch.reason
-          : "initial message was not accepted";
-        return agentErrorToolResult(core, "dispatch_failed", reason);
+        const cleanupError = await rollbackWorktreeThenState();
+        const reason = cleanupError
+          ?? (typeof dispatch.reason === "string"
+            ? dispatch.reason
+            : "initial message was not accepted");
+        return agentErrorToolResult(core, cleanupError ? childFailureCode(cleanupError) : "dispatch_failed", reason);
       }
       try {
         decodeCoreAck(core.call("acceptAgentWorktreeStart", [prepared, ctx]));
       } catch (error) {
-        await rollbackWorktreeThenState();
-        const message = error instanceof Error ? error.message : String(error);
-        return agentErrorToolResult(core, childFailureCode(message), message || "failed to accept agent worktree");
+        const cleanupError = await rollbackWorktreeThenState();
+        const message = cleanupError
+          ?? (error instanceof Error ? error.message : String(error))
+          ?? "failed to accept agent worktree";
+        return agentErrorToolResult(core, childFailureCode(message), message);
       }
       return preparedToolResult(core, {
         text: stringField(prepared, "text"),

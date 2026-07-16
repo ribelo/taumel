@@ -248,22 +248,18 @@ let nul_paths listing =
 
 let list_source_entries ~source_workspace =
   let ( let* ) = Result.bind in
-  (* Index-versus-HEAD captures staged-only changes; worktree flags capture
-     unstaged modifications/deletions; -o captures untracked non-ignored files. *)
-  let* cached =
-    run_git ~cwd:source_workspace
-      [ "diff"; "--cached"; "--name-only"; "-z"; "HEAD" ]
-  in
-  let* worktree =
-    run_git ~cwd:source_workspace
-      [ "ls-files"; "-z"; "-m"; "-d"; "--exclude-standard" ]
+  (* Complete snapshot of every tracked path and every untracked non-ignored path,
+     including tracked deletions. Content/mode/link are re-read for fingerprints. *)
+  let* tracked = run_git ~cwd:source_workspace [ "ls-files"; "-z" ] in
+  let* deleted =
+    run_git ~cwd:source_workspace [ "ls-files"; "-z"; "-d"; "--exclude-standard" ]
   in
   let* untracked =
     run_git ~cwd:source_workspace
       [ "ls-files"; "-z"; "-o"; "--exclude-standard" ]
   in
   let paths =
-    nul_paths cached @ nul_paths worktree @ nul_paths untracked
+    nul_paths tracked @ nul_paths deleted @ nul_paths untracked
     |> List.sort_uniq String.compare
   in
   Ok paths
@@ -283,12 +279,13 @@ let fingerprint_entries ~root entries =
 
 let capture_source_manifest ~source_workspace =
   let ( let* ) = Result.bind in
-  let* entries = list_source_entries ~source_workspace in
-  let* first = fingerprint_entries ~root:source_workspace entries in
-  let* second = fingerprint_entries ~root:source_workspace entries in
-  if first <> second then
+  let* first_entries = list_source_entries ~source_workspace in
+  let* first = fingerprint_entries ~root:source_workspace first_entries in
+  let* second_entries = list_source_entries ~source_workspace in
+  let* second = fingerprint_entries ~root:source_workspace second_entries in
+  if first_entries <> second_entries || first <> second then
     Error Taumel.Agent_worktree.workspace_unavailable_source_changed
-  else Ok (entries, second)
+  else Ok (second_entries, second)
 
 let source_fingerprint ~source_workspace =
   let ( let* ) = Result.bind in
@@ -427,7 +424,17 @@ let create_baseline ~worktree_path =
       Ok ()
     with error -> Error (Printexc.to_string error)
   in
-  match run [ "add"; "-A" ] with
+  match
+    run
+      [
+        "-c";
+        "core.attributesFile=/dev/null";
+        "-c";
+        "core.hooksPath=/dev/null";
+        "add";
+        "-A";
+      ]
+  with
   | Error message -> Error message
   | Ok () -> (
       match
@@ -435,6 +442,8 @@ let create_baseline ~worktree_path =
           [
             "-c";
             "user.useConfigOnly=true";
+            "-c";
+            "core.hooksPath=/dev/null";
             "commit";
             "--allow-empty";
             "-m";
@@ -664,7 +673,9 @@ let accept_provisional ~owner_session_id ~agent_id =
       ~agent_id
   in
   match read_marker path with
-  | Error _ when not (path_exists path) -> Ok ()
+  | Error _ when not (path_exists path) ->
+      Error
+        "workspace_unavailable: provisional marker missing before acceptance"
   | Error message -> Error ("workspace_unavailable: " ^ message)
   | Ok marker -> (
       try
@@ -824,6 +835,37 @@ let reconcile_provisional_markers () =
                  ~worktree_path:marker.worktree_path ~branch:marker.branch;
                ignore (remove_path path)))
 
+let attr_values_for ~worktree_path ~attr relative =
+  match
+    run_git ~cwd:worktree_path
+      [ "check-attr"; "-z"; attr; "--"; relative ]
+  with
+  | Error message -> Error message
+  | Ok output ->
+      (* NUL records: path\0attr\0value\0 ... *)
+      let parts = nul_paths output in
+      let rec values acc = function
+        | path :: name :: value :: rest when path = relative && name = attr ->
+            values (value :: acc) rest
+        | _ :: rest -> values acc rest
+        | [] -> List.rev acc
+      in
+      Ok (values [] parts)
+
+let path_has_executable_filter ~worktree_path relative =
+  let ( let* ) = Result.bind in
+  let* filters = attr_values_for ~worktree_path ~attr:"filter" relative in
+  let* cleans = attr_values_for ~worktree_path ~attr:"clean" relative in
+  let* processes = attr_values_for ~worktree_path ~attr:"process" relative in
+  let dangerous value =
+    let value = String.trim (String.lowercase_ascii value) in
+    value <> "" && value <> "unspecified" && value <> "unset"
+  in
+  if List.exists dangerous filters || List.exists dangerous cleans
+     || List.exists dangerous processes
+  then Error ("brokered git add rejects executable filter: " ^ relative)
+  else Ok ()
+
 let preflight_broker_add ~worktree_path argv =
   let ( let* ) = Result.bind in
   let has_all = List.mem "--all" argv in
@@ -843,38 +885,47 @@ let preflight_broker_add ~worktree_path argv =
     else if pathspecs = [] then
       Error "brokered git add requires --all or pathspecs after --"
     else
-      run_git ~cwd:worktree_path ("ls-files" :: "-z" :: "-c" :: "-o" :: "--exclude-standard" :: "--" :: pathspecs)
+      run_git ~cwd:worktree_path
+        ("ls-files" :: "-z" :: "-c" :: "-o" :: "--exclude-standard" :: "--"
+       :: pathspecs)
       |> Result.map nul_paths
-  in
-  let has_sub haystack needle =
-    let h = String.length haystack in
-    let n = String.length needle in
-    let rec loop i = i + n <= h && (String.sub haystack i n = needle || loop (i + 1)) in
-    n = 0 || loop 0
   in
   let rec check = function
     | [] -> Ok ()
     | relative :: rest ->
-        if path_exists (Filename.concat (Filename.concat worktree_path relative) ".git")
+        if
+          path_exists
+            (Filename.concat (Filename.concat worktree_path relative) ".git")
         then Error ("brokered git add rejects nested repository: " ^ relative)
         else
           match run_git ~cwd:worktree_path [ "ls-files"; "-s"; "--"; relative ] with
           | Error message -> Error message
-          | Ok output when String.length output >= 6 && String.sub output 0 6 = "160000" ->
+          | Ok output
+            when String.length output >= 6 && String.sub output 0 6 = "160000" ->
               Error ("brokered git add rejects gitlink: " ^ relative)
           | Ok _ -> (
-              match run_git ~cwd:worktree_path [ "check-attr"; "-a"; "--"; relative ] with
-              | Error message -> Error message
-              | Ok attrs ->
-                  let lowered = String.lowercase_ascii attrs in
-                  if
-                    (has_sub lowered "filter:" && not (has_sub lowered "filter: unspecified"))
-                    || (has_sub lowered "clean:" && not (has_sub lowered "clean: unspecified"))
-                    || (has_sub lowered "process:" && not (has_sub lowered "process: unspecified"))
-                  then Error ("brokered git add rejects executable filter: " ^ relative)
-                  else check rest)
+              match path_has_executable_filter ~worktree_path relative with
+              | Error _ as error -> error
+              | Ok () -> check rest)
   in
   check expanded
+
+let registration_present ~main_repository_root ~worktree_path =
+  match
+    run_git ~cwd:main_repository_root [ "worktree"; "list"; "--porcelain" ]
+  with
+  | Error _ -> false
+  | Ok listing ->
+      let needle = "worktree " ^ worktree_path in
+      let rec contains haystack =
+        let h = String.length haystack in
+        let n = String.length needle in
+        let rec loop i =
+          i + n <= h && (String.sub haystack i n = needle || loop (i + 1))
+        in
+        n = 0 || loop 0
+      in
+      List.exists contains (String.split_on_char '\n' listing)
 
 let verify_broker_registration ~worktree_path ~main_repository_root ~branch =
   if not (is_directory worktree_path) then
@@ -937,62 +988,4 @@ let effective_workspace_for_identity ~(identity : Taumel.Agents.identity) =
                 ( Taumel.Agent_workspace.effective_workspace_of_derived derived,
                   derived )))
 
-let identity_metadata ~(identity : Taumel.Agents.identity) ?child_session_file () =
-  let source = Taumel.Agents.identity_source_workspace identity in
-  let isolation =
-    Taumel.Agent_workspace.isolation_to_string
-      (Taumel.Agents.identity_isolation identity)
-  in
-  let effective, derived =
-    match effective_workspace_for_identity ~identity with
-    | Ok (path, derived) -> (path, Some derived)
-    | Error _ ->
-        match identity.identity_workspace_binding with
-        | Taumel.Agent_workspace.Shared { source_root } -> (source_root, None)
-        | Taumel.Agent_workspace.Worktree _ -> ("", None)
-  in
-  let fields =
-    [
-      ("kind", Taumel.Shared.String "agent");
-      ( "agentKind",
-        Taumel.Shared.String
-          (Taumel.Agents.agent_kind_to_string identity.identity_kind) );
-      ("agentId", Taumel.Shared.String identity.identity_agent_id);
-      ("modelId", Taumel.Shared.String identity.identity_model);
-      ("thinkingLevel", Taumel.Shared.String identity.identity_thinking);
-      ( "activeTools",
-        Taumel.Shared.Array
-          (List.map
-             (fun value -> Taumel.Shared.String value)
-             identity.identity_active_tools) );
-      ( "capabilityProfile",
-        Taumel.Capability_profile.to_json identity.identity_permission_ceiling );
-      ( "networkMode",
-        Taumel.Shared.String
-          (if identity.identity_network_allowed then "enabled" else "disabled") );
-      ("isolated_child", Taumel.Shared.Bool true);
-      ("workspaceDirectory", Taumel.Shared.String effective);
-      ("sourceWorkspace", Taumel.Shared.String source);
-      ("isolation", Taumel.Shared.String isolation);
-      ( "workspaceBinding",
-        Taumel.Agent_workspace.binding_to_json identity.identity_workspace_binding );
-    ]
-  in
-  let fields =
-    match derived with
-    | Some derived when derived.isolation = Taumel.Agent_workspace.Worktree ->
-        fields
-        @ [
-            ("worktreePath", Taumel.Shared.String derived.worktree_path);
-            ("worktreeBranch", Taumel.Shared.String derived.branch);
-            ( "mainRepositoryRoot",
-              Taumel.Shared.String derived.main_repository_root );
-          ]
-    | _ -> fields
-  in
-  let fields =
-    match child_session_file with
-    | Some value -> fields @ [ ("childSessionFile", Taumel.Shared.String value) ]
-    | None -> fields
-  in
-  Taumel.Shared.Object fields
+

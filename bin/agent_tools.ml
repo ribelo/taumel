@@ -119,7 +119,7 @@ let isolation_of_params params =
   match optional_string_field params "isolation" with
   | None -> Ok Taumel.Agent_workspace.default_isolation
   | Some value -> Taumel.Agent_workspace.isolation_of_string (String.trim value)
-let identity_metadata = Agent_worktree_host.identity_metadata
+let identity_metadata = Agent_worktree_ops.identity_metadata
 let tool_result text details =
   Boundary_contracts.BridgeToolResult.create ~text
     ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details)) ()
