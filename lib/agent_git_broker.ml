@@ -538,3 +538,42 @@ let authorize ~read_only parsed =
          ("brokered agent Git subcommand is not allowed while read-only: "
         ^ subcommand_to_string parsed.subcommand))
   else Ok parsed
+
+(* Per-identity broker lease: one active brokered Git process at a time. *)
+module Lease = struct
+  let held : (string, unit) Hashtbl.t = Hashtbl.create 16
+
+  let try_acquire agent_id =
+    let agent_id = String.trim agent_id in
+    if agent_id = "" then Error "broker lease requires agent id"
+    else if Hashtbl.mem held agent_id then
+      Error "brokered agent Git is already running for this identity"
+    else (
+      Hashtbl.replace held agent_id ();
+      Ok ())
+
+  let release agent_id =
+    let agent_id = String.trim agent_id in
+    Hashtbl.remove held agent_id
+
+  let is_held agent_id = Hashtbl.mem held (String.trim agent_id)
+
+  let held_agent_ids () =
+    Hashtbl.fold (fun agent_id _ acc -> agent_id :: acc) held []
+end
+
+(* Classify a shell AST as exactly one simple git command, or reject. *)
+let simple_git_tokens_from_ast root =
+  match Exec_policy.command_token_sequences_from_ast root with
+  | Error message -> Error (Invalid_arguments message)
+  | Ok [] -> Error Not_simple_git
+  | Ok (_ :: _ :: _) -> Error Not_simple_git
+  | Ok [ tokens ] -> (
+      match tokens with
+      | "git" :: _ -> Ok tokens
+      | _ -> Error Not_simple_git)
+
+let parse_simple_git_ast root =
+  match simple_git_tokens_from_ast root with
+  | Error _ as error -> error
+  | Ok tokens -> parse_tokens tokens

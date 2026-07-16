@@ -178,47 +178,44 @@ let child_worktree_context ctx =
             if worktree = "" then None else Some (worktree, main_repo, branch)
       | _ -> None)
 
-let simple_git_tokens cmd =
-  let trimmed = String.trim cmd in
-  if trimmed = "" then None
-  else if
-    List.exists
-      (fun operator ->
-        let needle = " " ^ operator ^ " " in
-        let rec contains haystack =
-          let hlen = String.length haystack in
-          let nlen = String.length needle in
-          nlen = 0
-          || (hlen >= nlen
-             && (String.sub haystack 0 nlen = needle
-                || contains (String.sub haystack 1 (hlen - 1))))
-        in
-        contains (" " ^ trimmed ^ " "))
-      [ "&&"; "||"; "|"; ";"; "`"; "$("; "<"; ">"; ">>" ]
-  then None
-  else
-    let tokens =
-      trimmed |> String.split_on_char ' '
-      |> List.filter (fun token -> token <> "")
-    in
-    match tokens with "git" :: _ -> Some tokens | _ -> None
+let child_agent_id ctx =
+  match Session_store.custom_entry_data ctx "taumel.childSession" with
+  | Some (Taumel.Shared.Object fields) -> (
+      match List.assoc_opt "agentId" fields with
+      | Some (Taumel.Shared.String value) -> Taumel.Shared.trim_non_empty value
+      | _ -> None)
+  | _ -> None
+
+let parse_brokered_git cmd =
+  match Exec_policy_bridge.reflect_bash_script cmd with
+  | Error _ ->
+      Error
+        (Taumel.Agent_git_broker.error_message Taumel.Agent_git_broker.Not_simple_git)
+  | Ok ast -> (
+      match Taumel.Agent_git_broker.parse_simple_git_ast ast with
+      | Error error -> Error (Taumel.Agent_git_broker.error_message error)
+      | Ok parsed -> Ok parsed)
 
 let prepare_exec_command params ctx =
   with_gateway_authorized "exec_command" (fun sandbox ->
       let request = exec_request_from_params params in
       let worktree_ctx = child_worktree_context ctx in
+      let looks_like_git =
+        let trimmed = String.trim request.cmd in
+        String.length trimmed >= 3 && String.sub trimmed 0 3 = "git"
+      in
       let brokered =
-        match (worktree_ctx, simple_git_tokens request.cmd) with
-        | Some (worktree, main_repo, branch), Some tokens -> (
-            match request.sandbox_permissions with
-            | Taumel.Sandbox.Require_escalated _ ->
-                Error
-                  "brokered agent Git rejects with_escalated_permissions"
-            | Taumel.Sandbox.Use_default -> (
-                match Taumel.Agent_git_broker.parse_tokens tokens with
-                | Error error ->
-                    Error (Taumel.Agent_git_broker.error_message error)
-                | Ok parsed ->
+        match worktree_ctx with
+        | None -> Error ""
+        | Some _ when not looks_like_git -> Error ""
+        | Some (worktree, main_repo, branch) ->
+            (match parse_brokered_git request.cmd with
+            | Error message -> Error message
+            | Ok parsed ->
+                (match request.sandbox_permissions with
+                | Taumel.Sandbox.Require_escalated _ ->
+                    Error "brokered agent Git rejects with_escalated_permissions"
+                | Taumel.Sandbox.Use_default ->
                     let read_only =
                       match sandbox.filesystem_mode with
                       | Taumel.Sandbox.Read_only -> true
@@ -228,33 +225,42 @@ let prepare_exec_command params ctx =
                     | Error error ->
                         Error (Taumel.Agent_git_broker.error_message error)
                     | Ok authorized ->
-                        let auth =
-                          Taumel.Agent_worktree.authorize_mutation
-                            ~operation:Broker ~main_repository_root:main_repo
-                            ~main_repository_id:"verified" ~worktree_path:worktree
-                            ~branch ~trusted_adapter:true
-                        in
-                        (match auth with
+                        (match
+                           Taumel.Agent_worktree.authorize_mutation
+                             ~operation:Broker ~main_repository_root:main_repo
+                             ~main_repository_id:"verified"
+                             ~worktree_path:worktree ~branch ~trusted_adapter:true
+                         with
                         | Denied message -> Error message
                         | Authorized _ ->
-                            Ok
-                              ( worktree,
-                                main_repo ^ "/.git",
-                                authorized.argv )))))
-        | _ -> Error ""
+                            let agent_id =
+                              Option.value (child_agent_id ctx) ~default:""
+                            in
+                            if
+                              agent_id <> ""
+                              && Taumel.Agent_git_broker.Lease.is_held agent_id
+                            then
+                              Error
+                                "brokered agent Git is already running for this identity"
+                            else
+                              Ok
+                                ( worktree,
+                                  main_repo ^ "/.git",
+                                  authorized.argv,
+                                  agent_id )))))
       in
       match brokered with
-      | Ok (worktree, git_dir, argv) ->
+      | Ok (worktree, git_dir, argv, agent_id) ->
           let sandbox_cfg = typed_sandbox_config sandbox in
           let workdir =
             if request.workdir = "" then worktree else request.workdir
           in
           Boundary_contracts.PreparedExec.create ~cmd:request.cmd ~workdir
-            ~tty:true ~sandbox:sandbox_cfg ~brokeredGit:true ~directCommand:"git"
-            ~directArgv:argv ~gitDir:git_dir ~gitWorkTree:worktree ()
+            ~tty:false ~sandbox:sandbox_cfg ~brokeredGit:true ~directCommand:"git"
+            ~directArgv:argv ~gitDir:git_dir ~gitWorkTree:worktree
+            ?brokerAgentId:(if agent_id = "" then None else Some agent_id) ()
           |> Tool_contracts.PreparedExec.t_to_js |> inject
-      | Error message when message <> "" && worktree_ctx <> None
-        && simple_git_tokens request.cmd <> None ->
+      | Error message when message <> "" && worktree_ctx <> None ->
           error_obj message
       | Error _ ->
       let policy_decision =

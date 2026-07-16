@@ -304,40 +304,52 @@ let create_worktree ~source_workspace ~main_repository_root ~worktree_path ~bran
               (fun relative ->
                 let source = Filename.concat source_workspace relative in
                 let target = Filename.concat worktree_path relative in
+                let fs = Lazy.force fs_mod in
                 if path_exists source then (
                   mkdir_p (Filename.dirname target);
-                  let fs = Lazy.force fs_mod in
-                  ignore
-                    (Unsafe.meth_call fs "copyFileSync"
-                       [| js_string source; js_string target |]))
+                  try
+                    let lstat =
+                      Unsafe.meth_call fs "lstatSync" [| js_string source |]
+                    in
+                    if Js.to_bool (Unsafe.meth_call lstat "isSymbolicLink" [||])
+                    then
+                      let link =
+                        Js.to_string
+                          (Unsafe.meth_call fs "readlinkSync"
+                             [| js_string source |])
+                      in
+                      ignore (remove_path target);
+                      ignore
+                        (Unsafe.meth_call fs "symlinkSync"
+                           [| js_string link; js_string target |])
+                    else if Js.to_bool (Unsafe.meth_call lstat "isDirectory" [||])
+                    then
+                      (* Nested gitlinks/directories are not reproduced as files. *)
+                      ()
+                    else (
+                      ignore
+                        (Unsafe.meth_call fs "copyFileSync"
+                           [| js_string source; js_string target |]);
+                      let mode =
+                        match float_value (Unsafe.get lstat "mode") with
+                        | Some value -> int_of_float value land 0o777
+                        | None -> 0o644
+                      in
+                      ignore
+                        (Unsafe.meth_call fs "chmodSync"
+                           [| js_string target; js_number (float_of_int mode) |]))
+                  with _ ->
+                    ignore
+                      (Unsafe.meth_call fs "copyFileSync"
+                         [| js_string source; js_string target |]))
                 else ignore (remove_path target))
               files);
       Ok ()
 
 let create_baseline ~worktree_path =
-  let env_identity =
-    [
-      ("GIT_AUTHOR_NAME", Taumel.Agent_worktree.baseline_author_name);
-      ("GIT_AUTHOR_EMAIL", Taumel.Agent_worktree.baseline_author_email);
-      ("GIT_COMMITTER_NAME", Taumel.Agent_worktree.baseline_committer_name);
-      ("GIT_COMMITTER_EMAIL", Taumel.Agent_worktree.baseline_committer_email);
-      ("GIT_CONFIG_NOSYSTEM", "1");
-      ("GIT_TERMINAL_PROMPT", "0");
-    ]
-  in
   let child_process = Lazy.force child_process_mod in
   let run args =
     try
-      let process_env = Unsafe.get (Unsafe.get Unsafe.global "process") "env" in
-      let env_fields =
-        Array.append
-          [|
-            ("PATH", Unsafe.get process_env "PATH");
-            ("HOME", Unsafe.get process_env "HOME");
-          |]
-          (Array.of_list
-             (List.map (fun (name, value) -> (name, js_string value)) env_identity))
-      in
       ignore
         (Unsafe.meth_call child_process "execFileSync"
            [|
@@ -347,7 +359,18 @@ let create_baseline ~worktree_path =
                [|
                  ("cwd", js_string worktree_path);
                  ("encoding", js_string "utf8");
-                 ("env", Unsafe.obj env_fields);
+                 ( "env",
+                   trusted_git_env
+                     [
+                       ( "GIT_AUTHOR_NAME",
+                         js_string Taumel.Agent_worktree.baseline_author_name );
+                       ( "GIT_AUTHOR_EMAIL",
+                         js_string Taumel.Agent_worktree.baseline_author_email );
+                       ( "GIT_COMMITTER_NAME",
+                         js_string Taumel.Agent_worktree.baseline_committer_name );
+                       ( "GIT_COMMITTER_EMAIL",
+                         js_string Taumel.Agent_worktree.baseline_committer_email );
+                     ] );
                  ( "stdio",
                    js_array
                      [ js_string "ignore"; js_string "pipe"; js_string "pipe" ] );
@@ -518,32 +541,193 @@ let accept_provisional ~owner_session_id ~agent_id =
 let rollback_failed_start ~owner_session_id ~agent_id ~main_repository_root
     ~worktree_path ~branch =
   let agent_home = pi_agent_dir () in
-  rollback_provisional ~main_repository_root ~worktree_path ~branch;
-  clear_marker ~agent_home ~owner_session_id ~agent_id
+  (try rollback_provisional ~main_repository_root ~worktree_path ~branch
+   with _ -> ());
+  let still_present =
+    path_exists worktree_path
+    ||
+    match
+      run_git ~cwd:main_repository_root
+        [ "show-ref"; "--verify"; "--quiet"; "refs/heads/" ^ branch ]
+    with
+    | Ok _ -> true
+    | Error _ -> false
+  in
+  if still_present then (
+    let incident =
+      Taumel.Agent_worktree.opaque_cleanup_incident_id ~owner_session_id
+        ~agent_id ~now:(int_of_float (Unix.gettimeofday ()))
+    in
+    let marker =
+      {
+        Taumel.Agent_worktree.owner_session_id;
+        agent_id;
+        main_repository_root;
+        main_repository_id = "";
+        worktree_path;
+        branch;
+        completed_steps = [];
+        cleanup_incident_id = Some incident;
+      }
+    in
+    ignore (write_marker marker ~agent_home);
+    Error
+      ( "cleanup_failed",
+        "provisional worktree cleanup failed; incident " ^ incident ))
+  else (
+    clear_marker ~agent_home ~owner_session_id ~agent_id;
+    Ok ())
+
+let unfinished_operation ~worktree_path =
+  let git_dir =
+    match run_git ~cwd:worktree_path [ "rev-parse"; "--git-dir" ] with
+    | Ok value -> value
+    | Error _ -> worktree_path ^ "/.git"
+  in
+  let markers =
+    [
+      "MERGE_HEAD";
+      "CHERRY_PICK_HEAD";
+      "REVERT_HEAD";
+      "BISECT_LOG";
+      "rebase-merge";
+      "rebase-apply";
+    ]
+  in
+  List.exists
+    (fun name -> path_exists (Filename.concat git_dir name))
+    markers
 
 let worktree_is_clean ~worktree_path =
-  match
-    run_git ~cwd:worktree_path
-      [ "status"; "--porcelain=v1"; "--untracked-files=normal" ]
-  with
-  | Error message -> Error message
-  | Ok output -> Ok (String.trim output = "")
+  if unfinished_operation ~worktree_path then
+    Error "agent worktree has an unfinished repository operation"
+  else
+    match
+      run_git ~cwd:worktree_path
+        [ "status"; "--porcelain=v1"; "--untracked-files=normal" ]
+    with
+    | Error message -> Error message
+    | Ok output when String.trim output <> "" ->
+        Error "agent worktree has uncommitted changes"
+    | Ok _ -> (
+        match
+          run_git ~cwd:worktree_path
+            [ "submodule"; "status"; "--recursive" ]
+        with
+        | Error _ -> Ok ()
+        | Ok submodule_status ->
+            let dirty =
+              submodule_status |> String.split_on_char '\n'
+              |> List.exists (fun line ->
+                     let line = String.trim line in
+                     line <> ""
+                     && (line.[0] = '-' || line.[0] = '+' || line.[0] = 'U'))
+            in
+            if dirty then
+              Error "agent worktree has dirty or uninitialized submodules"
+            else Ok ())
 
-let remove_worktree ~main_repository_root ~worktree_path =
+let remove_worktree ~main_repository_root ~worktree_path ~main_repository_id
+    ~branch =
   let auth =
     Taumel.Agent_worktree.authorize_mutation ~operation:Cleanup
-      ~main_repository_root ~main_repository_id:"verified" ~worktree_path
-      ~branch:"verified" ~trusted_adapter:true
+      ~main_repository_root ~main_repository_id ~worktree_path ~branch
+      ~trusted_adapter:true
   in
   match auth with
   | Denied message -> Error message
-  | Authorized _ -> (
+  | Authorized auth_effect -> (
       match
-        run_git ~cwd:main_repository_root
-          [ "worktree"; "remove"; worktree_path ]
+        Taumel.Sandbox.authorize_agent_worktree_mutation ~trusted_adapter:true
+          {
+            Taumel.Sandbox.operation = Taumel.Sandbox.Agent_worktree_cleanup;
+            main_repository_root = auth_effect.main_repository_root;
+            main_repository_id = auth_effect.main_repository_id;
+            worktree_path = auth_effect.worktree_path;
+            worktree_admin_path = auth_effect.worktree_admin_path;
+            branch = auth_effect.branch;
+            branch_ref = auth_effect.branch_ref;
+            object_store_path = auth_effect.object_store_path;
+          }
       with
-      | Ok _ -> Ok ()
-      | Error message -> Error message)
+      | Taumel.Sandbox.Deny message | Taumel.Sandbox.Requires_approval message ->
+          Error message
+      | Taumel.Sandbox.Allow -> (
+          match
+            run_git ~cwd:main_repository_root
+              [ "worktree"; "remove"; worktree_path ]
+          with
+          | Ok _ -> Ok ()
+          | Error message -> Error message))
+
+let list_provisional_marker_files ~agent_home =
+  let root =
+    Taumel.Agent_workspace.join_path
+      [ agent_home; "taumel"; "worktrees"; ".provisional" ]
+  in
+  if not (path_exists root) then []
+  else
+    let fs = Lazy.force fs_mod in
+    try
+      let owners =
+        Js.to_array
+          (Unsafe.meth_call fs "readdirSync" [| js_string root |])
+        |> Array.to_list
+        |> List.filter_map string_value
+      in
+      List.concat_map
+        (fun owner ->
+          let owner_dir = Filename.concat root owner in
+          if not (is_directory owner_dir) then []
+          else
+            try
+              Js.to_array
+                (Unsafe.meth_call fs "readdirSync" [| js_string owner_dir |])
+              |> Array.to_list
+              |> List.filter_map (fun name_js ->
+                     match string_value name_js with
+                     | Some name when Filename.check_suffix name ".json" ->
+                         Some (Filename.concat owner_dir name)
+                     | _ -> None)
+            with _ -> [])
+        owners
+    with _ -> []
+
+let reconcile_provisional_markers () =
+  let agent_home = pi_agent_dir () in
+  list_provisional_marker_files ~agent_home
+  |> List.iter (fun path ->
+         match read_marker path with
+         | Error _ -> ()
+         | Ok marker ->
+             let matches =
+               Taumel.Agent_worktree.marker_matches_resources marker
+                 ~main_repository_root:marker.main_repository_root
+                 ~main_repository_id:marker.main_repository_id
+                 ~worktree_path:marker.worktree_path ~branch:marker.branch
+             in
+             if not matches then ()
+             else
+               let has_resources =
+                 path_exists marker.worktree_path
+                 ||
+                 match
+                   run_git ~cwd:marker.main_repository_root
+                     [
+                       "show-ref";
+                       "--verify";
+                       "--quiet";
+                       "refs/heads/" ^ marker.branch;
+                     ]
+                 with
+                 | Ok _ -> true
+                 | Error _ -> false
+               in
+               if has_resources then
+                 rollback_provisional
+                   ~main_repository_root:marker.main_repository_root
+                   ~worktree_path:marker.worktree_path ~branch:marker.branch;
+               ignore (remove_path path))
 
 let effective_workspace_for_identity ~(identity : Taumel.Agents.identity) =
   let agent_home = pi_agent_dir () in

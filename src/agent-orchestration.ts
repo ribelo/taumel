@@ -610,6 +610,11 @@ export function installAgentLifecycle(
 ): void {
   const reconcileAfterLoad = (_event: unknown, ctx: unknown) => {
     setTimeout(() => {
+      try {
+        decodeCoreAck(core.call("reconcileProvisionalAgentWorktrees", []));
+      } catch {
+        /* best-effort provisional worktree reclaim */
+      }
       reconcilePersistedAgentNotifications(core, ctx);
       if (!isObject(ctx) || ctx.hasUI !== true || !isObject(ctx.ui)) return;
       const notify = ctx.ui.notify;

@@ -1,9 +1,7 @@
 open Jsoo_bridge
 open App_state
 open Runtime_access
-
 let owner_id ctx = Session_store.session_id_from_ctx ctx
-
 let is_agent_child ctx =
   match Session_store.custom_entry_data ctx "taumel.childSession" with
   | Some data -> (
@@ -13,11 +11,9 @@ let is_agent_child ctx =
   | None -> false
 let reject_nested name =
   error_obj (name ^ " is unavailable inside a child agent")
-
 let save_agent_state ctx =
   Session_store.append_custom_entry ctx "taumel.agents.v4"
     (Taumel.Agents_codec.encode !agent_state)
-
 let commit_agent_state ctx next =
   let previous = !agent_state in
   agent_state := next;
@@ -27,22 +23,16 @@ let commit_agent_state ctx next =
   with error ->
     agent_state := previous;
     Error ("agent state persistence failed: " ^ Printexc.to_string error)
-
 let js_string_array values = js_array (List.map js_string values)
-
 let option_string = function
   | None -> Unsafe.inject Js.null
   | Some value -> js_string value
-
 let js_run_status status =
   js_string (Taumel.Agents.run_status_to_string status)
-
 let js_kind kind = js_string (Taumel.Agents.agent_kind_to_string kind)
-
 let js_tier = function
   | None -> Unsafe.inject Js.null
   | Some effort -> js_string (Taumel.Agents.effort_to_string effort)
-
 let local_timestamp seconds =
   let value = Unix.localtime (float_of_int seconds) in
   let date =
@@ -60,9 +50,7 @@ let local_timestamp seconds =
     (value.Unix.tm_year + 1900) (value.Unix.tm_mon + 1) value.Unix.tm_mday
     value.Unix.tm_hour value.Unix.tm_min value.Unix.tm_sec sign
     (absolute / 3600) ((absolute mod 3600) / 60)
-
 let js_timestamp seconds = js_string (local_timestamp seconds)
-
 let recommendation_for status activity =
   match (status, activity) with
   | "running", ("starting" | "reasoning" | "using_tool") -> "wait"
@@ -70,7 +58,6 @@ let recommendation_for status activity =
   | ("completed" | "failed" | "cancelled" | "lost"), "inactive" -> "call_agent_wait"
   | "suspended", "inactive" -> "resume_or_close"
   | _ -> "wait"
-
 let current_active_tools ctx =
   match optional_string_array ctx "activeTools" with
   | Some tools -> tools
@@ -949,17 +936,19 @@ let rollback_worktree_start facts _ctx =
   match Taumel.Agents.find_identity !agent_state agent_id with
   | None -> core_ack ()
   | Some identity -> (
-      match
-        Agent_worktree_host.effective_workspace_for_identity ~identity
-      with
+      match Agent_worktree_host.effective_workspace_for_identity ~identity with
       | Error _ -> core_ack ()
       | Ok (_path, derived) ->
-          if derived.isolation = Taumel.Agent_workspace.Worktree then
-            Agent_worktree_host.rollback_failed_start
-              ~owner_session_id:identity.identity_owner_session_id
-              ~agent_id ~main_repository_root:derived.main_repository_root
-              ~worktree_path:derived.worktree_path ~branch:derived.branch;
-          core_ack ())
+          if derived.isolation <> Taumel.Agent_workspace.Worktree then core_ack ()
+          else
+            match
+              Agent_worktree_host.rollback_failed_start
+                ~owner_session_id:identity.identity_owner_session_id ~agent_id
+                ~main_repository_root:derived.main_repository_root
+                ~worktree_path:derived.worktree_path ~branch:derived.branch
+            with
+            | Ok () -> core_ack ()
+            | Error (_code, message) -> error_obj message)
 
 let delete_worktree facts _ctx =
   let worktree_path =
@@ -972,19 +961,28 @@ let delete_worktree facts _ctx =
     | Some value -> String.trim value
     | None -> ""
   in
+  let branch =
+    match optional_string_field facts "branch" with
+    | Some value -> String.trim value
+    | None -> ""
+  in
   if worktree_path = "" || main_repository_root = "" then core_ack ()
   else if not (Agent_worktree_host.path_exists worktree_path) then core_ack ()
   else
     match Agent_worktree_host.worktree_is_clean ~worktree_path with
     | Error message -> error_obj message
-    | Ok false -> error_obj "agent worktree has uncommitted changes"
-    | Ok true -> (
+    | Ok () -> (
         match
-          Agent_worktree_host.remove_worktree ~main_repository_root
-            ~worktree_path
+          Agent_worktree_host.remove_worktree ~main_repository_root ~worktree_path
+            ~main_repository_id:main_repository_root
+            ~branch:(if branch = "" then "HEAD" else branch)
         with
         | Ok () -> core_ack ()
         | Error message -> error_obj message)
+
+let reconcile_provisional_worktrees () =
+  Agent_worktree_host.reconcile_provisional_markers ();
+  core_ack ()
 
 let prepare name params ctx =
   match !agent_state_load_error with
@@ -992,7 +990,9 @@ let prepare name params ctx =
       error_obj ("agent state is unavailable: " ^ message)
   | None -> (
       match name with
-      | "agent_spawn" | "finder" | "oracle" -> prepare_start name params ctx
+      | "agent_spawn" | "finder" | "oracle" ->
+          Agent_worktree_host.reconcile_provisional_markers ();
+          prepare_start name params ctx
       | "agent_send" -> prepare_send params ctx
       | "agent_wait" -> prepare_wait params ctx
       | "agent_list" -> prepare_list ctx

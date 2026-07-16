@@ -139,6 +139,7 @@ let core_call name_js args_js =
   | "acceptAgentWorktreeStart" -> Agent_tools.accept_worktree_start (arg 0) (arg 1)
   | "rollbackAgentWorktreeStart" -> Agent_tools.rollback_worktree_start (arg 0) (arg 1)
   | "deleteAgentWorktree" -> Agent_tools.delete_worktree (arg 0) (arg 1)
+  | "reconcileProvisionalAgentWorktrees" -> Agent_tools.reconcile_provisional_worktrees ()
   | "handleCommand" -> Command_bridge.handle (arg 0)
   | "handleComposerCommand" -> Composer_commands.handle (arg 0)
    | "planCommandNotification" ->

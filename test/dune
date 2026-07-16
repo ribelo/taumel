@@ -95,6 +95,12 @@
  (libraries taumel))
 
 (test
+ (name test_agent_git_broker_hardening)
+ (modules test_agent_git_broker_hardening)
+ (package taumel)
+ (libraries taumel))
+
+(test
  (name test_agent_worktree_lifecycle)
  (modules test_agent_worktree_lifecycle)
  (package taumel)

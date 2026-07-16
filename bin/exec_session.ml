@@ -25,6 +25,7 @@ type session = {
   mutable active_write_stdin_waiters : int;
   mutable waiters : (int * (unit -> unit)) list;
   mutable next_waiter_id : int;
+  mutable broker_agent_id : string option;
 }
 type retained_session = {
   retained_id : int;
@@ -682,6 +683,13 @@ let wire_stream session child name =
                     if crossed then kill_session session;
                     notify session));
            |])
+let release_broker_lease session =
+  match session.broker_agent_id with
+  | None -> ()
+  | Some agent_id ->
+      Taumel.Agent_git_broker.Lease.release agent_id;
+      session.broker_agent_id <- None
+
 let spawn_session session ~file ~args ~cwd ?env () =
   let fs = js_require "node:fs" in
   let exists = Unsafe.fun_call (Unsafe.get fs "existsSync") [| js_string cwd |] in
@@ -714,6 +722,7 @@ let spawn_session session ~file ~args ~cwd ?env () =
        [| inject (Js.wrap_callback (fun event ->
             session.exited <- true;
             session.exit_code <- Some (int_field_default event "exitCode" 1);
+            release_broker_lease session;
             notify session)) |])
 let new_session owner_id tty =
   let id = !next_session_id in
@@ -744,6 +753,7 @@ let new_session owner_id tty =
     active_write_stdin_waiters = 0;
     waiters = [];
     next_waiter_id = 1;
+    broker_agent_id = None;
   }
 let retained_session_cap_per_owner = 128
 let prune_retained_sessions owner_id =
@@ -852,6 +862,17 @@ let run_exec_command prepared host runtime owner_id signal force_unsandboxed =
   | Error message -> rejected_promise message
   | Ok call ->
       let session = new_session owner_id call.tty in
+      let broker_agent_id =
+        match optional_string_field prepared "brokerAgentId" with
+        | Some value when String.trim value <> "" -> Some (String.trim value)
+        | _ -> None
+      in
+      (match broker_agent_id with
+      | None -> ()
+      | Some agent_id -> (
+          match Taumel.Agent_git_broker.Lease.try_acquire agent_id with
+          | Error message -> failwith message
+          | Ok () -> session.broker_agent_id <- Some agent_id));
       (try
          let env =
            if not (get_bool prepared "brokeredGit") then None
@@ -891,7 +912,8 @@ let run_exec_command prepared host runtime owner_id signal force_unsandboxed =
          let message = Printexc.to_string exn ^ "\n" in
          ignore (add_output session message);
          session.exited <- true;
-         session.exit_code <- Some 1);
+         session.exit_code <- Some 1;
+         release_broker_lease session);
       Hashtbl.replace sessions session.id session;
       let extra =
         Unsafe.obj
