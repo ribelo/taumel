@@ -73,7 +73,13 @@ let test_rejects_unsupported_and_non_simple () =
   assert_error_kind "log --max-count space form" "invalid"
     [ "git"; "log"; "--max-count"; "5" ];
   assert_error_kind "multiline commit" "invalid"
-    [ "git"; "commit"; "-m"; "line1\nline2" ]
+    [ "git"; "commit"; "-m"; "line1\nline2" ];
+  assert_error_kind "diff option after rev" "invalid"
+    [ "git"; "diff"; "HEAD"; "--exit-code" ];
+  assert_error_kind "log option after rev" "invalid"
+    [ "git"; "log"; "HEAD"; "--oneline" ];
+  assert_error_kind "show option after object" "invalid"
+    [ "git"; "show"; "HEAD"; "--stat" ]
 
 let test_read_only_authorization () =
   let commit = parse_ok [ "git"; "commit"; "-m"; "x" ] in

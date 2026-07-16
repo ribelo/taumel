@@ -65,7 +65,6 @@ let current_active_tools ctx =
       match optional_string_array (active_host_or_empty ()) "activeTools" with
       | Some tools -> tools
       | None -> []
-
 let parent_model () =
   if state.provider = "" || state.model = "" then None
   else Some (state.provider ^ "/" ^ state.model)
@@ -274,7 +273,8 @@ let prepare_start name params ctx =
                               ~agent_id:identity.identity_agent_id
                               ~source_workspace:state.cwd
                           with
-                          | Error (_code, message) -> Error message
+                          | Error (_code, message) ->
+                              Error ("workspace_unavailable: " ^ message)
                           | Ok (binding, _derived, _marker) ->
                               let identity =
                                 {

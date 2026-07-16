@@ -186,6 +186,16 @@ let child_agent_id ctx =
       | _ -> None)
   | _ -> None
 
+let resolve_trusted_git () =
+  let process = Unsafe.get Unsafe.global "process" in
+  let env = Unsafe.get process "env" in
+  match string_value (Unsafe.get env "TAUMEL_TRUSTED_GIT") with
+  | Some value when String.trim value <> "" -> String.trim value
+  | _ -> (
+      match string_value (Unsafe.get env "GIT_EXEC_PATH") with
+      | Some _ -> "git"
+      | None -> "git")
+
 let parse_brokered_git cmd =
   match Exec_policy_bridge.reflect_bash_script cmd with
   | Error _ ->
@@ -220,6 +230,23 @@ let prepare_exec_command params ctx =
         let trimmed = String.trim request.cmd in
         String.length trimmed >= 3 && String.sub trimmed 0 3 = "git"
       in
+      let policy_decision =
+        Exec_policy_bridge.policy_decision_for_command sandbox
+          request.sandbox_permissions request.cmd
+      in
+      let policy_message =
+        Exec_policy_bridge.policy_reason_for_command sandbox
+          request.sandbox_permissions request.cmd
+      in
+      match (worktree_ctx, looks_like_git, policy_decision) with
+      | Some _, true, Some Taumel.Exec_policy.Forbidden ->
+          error_obj
+            (Option.value policy_message ~default:"exec policy forbids command")
+      | Some _, true, Some Taumel.Exec_policy.Prompt ->
+          error_obj
+            (Option.value policy_message
+               ~default:"exec policy requires approval before brokered agent Git")
+      | _ ->
       let brokered =
         match worktree_ctx with
         | None -> Error ""
@@ -290,21 +317,13 @@ let prepare_exec_command params ctx =
           then error_obj "brokered agent Git workdir must stay inside the agent worktree"
           else
           Boundary_contracts.PreparedExec.create ~cmd:request.cmd ~workdir
-            ~tty:false ~sandbox:sandbox_cfg ~brokeredGit:true ~directCommand:"git"
+            ~tty:false ~sandbox:sandbox_cfg ~brokeredGit:true ~directCommand:(resolve_trusted_git ())
             ~directArgv:argv ~gitDir:git_dir ~gitWorkTree:worktree
             ?brokerAgentId:(if agent_id = "" then None else Some agent_id) ()
           |> Tool_contracts.PreparedExec.t_to_js |> inject
       | Error message when message <> "" && worktree_ctx <> None ->
           error_obj message
       | Error _ ->
-      let policy_decision =
-        Exec_policy_bridge.policy_decision_for_command sandbox request.sandbox_permissions
-          request.cmd
-      in
-      let policy_message =
-        Exec_policy_bridge.policy_reason_for_command sandbox request.sandbox_permissions
-          request.cmd
-      in
       match Taumel.Mutation_plan.plan_exec ?policy_decision ?policy_message sandbox request with
       | Error message -> error_obj message
       | Ok plan ->

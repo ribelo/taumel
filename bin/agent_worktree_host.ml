@@ -213,50 +213,60 @@ let sha256_hex value =
 let file_entry_fingerprint ~root relative =
   let fs = Lazy.force fs_mod in
   let path = Filename.concat root relative in
+  let crypto = Lazy.force crypto_mod in
   try
-    let lstat = Unsafe.meth_call fs "lstatSync" [| js_string path |] in
-    if Js.to_bool (Unsafe.meth_call lstat "isSymbolicLink" [||]) then
-      let target =
-        Js.to_string (Unsafe.meth_call fs "readlinkSync" [| js_string path |])
-      in
-      Ok ("symlink\000" ^ relative ^ "\000" ^ target)
-    else if Js.to_bool (Unsafe.meth_call lstat "isDirectory" [||]) then
-      Error ("unsupported directory entry in source snapshot: " ^ relative)
-    else if Js.to_bool (Unsafe.meth_call lstat "isFile" [||]) then
-      let mode =
-        match float_value (Unsafe.get lstat "mode") with
-        | Some value -> int_of_float value land 0o777
-        | None -> 0o644
-      in
-      let contents =
-        Js.to_string
-          (Unsafe.meth_call fs "readFileSync" [| js_string path; js_string "utf8" |])
-      in
-      Ok
-        ("file\000" ^ relative ^ "\000" ^ string_of_int mode ^ "\000"
-       ^ sha256_hex contents)
-    else Error ("unsupported source entry type: " ^ relative)
+    if not (path_exists path) then Ok ("deleted\000" ^ relative)
+    else
+      let lstat = Unsafe.meth_call fs "lstatSync" [| js_string path |] in
+      if Js.to_bool (Unsafe.meth_call lstat "isSymbolicLink" [||]) then
+        let target =
+          Js.to_string (Unsafe.meth_call fs "readlinkSync" [| js_string path |])
+        in
+        Ok ("symlink\000" ^ relative ^ "\000" ^ target)
+      else if Js.to_bool (Unsafe.meth_call lstat "isDirectory" [||]) then
+        Error ("unsupported directory entry in source snapshot: " ^ relative)
+      else if Js.to_bool (Unsafe.meth_call lstat "isFile" [||]) then
+        let mode =
+          match float_value (Unsafe.get lstat "mode") with
+          | Some value -> int_of_float value land 0o777
+          | None -> 0o644
+        in
+        let buf = Unsafe.meth_call fs "readFileSync" [| js_string path |] in
+        let hash =
+          Unsafe.fun_call (Unsafe.get crypto "createHash") [| js_string "sha256" |]
+        in
+        ignore (Unsafe.meth_call hash "update" [| buf |]);
+        let digest =
+          Js.to_string (Unsafe.meth_call hash "digest" [| js_string "hex" |])
+        in
+        Ok ("file\000" ^ relative ^ "\000" ^ string_of_int mode ^ "\000" ^ digest)
+      else Error ("unsupported source entry type: " ^ relative)
   with error -> Error (relative ^ ": " ^ Printexc.to_string error)
 
+let nul_paths listing =
+  String.split_on_char '\x00' listing |> List.filter (fun value -> value <> "")
+
 let list_source_entries ~source_workspace =
-  let rec collect acc args =
-    match run_git ~cwd:source_workspace args with
-    | Error message -> Error message
-    | Ok listing ->
-        let files =
-          String.split_on_char '\x00' listing
-          |> List.filter (fun value -> value <> "")
-        in
-        Ok (List.rev_append (List.rev files) acc)
-  in
   let ( let* ) = Result.bind in
-  let* modified =
-    collect [] [ "ls-files"; "-z"; "-m"; "-d"; "--exclude-standard" ]
+  (* Index-versus-HEAD captures staged-only changes; worktree flags capture
+     unstaged modifications/deletions; -o captures untracked non-ignored files. *)
+  let* cached =
+    run_git ~cwd:source_workspace
+      [ "diff"; "--cached"; "--name-only"; "-z"; "HEAD" ]
+  in
+  let* worktree =
+    run_git ~cwd:source_workspace
+      [ "ls-files"; "-z"; "-m"; "-d"; "--exclude-standard" ]
   in
   let* untracked =
-    collect modified [ "ls-files"; "-z"; "-o"; "--exclude-standard" ]
+    run_git ~cwd:source_workspace
+      [ "ls-files"; "-z"; "-o"; "--exclude-standard" ]
   in
-  Ok (List.sort_uniq String.compare untracked)
+  let paths =
+    nul_paths cached @ nul_paths worktree @ nul_paths untracked
+    |> List.sort_uniq String.compare
+  in
+  Ok paths
 
 let source_fingerprint ~source_workspace =
   let ( let* ) = Result.bind in
@@ -632,7 +642,26 @@ let provision ~owner_session_id ~agent_id ~source_workspace =
                                   Ok (binding, derived, marker_path)))))
 
 let accept_provisional ~owner_session_id ~agent_id =
-  clear_marker ~agent_home:(pi_agent_dir ()) ~owner_session_id ~agent_id
+  let agent_home = pi_agent_dir () in
+  let owner_component = Taumel.Agent_workspace.owner_component owner_session_id in
+  let path =
+    Taumel.Agent_worktree.provisional_marker_path ~agent_home ~owner_component
+      ~agent_id
+  in
+  (match read_marker path with
+  | Ok marker ->
+      let marker =
+        {
+          marker with
+          completed_steps =
+            if List.mem Taumel.Agent_worktree.Identity_accepted marker.completed_steps
+            then marker.completed_steps
+            else marker.completed_steps @ [ Identity_accepted ];
+        }
+      in
+      ignore (write_marker marker ~agent_home)
+  | Error _ -> ());
+  clear_marker ~agent_home ~owner_session_id ~agent_id
 
 let rollback_failed_start ~owner_session_id ~agent_id ~main_repository_root
     ~worktree_path ~branch =
@@ -754,7 +783,7 @@ let reconcile_provisional_markers () =
                  ~worktree_path:marker.worktree_path ~branch:marker.branch
              in
              let accepted =
-               List.mem Taumel.Agent_worktree.Baseline_verified
+               List.mem Taumel.Agent_worktree.Identity_accepted
                  marker.completed_steps
              in
              if accepted then

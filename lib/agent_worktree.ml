@@ -11,6 +11,7 @@ type creation_step =
   | Source_reproduced
   | Baseline_created
   | Baseline_verified
+  | Identity_accepted
 
 type provisional_marker = {
   owner_session_id : string;
@@ -55,6 +56,7 @@ let creation_step_to_string = function
   | Source_reproduced -> "source_reproduced"
   | Baseline_created -> "baseline_created"
   | Baseline_verified -> "baseline_verified"
+  | Identity_accepted -> "identity_accepted"
 
 let creation_step_of_string = function
   | "marker_recorded" -> Ok Marker_recorded
@@ -62,6 +64,7 @@ let creation_step_of_string = function
   | "source_reproduced" -> Ok Source_reproduced
   | "baseline_created" -> Ok Baseline_created
   | "baseline_verified" -> Ok Baseline_verified
+  | "identity_accepted" -> Ok Identity_accepted
   | value -> Error ("invalid creation step: " ^ value)
 
 let baseline_author_name = "Pi Baseline"

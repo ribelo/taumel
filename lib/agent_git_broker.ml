@@ -166,13 +166,15 @@ let parse_diff tokens =
   let* pathspecs = validate_pathspecs pathspecs in
   let rec loop staged output_mode exit_code no_renames unified revs = function
     | [] -> Ok (staged, output_mode, exit_code, no_renames, unified, List.rev revs)
-    | ("--cached" | "--staged") :: rest when not staged ->
+    | token :: _ when revs <> [] && starts_with ~prefix:"-" token ->
+        Error (Invalid_arguments "git diff options must precede revision operands")
+    | ("--cached" | "--staged") :: rest when not staged && revs = [] ->
         loop true output_mode exit_code no_renames unified revs rest
-    | "--exit-code" :: rest when not exit_code ->
+    | "--exit-code" :: rest when not exit_code && revs = [] ->
         loop staged output_mode true no_renames unified revs rest
-    | "--no-renames" :: rest when not no_renames ->
+    | "--no-renames" :: rest when not no_renames && revs = [] ->
         loop staged output_mode exit_code true unified revs rest
-    | token :: rest when starts_with ~prefix:"--unified=" token -> (
+    | token :: rest when starts_with ~prefix:"--unified=" token && revs = [] -> (
         match int_of_string_opt (String.sub token 10 (String.length token - 10)) with
         | Some n when n >= 0 && n <= 1000 && unified = None && output_mode = None
           ->
@@ -193,10 +195,7 @@ let parse_diff tokens =
                "--check";
                "--quiet";
              ]
-           && output_mode = None ->
-        if revs <> [] then
-          Error (Invalid_arguments "git diff options must precede revision operands")
-        else
+           && output_mode = None && revs = [] ->
           let mode =
             match token with
             | "--patch" -> `Patch
@@ -284,24 +283,27 @@ let parse_log tokens =
             first_parent,
             reverse,
             rev )
-    | "--oneline" :: rest when not oneline ->
+    | token :: _ when rev <> None && starts_with ~prefix:"-" token ->
+        Error (Invalid_arguments "git log options must precede revision operands")
+    | "--oneline" :: rest when not oneline && rev = None ->
         loop count detail true graph decorate first_parent reverse rev rest
-    | "--graph" :: rest when not graph ->
+    | "--graph" :: rest when not graph && rev = None ->
         loop count detail oneline true decorate first_parent reverse rev rest
-    | "--decorate=short" :: rest when not decorate ->
+    | "--decorate=short" :: rest when not decorate && rev = None ->
         loop count detail oneline graph true first_parent reverse rev rest
-    | "--first-parent" :: rest when not first_parent ->
+    | "--first-parent" :: rest when not first_parent && rev = None ->
         loop count detail oneline graph decorate true reverse rev rest
-    | "--reverse" :: rest when not reverse ->
+    | "--reverse" :: rest when not reverse && rev = None ->
         loop count detail oneline graph decorate first_parent true rev rest
-    | token :: rest when parse_count_token token <> None && count = None -> (
+    | token :: rest
+      when parse_count_token token <> None && count = None && rev = None -> (
         match parse_count_token token with
         | Some n when n >= 1 && n <= 1000 ->
             loop (Some n) detail oneline graph decorate first_parent reverse rev
               rest
         | _ ->
             Error (Invalid_arguments ("unsupported git log count: " ^ token)))
-    | "-n" :: value :: rest when count = None -> (
+    | "-n" :: value :: rest when count = None && rev = None -> (
         match int_of_string_opt value with
         | Some n when n >= 1 && n <= 1000 ->
             loop (Some n) detail oneline graph decorate first_parent reverse rev
@@ -309,12 +311,9 @@ let parse_log tokens =
         | _ -> Error (Invalid_arguments "git log count must be 1..1000"))
     | token :: rest
       when List.mem token [ "--patch"; "--stat"; "--name-only"; "--name-status" ]
-           && detail = None ->
-        if rev <> None then
-          Error (Invalid_arguments "git log options must precede revision operands")
-        else
-          loop count (Some token) oneline graph decorate first_parent reverse rev
-            rest
+           && detail = None && rev = None ->
+        loop count (Some token) oneline graph decorate first_parent reverse rev
+          rest
     | token :: rest when rev = None && is_revision_or_object token ->
         loop count detail oneline graph decorate first_parent reverse
           (Some token) rest
@@ -358,12 +357,14 @@ let parse_show tokens =
   let* pathspecs = validate_pathspecs pathspecs in
   let rec loop oneline detail object_selector = function
     | [] -> Ok (oneline, detail, object_selector)
-    | "--oneline" :: rest when not oneline ->
+    | token :: _ when object_selector <> None && starts_with ~prefix:"-" token ->
+        Error (Invalid_arguments "git show options must precede object operands")
+    | "--oneline" :: rest when not oneline && object_selector = None ->
         loop true detail object_selector rest
     | token :: rest
       when List.mem token
              [ "--patch"; "--no-patch"; "--stat"; "--name-only"; "--name-status" ]
-           && detail = None ->
+           && detail = None && object_selector = None ->
         loop oneline (Some token) object_selector rest
     | token :: rest when object_selector = None && is_revision_or_object token ->
         loop oneline detail (Some token) rest

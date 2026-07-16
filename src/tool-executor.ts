@@ -834,10 +834,11 @@ export async function executeTool(
         outcome: outcome === "approved_always" ? "approved" : outcome,
       }]));
       if (approvalPlan.kind === "denied") return approvalPlan.result;
-      // Worktree-isolated and brokered Git paths must never escape the sandbox.
+      // Finder/Oracle/worktree children and brokered Git must never escape the sandbox.
       const preparedFields = prepared as { readonly [key: string]: unknown };
-      const forceUnsandboxed =
-        preparedFields.brokeredGit === true ? false : approvalPlan.forceUnsandboxed === true;
+      const sandbox = preparedFields.sandbox as { isolatedChild?: unknown } | undefined;
+      const restrictedChild = sandbox?.isolatedChild === true || preparedFields.brokeredGit === true;
+      const forceUnsandboxed = restrictedChild ? false : approvalPlan.forceUnsandboxed === true;
       return runPreparedExec(pi, core, { ...prepared, action: "exec_command" }, ctx, signal, forceUnsandboxed);
     }
     case "write_stdin":
