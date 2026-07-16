@@ -95,17 +95,18 @@ let hex_of_bytes bytes =
   done;
   Buffer.contents buffer
 
-(* Digest.string is MD5; that is fine for a non-reversible filesystem component.
-   Keep the public form short and path-safe. *)
+(* Domain-separated double digest for a non-reversible, filesystem-safe component.
+   Not a public hash API; collision resistance is improved over a bare MD5. *)
+let durable_digest label payload =
+  let left = Digest.string (label ^ "\000left\000" ^ payload) in
+  let right = Digest.string (label ^ "\000right\000" ^ payload ^ left) in
+  hex_of_bytes (left ^ right)
+
 let owner_component owner_session_id =
-  let digest = Digest.string ("taumel-owner\000" ^ owner_session_id) in
-  hex_of_bytes digest
+  durable_digest "taumel-owner" owner_session_id
 
 let branch_component owner_session_id agent_id =
-  let digest =
-    Digest.string ("taumel-branch\000" ^ owner_session_id ^ "\000" ^ agent_id)
-  in
-  hex_of_bytes digest
+  durable_digest "taumel-branch" (owner_session_id ^ "\000" ^ agent_id)
 
 let join_path parts =
   let parts =

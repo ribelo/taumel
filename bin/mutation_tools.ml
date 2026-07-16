@@ -196,9 +196,25 @@ let parse_brokered_git cmd =
       | Error error -> Error (Taumel.Agent_git_broker.error_message error)
       | Ok parsed -> Ok parsed)
 
+let child_rejects_escalation ctx =
+  match Session_store.custom_entry_data ctx "taumel.childSession" with
+  | Some (Taumel.Shared.Object fields) -> (
+      match List.assoc_opt "isolation" fields with
+      | Some (Taumel.Shared.String "worktree") -> true
+      | _ -> (
+          match List.assoc_opt "agentKind" fields with
+          | Some (Taumel.Shared.String ("finder" | "oracle")) -> true
+          | _ -> false))
+  | _ -> false
+
 let prepare_exec_command params ctx =
   with_gateway_authorized "exec_command" (fun sandbox ->
       let request = exec_request_from_params params in
+      match request.sandbox_permissions with
+      | Taumel.Sandbox.Require_escalated _ when child_rejects_escalation ctx ->
+          error_obj
+            "command escalation is rejected for finder, oracle, and worktree-isolated agents"
+      | _ ->
       let worktree_ctx = child_worktree_context ctx in
       let looks_like_git =
         let trimmed = String.trim request.cmd in
@@ -243,18 +259,36 @@ let prepare_exec_command params ctx =
                               Error
                                 "brokered agent Git is already running for this identity"
                             else
-                              Ok
-                                ( worktree,
-                                  main_repo ^ "/.git",
-                                  authorized.argv,
-                                  agent_id )))))
+                              match
+                                Agent_worktree_host.verify_broker_registration
+                                  ~worktree_path:worktree
+                                  ~main_repository_root:main_repo ~branch
+                              with
+                              | Error message -> Error message
+                              | Ok git_dir ->
+                                  Ok
+                                    ( worktree,
+                                      git_dir,
+                                      authorized.argv,
+                                      agent_id )))))
       in
       match brokered with
       | Ok (worktree, git_dir, argv, agent_id) ->
           let sandbox_cfg = typed_sandbox_config sandbox in
           let workdir =
-            if request.workdir = "" then worktree else request.workdir
+            if request.workdir = "" then worktree
+            else if
+              request.workdir = worktree
+              || Taumel.Sandbox.path_within ~root:worktree request.workdir
+            then request.workdir
+            else worktree
           in
+          if
+            request.workdir <> ""
+            && request.workdir <> worktree
+            && not (Taumel.Sandbox.path_within ~root:worktree request.workdir)
+          then error_obj "brokered agent Git workdir must stay inside the agent worktree"
+          else
           Boundary_contracts.PreparedExec.create ~cmd:request.cmd ~workdir
             ~tty:false ~sandbox:sandbox_cfg ~brokeredGit:true ~directCommand:"git"
             ~directArgv:argv ~gitDir:git_dir ~gitWorkTree:worktree

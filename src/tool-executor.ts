@@ -774,10 +774,12 @@ export async function executeTool(
         : /unknown agent|not owned.*agent|closing/.test(message) ? "agent_not_found"
         : /64 agents|namespace is exhausted/.test(message) ? "agent_limit_reached"
         : /routing|model|thinking|authentication/.test(message) ? "routing_unavailable"
-        : /delete_worktree is only valid/.test(message) ? "invalid_arguments"
-        : /workspace/.test(message) ? "workspace_unavailable"
-        : /state is unavailable/.test(message) ? "persistence_failed"
-        : /cleanup|worktree has uncommitted|worktree deletion/.test(message) ? "cleanup_failed"
+        : /delete_worktree is only valid|invalid_arguments/.test(message) ? "invalid_arguments"
+        : /workspace_unavailable|workspace|Git repository|HEAD commit|isolated agent worktree/.test(message)
+          ? "workspace_unavailable"
+        : /state is unavailable|persistence_failed/.test(message) ? "persistence_failed"
+        : /cleanup_failed|cleanup|worktree has uncommitted|worktree deletion|provisional worktree cleanup/.test(message)
+          ? "cleanup_failed"
         : "internal_error";
       const safeMessage = code === "run_not_found" ? "run not found"
         : code === "agent_not_found" ? "agent not found"
@@ -832,7 +834,11 @@ export async function executeTool(
         outcome: outcome === "approved_always" ? "approved" : outcome,
       }]));
       if (approvalPlan.kind === "denied") return approvalPlan.result;
-      return runPreparedExec(pi, core, { ...prepared, action: "exec_command" }, ctx, signal, approvalPlan.forceUnsandboxed);
+      // Worktree-isolated and brokered Git paths must never escape the sandbox.
+      const preparedFields = prepared as { readonly [key: string]: unknown };
+      const forceUnsandboxed =
+        preparedFields.brokeredGit === true ? false : approvalPlan.forceUnsandboxed === true;
+      return runPreparedExec(pi, core, { ...prepared, action: "exec_command" }, ctx, signal, forceUnsandboxed);
     }
     case "write_stdin":
       return writePreparedStdin(core, prepared, ctx, signal);

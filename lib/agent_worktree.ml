@@ -216,16 +216,16 @@ let opaque_cleanup_incident_id ~owner_session_id ~agent_id ~now =
   String.sub hex 0 (min 16 (String.length hex))
 
 let workspace_unavailable_not_git =
-  "isolated agent worktree cannot be created because the project is not a Git repository"
+  "workspace_unavailable: isolated agent worktree cannot be created because the project is not a Git repository"
 
 let workspace_unavailable_no_head =
-  "isolated agent worktree cannot be created because the repository has no HEAD commit"
+  "workspace_unavailable: isolated agent worktree cannot be created because the repository has no HEAD commit"
 
 let workspace_unavailable_collision =
-  "isolated agent worktree cannot be created because the intended worktree path or branch already exists"
+  "workspace_unavailable: isolated agent worktree cannot be created because the intended worktree path or branch already exists"
 
 let workspace_unavailable_source_changed =
-  "isolated agent worktree cannot be created because the source workspace changed during capture"
+  "workspace_unavailable: isolated agent worktree cannot be created because the source workspace changed during capture"
 
 let delete_worktree_on_none_message =
   "delete_worktree is only valid for worktree-isolated identities"

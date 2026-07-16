@@ -510,20 +510,13 @@ export async function executeAgentPrepared(
       const key = childSessionCacheKey(agentId, keyScope);
       const bridge = childSessions.get(key);
       try {
-        await applyChildSessionUpdate(childSessions, {
-          action: "delete_child_session",
-          key: agentId,
-          reason: "agent_closed",
-        }, bridge, keyScope);
-        const sessionFile = prepared.childSessionFile;
-        if (typeof sessionFile === "string" && sessionFile !== "") {
-          const fs = await import("node:fs/promises");
-          const path = await import("node:path");
-          const directory = path.dirname(sessionFile);
-          if (path.basename(directory) === agentId) {
-            await fs.rm(directory, { recursive: true, force: true });
-          } else {
-            await fs.rm(sessionFile, { force: true });
+        // Stop child execution first, but keep private session files until worktree
+        // cleanup succeeds so close remains retryable on cleanup_failed.
+        if (bridge?.stop !== undefined) {
+          try {
+            await bridge.stop("agent_closed");
+          } catch {
+            /* continue to cleanup; failure is surfaced below if needed */
           }
         }
         if (prepared.deleteWorktree === true) {
@@ -538,6 +531,22 @@ export async function executeAgentPrepared(
             decodeCoreAck(core.call("releaseAgentClose", [{ agent_id: agentId }]));
             const message = error instanceof Error ? error.message : String(error);
             return agentErrorToolResult(core, "cleanup_failed", message || "worktree deletion failed");
+          }
+        }
+        await applyChildSessionUpdate(childSessions, {
+          action: "delete_child_session",
+          key: agentId,
+          reason: "agent_closed",
+        }, bridge, keyScope);
+        const sessionFile = prepared.childSessionFile;
+        if (typeof sessionFile === "string" && sessionFile !== "") {
+          const fs = await import("node:fs/promises");
+          const path = await import("node:path");
+          const directory = path.dirname(sessionFile);
+          if (path.basename(directory) === agentId) {
+            await fs.rm(directory, { recursive: true, force: true });
+          } else {
+            await fs.rm(sessionFile, { force: true });
           }
         }
       } catch (error) {

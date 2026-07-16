@@ -65,7 +65,15 @@ let test_rejects_unsupported_and_non_simple () =
   assert_error_kind "add force" "invalid" [ "git"; "add"; "-f"; "--"; "a" ];
   assert_error_kind "commit amend" "invalid"
     [ "git"; "commit"; "--amend"; "-m"; "x" ];
-  assert_error_kind "status nul" "invalid" [ "git"; "status"; "-z" ]
+  assert_error_kind "status nul" "invalid" [ "git"; "status"; "-z" ];
+  assert_error_kind "status -b alias" "invalid" [ "git"; "status"; "-b" ];
+  assert_error_kind "status --porcelain alias" "invalid"
+    [ "git"; "status"; "--porcelain" ];
+  assert_error_kind "status -uno alias" "invalid" [ "git"; "status"; "-uno" ];
+  assert_error_kind "log --max-count space form" "invalid"
+    [ "git"; "log"; "--max-count"; "5" ];
+  assert_error_kind "multiline commit" "invalid"
+    [ "git"; "commit"; "-m"; "line1\nline2" ]
 
 let test_read_only_authorization () =
   let commit = parse_ok [ "git"; "commit"; "-m"; "x" ] in

@@ -118,21 +118,12 @@ let parse_status tokens =
         loop `Porcelain_v1 branch untracked rest
     | "--porcelain=v2" :: rest when output_form = `Default ->
         loop `Porcelain_v2 branch untracked rest
-    | "--porcelain" :: rest when output_form = `Default ->
-        loop `Porcelain_v1 branch untracked rest
     | "--branch" :: rest when not branch -> loop output_form true untracked rest
-    | "-b" :: rest when not branch -> loop output_form true untracked rest
     | "--untracked-files=no" :: rest when untracked = None ->
         loop output_form branch (Some "no") rest
     | "--untracked-files=normal" :: rest when untracked = None ->
         loop output_form branch (Some "normal") rest
     | "--untracked-files=all" :: rest when untracked = None ->
-        loop output_form branch (Some "all") rest
-    | "-uno" :: rest when untracked = None ->
-        loop output_form branch (Some "no") rest
-    | "-unormal" :: rest when untracked = None ->
-        loop output_form branch (Some "normal") rest
-    | "-uall" :: rest when untracked = None ->
         loop output_form branch (Some "all") rest
     | token :: _ ->
         Error
@@ -203,19 +194,22 @@ let parse_diff tokens =
                "--quiet";
              ]
            && output_mode = None ->
-        let mode =
-          match token with
-          | "--patch" -> `Patch
-          | "--stat" -> `Stat
-          | "--shortstat" -> `Shortstat
-          | "--numstat" -> `Numstat
-          | "--name-only" -> `Name_only
-          | "--name-status" -> `Name_status
-          | "--summary" -> `Summary
-          | "--check" -> `Check
-          | _ -> `Quiet
-        in
-        loop staged (Some mode) exit_code no_renames unified revs rest
+        if revs <> [] then
+          Error (Invalid_arguments "git diff options must precede revision operands")
+        else
+          let mode =
+            match token with
+            | "--patch" -> `Patch
+            | "--stat" -> `Stat
+            | "--shortstat" -> `Shortstat
+            | "--numstat" -> `Numstat
+            | "--name-only" -> `Name_only
+            | "--name-status" -> `Name_status
+            | "--summary" -> `Summary
+            | "--check" -> `Check
+            | _ -> `Quiet
+          in
+          loop staged (Some mode) exit_code no_renames unified revs rest
     | token :: rest when is_revision_or_object token && List.length revs < 2 ->
         if staged && List.length revs >= 1 then
           Error (Invalid_arguments "git diff --cached accepts at most one revision")
@@ -264,8 +258,7 @@ let parse_count_token token =
   if starts_with ~prefix:"-n" token && String.length token > 2 then
     int_of_string_opt (String.sub token 2 (String.length token - 2))
   else if starts_with ~prefix:"--max-count=" token then
-    int_of_string_opt
-      (String.sub token 12 (String.length token - 12))
+    int_of_string_opt (String.sub token 12 (String.length token - 12))
   else if
     String.length token > 1
     && token.[0] = '-'
@@ -314,17 +307,14 @@ let parse_log tokens =
             loop (Some n) detail oneline graph decorate first_parent reverse rev
               rest
         | _ -> Error (Invalid_arguments "git log count must be 1..1000"))
-    | "--max-count" :: value :: rest when count = None -> (
-        match int_of_string_opt value with
-        | Some n when n >= 1 && n <= 1000 ->
-            loop (Some n) detail oneline graph decorate first_parent reverse rev
-              rest
-        | _ -> Error (Invalid_arguments "git log count must be 1..1000"))
     | token :: rest
       when List.mem token [ "--patch"; "--stat"; "--name-only"; "--name-status" ]
            && detail = None ->
-        loop count (Some token) oneline graph decorate first_parent reverse rev
-          rest
+        if rev <> None then
+          Error (Invalid_arguments "git log options must precede revision operands")
+        else
+          loop count (Some token) oneline graph decorate first_parent reverse rev
+            rest
     | token :: rest when rev = None && is_revision_or_object token ->
         loop count detail oneline graph decorate first_parent reverse
           (Some token) rest
@@ -488,6 +478,9 @@ let parse_commit tokens =
       else if String.length message > max_commit_message_bytes then
         Error
           (Limits_exceeded "git commit message exceeds 16384 bytes")
+      else if String.contains message '\n' then
+        Error
+          (Invalid_arguments "git commit accepts only one non-multiline message")
       else
         let message_ok =
           let length = String.length message in
@@ -495,7 +488,7 @@ let parse_commit tokens =
             if index >= length then true
             else
               match message.[index] with
-              | '\n' | '\t' -> loop (index + 1)
+              | '\t' -> loop (index + 1)
               | '\x00' .. '\x1f' | '\x7f' -> false
               | _ -> loop (index + 1)
           in
