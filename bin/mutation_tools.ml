@@ -295,6 +295,9 @@ let prepare_exec_command params ctx =
                               | Ok git_dir ->
                                   (match authorized.subcommand with
                                   | Taumel.Agent_git_broker.Add -> (
+                                      (* Preflight twice: once for the decision and
+                                         again immediately before returning the plan
+                                         to shrink the race window before spawn. *)
                                       match
                                         Agent_worktree_host.preflight_broker_add
                                           ~worktree_path:worktree
@@ -302,11 +305,18 @@ let prepare_exec_command params ctx =
                                       with
                                       | Error message -> Error message
                                       | Ok () ->
-                                          Ok
-                                            ( worktree,
-                                              git_dir,
-                                              authorized.argv,
-                                              agent_id ))
+                                          (match
+                                             Agent_worktree_host.preflight_broker_add
+                                               ~worktree_path:worktree
+                                               authorized.argv
+                                           with
+                                          | Error message -> Error message
+                                          | Ok () ->
+                                              Ok
+                                                ( worktree,
+                                                  git_dir,
+                                                  authorized.argv,
+                                                  agent_id )))
                                   | _ ->
                                       Ok
                                         ( worktree,

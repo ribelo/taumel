@@ -403,8 +403,9 @@ let path_has_executable_filter ~worktree_path relative =
   let* cleans = attr_values_for ~worktree_path ~attr:"clean" relative in
   let* processes = attr_values_for ~worktree_path ~attr:"process" relative in
   let dangerous value =
-    let value = String.trim (String.lowercase_ascii value) in
-    value <> "" && value <> "unspecified" && value <> "unset"
+    (* Only exact "unspecified" is safe. "unset" is NOT safe: it can select a
+       driver named unset (filter.unset.clean/process). *)
+    value <> "unspecified"
   in
   if List.exists dangerous filters || List.exists dangerous cleans
      || List.exists dangerous processes
@@ -423,13 +424,13 @@ let preflight_broker_add ~worktree_path argv =
   in
   let* expanded =
     if has_all then
-      run_git ~cwd:worktree_path
+      run_git ~trim:false ~cwd:worktree_path
         [ "ls-files"; "-z"; "-c"; "-o"; "--exclude-standard" ]
       |> Result.map nul_paths
     else if pathspecs = [] then
       Error "brokered git add requires --all or pathspecs after --"
     else
-      run_git ~cwd:worktree_path
+      run_git ~trim:false ~cwd:worktree_path
         ("ls-files" :: "-z" :: "-c" :: "-o" :: "--exclude-standard" :: "--"
        :: pathspecs)
       |> Result.map nul_paths
@@ -469,6 +470,32 @@ let registration_present ~main_repository_root ~worktree_path =
         n = 0 || loop 0
       in
       Ok (List.exists contains (String.split_on_char '\n' listing))
+let with_attributes_disabled ~worktree_path f =
+  let fs = Lazy.force fs_mod in
+  let gitattributes = Filename.concat worktree_path ".gitattributes" in
+  let info_attributes =
+    Filename.concat (Filename.concat worktree_path ".git") "info/attributes"
+  in
+  let aside path =
+    if path_exists path then (
+      let tmp = path ^ ".taumel-disabled" in
+      ignore (Unsafe.meth_call fs "renameSync" [| js_string path; js_string tmp |]);
+      Some (path, tmp))
+    else None
+  in
+  let restore = function
+    | None -> ()
+    | Some (path, tmp) ->
+        (try ignore (Unsafe.meth_call fs "renameSync" [| js_string tmp; js_string path |])
+         with _ -> ())
+  in
+  let moved_root = aside gitattributes in
+  let moved_info = aside info_attributes in
+  let result = try f () with error -> Error (Printexc.to_string error) in
+  restore moved_info;
+  restore moved_root;
+  result
+
 let create_baseline ~worktree_path =
   let child_process = Lazy.force child_process_mod in
   let run args =
@@ -502,37 +529,38 @@ let create_baseline ~worktree_path =
       Ok ()
     with error -> Error (Printexc.to_string error)
   in
-  match preflight_broker_add ~worktree_path [ "add"; "--all" ] with
-  | Error message -> Error message
-  | Ok () ->
-  match
-    run
-      [
-        "-c";
-        "core.attributesFile=/dev/null";
-        "-c";
-        "core.hooksPath=/dev/null";
-        "add";
-        "-A";
-      ]
-  with
-  | Error message -> Error message
-  | Ok () -> (
-      match
-        run
-          [
-            "-c";
-            "user.useConfigOnly=true";
-            "-c";
-            "core.hooksPath=/dev/null";
-            "commit";
-            "--allow-empty";
-            "-m";
-            "pi agent baseline";
-          ]
-      with
+  with_attributes_disabled ~worktree_path (fun () ->
+      match preflight_broker_add ~worktree_path [ "add"; "--all" ] with
       | Error message -> Error message
-      | Ok () -> Ok ())
+      | Ok () -> (
+          match
+            run
+              [
+                "-c";
+                "core.attributesFile=/dev/null";
+                "-c";
+                "core.hooksPath=/dev/null";
+                "add";
+                "-A";
+              ]
+          with
+          | Error message -> Error message
+          | Ok () -> (
+              match
+                run
+                  [
+                    "-c";
+                    "user.useConfigOnly=true";
+                    "-c";
+                    "core.hooksPath=/dev/null";
+                    "commit";
+                    "--allow-empty";
+                    "-m";
+                    "pi agent baseline";
+                  ]
+              with
+              | Error message -> Error message
+              | Ok () -> Ok ())))
 let rollback_provisional ~main_repository_root ~worktree_path ~branch =
   ignore (run_git ~cwd:main_repository_root [ "worktree"; "remove"; "--force"; worktree_path ]);
   ignore (remove_path worktree_path);
