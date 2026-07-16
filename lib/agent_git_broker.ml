@@ -556,7 +556,85 @@ module Lease = struct
     Hashtbl.fold (fun agent_id _ acc -> agent_id :: acc) held []
 end
 
-(* Classify a shell AST as exactly one simple git command, or reject. *)
+(* Classify the common, syntactically explicit ways a shell request invokes Git.
+   Ordinary command semantics remain the sandbox's responsibility. *)
+let normalize_static_shell_word value =
+  let output = Buffer.create (String.length value) in
+  let rec loop quote index =
+    if index >= String.length value then Buffer.contents output
+    else
+      match (quote, value.[index]) with
+      | `Unquoted, '\'' -> loop `Single (index + 1)
+      | `Unquoted, '"' -> loop `Double (index + 1)
+      | `Single, '\'' -> loop `Unquoted (index + 1)
+      | `Double, '"' -> loop `Unquoted (index + 1)
+      | `Unquoted, '\\' when index + 1 < String.length value ->
+          if value.[index + 1] <> '\n' then Buffer.add_char output value.[index + 1];
+          loop `Unquoted (index + 2)
+      | quote, character ->
+          Buffer.add_char output character;
+          loop quote (index + 1)
+  in
+  loop `Unquoted 0
+
+let is_git_word value =
+  Filename.basename (normalize_static_shell_word value) = "git"
+
+let dynamic_git_command_name node =
+  node.Exec_policy.kind = "command_name"
+  && List.mem (String.trim node.text) [ "$GIT"; "${GIT}"; "\"$GIT\""; "\"${GIT}\"" ]
+
+let command_words node =
+  node.Exec_policy.children
+  |> List.filter_map (fun child ->
+         if
+           List.mem child.Exec_policy.kind
+             [ "command_name"; "word"; "number"; "raw_string"; "string" ]
+         then Some (normalize_static_shell_word child.text)
+         else None)
+
+let starts_with_dash value = String.length value > 0 && value.[0] = '-'
+
+let rec first_command = function
+  | [] -> None
+  | "--" :: command :: _ -> Some command
+  | option :: rest when starts_with_dash option -> first_command rest
+  | command :: _ -> Some command
+
+let rec env_command = function
+  | [] -> None
+  | "--" :: command :: _ -> Some command
+  | ("-u" | "--unset" | "-C" | "--chdir") :: _value :: rest ->
+      env_command rest
+  | assignment :: rest when String.contains assignment '=' -> env_command rest
+  | option :: rest when starts_with_dash option -> env_command rest
+  | command :: _ -> Some command
+
+let option_is_git = function Some command -> is_git_word command | None -> false
+
+let wrapper_invokes_git ~shell_source_classifier node =
+  match command_words node with
+  | command :: arguments -> (
+      match Filename.basename command with
+      | "env" -> option_is_git (env_command arguments)
+      | "command" -> (
+          match arguments with
+          | ("-v" | "-V") :: _ -> false
+          | _ -> option_is_git (first_command arguments))
+      | "exec" -> option_is_git (first_command arguments)
+      | "sh" | "bash" | "dash" | "zsh" -> (
+          match arguments with
+          | "-c" :: source :: _ -> shell_source_classifier source
+          | _ -> false)
+      | _ -> false)
+  | [] -> false
+
+let rec ast_invokes_git ?(shell_source_classifier = fun _ -> false) node =
+  (node.Exec_policy.kind = "command_name"
+  && (is_git_word node.text || dynamic_git_command_name node))
+  || wrapper_invokes_git ~shell_source_classifier node
+  || List.exists (ast_invokes_git ~shell_source_classifier) node.children
+
 let simple_git_tokens_from_ast root =
   match Exec_policy.command_token_sequences_from_ast root with
   | Error message -> Error (Invalid_arguments message)

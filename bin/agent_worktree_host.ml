@@ -25,59 +25,16 @@ let pi_agent_dir () =
         home ^ String.sub value 1 (String.length value - 1)
       else value
   | _ -> home ^ "/.pi/agent"
-let trusted_git_env ?git_dir ?git_work_tree extra =
-  let process_env = Unsafe.get (Unsafe.get Unsafe.global "process") "env" in
-  let base =
-    [
-      ("PATH", Unsafe.get process_env "PATH");
-      ("HOME", Unsafe.get process_env "HOME");
-      ("GIT_CONFIG_NOSYSTEM", js_string "1");
-      ("GIT_CONFIG_GLOBAL", js_string "/dev/null");
-      ("GIT_CONFIG_SYSTEM", js_string "/dev/null");
-      ("GIT_TERMINAL_PROMPT", js_string "0");
-      ("GIT_OPTIONAL_LOCKS", js_string "0");
-      ("GIT_PAGER", js_string "cat");
-      ("GIT_EDITOR", js_string "true");
-      ("GIT_ASKPASS", js_string "true");
-      ("GCM_INTERACTIVE", js_string "never");
-      ("LC_ALL", js_string "C");
-      ("GIT_CONFIG_COUNT", js_string "8");
-      ("GIT_CONFIG_KEY_0", js_string "core.hooksPath");
-      ("GIT_CONFIG_VALUE_0", js_string "/dev/null");
-      ("GIT_CONFIG_KEY_1", js_string "alias.x");
-      ("GIT_CONFIG_VALUE_1", js_string "");
-      ("GIT_CONFIG_KEY_2", js_string "core.useBuiltinFSMonitor");
-      ("GIT_CONFIG_VALUE_2", js_string "false");
-      ("GIT_CONFIG_KEY_3", js_string "advice.detachedHead");
-      ("GIT_CONFIG_VALUE_3", js_string "false");
-      ("GIT_CONFIG_KEY_4", js_string "commit.gpgsign");
-      ("GIT_CONFIG_VALUE_4", js_string "false");
-      ("GIT_CONFIG_KEY_5", js_string "core.editor");
-      ("GIT_CONFIG_VALUE_5", js_string "true");
-      ("GIT_CONFIG_KEY_6", js_string "protocol.file.allow");
-      ("GIT_CONFIG_VALUE_6", js_string "always");
-      ("GIT_CONFIG_KEY_7", js_string "submodule.recurse");
-      ("GIT_CONFIG_VALUE_7", js_string "false");
-    ]
-  in
-  let base =
-    match git_dir with
-    | Some value when value <> "" -> ("GIT_DIR", js_string value) :: base
-    | _ -> base
-  in
-  let base =
-    match git_work_tree with
-    | Some value when value <> "" -> ("GIT_WORK_TREE", js_string value) :: base
-    | _ -> base
-  in
-  Unsafe.obj (Array.of_list (base @ extra))
+let trusted_git_env = Trusted_git.restricted_environment
+let trusted_git_executable = Trusted_git.executable
+let require_trusted_git = Trusted_git.require_executable
 let run_git ?(trim = true) ~cwd ?git_dir ?git_work_tree args =
   let child_process = Lazy.force child_process_mod in
   try
     let stdout =
       Unsafe.meth_call child_process "execFileSync"
         [|
-          js_string "git";
+          js_string (require_trusted_git ());
           js_array (List.map js_string args);
           Unsafe.obj
             [|
@@ -464,7 +421,7 @@ let perform_secure_broker_add ?(preflight = true) ~worktree_path argv =
       let stdout =
         Unsafe.meth_call child_process "execFileSync"
           [|
-            js_string "git";
+            js_string (require_trusted_git ());
             js_array (List.map js_string args);
             Unsafe.obj
               [|
@@ -551,7 +508,7 @@ let create_baseline ~worktree_path =
     ignore
       (Unsafe.meth_call child_process "execFileSync"
          [|
-           js_string "git";
+           js_string (require_trusted_git ());
            js_array (List.map js_string [ "-c"; "core.hooksPath=/dev/null"; "commit"; "--allow-empty"; "-m"; "pi agent baseline" ]);
            Unsafe.obj
              [|
@@ -567,12 +524,47 @@ let create_baseline ~worktree_path =
          |]);
     Ok ()
   with error -> Error (Printexc.to_string error)
-let rollback_provisional ~main_repository_root ~worktree_path ~branch =
-  ignore (run_git ~cwd:main_repository_root [ "worktree"; "remove"; "--force"; worktree_path ]);
-  ignore (remove_path worktree_path);
-  ignore
-    (run_git ~cwd:main_repository_root
-       [ "branch"; "-D"; branch ])
+let authorize_cleanup ~main_repository_root ~main_repository_id ~worktree_path
+    ~branch =
+  match
+    Taumel.Agent_worktree.authorize_mutation ~operation:Cleanup
+      ~main_repository_root ~main_repository_id ~worktree_path ~branch
+      ~trusted_adapter:true
+  with
+  | Denied message -> Error message
+  | Authorized auth_effect -> (
+      match
+        Taumel.Sandbox.authorize_agent_worktree_mutation ~trusted_adapter:true
+          {
+            Taumel.Sandbox.operation = Taumel.Sandbox.Agent_worktree_cleanup;
+            main_repository_root = auth_effect.main_repository_root;
+            main_repository_id = auth_effect.main_repository_id;
+            worktree_path = auth_effect.worktree_path;
+            worktree_admin_path = auth_effect.worktree_admin_path;
+            branch = auth_effect.branch;
+            branch_ref = auth_effect.branch_ref;
+            object_store_path = auth_effect.object_store_path;
+          }
+      with
+      | Taumel.Sandbox.Deny message | Taumel.Sandbox.Requires_approval message ->
+          Error message
+      | Taumel.Sandbox.Allow -> Ok ())
+let rollback_provisional ~main_repository_root ~main_repository_id ~worktree_path
+    ~branch =
+  match
+    authorize_cleanup ~main_repository_root ~main_repository_id ~worktree_path
+      ~branch
+  with
+  | Error _ as error -> error
+  | Ok () ->
+      ignore
+        (run_git ~cwd:main_repository_root
+           [ "worktree"; "remove"; "--force"; worktree_path ]);
+      ignore (remove_path worktree_path);
+      ignore
+        (run_git ~cwd:main_repository_root
+           [ "branch"; "-D"; branch ]);
+      Ok ()
 let unfinished_operation ~worktree_path =
   let git_dir =
     match run_git ~cwd:worktree_path [ "rev-parse"; "--git-dir" ] with
@@ -598,7 +590,12 @@ let worktree_is_clean ~worktree_path =
   else
     match
       run_git ~cwd:worktree_path
-        [ "status"; "--porcelain=v1"; "--untracked-files=normal" ]
+        [
+          "status";
+          "--porcelain=v1";
+          "--untracked-files=normal";
+          "--ignore-submodules=none";
+        ]
     with
     | Error message -> Error message
     | Ok output when String.trim output <> "" ->
@@ -608,7 +605,8 @@ let worktree_is_clean ~worktree_path =
           run_git ~cwd:worktree_path
             [ "submodule"; "status"; "--recursive" ]
         with
-        | Error _ -> Ok ()
+        | Error message ->
+            Error ("failed to inspect agent worktree submodules: " ^ message)
         | Ok submodule_status ->
             let dirty =
               submodule_status |> String.split_on_char '\n'
@@ -712,8 +710,9 @@ let provision ~owner_session_id ~agent_id ~source_workspace =
                           ~worktree_path ~branch ~head ~entries
                       with
                       | Error message ->
-                          rollback_provisional ~main_repository_root ~worktree_path
-                            ~branch;
+                          ignore
+                            (rollback_provisional ~main_repository_root
+                               ~main_repository_id ~worktree_path ~branch);
                           clear_marker ~agent_home ~owner_session_id ~agent_id;
                           Error ("workspace_unavailable", message)
                       | Ok () ->
@@ -731,13 +730,15 @@ let provision ~owner_session_id ~agent_id ~source_workspace =
                           ignore (write_marker marker ~agent_home);
                           (match fingerprint_entries ~root:worktree_path entries with
                           | Error message ->
-                              rollback_provisional ~main_repository_root
-                                ~worktree_path ~branch;
+                              ignore
+                                (rollback_provisional ~main_repository_root
+                                   ~main_repository_id ~worktree_path ~branch);
                               clear_marker ~agent_home ~owner_session_id ~agent_id;
                               Error ("workspace_unavailable", message)
                           | Ok reproduced when reproduced <> accepted_fingerprint ->
-                              rollback_provisional ~main_repository_root
-                                ~worktree_path ~branch;
+                              ignore
+                                (rollback_provisional ~main_repository_root
+                                   ~main_repository_id ~worktree_path ~branch);
                               clear_marker ~agent_home ~owner_session_id ~agent_id;
                               Error
                                 ( "workspace_unavailable",
@@ -745,15 +746,17 @@ let provision ~owner_session_id ~agent_id ~source_workspace =
                           | Ok _ ->
                           match create_baseline ~worktree_path with
                           | Error message ->
-                              rollback_provisional ~main_repository_root
-                                ~worktree_path ~branch;
+                              ignore
+                                (rollback_provisional ~main_repository_root
+                                   ~main_repository_id ~worktree_path ~branch);
                               clear_marker ~agent_home ~owner_session_id ~agent_id;
                               Error ("workspace_unavailable", message)
                           | Ok () -> (
                               match worktree_is_clean ~worktree_path with
                               | Error message ->
-                                  rollback_provisional ~main_repository_root
-                                    ~worktree_path ~branch;
+                                  ignore
+                                    (rollback_provisional ~main_repository_root
+                                       ~main_repository_id ~worktree_path ~branch);
                                   clear_marker ~agent_home ~owner_session_id
                                     ~agent_id;
                                   Error ("workspace_unavailable", message)
@@ -809,9 +812,12 @@ let accept_provisional ~owner_session_id ~agent_id =
           ("workspace_unavailable: acceptance marker update failed: "
          ^ Printexc.to_string error))
 let rollback_failed_start ~owner_session_id ~agent_id ~main_repository_root
-    ~worktree_path ~branch =
+    ~main_repository_id ~worktree_path ~branch =
   let agent_home = pi_agent_dir () in
-  (try rollback_provisional ~main_repository_root ~worktree_path ~branch
+  (try
+     ignore
+       (rollback_provisional ~main_repository_root ~main_repository_id
+          ~worktree_path ~branch)
    with _ -> ());
   let still_present =
     path_exists worktree_path
@@ -833,7 +839,7 @@ let rollback_failed_start ~owner_session_id ~agent_id ~main_repository_root
         Taumel.Agent_worktree.owner_session_id;
         agent_id;
         main_repository_root;
-        main_repository_id = "";
+        main_repository_id;
         worktree_path;
         branch;
         completed_steps = [];
@@ -849,36 +855,18 @@ let rollback_failed_start ~owner_session_id ~agent_id ~main_repository_root
     Ok ())
 let remove_worktree ~main_repository_root ~worktree_path ~main_repository_id
     ~branch =
-  let auth =
-    Taumel.Agent_worktree.authorize_mutation ~operation:Cleanup
-      ~main_repository_root ~main_repository_id ~worktree_path ~branch
-      ~trusted_adapter:true
-  in
-  match auth with
-  | Denied message -> Error message
-  | Authorized auth_effect -> (
-      match
-        Taumel.Sandbox.authorize_agent_worktree_mutation ~trusted_adapter:true
-          {
-            Taumel.Sandbox.operation = Taumel.Sandbox.Agent_worktree_cleanup;
-            main_repository_root = auth_effect.main_repository_root;
-            main_repository_id = auth_effect.main_repository_id;
-            worktree_path = auth_effect.worktree_path;
-            worktree_admin_path = auth_effect.worktree_admin_path;
-            branch = auth_effect.branch;
-            branch_ref = auth_effect.branch_ref;
-            object_store_path = auth_effect.object_store_path;
-          }
-      with
-      | Taumel.Sandbox.Deny message | Taumel.Sandbox.Requires_approval message ->
-          Error message
-      | Taumel.Sandbox.Allow -> (
+  match
+    authorize_cleanup ~main_repository_root ~main_repository_id ~worktree_path
+      ~branch
+  with
+  | Error _ as error -> error
+  | Ok () -> (
           match
             run_git ~cwd:main_repository_root
               [ "worktree"; "remove"; worktree_path ]
           with
           | Ok _ -> Ok ()
-          | Error message -> Error message))
+          | Error message -> Error message)
 let list_provisional_marker_files ~agent_home =
   let root =
     Taumel.Agent_workspace.join_path
@@ -932,10 +920,14 @@ let reconcile_provisional_markers () =
                ignore (remove_path path)
              else if not matches then ()
              else (
-               rollback_provisional
-                 ~main_repository_root:marker.main_repository_root
-                 ~worktree_path:marker.worktree_path ~branch:marker.branch;
-               ignore (remove_path path)))
+               match
+                 rollback_provisional
+                   ~main_repository_root:marker.main_repository_root
+                   ~main_repository_id:marker.main_repository_id
+                   ~worktree_path:marker.worktree_path ~branch:marker.branch
+               with
+               | Ok () -> ignore (remove_path path)
+               | Error _ -> ()))
 let verify_broker_registration ~worktree_path ~main_repository_root ~branch =
   if not (is_directory worktree_path) then
     Error "agent worktree path is unavailable"

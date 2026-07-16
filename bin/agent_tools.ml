@@ -911,7 +911,6 @@ let prepare name params ctx =
   | None -> (
       match name with
       | "agent_spawn" | "finder" | "oracle" ->
-          Agent_worktree_host.reconcile_provisional_markers ();
           prepare_start name params ctx
       | "agent_send" -> prepare_send params ctx
       | "agent_wait" -> prepare_wait params ctx

@@ -146,12 +146,13 @@ let planned_exec_host_call prepared host runtime force_unsandboxed =
   if get_bool prepared "brokeredGit" then
     if Js.to_bool (Unsafe.coerce force_unsandboxed) then
       Error "brokered agent Git rejects escalated unsandboxed execution"
-    else
-    let command =
+    else (
       match optional_string_field prepared "directCommand" with
-      | Some value when String.trim value <> "" -> String.trim value
-      | _ -> "git"
-    in
+      | None -> Error "brokered agent Git requires a trusted executable"
+      | Some value when String.trim value = "" ->
+          Error "brokered agent Git requires a trusted executable"
+      | Some value ->
+    let command = String.trim value in
     let args =
       if has_property prepared "directArgv" then get_string_array prepared "directArgv"
       else []
@@ -173,7 +174,7 @@ let planned_exec_host_call prepared host runtime force_unsandboxed =
         yield_time_ms = positive_float_option prepared "yieldTimeMs";
         tty = false;
         escalated = false;
-      }
+      })
   else
   let sandbox = sandbox_config_from_js (Unsafe.get prepared "sandbox") in
   let host = exec_host_facts_from_js host in

@@ -57,6 +57,7 @@ let streaming = false;
 let allocatedSessionFile;
 let allocatedAppendPrompt;
 let allocatedResourceLoader;
+let createSessionError;
 const sessionMessages = [];
 const model = { provider: "test", id: "model", reasoning: true };
 const pi = {
@@ -66,6 +67,7 @@ const pi = {
   },
   getAllTools: () => ["read", "exec_command", "write_stdin"],
   createAgentSession: async (options) => {
+    if (createSessionError !== undefined) throw new Error(createSessionError);
     allocatedSessionFile = options.sessionManager.getSessionFile();
     allocatedResourceLoader = options.resourceLoader;
     allocatedAppendPrompt = options.resourceLoader.getAppendSystemPrompt();
@@ -153,10 +155,39 @@ assert.equal("thinking" in waitedJson.results[0], false);
 assert.equal("model" in JSON.parse(prepared.text), false);
 assert.equal("thinking" in JSON.parse(prepared.text), false);
 
+const retainedChildSessions = [...childSessions];
+childSessions.clear();
+createSessionError = "failed to reopen child session";
+const failedPreflightResult = await executeTool(
+  pi,
+  core,
+  childSessions,
+  "agent_send",
+  { agent_id: prepared.agentId, message: "must not allocate", description: "Fail send preflight" },
+  ctx,
+);
+assert.equal(JSON.parse(failedPreflightResult.content[0].text).error.code, "child_session_unavailable");
+createSessionError = undefined;
+for (const [key, bridge] of retainedChildSessions) childSessions.set(key, bridge);
+const failedPreflightRunId = `${prepared.agentId}-run-2`;
+const afterFailedPreflight = core.call("agentManagerSnapshot", [ctx]);
+assert.equal(
+  afterFailedPreflight.runs.some((run) => run.runId === failedPreflightRunId),
+  false,
+  "failed send left a phantom run",
+);
+assert.equal(core.call("prepareTool", [{
+  name: "agent_wait", params: { run_ids: [failedPreflightRunId], timeout_seconds: 0 }, ctx,
+}]).ok, false, "failed send exposed prior output under a new run id");
+
 const failedSend = core.call("prepareTool", [{
   name: "agent_send", params: { agent_id: prepared.agentId, message: "fail", description: "Trigger failed work" }, ctx,
 }]);
-await executeAgentPrepared(pi, core, childSessions, pendingWaits, failedSend, ctx);
+assert.notEqual(failedSend.runId, failedPreflightRunId, "rolled-back run id must remain retired");
+const failedSendResult = await executeAgentPrepared(pi, core, childSessions, pendingWaits, failedSend, ctx);
+assert.equal(failedSendResult.details.status, "running");
+assert.equal(core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]).details.agents[0].status, "running");
+assert.equal(subscribers.size, 1);
 settle({ role: "assistant", content: [], stopReason: "error", errorMessage: "provider failed" });
 await new Promise((resolve) => setTimeout(resolve, 0));
 const failedNotification = JSON.parse(core.call("pendingAgentNotifications", [ctx]).notifications[0].content);

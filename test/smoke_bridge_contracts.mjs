@@ -54,11 +54,22 @@ import {
   decodeSkillResolveResult,
   decodeThreadCatalogScansResult,
   decodeToolNamesResult,
+  decodeCoreAck,
 } from "../src/bridge-contracts.ts";
 
 const valid = decodeActiveToolsPlan({ changed: true, tools: ["read", "exec_command"] });
 if (!valid.changed || valid.tools.join(",") !== "read,exec_command") {
   throw new Error(`active-tools bridge decoder changed a valid response: ${JSON.stringify(valid)}`);
+}
+
+let acknowledgementError = "";
+try {
+  decodeCoreAck({ ok: false, error: "cleanup_failed: agent worktree has uncommitted changes" });
+} catch (error) {
+  acknowledgementError = error instanceof Error ? error.message : String(error);
+}
+if (acknowledgementError !== "cleanup_failed: agent worktree has uncommitted changes") {
+  throw new Error(`typed acknowledgement hid OCaml failure: ${acknowledgementError}`);
 }
 
 for (const invalid of [

@@ -45,7 +45,10 @@ let rollback_send_preflight facts ctx =
   let previous_submission_id = get_string facts "previous_submission_id" in
   let outcome = Taumel.Agents.send_outcome_of_string (get_string facts "outcome") in
   let previous_reason_code =
-    match optional_string_field facts "previous_reason_code" with
+    match
+      Option.bind (optional_string_field facts "previous_reason_code")
+        Taumel.Shared.trim_non_empty
+    with
     | None -> Ok None
     | Some value ->
         Result.map Option.some (Taumel.Agents.reason_code_of_string value)

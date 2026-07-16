@@ -153,14 +153,7 @@ let child_agent_id = function
   | Some metadata -> Taumel.Child_session.persisted_agent_id metadata
 
 let resolve_trusted_git () =
-  let process = Unsafe.get Unsafe.global "process" in
-  let env = Unsafe.get process "env" in
-  match string_value (Unsafe.get env "TAUMEL_TRUSTED_GIT") with
-  | Some value when String.trim value <> "" -> String.trim value
-  | _ -> (
-      match string_value (Unsafe.get env "GIT_EXEC_PATH") with
-      | Some _ -> "git"
-      | None -> "git")
+  Agent_worktree_host.trusted_git_executable ()
 
 let parse_brokered_git cmd =
   match Exec_policy_bridge.reflect_bash_script cmd with
@@ -171,6 +164,14 @@ let parse_brokered_git cmd =
       match Taumel.Agent_git_broker.parse_simple_git_ast ast with
       | Error error -> Error (Taumel.Agent_git_broker.error_message error)
       | Ok parsed -> Ok parsed)
+
+let rec ast_invokes_git ast =
+  Taumel.Agent_git_broker.ast_invokes_git
+    ~shell_source_classifier:(fun source ->
+      match Exec_policy_bridge.reflect_bash_script source with
+      | Error _ -> false
+      | Ok nested -> ast_invokes_git nested)
+    ast
 
 let child_rejects_escalation = function
   | None -> false
@@ -225,8 +226,9 @@ let prepare_exec_command params ctx =
       | _ ->
       let worktree_ctx = child_worktree_context child_metadata in
       let looks_like_git =
-        let trimmed = String.trim request.cmd in
-        String.length trimmed >= 3 && String.sub trimmed 0 3 = "git"
+        match Exec_policy_bridge.reflect_bash_script request.cmd with
+        | Error _ -> false
+        | Ok ast -> ast_invokes_git ast
       in
       let policy_decision =
         Exec_policy_bridge.policy_decision_for_command sandbox
@@ -323,13 +325,17 @@ let prepare_exec_command params ctx =
             && not (Taumel.Sandbox.path_within ~root:worktree request.workdir)
           then error_obj "brokered agent Git workdir must stay inside the agent worktree"
           else
-          Boundary_contracts.PreparedExec.create ~cmd:request.cmd ~workdir
-            ~tty:false ~sandbox:sandbox_cfg ~brokeredGit:true ~directCommand:(resolve_trusted_git ())
-            ~directArgv:argv ~gitDir:git_dir ~gitWorkTree:worktree
-            ?brokerAgentId:(if agent_id = "" then None else Some agent_id)
-            ~brokerSubcommand:
-              (Taumel.Agent_git_broker.subcommand_to_string subcommand) ()
-          |> Tool_contracts.PreparedExec.t_to_js |> inject
+          (match resolve_trusted_git () with
+          | Error message -> error_obj message
+          | Ok trusted_git ->
+              Boundary_contracts.PreparedExec.create ~cmd:request.cmd ~workdir
+                ~tty:false ~sandbox:sandbox_cfg ~brokeredGit:true
+                ~directCommand:trusted_git ~directArgv:argv ~gitDir:git_dir
+                ~gitWorkTree:worktree
+                ?brokerAgentId:(if agent_id = "" then None else Some agent_id)
+                ~brokerSubcommand:
+                  (Taumel.Agent_git_broker.subcommand_to_string subcommand) ()
+              |> Tool_contracts.PreparedExec.t_to_js |> inject)
       | Error message when message <> "" && worktree_ctx <> None ->
           error_obj message
       | Error _ ->

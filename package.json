@@ -25,7 +25,7 @@
     "smoke:agent-runs-manager": "bun test/smoke_agent_runs_manager.mjs",
     "smoke:agent-async": "bun test/smoke_agent_async.mjs",
     "smoke:agent-worktrees": "bun test/smoke_agent_worktrees.mjs",
-    "smoke:agent-worktree-runtime": "node test/smoke_agent_worktree_runtime.mjs",
+    "smoke:agent-worktree-runtime": "node --experimental-loader ./test/markdown-loader.mjs test/smoke_agent_worktree_runtime.mjs",
     "smoke:exa-contracts": "bun test/smoke_exa_contracts.mjs",
     "smoke:cron-loop": "bun test/smoke_cron_loop.mjs",
     "smoke:cron-persistence": "bun test/smoke_cron_persistence.mjs",

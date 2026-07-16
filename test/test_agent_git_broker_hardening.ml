@@ -71,6 +71,30 @@ let ast_pipeline left right =
         ];
     }
 
+let ast_environment_prefixed_git () =
+  Exec_policy.
+    {
+      kind = "program";
+      text = "TAUMEL_PROBE=1 git status";
+      children =
+        [
+          {
+            kind = "command";
+            text = "TAUMEL_PROBE=1 git status";
+            children =
+              [
+                { kind = "variable_assignment"; text = "TAUMEL_PROBE=1"; children = [] };
+                {
+                  kind = "command_name";
+                  text = "git";
+                  children = [ { kind = "word"; text = "git"; children = [] } ];
+                };
+                { kind = "word"; text = "status"; children = [] };
+              ];
+          };
+        ];
+    }
+
 let test_ast_accepts_simple_git () =
   match Agent_git_broker.parse_simple_git_ast (ast_command [ "git"; "status" ]) with
   | Error error -> failwith (Agent_git_broker.error_message error)
@@ -88,6 +112,10 @@ let test_ast_rejects_pipeline () =
   | Error Agent_git_broker.Not_simple_git -> ()
   | Error error ->
       failwith ("expected not_simple, got " ^ Agent_git_broker.error_message error)
+
+let test_ast_detects_environment_prefixed_git () =
+  assert_true "environment-prefixed git detected"
+    (Agent_git_broker.ast_invokes_git (ast_environment_prefixed_git ()))
 
 let test_lease_is_exclusive_per_identity () =
   Agent_git_broker.Lease.release "agent-ab12";
@@ -109,5 +137,6 @@ let test_lease_is_exclusive_per_identity () =
 let () =
   test_ast_accepts_simple_git ();
   test_ast_rejects_pipeline ();
+  test_ast_detects_environment_prefixed_git ();
   test_lease_is_exclusive_per_identity ();
   print_endline "test_agent_git_broker_hardening: ok"

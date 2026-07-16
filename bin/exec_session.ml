@@ -913,48 +913,20 @@ let run_exec_command prepared host runtime owner_id signal force_unsandboxed =
       (try
          if session.exited then ()
          else
-         let env =
-           if not (get_bool prepared "brokeredGit") then None
-           else
-             let process = node_process () in
-             let process_env = Unsafe.get process "env" in
-             let path = Unsafe.get process_env "PATH" in
-             let home = Unsafe.get process_env "HOME" in
-             let fields =
-               ref
-                 [
-                   ("PATH", path);
-                   ("HOME", home);
-                   ("LC_ALL", js_string "C");
-                   ("NO_COLOR", js_string "1");
-                   ("TERM", js_string "dumb");
-                   ("GIT_CONFIG_NOSYSTEM", js_string "1");
-                   ("GIT_CONFIG_GLOBAL", js_string "/dev/null");
-                   ("GIT_CONFIG_SYSTEM", js_string "/dev/null");
-                   ("GIT_OPTIONAL_LOCKS", js_string "0");
-                   ("GIT_TERMINAL_PROMPT", js_string "0");
-                   ("GIT_PAGER", js_string "cat");
-                   ("GIT_EDITOR", js_string "true");
-                   ("GIT_ASKPASS", js_string "true");
-                   ("GIT_CONFIG_COUNT", js_string "8");
-                   ("GIT_CONFIG_KEY_0", js_string "core.hooksPath"); ("GIT_CONFIG_VALUE_0", js_string "/dev/null");
-                   ("GIT_CONFIG_KEY_1", js_string "commit.gpgsign"); ("GIT_CONFIG_VALUE_1", js_string "false");
-                   ("GIT_CONFIG_KEY_2", js_string "submodule.recurse"); ("GIT_CONFIG_VALUE_2", js_string "false");
-                   ("GIT_CONFIG_KEY_3", js_string "core.useBuiltinFSMonitor"); ("GIT_CONFIG_VALUE_3", js_string "false");
-                   ("GIT_CONFIG_KEY_4", js_string "diff.external"); ("GIT_CONFIG_VALUE_4", js_string "true");
-                   ("GIT_CONFIG_KEY_5", js_string "core.attributesFile"); ("GIT_CONFIG_VALUE_5", js_string "/dev/null");
-                   ("GIT_CONFIG_KEY_6", js_string "filter.unset.clean"); ("GIT_CONFIG_VALUE_6", js_string "");
-                   ("GIT_CONFIG_KEY_7", js_string "filter.unset.process"); ("GIT_CONFIG_VALUE_7", js_string "");
-                 ]
-             in
-             List.iter
-               (fun (field, key) ->
-                 match optional_string_field prepared field with
-                 | Some v when String.trim v <> "" ->
-                     fields := (key, js_string (String.trim v)) :: !fields
-                 | _ -> ())
-               [ ("gitDir", "GIT_DIR"); ("gitWorkTree", "GIT_WORK_TREE") ];
-             Some (Unsafe.obj (Array.of_list !fields))
+	         let env =
+	           if not (get_bool prepared "brokeredGit") then None
+	           else
+	             match
+	               ( optional_string_field prepared "gitDir",
+	                 optional_string_field prepared "gitWorkTree" )
+	             with
+	             | Some git_dir, Some git_work_tree ->
+	                 Some
+	                   (Trusted_git.broker_environment ~git_dir ~git_work_tree
+	                      ~commit:
+	                        (optional_string_field prepared "brokerSubcommand"
+	                        = Some "commit"))
+	             | _ -> failwith "brokered Git requires verified repository paths"
          in
          spawn_session session ~file:call.invocation.command
            ~args:call.invocation.args ~cwd:call.cwd ?env ()

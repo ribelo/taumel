@@ -77,12 +77,24 @@ type PreparedOpenAiAction = Extract<PreparedSuccess, { action: "openai_usage_fet
 type PreparedApprovalAction = Extract<PreparedSuccess, { action: "exec_command_approval" | "write_approval" | "edit_approval" | "apply_patch_approval" | "exa_agent_create_run_approval" }>;
 type PreparedMutationAction = Extract<PreparedSuccess, { action: "write" | "write_approval" | "edit" | "edit_approval" | "apply_patch" | "apply_patch_approval" }>;
 type GatewayToolResult = ToolResultEnvelope | ReturnType<typeof decodeViewMediaResultEnvelope>;
+const agentToolNames = new Set(["agent_spawn", "finder", "oracle", "agent_send", "agent_wait", "agent_list", "agent_close"]);
 
 function settingsObject(value: unknown): SettingsObject | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value as SettingsObject : undefined;
 }
 function toolContext(value: unknown): Partial<ToolContext> | undefined {
   return typeof value === "object" && value !== null ? value as Partial<ToolContext> : undefined;
+}
+function agentFailureText(name: string, result: GatewayToolResult): string | undefined {
+  if (!agentToolNames.has(name)) return undefined;
+  const details = settingsObject(result.details);
+  const error = settingsObject(details?.["error"]);
+  if (details?.["ok"] !== false || typeof error?.["code"] !== "string" || typeof error["message"] !== "string") {
+    return undefined;
+  }
+  return result.content
+    .flatMap((item) => item.type === "text" ? [item.text] : [])
+    .join("\n");
 }
 
 export {
@@ -760,7 +772,7 @@ export async function executeTool(
 ): Promise<GatewayToolResult> {
   const parsed = parseToolParams(name, rawParams);
   if (!parsed.ok) {
-    if (["agent_spawn", "finder", "oracle", "agent_send", "agent_wait", "agent_list", "agent_close"].includes(name)) {
+    if (agentToolNames.has(name)) {
       return agentErrorToolResult(core, "invalid_arguments", parsed.error);
     }
     return errorToolResult(core, parsed.error, { ok: false, error: parsed.error });
@@ -789,13 +801,13 @@ export async function executeTool(
     prepared = preparedAction(core, name, parsed.params, prepareCtx);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (["agent_spawn", "finder", "oracle", "agent_send", "agent_wait", "agent_list", "agent_close"].includes(name)) {
+    if (agentToolNames.has(name)) {
       return agentErrorToolResult(core, "persistence_failed", message);
     }
     throw error;
   }
   if (!prepared.ok) {
-    if (["agent_spawn", "finder", "oracle", "agent_send", "agent_wait", "agent_list", "agent_close"].includes(name)) {
+    if (agentToolNames.has(name)) {
       const message = prepared.error;
       const code = /unknown run|not owned.*run/.test(message) ? "run_not_found"
         : /unknown agent|not owned.*agent|closing/.test(message) ? "agent_not_found"
@@ -959,8 +971,15 @@ export function registerGatewayTools(
       parameters: contract.parameters,
       promptSnippet: contract.promptSnippet ?? "",
       ...(contract.promptGuidelines !== undefined ? { promptGuidelines: contract.promptGuidelines } : {}),
-      execute: async (...args: unknown[]) =>
-        executeTool(pi, core, childSessions, name, args[1], args[4], args[2] instanceof AbortSignal ? args[2] : undefined),
+      execute: async (...args: unknown[]) => {
+        const result = await executeTool(
+          pi, core, childSessions, name, args[1], args[4],
+          args[2] instanceof AbortSignal ? args[2] : undefined,
+        );
+        const failure = agentFailureText(name, result);
+        if (failure !== undefined) throw new Error(failure);
+        return result;
+      },
       ...(renderersForTool(name) ?? {}),
     });
   }

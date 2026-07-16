@@ -396,7 +396,16 @@ export async function executeAgentPrepared(
         return agentErrorToolResult(core, "workspace_unavailable", "identity workspace is unavailable");
       }
       if (bridge === undefined) {
-        bridge = await createAgentChildSession(pi, core, childSessions, prepared, ctx);
+        try {
+          bridge = await createAgentChildSession(pi, core, childSessions, prepared, ctx);
+        } catch (error) {
+          rollbackAgentSendPreflight(core, prepared, ctx);
+          return agentErrorToolResult(
+            core,
+            "child_session_unavailable",
+            error instanceof Error ? error.message : String(error),
+          );
+        }
       }
       if (bridge === undefined || bridge.error !== undefined || bridge.missingSessionIdentifier) {
         rollbackAgentSendPreflight(core, prepared, ctx);

@@ -66,6 +66,7 @@ let test_worktree_binding_derives_path_and_branch () =
         (Agent_workspace.isolation_to_string derived.isolation)
         "worktree";
       assert_equal "project name" derived.project_name "project";
+      assert_equal "repository identity" derived.main_repository_id "repo-abc";
       assert_equal "worktree path" derived.worktree_path
         ("/home/u/.pi/agent/taumel/worktrees/project/"
        ^ derived.owner_component ^ "/agent-ab12");
