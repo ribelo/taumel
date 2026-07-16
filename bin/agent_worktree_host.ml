@@ -396,36 +396,20 @@ let attr_values_for ~worktree_path ~attr relative =
           Error ("missing check-attr record for " ^ relative ^ "/" ^ attr)
       | Ok vals -> Ok vals
 let path_has_executable_filter ~worktree_path relative =
-  let ( let* ) = Result.bind in
-  let* filters = attr_values_for ~worktree_path ~attr:"filter" relative in
-  let* cleans = attr_values_for ~worktree_path ~attr:"clean" relative in
-  let* processes = attr_values_for ~worktree_path ~attr:"process" relative in
-  let dangerous value =
-    value <> "unspecified"
-  in
-  if List.exists dangerous filters || List.exists dangerous cleans
-     || List.exists dangerous processes
-  then Error ("brokered git add rejects executable filter: " ^ relative)
-  else Ok ()
+  match attr_values_for ~worktree_path ~attr:"filter" relative with
+  | Error _ as error -> error
+  | Ok filters when List.exists (( <> ) "unspecified") filters ->
+      Error ("brokered git add rejects executable filter: " ^ relative)
+  | Ok _ -> Ok ()
 let expand_broker_add_paths ~worktree_path argv =
   let has_all = List.mem "--all" argv in
-  let pathspecs =
-    let rec after_sep = function
-      | [] -> []
-      | "--" :: rest -> rest
-      | _ :: rest -> after_sep rest
-    in
-    after_sep argv
-  in
-  if has_all then
-    run_git ~trim:false ~cwd:worktree_path
-      [ "ls-files"; "-z"; "-c"; "-o"; "--exclude-standard" ]     |> Result.map nul_paths
-  else if pathspecs = [] then
+  let rec after_sep = function [] -> [] | "--" :: r -> r | _ :: r -> after_sep r in
+  let pathspecs = after_sep argv in
+  if (not has_all) && pathspecs = [] then
     Error "brokered git add requires --all or pathspecs after --"
   else
-    run_git ~trim:false ~cwd:worktree_path
-      ("ls-files" :: "-z" :: "-c" :: "-o" :: "--exclude-standard" :: "--" :: pathspecs)
-    |> Result.map nul_paths
+    let args = [ "ls-files"; "-z"; "-c"; "-o"; "--exclude-standard" ] @ (if pathspecs = [] then [] else "--" :: pathspecs) in
+    run_git ~trim:false ~cwd:worktree_path args |> Result.map nul_paths
 let preflight_broker_add ~worktree_path argv =
   let ( let* ) = Result.bind in
   let* expanded = expand_broker_add_paths ~worktree_path argv in
@@ -448,16 +432,57 @@ let preflight_broker_add ~worktree_path argv =
               | Ok () -> check rest)
   in
   check expanded
+let with_temp_index ~worktree_path f =
+  let ( let* ) = Result.bind in
+  let* index_path = run_git ~cwd:worktree_path [ "rev-parse"; "--git-path"; "index" ] in
+  let* temp_index = run_git ~cwd:worktree_path [ "rev-parse"; "--git-path"; "taumel-temp-index" ] in
+  let fs = Lazy.force fs_mod in
+  (try
+     if path_exists index_path then
+       ignore (Unsafe.meth_call fs "copyFileSync" [| js_string index_path; js_string temp_index |])
+     else ignore (remove_path temp_index);
+     Ok ()
+   with error -> Error (Printexc.to_string error))
+  |> function
+  | Error _ as error -> error
+  | Ok () -> (
+      match f ~temp_index with
+      | Ok () -> (
+          try
+            ignore (Unsafe.meth_call fs "renameSync" [| js_string temp_index; js_string index_path |]);
+            Ok ()
+          with error -> ignore (remove_path temp_index); Error (Printexc.to_string error))
+      | Error _ as error -> ignore (remove_path temp_index); error)
 let perform_secure_broker_add ?(preflight = true) ~worktree_path argv =
   let ( let* ) = Result.bind in
   let* () = if preflight then preflight_broker_add ~worktree_path argv else Ok () in
   let* paths = expand_broker_add_paths ~worktree_path argv in
+  with_temp_index ~worktree_path (fun ~temp_index ->
+  let run_index args =
+    let child_process = Lazy.force child_process_mod in
+    try
+      let stdout =
+        Unsafe.meth_call child_process "execFileSync"
+          [|
+            js_string "git";
+            js_array (List.map js_string args);
+            Unsafe.obj
+              [|
+                ("cwd", js_string worktree_path);
+                ("encoding", js_string "utf8");
+                ("env", trusted_git_env [ ("GIT_INDEX_FILE", js_string temp_index) ]);
+                ("stdio", js_array [ js_string "ignore"; js_string "pipe"; js_string "pipe" ]);
+              |];
+          |]
+      in
+      Ok (String.trim (Js.to_string stdout))
+    with error -> Error (Printexc.to_string error)
+  in
   let stage_path relative =
     let full = Filename.concat worktree_path relative in
     let fs = Lazy.force fs_mod in
     if not (path_exists full) then
-      run_git ~cwd:worktree_path [ "update-index"; "--force-remove"; "--"; relative ]
-      |> Result.map ignore
+      run_index [ "update-index"; "--force-remove"; "--"; relative ] |> Result.map ignore
     else
       try
         let st = Unsafe.meth_call fs "lstatSync" [| js_string full |] in
@@ -474,8 +499,7 @@ let perform_secure_broker_add ?(preflight = true) ~worktree_path argv =
           match hashed with
           | Error message -> Error message
           | Ok blob ->
-              run_git ~cwd:worktree_path
-                [ "update-index"; "--add"; "--cacheinfo"; "120000," ^ blob ^ "," ^ relative ]
+              run_index [ "update-index"; "--add"; "--cacheinfo"; "120000," ^ blob ^ "," ^ relative ]
               |> Result.map ignore)
         else
           let mode =
@@ -486,17 +510,15 @@ let perform_secure_broker_add ?(preflight = true) ~worktree_path argv =
           match run_git ~cwd:worktree_path [ "hash-object"; "-w"; "--no-filters"; full ] with
           | Error message -> Error message
           | Ok blob ->
-              run_git ~cwd:worktree_path
-                [ "update-index"; "--add"; "--cacheinfo"; mode ^ "," ^ blob ^ "," ^ relative ]
+              run_index [ "update-index"; "--add"; "--cacheinfo"; mode ^ "," ^ blob ^ "," ^ relative ]
               |> Result.map ignore
       with error -> Error (relative ^ ": " ^ Printexc.to_string error)
   in
   let rec stage_all = function
     | [] -> Ok ()
-    | relative :: rest -> (
-        match stage_path relative with Error _ as e -> e | Ok () -> stage_all rest)
+    | relative :: rest -> (match stage_path relative with Error _ as e -> e | Ok () -> stage_all rest)
   in
-  stage_all paths
+  stage_all paths)
 let registration_present ~main_repository_root ~worktree_path =
   match
     run_git ~cwd:main_repository_root [ "worktree"; "list"; "--porcelain" ]
@@ -535,14 +557,11 @@ let create_baseline ~worktree_path =
              [|
                ("cwd", js_string worktree_path);
                ("encoding", js_string "utf8");
-               ( "env",
-                 trusted_git_env
-                   [
-                     ("GIT_AUTHOR_NAME", js_string Taumel.Agent_worktree.baseline_author_name);
-                     ("GIT_AUTHOR_EMAIL", js_string Taumel.Agent_worktree.baseline_author_email);
-                     ("GIT_COMMITTER_NAME", js_string Taumel.Agent_worktree.baseline_committer_name);
-                     ("GIT_COMMITTER_EMAIL", js_string Taumel.Agent_worktree.baseline_committer_email);
-                   ] );
+               ("env", trusted_git_env [
+                    ("GIT_AUTHOR_NAME", js_string Taumel.Agent_worktree.baseline_author_name);
+                    ("GIT_AUTHOR_EMAIL", js_string Taumel.Agent_worktree.baseline_author_email);
+                    ("GIT_COMMITTER_NAME", js_string Taumel.Agent_worktree.baseline_committer_name);
+                    ("GIT_COMMITTER_EMAIL", js_string Taumel.Agent_worktree.baseline_committer_email)]);
                ("stdio", js_array [ js_string "ignore"; js_string "pipe"; js_string "pipe" ]);
              |];
          |]);

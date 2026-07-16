@@ -904,10 +904,11 @@ let run_exec_command prepared host runtime owner_id signal force_unsandboxed =
              release_broker_lease session;
              failwith message
          | Ok () ->
-             (* Staging completed via filter-free plumbing; mark session exited
-                successfully without spawning git add. *)
+             (* Staging completed via filter-free plumbing; release lease and mark
+                the synthetic session successful without spawning git add. *)
              session.exited <- true;
-             session.exit_code <- Some 0);
+             session.exit_code <- Some 0;
+             release_broker_lease session);
 
       (try
          if session.exited then ()
