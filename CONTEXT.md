@@ -184,6 +184,36 @@ Routing is either inherited as declared or concrete and exact; unavailable
 concrete routing fails rather than falling back silently.
 _Avoid_: Best-effort model selection, model fallback, agent tier
 
+**Agent isolation**:
+The immutable choice of whether an agent identity shares its parent's workspace
+or uses a dedicated agent worktree throughout its lifetime.
+_Avoid_: Sandbox mode, temporary directory, per-run isolation
+
+**Agent worktree**:
+A persistent Git working tree dedicated to one agent identity and reused by all
+of that identity's runs until explicitly removed by its owner.
+_Avoid_: Work directory, temporary checkout, run worktree
+
+**Agent Git broker**:
+The allowlisted execution path that applies an eligible agent's validated
+`exec_command` Git invocation to its worktree without granting the command shell
+arbitrary access to shared repository metadata.
+_Avoid_: Git reimplementation, unrestricted Git shell, worktree manager
+
+**Workspace binding**:
+An identity's immutable, closed choice between a shared source workspace and a
+dedicated worktree whose source path is retained only as origin metadata.
+Isolation mode and effective-workspace behavior are projections of this choice,
+not independently stored facts.
+_Avoid_: workspace configuration, source/effective path pair
+
+**Resolved workspace**:
+The ephemeral, verified filesystem and authorization capability produced from a
+workspace binding before an operation. Resolution either yields the complete
+shared or worktree capability or fails; it never yields a partially valid path
+combination.
+_Avoid_: workspace path, unchecked binding
+
 **Specialist task**:
 A model-backed objective with a fixed purpose and policy, such as Finder or
 Oracle, which is started through its own tool rather than selected as a generic
