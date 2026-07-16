@@ -17,11 +17,11 @@ let prepare raw_facts =
   | "finder" | "oracle" -> Agent_tools.prepare name params ctx
   | "exec_command" -> Mutation_tools.prepare_exec_command params ctx
   | "write_stdin" -> Mutation_tools.prepare_write_stdin params
-  | "apply_patch" -> Mutation_tools.prepare_apply_patch params
-  | "write" -> Mutation_tools.prepare_write params
+  | "apply_patch" -> Mutation_tools.prepare_apply_patch params ctx
+  | "write" -> Mutation_tools.prepare_write params ctx
   | "read" -> Mutation_tools.prepare_read params
   | "view_media" -> View_media_tool.prepare params
-  | "edit" -> Mutation_tools.prepare_edit params
+  | "edit" -> Mutation_tools.prepare_edit params ctx
   | "get_goal" -> Goal_tools.prepare_get ()
   | "create_goal" -> Goal_tools.prepare_create params ctx
   | "update_goal" -> Goal_tools.prepare_update params ctx

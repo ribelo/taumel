@@ -53,6 +53,16 @@ let custom_entry_data ctx custom_type =
       in
       find entries)
 
+let child_session_metadata ctx =
+  match custom_entry_data ctx "taumel.childSession" with
+  | None -> Ok None
+  | Some data -> (
+      match json_from_js data with
+      | Error message -> Error ("invalid child session metadata: " ^ message)
+      | Ok json ->
+          Result.map Option.some
+            (Taumel.Child_session.decode_persisted_metadata json))
+
 let append_custom_entry ctx custom_type json =
   let session_manager = Unsafe.get ctx "sessionManager" in
   match function_field session_manager "appendCustomEntry" with

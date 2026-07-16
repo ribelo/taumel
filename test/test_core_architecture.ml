@@ -895,12 +895,88 @@ let test_permissions_state () =
   expect_error "isolated_child cannot enable no-sandbox"
     (Permissions.apply_update child_state (Permissions.Set_no_sandbox true))
 
+let test_child_session_persisted_metadata () =
+  let worktree_binding =
+    Taumel.Agent_workspace.worktree ~source_origin:"/repo"
+      ~main_repository_root:"/repo" ~main_repository_id:"repo-id"
+  in
+  let fields =
+    [
+      ("kind", Shared.String "agent");
+      ("agentKind", Shared.String "generic");
+      ("agentId", Shared.String "agent-1");
+      ("workspaceDirectory", Shared.String "/agents/agent-1");
+      ("sourceWorkspace", Shared.String "/repo");
+      ("isolation", Shared.String "worktree");
+      ( "workspaceBinding",
+        Taumel.Agent_workspace.binding_to_json worktree_binding );
+      ("worktreePath", Shared.String "/agents/agent-1");
+      ("worktreeBranch", Shared.String "taumel/agent/agent-1");
+      ("mainRepositoryRoot", Shared.String "/repo");
+    ]
+  in
+  let metadata =
+    expect_ok "decode worktree child metadata"
+      (Child_session.decode_persisted_metadata (Shared.Object fields))
+  in
+  assert_bool "typed worktree effective workspace"
+    (Child_session.effective_workspace metadata = Some "/agents/agent-1");
+  (match Child_session.worktree_agent metadata with
+  | Some worktree ->
+      assert_equal "typed worktree agent id" "agent-1" worktree.agent_id;
+      assert_equal "typed worktree repository" "/repo"
+        worktree.main_repository_root
+  | None -> fail "typed worktree metadata" "expected worktree agent");
+  expect_error "worktree metadata requires repository root"
+    (Child_session.decode_persisted_metadata
+       (Shared.Object (List.remove_assoc "mainRepositoryRoot" fields)));
+  expect_error "worktree path must match effective workspace"
+    (Child_session.decode_persisted_metadata
+       (Shared.Object
+          (("worktreePath", Shared.String "/agents/other")
+          :: List.remove_assoc "worktreePath" fields)));
+  let shared_binding = Taumel.Agent_workspace.shared ~source_root:"/repo" in
+  let shared =
+    Child_session.decode_persisted_metadata
+      (Shared.Object
+         [
+           ("kind", Shared.String "agent");
+           ("agentKind", Shared.String "finder");
+           ("agentId", Shared.String "agent-2");
+           ("workspaceDirectory", Shared.String "/repo");
+           ("sourceWorkspace", Shared.String "/repo");
+           ("isolation", Shared.String "none");
+           ( "workspaceBinding",
+             Taumel.Agent_workspace.binding_to_json shared_binding );
+         ])
+    |> expect_ok "decode shared child metadata"
+  in
+  assert_bool "shared child has no broker context"
+    (Child_session.worktree_agent shared = None);
+  assert_bool "finder rejects escalation"
+    (Child_session.rejects_escalation shared);
+  ignore
+    (Child_session.decode_persisted_metadata
+       (Shared.Object
+          [
+            ("kind", Shared.String "ralph");
+            ("objective", Shared.String "finish task");
+            ("controllerSessionId", Shared.String "parent");
+            ("maxIterations", Shared.Null);
+            ("reflectionEvery", Shared.Number 2.);
+          ])
+    |> expect_ok "decode Ralph child metadata");
+  expect_error "Ralph child metadata requires its objective"
+    (Child_session.decode_persisted_metadata
+       (Shared.Object [ ("kind", Shared.String "ralph") ]))
+
 
 let () =
   test_gateway_enforces_profile_and_sandbox ();
   test_sandbox_patch_policy ();
   test_sandbox_workspace_metadata_protection ();
   test_child_session_setup_entries ();
+  test_child_session_persisted_metadata ();
   test_goal_state_machine ();
   test_ralph_ownership ();
   test_thread_tools ();

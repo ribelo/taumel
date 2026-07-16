@@ -102,8 +102,14 @@ function schemaToTs(schema, namedSchemas, currentName) {
 }
 
 function interfaceText(name, schema, namedSchemas) {
-  if (!schema || typeof schema !== "object" || schema.type !== "object") {
-    throw new Error(`${name} must be a TypeBox object schema`);
+  if (!schema || typeof schema !== "object") {
+    throw new Error(`${name} must be a TypeBox schema`);
+  }
+  if (Array.isArray(schema.anyOf)) {
+    return `export type ${name} = ${schemaToTs(schema, namedSchemas, name)};`;
+  }
+  if (schema.type !== "object") {
+    throw new Error(`${name} must be a TypeBox object or union schema`);
   }
   const required = new Set(Array.isArray(schema.required) ? schema.required : []);
   const fields = Object.entries(schema.properties ?? {}).map(([fieldName, property]) => {

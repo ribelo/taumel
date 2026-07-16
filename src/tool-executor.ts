@@ -40,7 +40,7 @@ import {
 } from "./child-sessions.ts";
 import { installExecNotificationLifecycle, startExecCompletionWaiter } from "./exec-notifications.ts";
 import { executeAgentPrepared, installAgentLifecycle } from "./agent-orchestration.ts";
-import { decodeBridgeToolExecutionResult, decodeBridgeToolResult, decodeEditApplicationResult, decodeExecApprovalPromptPlan, decodeExecApprovalResult, decodeExecPolicyAllowRuleResult, decodeExecToolResult, decodePatchApplicationResult, decodeToolNamesResult, decodeToolResultEnvelope, decodeViewMediaResultEnvelope, type PreparedToolAction, type ToolResultEnvelope } from "./bridge-contracts.ts";
+import { decodeBridgeToolExecutionResult, decodeBridgeToolResult, decodeChildSessionMetadata, decodeEditApplicationResult, decodeExecApprovalPromptPlan, decodeExecApprovalResult, decodeExecPolicyAllowRuleResult, decodeExecToolResult, decodePatchApplicationResult, decodeToolNamesResult, decodeToolResultEnvelope, decodeViewMediaResultEnvelope, type PreparedToolAction, type ToolResultEnvelope } from "./bridge-contracts.ts";
 import {
   decodeOpenAiUsageHostAuth,
   decodeOpenAiUsageHostParams,
@@ -61,8 +61,12 @@ type SessionManagerHost = { readonly getEntries?: () => unknown };
 type SessionEntry = { readonly type?: unknown; readonly customType?: unknown; readonly data?: unknown };
 type ChildMetadata = {
   readonly isolated_child?: unknown; readonly kind?: unknown;
-  readonly parentSessionId?: unknown; readonly agentId?: unknown;
+  readonly parentSessionId?: unknown; readonly parentSessionFile?: unknown;
+  readonly agentId?: unknown;
 };
+type ChildSessionMarker =
+  | { readonly present: false }
+  | { readonly present: true; readonly data: unknown };
 type ImageModel = { readonly input?: unknown };
 type EditReplacement = { readonly oldText?: unknown; readonly newText?: unknown };
 type NodeError = { readonly code?: unknown };
@@ -151,14 +155,14 @@ function mutationApprovalDenied(core: CoreBridge, action: string, outcome: Appro
   });
 }
 
-function childSessionMetadataFromContext(ctx: unknown): Partial<ChildMetadata> | undefined {
+function childSessionMarkerFromContext(ctx: unknown): ChildSessionMarker {
   const sessionManager = toolContext(ctx)?.sessionManager;
-  if (typeof sessionManager !== "object" || sessionManager === null) return undefined;
+  if (typeof sessionManager !== "object" || sessionManager === null) return { present: false };
   const getEntries = (sessionManager as SessionManagerHost).getEntries;
-  if (typeof getEntries !== "function") return undefined;
+  if (typeof getEntries !== "function") return { present: false };
   try {
     const entries = getEntries.call(sessionManager);
-    if (!Array.isArray(entries)) return undefined;
+    if (!Array.isArray(entries)) return { present: false };
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const entry = entries[index];
       if (typeof entry !== "object" || entry === null) continue;
@@ -166,14 +170,37 @@ function childSessionMetadataFromContext(ctx: unknown): Partial<ChildMetadata> |
       if (sessionEntry.type !== "custom" || sessionEntry.customType !== "taumel.childSession") {
         continue;
       }
-      return typeof sessionEntry.data === "object" && sessionEntry.data !== null
-        ? sessionEntry.data as Partial<ChildMetadata>
-        : undefined;
+      return { present: true, data: sessionEntry.data };
     }
   } catch {
-    return undefined;
+    return { present: false };
   }
-  return undefined;
+  return { present: false };
+}
+
+function childSessionMetadataFromContext(ctx: unknown): Partial<ChildMetadata> | undefined {
+  const marker = childSessionMarkerFromContext(ctx);
+  return marker.present && typeof marker.data === "object" && marker.data !== null
+    ? marker.data as Partial<ChildMetadata>
+    : undefined;
+}
+
+function childMutationConfinement(ctx: unknown): "none" | "worktree" | "invalid" {
+  const marker = childSessionMarkerFromContext(ctx);
+  if (!marker.present) return "none";
+  if (typeof marker.data !== "object" || marker.data === null) return "invalid";
+  const raw = marker.data as Partial<ChildMetadata>;
+  const candidate = { ...raw } as { [key: string]: unknown };
+  delete candidate.parentSessionId;
+  delete candidate.parentSessionFile;
+  try {
+    const metadata = decodeChildSessionMetadata(candidate);
+    return metadata.kind === "agent" && metadata.isolation === "worktree"
+      ? "worktree"
+      : "none";
+  } catch {
+    return "invalid";
+  }
 }
 
 let loadedMainSessionId: string | undefined;
@@ -844,6 +871,9 @@ export async function executeTool(
     case "write_stdin":
       return writePreparedStdin(core, prepared, ctx, signal);
     case "write_approval":
+      if (childMutationConfinement(ctx) !== "none") {
+        return errorToolResult(core, "worktree-isolated child filesystem approval is forbidden", { ok: false });
+      }
       return withMutationApproval(core, "write", prepared, ctx, signal, approvalStillCurrent, replan, () =>
         executeLegacyWrite(core, {
           ...prepared,
@@ -853,6 +883,9 @@ export async function executeTool(
         })
       );
     case "edit_approval":
+      if (childMutationConfinement(ctx) !== "none") {
+        return errorToolResult(core, "worktree-isolated child filesystem approval is forbidden", { ok: false });
+      }
       return withMutationApproval(core, "edit", prepared, ctx, signal, approvalStillCurrent, replan, () =>
         executeLegacyEdit(core, {
           ...prepared,
@@ -862,6 +895,9 @@ export async function executeTool(
         })
       );
     case "apply_patch_approval":
+      if (childMutationConfinement(ctx) !== "none") {
+        return errorToolResult(core, "worktree-isolated child filesystem approval is forbidden", { ok: false });
+      }
       return withMutationApproval(core, "apply_patch", prepared, ctx, signal, approvalStillCurrent, replan, () =>
         executeApplyPatch(core, parsed.params, {
           ...prepared,

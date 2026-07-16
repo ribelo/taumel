@@ -1,4 +1,6 @@
 import Type, { type Static } from "typebox";
+import { ChildSessionMetadataSchema, type ChildSessionMetadata } from "./bridge-child-session-contracts.ts";
+export { ChildSessionMetadataSchema, type ChildSessionMetadata };
 /** Transport contracts for values returned by OCaml to the Pi adapter. */
 export const ActiveToolsSyncFactsSchema = Type.Object(
   { tools: Type.Array(Type.String()), ctx: Type.Optional(Type.Unknown()) },
@@ -288,19 +290,6 @@ export const ChildGoalContinuationFinalizeSchema = Type.Object(
   },
   { $id: "ChildGoalContinuationFinalize", additionalProperties: false },
 );
-
-export const ChildSessionMetadataSchema = Type.Object(
-  {
-    kind: Type.Literal("ralph"), objective: Type.String({ minLength: 1 }),
-    controllerSessionId: Type.String({ minLength: 1 }),
-    maxIterations: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
-    reflectionEvery: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
-    activeTools: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
-    capabilityProfile: Type.Optional(Type.Unknown()),
-  },
-  { $id: "ChildSessionMetadata", additionalProperties: false },
-);
-export type ChildSessionMetadata = Static<typeof ChildSessionMetadataSchema>;
 
 export const ChildSessionStartFactsSchema = Type.Object(
   {

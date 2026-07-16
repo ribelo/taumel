@@ -21,6 +21,7 @@ import {
   decodeAgentNotificationClaimValidation,
   decodeAgentRoutingDiagnosticsResult,
   decodeCoreAck,
+  decodeChildSessionMetadata,
   decodePendingAgentNotificationsResult,
   decodePreparedToolAction,
   decodeToolResultEnvelope,
@@ -263,7 +264,13 @@ async function createAgentChildSession(
 ): Promise<ChildSessionBridge | undefined> {
   const metadata = prepared.metadata;
   if (!isObject(metadata)) return { error: "missing agent metadata" };
-  const bridge = await createChildSession(pi, core, ctx, metadata as never);
+  let typedMetadata;
+  try {
+    typedMetadata = decodeChildSessionMetadata(metadata);
+  } catch {
+    return { error: "invalid agent metadata" };
+  }
+  const bridge = await createChildSession(pi, core, ctx, typedMetadata);
   if (bridge === undefined || bridge.error !== undefined || bridge.missingSessionIdentifier) {
     return bridge;
   }

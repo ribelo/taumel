@@ -174,18 +174,23 @@ let bool_of_flag_string value =
 
 let session_is_isolated_child_data = function
   | None -> false
-  | Some data ->
-      get_bool data "isolated_child"
-      ||
-      match get_string data "kind" with
-      | "agent" | "ralph" -> true
-      | _ -> false
+  | Some _ -> true
 
 let session_is_isolated_child ctx =
   session_is_isolated_child_data (Session_store.custom_entry_data ctx "taumel.childSession")
 
 let update_session_state host ctx =
   let snapshot = call1 host "sessionSnapshot" (inject ctx) in
+  let snapshot_cwd = get_string snapshot "cwd" in
+  let operational_cwd =
+    match Session_store.child_session_metadata ctx with
+    | Ok None -> snapshot_cwd
+    | Ok (Some metadata) ->
+        Option.value
+          (Taumel.Child_session.effective_workspace metadata)
+          ~default:snapshot_cwd
+    | Error _ -> ""
+  in
   let next_host_sandbox_preset =
     Taumel.Capability_profile.sandbox_of_string (get_string snapshot "sandboxMode")
   in
@@ -201,7 +206,7 @@ let update_session_state host ctx =
     else
       Some
         (
-          get_string snapshot "cwd",
+          snapshot_cwd,
           get_string snapshot "provider",
           get_string snapshot "model",
           get_string snapshot "thinking",
@@ -215,7 +220,11 @@ let update_session_state host ctx =
   host_network_mode := next_host_network_mode;
   host_no_sandbox := next_host_no_sandbox;
   match next_session_state with
-  | None -> ()
+  | None ->
+      let previous_cwd = state.cwd in
+      state.cwd <- operational_cwd;
+      if previous_cwd <> "" && previous_cwd <> state.cwd then
+        state.git_delta <- Model.empty_git_delta
   | Some
       ( next_cwd,
         next_provider,

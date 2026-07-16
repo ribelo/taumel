@@ -3,6 +3,27 @@ type custom_entry = {
   data : Shared.json;
 }
 
+type agent_kind = Generic | Finder | Oracle
+
+type worktree_agent = {
+  agent_id : string;
+  worktree_path : string;
+  main_repository_root : string;
+  branch : string;
+}
+
+type agent_workspace =
+  | Shared_workspace of { root : string }
+  | Worktree_workspace of worktree_agent
+
+type persisted_metadata =
+  | Ralph_metadata
+  | Agent_metadata of {
+      agent_id : string;
+      agent_kind : agent_kind;
+      workspace : agent_workspace;
+    }
+
 type start_plan = {
   parent_session : string option;
   model_id : string option;
@@ -70,6 +91,119 @@ let string_array_field name fields =
       in
       Some values
   | _ -> None
+
+let required_string fields name =
+  match Shared.json_required_string "child session metadata" fields name with
+  | Ok value when String.trim value <> "" -> Ok (String.trim value)
+  | Ok _ -> Error ("child session metadata." ^ name ^ " is required")
+  | Error message -> Error message
+
+let decode_agent_kind = function
+  | "generic" -> Ok Generic
+  | "finder" -> Ok Finder
+  | "oracle" -> Ok Oracle
+  | value -> Error ("invalid child session agentKind: " ^ value)
+
+let validate_optional_positive_int fields name =
+  match List.assoc_opt name fields with
+  | Some Shared.Null -> Ok ()
+  | Some (Shared.Number value)
+    when value >= 1. && Float.floor value = value -> Ok ()
+  | Some _ ->
+      Error ("child session metadata." ^ name ^ " must be null or a positive integer")
+  | None -> Error ("child session metadata." ^ name ^ " is required")
+
+let decode_persisted_metadata = function
+  | Shared.Object fields ->
+      let ( let* ) = Result.bind in
+      let* kind = required_string fields "kind" in
+      if kind = "ralph" then
+        let* _objective = required_string fields "objective" in
+        let* _controller = required_string fields "controllerSessionId" in
+        let* () = validate_optional_positive_int fields "maxIterations" in
+        let* () = validate_optional_positive_int fields "reflectionEvery" in
+        Ok Ralph_metadata
+      else if kind <> "agent" then Error ("invalid child session kind: " ^ kind)
+      else
+        let* agent_id = required_string fields "agentId" in
+        let* agent_kind =
+          let* value = required_string fields "agentKind" in
+          decode_agent_kind value
+        in
+        let* workspace_directory = required_string fields "workspaceDirectory" in
+        let* source_workspace = required_string fields "sourceWorkspace" in
+        let* isolation = required_string fields "isolation" in
+        let* binding =
+          match List.assoc_opt "workspaceBinding" fields with
+          | Some value -> Agent_workspace.binding_of_json value
+          | None -> Error "child session metadata.workspaceBinding is required"
+        in
+        (match (isolation, binding) with
+        | "none", Agent_workspace.Shared { source_root }
+          when workspace_directory = source_root && source_workspace = source_root ->
+            Ok
+              (Agent_metadata
+                 {
+                   agent_id;
+                   agent_kind;
+                   workspace = Shared_workspace { root = source_root };
+                 })
+        | "worktree",
+          Agent_workspace.Worktree
+            { source_origin; main_repository_root; _ }
+          when source_workspace = source_origin ->
+            let* worktree_path = required_string fields "worktreePath" in
+            let* branch = required_string fields "worktreeBranch" in
+            let* metadata_main_root =
+              required_string fields "mainRepositoryRoot"
+            in
+            if workspace_directory <> worktree_path then
+              Error "child session worktreePath must equal workspaceDirectory"
+            else if metadata_main_root <> main_repository_root then
+              Error
+                "child session mainRepositoryRoot must match workspaceBinding"
+            else
+              Ok
+                (Agent_metadata
+                   {
+                     agent_id;
+                     agent_kind;
+                     workspace =
+                       Worktree_workspace
+                         {
+                           agent_id;
+                           worktree_path;
+                           main_repository_root;
+                           branch;
+                         };
+                   })
+        | "none", _ ->
+            Error "shared child session requires a shared workspaceBinding"
+        | "worktree", _ ->
+            Error "worktree child session requires a worktree workspaceBinding"
+        | value, _ -> Error ("invalid child session isolation: " ^ value))
+  | _ -> Error "child session metadata must be an object"
+
+let effective_workspace = function
+  | Ralph_metadata -> None
+  | Agent_metadata { workspace = Shared_workspace { root }; _ } -> Some root
+  | Agent_metadata
+      { workspace = Worktree_workspace { worktree_path; _ }; _ } ->
+      Some worktree_path
+
+let worktree_agent = function
+  | Agent_metadata { workspace = Worktree_workspace worktree; _ } -> Some worktree
+  | Ralph_metadata | Agent_metadata _ -> None
+
+let persisted_agent_id = function
+  | Agent_metadata { agent_id; _ } -> Some agent_id
+  | Ralph_metadata -> None
+
+let rejects_escalation = function
+  | Ralph_metadata -> false
+  | Agent_metadata { agent_kind = Finder | Oracle; _ } -> true
+  | Agent_metadata { workspace = Worktree_workspace _; _ } -> true
+  | Agent_metadata _ -> false
 
 let ralph_child_capability_profile (parent : Capability_profile.t) active_tools =
   let tools =

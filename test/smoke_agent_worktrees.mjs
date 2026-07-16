@@ -37,6 +37,7 @@ try {
   git(repo, ["init"]);
   git(repo, ["config", "user.email", "test@example.com"]);
   git(repo, ["config", "user.name", "Test"]);
+  git(repo, ["config", "commit.gpgsign", "false"]);
   writeFileSync(join(repo, "README.md"), "hello\n");
   git(repo, ["add", "README.md"]);
   git(repo, ["commit", "-m", "init"]);

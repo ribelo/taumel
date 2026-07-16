@@ -67,7 +67,14 @@ const childCtx = {
     getEntries: () => [{
       type: "custom",
       customType: "taumel.childSession",
-      data: { kind: "agent", agentId: "agent-test", isolated_child: true, parentSessionId: "parent-a" },
+      data: {
+        kind: "agent", agentKind: "generic", agentId: "agent-test",
+        modelId: "test/model", thinkingLevel: "medium", activeTools: ["write"],
+        capabilityProfile: {}, networkMode: "disabled", isolated_child: true,
+        workspaceDirectory: "/tmp", sourceWorkspace: "/tmp", isolation: "none",
+        workspaceBinding: { variant: "shared", source_root: "/tmp" },
+        parentSessionId: "parent-a", parentSessionFile: "",
+      },
     }],
   },
   ui: { confirm: async () => { childConfirmations += 1; return false; } },

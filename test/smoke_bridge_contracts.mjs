@@ -3,6 +3,7 @@ import {
   decodeCommandSpecsResult,
   decodeCommandNotificationPlan,
   decodeChildSessionStartPlan,
+  decodeChildSessionMetadata,
   decodeChildDispatchPlan,
   decodeSandboxHostPathPlan,
   decodeWorkspaceMutationValidation,
@@ -296,6 +297,31 @@ const childStart = decodeChildSessionStartPlan({
   activeTools: ["read"], setupEntries: [{ customType: "taumel.childSession", data: { kind: "ralph" } }],
 });
 if (childStart.activeTools?.[0] !== "read") throw new Error("child-session start plan did not decode");
+const worktreeMetadata = {
+  kind: "agent", agentKind: "generic", agentId: "agent-1",
+  modelId: "test/model", thinkingLevel: "medium", activeTools: ["exec_command"],
+  capabilityProfile: {}, networkMode: "disabled", isolated_child: true,
+  workspaceDirectory: "/agents/agent-1", sourceWorkspace: "/repo",
+  isolation: "worktree",
+  workspaceBinding: {
+    variant: "worktree", source_origin: "/repo", main_repository_root: "/repo",
+    main_repository_id: "repo-id",
+  },
+  worktreePath: "/agents/agent-1", worktreeBranch: "taumel/agent/agent-1",
+  mainRepositoryRoot: "/repo",
+};
+if (decodeChildSessionMetadata(worktreeMetadata).isolation !== "worktree") {
+  throw new Error("worktree child-session metadata did not decode");
+}
+let malformedWorktreeAccepted = false;
+try {
+  const { mainRepositoryRoot: _missing, ...malformed } = worktreeMetadata;
+  decodeChildSessionMetadata(malformed);
+  malformedWorktreeAccepted = true;
+} catch {
+  // Expected: incomplete worktree metadata cannot become typed state.
+}
+if (malformedWorktreeAccepted) throw new Error("incomplete worktree metadata decoded");
 for (const invalid of [
   { activeTools: [""], setupEntries: [] },
   { activeTools: [1], setupEntries: [] },

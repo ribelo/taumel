@@ -146,7 +146,7 @@ try {
   runGit("init", "-q", gitDir);
   await writeFile(join(gitDir, "tracked.txt"), "before\n");
   runGit("-C", gitDir, "add", "tracked.txt");
-  runGit("-C", gitDir, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "initial");
+  runGit("-C", gitDir, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "-qm", "initial");
   await writeFile(join(gitDir, "tracked.txt"), "after\n");
   runGit("-C", gitDir, "config", "core.pager", "sh -c 'printf pager-launched; exit 97'");
 

@@ -144,47 +144,13 @@ let patch_request_from_params params =
   Taumel.Mutation_plan.patch_request_of_values
     (Tool_contracts.ApplyPatchParams.get_input params)
 
-let child_worktree_context ctx =
-  match Session_store.custom_entry_data ctx "taumel.childSession" with
+let child_worktree_context = function
   | None -> None
-  | Some data -> (
-      match data with
-      | Taumel.Shared.Object fields ->
-          let isolation =
-            match List.assoc_opt "isolation" fields with
-            | Some (Taumel.Shared.String value) -> value
-            | _ -> "none"
-          in
-          if isolation <> "worktree" then None
-          else
-            let worktree =
-              match List.assoc_opt "worktreePath" fields with
-              | Some (Taumel.Shared.String value) -> value
-              | _ ->
-                  (match List.assoc_opt "workspaceDirectory" fields with
-                  | Some (Taumel.Shared.String value) -> value
-                  | _ -> "")
-            in
-            let main_repo =
-              match List.assoc_opt "mainRepositoryRoot" fields with
-              | Some (Taumel.Shared.String value) -> value
-              | _ -> ""
-            in
-            let branch =
-              match List.assoc_opt "worktreeBranch" fields with
-              | Some (Taumel.Shared.String value) -> value
-              | _ -> ""
-            in
-            if worktree = "" then None else Some (worktree, main_repo, branch)
-      | _ -> None)
+  | Some metadata -> Taumel.Child_session.worktree_agent metadata
 
-let child_agent_id ctx =
-  match Session_store.custom_entry_data ctx "taumel.childSession" with
-  | Some (Taumel.Shared.Object fields) -> (
-      match List.assoc_opt "agentId" fields with
-      | Some (Taumel.Shared.String value) -> Taumel.Shared.trim_non_empty value
-      | _ -> None)
-  | _ -> None
+let child_agent_id = function
+  | None -> None
+  | Some metadata -> Taumel.Child_session.persisted_agent_id metadata
 
 let resolve_trusted_git () =
   let process = Unsafe.get Unsafe.global "process" in
@@ -206,26 +172,58 @@ let parse_brokered_git cmd =
       | Error error -> Error (Taumel.Agent_git_broker.error_message error)
       | Ok parsed -> Ok parsed)
 
-let child_rejects_escalation ctx =
-  match Session_store.custom_entry_data ctx "taumel.childSession" with
-  | Some (Taumel.Shared.Object fields) -> (
-      match List.assoc_opt "isolation" fields with
-      | Some (Taumel.Shared.String "worktree") -> true
-      | _ -> (
-          match List.assoc_opt "agentKind" fields with
-          | Some (Taumel.Shared.String ("finder" | "oracle")) -> true
-          | _ -> false))
-  | _ -> false
+let child_rejects_escalation = function
+  | None -> false
+  | Some metadata -> Taumel.Child_session.rejects_escalation metadata
+
+let with_child_session_metadata ctx run =
+  match Session_store.child_session_metadata ctx with
+  | Error message -> error_obj message
+  | Ok metadata -> run metadata
+
+let worktree_metadata = function
+  | None -> None
+  | Some metadata -> Taumel.Child_session.worktree_agent metadata
+
+let authorize_child_mutation_paths child_metadata paths =
+  match worktree_metadata child_metadata with
+  | None -> Ok ()
+  | Some worktree -> (
+      match resolve_authorization_path worktree.worktree_path with
+      | Error _ as error -> error
+      | Ok root ->
+          if List.for_all (Taumel.Sandbox.path_within ~root) paths then Ok ()
+          else Error "worktree-isolated child mutation must stay inside its worktree")
+
+let path_authorization_for_child child_metadata sandbox path =
+  match path_authorization sandbox path with
+  | Error _ as error -> error
+  | Ok (auth_path, auth_roots) ->
+      Result.map (fun () -> (auth_path, auth_roots))
+        (authorize_child_mutation_paths child_metadata [ auth_path ])
+
+let patch_authorization_for_child child_metadata sandbox patch =
+  match patch_authorization sandbox patch with
+  | Error _ as error -> error
+  | Ok (auth_paths, auth_roots) ->
+      Result.map (fun () -> (auth_paths, auth_roots))
+        (authorize_child_mutation_paths child_metadata (List.map snd auth_paths))
+
+let child_rejects_filesystem_approval child_metadata approval =
+  worktree_metadata child_metadata <> None && approval <> None
 
 let prepare_exec_command params ctx =
+  match Session_store.child_session_metadata ctx with
+  | Error message -> error_obj message
+  | Ok child_metadata ->
   with_gateway_authorized "exec_command" (fun sandbox ->
       let request = exec_request_from_params params in
       match request.sandbox_permissions with
-      | Taumel.Sandbox.Require_escalated _ when child_rejects_escalation ctx ->
+      | Taumel.Sandbox.Require_escalated _ when child_rejects_escalation child_metadata ->
           error_obj
             "command escalation is rejected for finder, oracle, and worktree-isolated agents"
       | _ ->
-      let worktree_ctx = child_worktree_context ctx in
+      let worktree_ctx = child_worktree_context child_metadata in
       let looks_like_git =
         let trimmed = String.trim request.cmd in
         String.length trimmed >= 3 && String.sub trimmed 0 3 = "git"
@@ -251,7 +249,10 @@ let prepare_exec_command params ctx =
         match worktree_ctx with
         | None -> Error ""
         | Some _ when not looks_like_git -> Error ""
-        | Some (worktree, main_repo, branch) ->
+        | Some worktree_context ->
+            let worktree = worktree_context.worktree_path in
+            let main_repo = worktree_context.main_repository_root in
+            let branch = worktree_context.branch in
             begin match parse_brokered_git request.cmd with
             | Error message -> Error message
             | Ok parsed ->
@@ -277,7 +278,7 @@ let prepare_exec_command params ctx =
                         | Denied message -> Error message
                         | Authorized _ ->
                             let agent_id =
-                              Option.value (child_agent_id ctx) ~default:""
+                              Option.value (child_agent_id child_metadata) ~default:""
                             in
                             if
                               agent_id <> ""
@@ -388,10 +389,11 @@ let js_edit_replacement (edit : Taumel.Sandbox.edit_replacement) =
 let unknown_edit edit =
   Ts2ocaml.unknown_of_js (ojs_of_js (js_edit_replacement edit))
 
-let prepare_write params =
+let prepare_write params ctx =
+  with_child_session_metadata ctx (fun child_metadata ->
   with_gateway_profile_authorized "write" (fun sandbox ->
       let request = write_request_from_params params in
-      match path_authorization sandbox request.path with
+      match path_authorization_for_child child_metadata sandbox request.path with
       | Error message -> error_obj message
       | Ok (auth_path, auth_roots) -> (
           match
@@ -399,6 +401,9 @@ let prepare_write params =
               request
           with
           | Error message -> error_obj message
+          | Ok plan
+            when child_rejects_filesystem_approval child_metadata plan.approval ->
+              error_obj "worktree-isolated child filesystem approval is forbidden"
           | Ok plan ->
               let contents = Option.value plan.contents ~default:"" in
               (match plan.approval with
@@ -417,7 +422,7 @@ let prepare_write params =
                     ~mode:request.mode ~approvalAction:"write"
                     ~approvalTitle:approval.title ~approvalPrompt:approval.prompt
                     ~approvalTimeoutMs:(float_of_int approval.timeout_ms) ()
-                  |> Tool_contracts.PreparedWriteApproval.t_to_js |> inject)))
+                  |> Tool_contracts.PreparedWriteApproval.t_to_js |> inject))))
 
 let prepare_read params =
   with_gateway_authorized "read" (fun _sandbox ->
@@ -430,16 +435,20 @@ let prepare_read params =
         Boundary_contracts.PreparedRead.create ~path ?offset ?limit ()
         |> Tool_contracts.PreparedRead.t_to_js |> inject)
 
-let prepare_edit params =
+let prepare_edit params ctx =
+  with_child_session_metadata ctx (fun child_metadata ->
   with_gateway_profile_authorized "edit" (fun sandbox ->
       let request = edit_request_from_params params in
-      match path_authorization sandbox request.path with
+      match path_authorization_for_child child_metadata sandbox request.path with
       | Error message -> error_obj message
       | Ok (auth_path, auth_roots) -> (
           match
             Taumel.Mutation_plan.plan_edit ~auth_path ~auth_roots sandbox request
           with
           | Error message -> error_obj message
+          | Ok plan
+            when child_rejects_filesystem_approval child_metadata plan.approval ->
+              error_obj "worktree-isolated child filesystem approval is forbidden"
           | Ok plan ->
               let edits = List.map unknown_edit plan.edits in
               (match plan.approval with
@@ -457,7 +466,7 @@ let prepare_edit params =
                     ~approvalAction:"edit" ~approvalTitle:approval.title
                     ~approvalPrompt:approval.prompt
                     ~approvalTimeoutMs:(float_of_int approval.timeout_ms) ()
-                  |> Tool_contracts.PreparedEditApproval.t_to_js |> inject)))
+                  |> Tool_contracts.PreparedEditApproval.t_to_js |> inject))))
 
 let apply_edit_to_file raw_facts =
   let facts = Tool_contracts.EditApplicationFacts.t_of_js (ojs_of_js raw_facts) in
@@ -479,12 +488,13 @@ let apply_edit_to_file raw_facts =
         ~contents ~editCount:(float_of_int (List.length request.edits)) ()
       |> Tool_contracts.EditApplied.t_to_js |> inject
 
-let prepare_apply_patch params =
+let prepare_apply_patch params ctx =
+  with_child_session_metadata ctx (fun child_metadata ->
   with_gateway_profile_authorized "apply_patch" (fun sandbox ->
       match patch_request_from_params params with
       | Error message -> error_obj message
       | Ok request -> (
-          match patch_authorization sandbox request.patch with
+          match patch_authorization_for_child child_metadata sandbox request.patch with
           | Error message -> error_obj message
           | Ok (auth_paths, auth_roots) -> (
               match
@@ -492,6 +502,9 @@ let prepare_apply_patch params =
                   sandbox request
               with
               | Error message -> error_obj message
+              | Ok plan
+                when child_rejects_filesystem_approval child_metadata plan.approval ->
+                  error_obj "worktree-isolated child filesystem approval is forbidden"
               | Ok plan ->
                   (match plan.approval with
                   | None ->
@@ -508,7 +521,7 @@ let prepare_apply_patch params =
                         ~approvalAction:"apply_patch"
                         ~approvalTitle:approval.title ~approvalPrompt:approval.prompt
                         ~approvalTimeoutMs:(float_of_int approval.timeout_ms) ()
-                      |> Tool_contracts.PreparedPatchApproval.t_to_js |> inject))))
+                      |> Tool_contracts.PreparedPatchApproval.t_to_js |> inject)))))
 
 let files_map_from_js obj =
   object_keys obj
@@ -527,24 +540,25 @@ let apply_patch_to_files raw_facts =
   let ctx = Tool_contracts.PatchApplicationFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
   Session_sync.sync_session_from_host ~scope:"apply_patch files" ctx;
   let approved = Tool_contracts.PatchApplicationFacts.get_filesystemApproval facts in
+  let mutation_error message =
+    Boundary_contracts.MutationError.create ~message ()
+    |> Tool_contracts.MutationError.t_to_js |> inject
+  in
+  match Session_store.child_session_metadata ctx with
+  | Error message -> mutation_error message
+  | Ok child_metadata ->
   with_gateway_profile_authorized "apply_patch" (fun sandbox ->
       match patch_request_from_params params with
-      | Error message ->
-          Boundary_contracts.MutationError.create ~message ()
-          |> Tool_contracts.MutationError.t_to_js |> inject
+      | Error message -> mutation_error message
       | Ok request -> (
-          match patch_authorization sandbox request.patch with
-          | Error message ->
-              Boundary_contracts.MutationError.create ~message ()
-              |> Tool_contracts.MutationError.t_to_js |> inject
+          match patch_authorization_for_child child_metadata sandbox request.patch with
+          | Error message -> mutation_error message
           | Ok (auth_paths, auth_roots) -> (
               match
                 Taumel.Mutation_plan.apply_patch_to_files ~approved ~auth_paths
                   ~auth_roots sandbox request (files_map_from_js files)
               with
-              | Error message ->
-                  Boundary_contracts.MutationError.create ~message ()
-                  |> Tool_contracts.MutationError.t_to_js |> inject
+              | Error message -> mutation_error message
               | Ok output ->
                   let write_objects =
                     output.writes
