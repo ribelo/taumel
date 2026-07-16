@@ -252,10 +252,10 @@ let prepare_exec_command params ctx =
         | None -> Error ""
         | Some _ when not looks_like_git -> Error ""
         | Some (worktree, main_repo, branch) ->
-            (match parse_brokered_git request.cmd with
+            begin match parse_brokered_git request.cmd with
             | Error message -> Error message
             | Ok parsed ->
-                (match request.sandbox_permissions with
+                begin match request.sandbox_permissions with
                 | Taumel.Sandbox.Require_escalated _ ->
                     Error "brokered agent Git rejects with_escalated_permissions"
                 | Taumel.Sandbox.Use_default ->
@@ -264,16 +264,16 @@ let prepare_exec_command params ctx =
                       | Taumel.Sandbox.Read_only -> true
                       | _ -> false
                     in
-                    (match Taumel.Agent_git_broker.authorize ~read_only parsed with
+                    begin match Taumel.Agent_git_broker.authorize ~read_only parsed with
                     | Error error ->
                         Error (Taumel.Agent_git_broker.error_message error)
                     | Ok authorized ->
-                        (match
-                           Taumel.Agent_worktree.authorize_mutation
-                             ~operation:Broker ~main_repository_root:main_repo
-                             ~main_repository_id:"verified"
-                             ~worktree_path:worktree ~branch ~trusted_adapter:true
-                         with
+                        begin match
+                          Taumel.Agent_worktree.authorize_mutation ~operation:Broker
+                            ~main_repository_root:main_repo
+                            ~main_repository_id:"verified" ~worktree_path:worktree
+                            ~branch ~trusted_adapter:true
+                        with
                         | Denied message -> Error message
                         | Authorized _ ->
                             let agent_id =
@@ -286,46 +286,27 @@ let prepare_exec_command params ctx =
                               Error
                                 "brokered agent Git is already running for this identity"
                             else
-                              match
+                              begin match
                                 Agent_worktree_host.verify_broker_registration
                                   ~worktree_path:worktree
                                   ~main_repository_root:main_repo ~branch
                               with
                               | Error message -> Error message
                               | Ok git_dir ->
-                                  (match authorized.subcommand with
-                                  | Taumel.Agent_git_broker.Add -> (
-                                      (* Preflight twice: once for the decision and
-                                         again immediately before returning the plan
-                                         to shrink the race window before spawn. *)
-                                      match
-                                        Agent_worktree_host.preflight_broker_add
-                                          ~worktree_path:worktree
-                                          authorized.argv
-                                      with
-                                      | Error message -> Error message
-                                      | Ok () ->
-                                          (match
-                                             Agent_worktree_host.preflight_broker_add
-                                               ~worktree_path:worktree
-                                               authorized.argv
-                                           with
-                                          | Error message -> Error message
-                                          | Ok () ->
-                                              Ok
-                                                ( worktree,
-                                                  git_dir,
-                                                  authorized.argv,
-                                                  agent_id )))
-                                  | _ ->
-                                      Ok
-                                        ( worktree,
-                                          git_dir,
-                                          authorized.argv,
-                                          agent_id ))))))
+                                  Ok
+                                    ( worktree,
+                                      git_dir,
+                                      authorized.argv,
+                                      agent_id,
+                                      authorized.subcommand )
+                              end
+                        end
+                    end
+                end
+            end
       in
       match brokered with
-      | Ok (worktree, git_dir, argv, agent_id) ->
+      | Ok (worktree, git_dir, argv, agent_id, subcommand) ->
           let sandbox_cfg = typed_sandbox_config sandbox in
           let workdir =
             if request.workdir = "" then worktree
@@ -344,7 +325,9 @@ let prepare_exec_command params ctx =
           Boundary_contracts.PreparedExec.create ~cmd:request.cmd ~workdir
             ~tty:false ~sandbox:sandbox_cfg ~brokeredGit:true ~directCommand:(resolve_trusted_git ())
             ~directArgv:argv ~gitDir:git_dir ~gitWorkTree:worktree
-            ?brokerAgentId:(if agent_id = "" then None else Some agent_id) ()
+            ?brokerAgentId:(if agent_id = "" then None else Some agent_id)
+            ~brokerSubcommand:
+              (Taumel.Agent_git_broker.subcommand_to_string subcommand) ()
           |> Tool_contracts.PreparedExec.t_to_js |> inject
       | Error message when message <> "" && worktree_ctx <> None ->
           error_obj message

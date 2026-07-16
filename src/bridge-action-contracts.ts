@@ -143,6 +143,7 @@ export const PreparedExecSchema = Type.Object(
     gitDir: Type.Optional(Type.String({ minLength: 1 })),
     gitWorkTree: Type.Optional(Type.String({ minLength: 1 })),
     brokerAgentId: Type.Optional(Type.String({ minLength: 1 })),
+    brokerSubcommand: Type.Optional(Type.String({ minLength: 1 })),
   },
   { $id: "PreparedExec", additionalProperties: false },
 );

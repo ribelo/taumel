@@ -895,6 +895,24 @@ let run_exec_command prepared host runtime owner_id signal force_unsandboxed =
           match Taumel.Agent_git_broker.Lease.try_acquire agent_id with
           | Error message -> failwith message
           | Ok () -> session.broker_agent_id <- Some agent_id));
+      (* Final add preflight under the exclusive lease, immediately before spawn. *)
+      (if get_bool prepared "brokeredGit"
+          && optional_string_field prepared "brokerSubcommand" = Some "add"
+       then
+         let worktree =
+           match optional_string_field prepared "gitWorkTree" with
+           | Some value -> value
+           | None -> call.cwd
+         in
+         let argv =
+           if has_property prepared "directArgv" then get_string_array prepared "directArgv"
+           else []
+         in
+         match Agent_worktree_host.preflight_broker_add ~worktree_path:worktree argv with
+         | Error message ->
+             release_broker_lease session;
+             failwith message
+         | Ok () -> ());
       (try
          let env =
            if not (get_bool prepared "brokeredGit") then None

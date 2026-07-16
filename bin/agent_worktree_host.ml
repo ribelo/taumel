@@ -231,8 +231,6 @@ let nul_paths listing =
   String.split_on_char '\x00' listing |> List.filter (fun value -> value <> "")
 let list_source_entries ~source_workspace =
   let ( let* ) = Result.bind in
-  (* Complete snapshot: HEAD tree paths (covers staged deletions), current index
-     paths, and untracked non-ignored paths. Content/mode/link are re-read. *)
   let* head_paths =
     run_git ~trim:false ~cwd:source_workspace
       [ "ls-tree"; "-r"; "--name-only"; "-z"; "HEAD" ]
@@ -403,8 +401,6 @@ let path_has_executable_filter ~worktree_path relative =
   let* cleans = attr_values_for ~worktree_path ~attr:"clean" relative in
   let* processes = attr_values_for ~worktree_path ~attr:"process" relative in
   let dangerous value =
-    (* Only exact "unspecified" is safe. "unset" is NOT safe: it can select a
-       driver named unset (filter.unset.clean/process). *)
     value <> "unspecified"
   in
   if List.exists dangerous filters || List.exists dangerous cleans
@@ -470,97 +466,103 @@ let registration_present ~main_repository_root ~worktree_path =
         n = 0 || loop 0
       in
       Ok (List.exists contains (String.split_on_char '\n' listing))
-let with_attributes_disabled ~worktree_path f =
-  let fs = Lazy.force fs_mod in
-  let gitattributes = Filename.concat worktree_path ".gitattributes" in
-  let info_attributes =
-    Filename.concat (Filename.concat worktree_path ".git") "info/attributes"
-  in
-  let aside path =
-    if path_exists path then (
-      let tmp = path ^ ".taumel-disabled" in
-      ignore (Unsafe.meth_call fs "renameSync" [| js_string path; js_string tmp |]);
-      Some (path, tmp))
-    else None
-  in
-  let restore = function
-    | None -> ()
-    | Some (path, tmp) ->
-        (try ignore (Unsafe.meth_call fs "renameSync" [| js_string tmp; js_string path |])
-         with _ -> ())
-  in
-  let moved_root = aside gitattributes in
-  let moved_info = aside info_attributes in
-  let result = try f () with error -> Error (Printexc.to_string error) in
-  restore moved_info;
-  restore moved_root;
-  result
-
 let create_baseline ~worktree_path =
-  let child_process = Lazy.force child_process_mod in
-  let run args =
-    try
-      ignore
-        (Unsafe.meth_call child_process "execFileSync"
-           [|
-             js_string "git";
-             js_array (List.map js_string args);
-             Unsafe.obj
-               [|
-                 ("cwd", js_string worktree_path);
-                 ("encoding", js_string "utf8");
-                 ( "env",
-                   trusted_git_env
-                     [
-                       ( "GIT_AUTHOR_NAME",
-                         js_string Taumel.Agent_worktree.baseline_author_name );
-                       ( "GIT_AUTHOR_EMAIL",
-                         js_string Taumel.Agent_worktree.baseline_author_email );
-                       ( "GIT_COMMITTER_NAME",
-                         js_string Taumel.Agent_worktree.baseline_committer_name );
-                       ( "GIT_COMMITTER_EMAIL",
-                         js_string Taumel.Agent_worktree.baseline_committer_email );
-                     ] );
-                 ( "stdio",
-                   js_array
-                     [ js_string "ignore"; js_string "pipe"; js_string "pipe" ] );
-               |];
-           |]);
-      Ok ()
-    with error -> Error (Printexc.to_string error)
+    let ( let* ) = Result.bind in
+  let* dirty =
+    run_git ~trim:false ~cwd:worktree_path
+      [ "ls-files"; "-z"; "-m"; "-d"; "-o"; "--exclude-standard" ]
+    |> Result.map nul_paths
   in
-  with_attributes_disabled ~worktree_path (fun () ->
-      match preflight_broker_add ~worktree_path [ "add"; "--all" ] with
-      | Error message -> Error message
-      | Ok () -> (
+  let stage_path relative =
+    let full = Filename.concat worktree_path relative in
+    let fs = Lazy.force fs_mod in
+    if not (path_exists full) then
+      run_git ~cwd:worktree_path [ "update-index"; "--force-remove"; "--"; relative ]
+      |> Result.map ignore
+    else
+      try
+        let st = Unsafe.meth_call fs "lstatSync" [| js_string full |] in
+        if Js.to_bool (Unsafe.meth_call st "isSymbolicLink" [||]) then
+          let target =
+            Js.to_string (Unsafe.meth_call fs "readlinkSync" [| js_string full |])
+          in
+          let tmp = Filename.concat (Filename.concat worktree_path ".git") "taumel-link-bytes" in
+          write_file tmp target;
+          let hashed =
+            run_git ~cwd:worktree_path
+              [ "hash-object"; "-w"; "--no-filters"; tmp ]
+          in
+          ignore (remove_path tmp);
+          match hashed with
+          | Error message -> Error message
+          | Ok blob ->
+              run_git ~cwd:worktree_path
+                [ "update-index"; "--add"; "--cacheinfo"; "120000," ^ blob ^ "," ^ relative ]
+              |> Result.map ignore
+        else
+          let mode =
+            match float_value (Unsafe.get st "mode") with
+            | Some m when int_of_float m land 0o111 <> 0 -> "100755"
+            | _ -> "100644"
+          in
           match
-            run
-              [
-                "-c";
-                "core.attributesFile=/dev/null";
-                "-c";
-                "core.hooksPath=/dev/null";
-                "add";
-                "-A";
-              ]
+            run_git ~cwd:worktree_path
+              [ "hash-object"; "-w"; "--no-filters"; "--path"; relative; full ]
           with
           | Error message -> Error message
-          | Ok () -> (
-              match
-                run
-                  [
-                    "-c";
-                    "user.useConfigOnly=true";
-                    "-c";
-                    "core.hooksPath=/dev/null";
-                    "commit";
-                    "--allow-empty";
-                    "-m";
-                    "pi agent baseline";
-                  ]
-              with
-              | Error message -> Error message
-              | Ok () -> Ok ())))
+          | Ok blob ->
+              run_git ~cwd:worktree_path
+                [ "update-index"; "--add"; "--cacheinfo"; mode ^ "," ^ blob ^ "," ^ relative ]
+              |> Result.map ignore
+      with error -> Error (relative ^ ": " ^ Printexc.to_string error)
+  in
+  let rec stage_all = function
+    | [] -> Ok ()
+    | relative :: rest -> (
+        match stage_path relative with
+        | Error _ as error -> error
+        | Ok () -> stage_all rest)
+  in
+  let* () = stage_all dirty in
+  let child_process = Lazy.force child_process_mod in
+  try
+    ignore
+      (Unsafe.meth_call child_process "execFileSync"
+         [|
+           js_string "git";
+           js_array
+             (List.map js_string
+                [
+                  "-c";
+                  "core.hooksPath=/dev/null";
+                  "commit";
+                  "--allow-empty";
+                  "-m";
+                  "pi agent baseline";
+                ]);
+           Unsafe.obj
+             [|
+               ("cwd", js_string worktree_path);
+               ("encoding", js_string "utf8");
+               ( "env",
+                 trusted_git_env
+                   [
+                     ( "GIT_AUTHOR_NAME",
+                       js_string Taumel.Agent_worktree.baseline_author_name );
+                     ( "GIT_AUTHOR_EMAIL",
+                       js_string Taumel.Agent_worktree.baseline_author_email );
+                     ( "GIT_COMMITTER_NAME",
+                       js_string Taumel.Agent_worktree.baseline_committer_name );
+                     ( "GIT_COMMITTER_EMAIL",
+                       js_string Taumel.Agent_worktree.baseline_committer_email );
+                   ] );
+               ( "stdio",
+                 js_array
+                   [ js_string "ignore"; js_string "pipe"; js_string "pipe" ] );
+             |];
+         |]);
+    Ok ()
+  with error -> Error (Printexc.to_string error)
 let rollback_provisional ~main_repository_root ~worktree_path ~branch =
   ignore (run_git ~cwd:main_repository_root [ "worktree"; "remove"; "--force"; worktree_path ]);
   ignore (remove_path worktree_path);
@@ -685,8 +687,6 @@ let provision ~owner_session_id ~agent_id ~source_workspace =
                 | Taumel.Sandbox.Requires_approval message ->
                     Error ("workspace_unavailable", message)
                 | Taumel.Sandbox.Allow ->
-                (* Double-fingerprint the source before mutation; the second matching
-                   fingerprint is the accepted source snapshot point (agent-ne9r/y6kl). *)
                 (match capture_source_manifest ~source_workspace with
                 | Error message -> Error ("workspace_unavailable", message)
                 | Ok (entries, accepted_fingerprint) ->
@@ -925,8 +925,6 @@ let reconcile_provisional_markers () =
                  marker.completed_steps
              in
              if accepted then
-               (* Acceptance completed but marker clear failed: drop only the
-                  marker so we never reclaim a durable accepted worktree. *)
                ignore (remove_path path)
              else if not matches then ()
              else (
