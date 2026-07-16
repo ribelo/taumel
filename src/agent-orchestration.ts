@@ -292,17 +292,20 @@ export async function executeAgentPrepared(
   switch (action) {
     case "agent_start": {
       const bridge = await createAgentChildSession(pi, core, childSessions, prepared, ctx);
-      if (bridge?.error !== undefined || bridge?.missingSessionIdentifier) {
+      const rollbackWorktreeThenState = async () => {
+        // Physical worktree rollback must run while identity/binding still exists.
+        try { decodeCoreAck(core.call("rollbackAgentWorktreeStart", [prepared, ctx])); } catch { /* retain incident marker if cleanup fails */ }
         await rollbackUnacceptedStart(core, childSessions, prepared, ctx, bridge);
-        try { decodeCoreAck(core.call("rollbackAgentWorktreeStart", [prepared, ctx])); } catch { /* best-effort provisional cleanup */ }
+      };
+      if (bridge?.error !== undefined || bridge?.missingSessionIdentifier) {
+        await rollbackWorktreeThenState();
         const message = bridge?.error ?? "failed to create child session";
         return agentErrorToolResult(core, childFailureCode(message), message);
       }
       try {
         recordDispatchBoundary(core, prepared, ctx, bridge);
       } catch (error) {
-        await rollbackUnacceptedStart(core, childSessions, prepared, ctx, bridge);
-        try { decodeCoreAck(core.call("rollbackAgentWorktreeStart", [prepared, ctx])); } catch { /* best-effort provisional cleanup */ }
+        await rollbackWorktreeThenState();
         return agentErrorToolResult(core, "persistence_failed", error instanceof Error ? error.message : String(error));
       }
       const dispatch = await sendToChildSession(
@@ -318,8 +321,7 @@ export async function executeAgentPrepared(
         },
       );
       if (dispatch.dispatched !== true) {
-        await rollbackUnacceptedStart(core, childSessions, prepared, ctx, bridge);
-        try { decodeCoreAck(core.call("rollbackAgentWorktreeStart", [prepared, ctx])); } catch { /* best-effort provisional cleanup */ }
+        await rollbackWorktreeThenState();
         const reason = typeof dispatch.reason === "string"
           ? dispatch.reason
           : "initial message was not accepted";
@@ -328,8 +330,7 @@ export async function executeAgentPrepared(
       try {
         decodeCoreAck(core.call("acceptAgentWorktreeStart", [prepared, ctx]));
       } catch (error) {
-        await rollbackUnacceptedStart(core, childSessions, prepared, ctx, bridge);
-        try { decodeCoreAck(core.call("rollbackAgentWorktreeStart", [prepared, ctx])); } catch { /* retain incident marker if cleanup fails */ }
+        await rollbackWorktreeThenState();
         const message = error instanceof Error ? error.message : String(error);
         return agentErrorToolResult(core, childFailureCode(message), message || "failed to accept agent worktree");
       }

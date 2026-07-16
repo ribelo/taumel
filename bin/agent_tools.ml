@@ -85,7 +85,6 @@ let routing_diagnostics = Agent_routing_host.routing_diagnostics
 let truncate_output ?owner_session_id ?agent_id ?run_id text =
   Agent_output.truncate ~agent_dir:(pi_agent_dir ()) ?owner_session_id ?agent_id
     ?run_id text
-
 let permission_ceiling_for ~kind (parent : Taumel.Capability_profile.t) =
   let sandbox_preset =
     match kind with
@@ -104,13 +103,11 @@ let permission_ceiling_for ~kind (parent : Taumel.Capability_profile.t) =
     model_id = parent.model_id;
     thinking_level = parent.thinking_level;
   }
-
 let kind_of_tool = function
   | "agent_spawn" -> Ok Taumel.Agents.Generic
   | "finder" -> Ok Taumel.Agents.Finder
   | "oracle" -> Ok Taumel.Agents.Oracle
   | name -> Error ("unknown agent start tool: " ^ name)
-
 let tier_of_params params =
   match optional_string_field params "tier" with
   | None -> Ok None
@@ -118,23 +115,17 @@ let tier_of_params params =
       match Taumel.Agents.effort_of_string (String.trim value) with
       | Ok effort -> Ok (Some effort)
       | Error _ as error -> error)
-
 let isolation_of_params params =
   match optional_string_field params "isolation" with
   | None -> Ok Taumel.Agent_workspace.default_isolation
   | Some value -> Taumel.Agent_workspace.isolation_of_string (String.trim value)
-
 let identity_metadata = Agent_worktree_host.identity_metadata
-
 let tool_result text details =
   Boundary_contracts.BridgeToolResult.create ~text
     ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details)) ()
   |> Tool_contracts.BridgeToolResult.t_to_js |> inject
-
 let json_text value = Taumel.Shared.encode_json value
-
 let json_success fields = json_text (Taumel.Shared.Object fields)
-
 let start_details ~(identity : Taumel.Agents.identity) ~(run : Taumel.Agents.agent_run)
     ~prompt =
   let fields =
@@ -163,7 +154,6 @@ let start_details ~(identity : Taumel.Agents.identity) ~(run : Taumel.Agents.age
         fields @ [ ("tier", js_string (Taumel.Agents.effort_to_string effort)) ]
   in
   Unsafe.obj (Array.of_list fields)
-
 let prepare_start name params ctx =
   if is_agent_child ctx then reject_nested name
   else
@@ -326,7 +316,6 @@ let prepare_start name params ctx =
                       ~runId:run.run_id ~submissionId:run.run_submission_id
                       ~metadata:(Ts2ocaml.unknown_of_js (ojs_of_js metadata)) ()
                     |> Tool_contracts.PreparedAgentStart.t_to_js |> inject)))))
-
 let prepare_send params ctx =
   if is_agent_child ctx then reject_nested "agent_send"
   else
@@ -456,7 +445,6 @@ let prepare_send params ctx =
                   ?previousReasonCode:previous_reason_code ~outcome
                   ~metadata:(Ts2ocaml.unknown_of_js (ojs_of_js metadata)) ()
                 |> Tool_contracts.PreparedAgentSend.t_to_js |> inject))
-
 let assistant_text_from_entry_json = function
   | Taumel.Shared.Object fields -> (
       match
@@ -484,7 +472,6 @@ let assistant_text_from_entry_json = function
           | _ -> None)
       | _ -> None)
   | _ -> None
-
 let recover_output_from_file ~path ~entry_id =
   try
     let fs = node_require "fs" in
@@ -503,7 +490,6 @@ let recover_output_from_file ~path ~entry_id =
                | _ -> None)
            | _ -> None)
   with _ -> None
-
 let recover_selected_outputs state run_ids =
   List.fold_left
     (fun state run_id ->
@@ -529,7 +515,6 @@ let recover_selected_outputs state run_ids =
           | Error _ -> state)
       | _ -> state)
     state run_ids
-
 let prepare_wait params ctx =
   if is_agent_child ctx then reject_nested "agent_wait"
   else
@@ -653,7 +638,6 @@ let prepare_wait params ctx =
             in
             tool_result text details)
         | Ok wait ->
-            (* Still waiting: return a prepared pending wait action for TS. *)
             let details =
               Unsafe.obj
                 [|
@@ -673,7 +657,6 @@ let prepare_wait params ctx =
               ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details))
               ~runIds:wait.wait_pending_run_ids ?timeoutSeconds:timeout_seconds ()
             |> Tool_contracts.PreparedAgentWait.t_to_js |> inject)
-
 let prepare_list ctx =
   if is_agent_child ctx then reject_nested "agent_list"
   else
@@ -803,7 +786,6 @@ let prepare_list ctx =
                ("ok", js_bool true);
                ("agents", js_array (List.map inject agents));
              |]))
-
 let prepare_close params ctx =
   if is_agent_child ctx then reject_nested "agent_close"
   else
@@ -882,7 +864,6 @@ let prepare_close params ctx =
                           | Taumel.Agent_workspace.Worktree -> `V_worktree)))
                   ()
                 |> Tool_contracts.PreparedAgentClose.t_to_js |> inject)))
-
 let finish_close facts ctx =
   Session_sync.sync_persisted_session ctx;
   let agent_id = get_string facts "agent_id" in
@@ -909,80 +890,15 @@ let finish_close facts ctx =
        with error ->
          agent_state := previous;
          error_obj ("agent state persistence failed: " ^ Printexc.to_string error))
-
 let release_close facts =
   let agent_id = get_string facts "agent_id" in
   agent_closing_ids :=
     List.filter (fun value -> value <> agent_id) !agent_closing_ids;
   core_ack ()
-
-let accept_worktree_start facts _ctx =
-  let agent_id = get_string facts "agentId" in
-  match Taumel.Agents.find_identity !agent_state agent_id with
-  | None -> core_ack ()
-  | Some identity -> (
-      match Taumel.Agents.identity_isolation identity with
-      | Taumel.Agent_workspace.None -> core_ack ()
-      | Taumel.Agent_workspace.Worktree -> (
-          match
-            Agent_worktree_host.accept_provisional
-              ~owner_session_id:identity.identity_owner_session_id ~agent_id
-          with
-          | Ok () -> core_ack ()
-          | Error message -> error_obj message))
-
-let rollback_worktree_start facts _ctx =
-  let agent_id = get_string facts "agentId" in
-  match Taumel.Agents.find_identity !agent_state agent_id with
-  | None -> core_ack ()
-  | Some identity -> (
-      match Agent_worktree_host.effective_workspace_for_identity ~identity with
-      | Error _ -> core_ack ()
-      | Ok (_path, derived) ->
-          if derived.isolation <> Taumel.Agent_workspace.Worktree then core_ack ()
-          else
-            match
-              Agent_worktree_host.rollback_failed_start
-                ~owner_session_id:identity.identity_owner_session_id ~agent_id
-                ~main_repository_root:derived.main_repository_root
-                ~worktree_path:derived.worktree_path ~branch:derived.branch
-            with
-            | Ok () -> core_ack ()
-            | Error (_code, message) -> error_obj message)
-
-let delete_worktree facts _ctx =
-  let worktree_path =
-    match optional_string_field facts "worktree_path" with
-    | Some value -> String.trim value
-    | None -> ""
-  in
-  let main_repository_root =
-    match optional_string_field facts "main_repository_root" with
-    | Some value -> String.trim value
-    | None -> ""
-  in
-  let branch =
-    match optional_string_field facts "branch" with
-    | Some value -> String.trim value
-    | None -> ""
-  in
-  if worktree_path = "" || main_repository_root = "" then core_ack ()
-  else if not (Agent_worktree_host.path_exists worktree_path) then core_ack ()
-  else
-    match Agent_worktree_host.worktree_is_clean ~worktree_path with
-    | Error message -> error_obj message
-    | Ok () -> (
-        match
-          Agent_worktree_host.remove_worktree ~main_repository_root ~worktree_path
-            ~main_repository_id:main_repository_root
-            ~branch:(if branch = "" then "HEAD" else branch)
-        with
-        | Ok () -> core_ack ()
-        | Error message -> error_obj message)
-
-let reconcile_provisional_worktrees () =
-  Agent_worktree_host.reconcile_provisional_markers ();
-  core_ack ()
+let accept_worktree_start = Agent_worktree_ops.accept_worktree_start
+let rollback_worktree_start = Agent_worktree_ops.rollback_worktree_start
+let delete_worktree = Agent_worktree_ops.delete_worktree
+let reconcile_provisional_worktrees = Agent_worktree_ops.reconcile_provisional_worktrees
 
 let prepare name params ctx =
   match !agent_state_load_error with

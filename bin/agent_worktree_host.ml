@@ -825,6 +825,8 @@ let reconcile_provisional_markers () =
                ignore (remove_path path)))
 
 let preflight_broker_add ~worktree_path argv =
+  let ( let* ) = Result.bind in
+  let has_all = List.mem "--all" argv in
   let pathspecs =
     let rec after_sep = function
       | [] -> []
@@ -832,6 +834,17 @@ let preflight_broker_add ~worktree_path argv =
       | _ :: rest -> after_sep rest
     in
     after_sep argv
+  in
+  let* expanded =
+    if has_all then
+      run_git ~cwd:worktree_path
+        [ "ls-files"; "-z"; "-c"; "-o"; "--exclude-standard" ]
+      |> Result.map nul_paths
+    else if pathspecs = [] then
+      Error "brokered git add requires --all or pathspecs after --"
+    else
+      run_git ~cwd:worktree_path ("ls-files" :: "-z" :: "-c" :: "-o" :: "--exclude-standard" :: "--" :: pathspecs)
+      |> Result.map nul_paths
   in
   let has_sub haystack needle =
     let h = String.length haystack in
@@ -846,21 +859,22 @@ let preflight_broker_add ~worktree_path argv =
         then Error ("brokered git add rejects nested repository: " ^ relative)
         else
           match run_git ~cwd:worktree_path [ "ls-files"; "-s"; "--"; relative ] with
+          | Error message -> Error message
           | Ok output when String.length output >= 6 && String.sub output 0 6 = "160000" ->
               Error ("brokered git add rejects gitlink: " ^ relative)
-          | _ -> (
+          | Ok _ -> (
               match run_git ~cwd:worktree_path [ "check-attr"; "-a"; "--"; relative ] with
-              | Error _ -> check rest
+              | Error message -> Error message
               | Ok attrs ->
                   let lowered = String.lowercase_ascii attrs in
                   if
                     (has_sub lowered "filter:" && not (has_sub lowered "filter: unspecified"))
                     || (has_sub lowered "clean:" && not (has_sub lowered "clean: unspecified"))
-                    || has_sub lowered "process:"
+                    || (has_sub lowered "process:" && not (has_sub lowered "process: unspecified"))
                   then Error ("brokered git add rejects executable filter: " ^ relative)
                   else check rest)
   in
-  check pathspecs
+  check expanded
 
 let verify_broker_registration ~worktree_path ~main_repository_root ~branch =
   if not (is_directory worktree_path) then

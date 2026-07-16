@@ -694,18 +694,30 @@ let cancel_broker_sessions_for_agent agent_id =
   Hashtbl.iter
     (fun _ session ->
       match session.broker_agent_id with
-      | Some id when id = agent_id ->
-          kill_session session;
-          live := session :: !live
+      | Some id when id = agent_id -> live := session :: !live
       | _ -> ())
     sessions;
-  List.iter
-    (fun session ->
-      if not session.exited then kill_session session;
-      release_broker_lease session)
-    !live;
-  Taumel.Agent_git_broker.Lease.release agent_id;
-  List.for_all (fun session -> session.exited) !live
+  List.iter (fun session -> if not session.exited then kill_session session) !live;
+  let deadline = now_ms () +. 5000. in
+  let rec wait () =
+    if List.for_all (fun session -> session.exited) !live then true
+    else if now_ms () >= deadline then false
+    else (
+      ignore
+        (Unsafe.fun_call (Unsafe.get Unsafe.global "Atomics")
+           [||]);
+      let start = now_ms () in
+      while now_ms () -. start < 25. do
+        ()
+      done;
+      wait ())
+  in
+  let finished = wait () in
+  if finished then (
+    List.iter release_broker_lease !live;
+    Taumel.Agent_git_broker.Lease.release agent_id;
+    true)
+  else false
 let spawn_session session ~file ~args ~cwd ?env () =
   let fs = js_require "node:fs" in
   let exists = Unsafe.fun_call (Unsafe.get fs "existsSync") [| js_string cwd |] in
@@ -915,11 +927,13 @@ let run_exec_command prepared host runtime owner_id signal force_unsandboxed =
                    ("GIT_PAGER", js_string "cat");
                    ("GIT_EDITOR", js_string "true");
                    ("GIT_ASKPASS", js_string "true");
-                   ("GIT_CONFIG_COUNT", js_string "4");
+                   ("GIT_CONFIG_COUNT", js_string "6");
                    ("GIT_CONFIG_KEY_0", js_string "core.hooksPath"); ("GIT_CONFIG_VALUE_0", js_string "/dev/null");
                    ("GIT_CONFIG_KEY_1", js_string "commit.gpgsign"); ("GIT_CONFIG_VALUE_1", js_string "false");
                    ("GIT_CONFIG_KEY_2", js_string "submodule.recurse"); ("GIT_CONFIG_VALUE_2", js_string "false");
                    ("GIT_CONFIG_KEY_3", js_string "core.useBuiltinFSMonitor"); ("GIT_CONFIG_VALUE_3", js_string "false");
+                   ("GIT_CONFIG_KEY_4", js_string "diff.external"); ("GIT_CONFIG_VALUE_4", js_string "");
+                   ("GIT_CONFIG_KEY_5", js_string "diff.suppressBlankEmpty"); ("GIT_CONFIG_VALUE_5", js_string "true");
                  ]
              in
              List.iter
