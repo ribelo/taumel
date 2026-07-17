@@ -48,7 +48,8 @@ let message_cost entry =
     | Some value -> value
     | None -> entry
   in
-  if get_string message "role" <> "assistant" then None
+  if Option.bind (object_field message "role") string_value <> Some "assistant"
+  then None
   else
     match object_field message "usage" with
     | None -> None
@@ -66,7 +67,7 @@ let assistant_message entry =
     | Some value -> value
     | None -> entry
   in
-  get_string message "role" = "assistant"
+  Option.bind (object_field message "role") string_value = Some "assistant"
 
 type total_cost_cache = {
   session_id : string;
@@ -184,14 +185,18 @@ let update_session_state host ctx =
   let snapshot_cwd = get_string snapshot "cwd" in
   let child_session = Session_store.custom_entry_data ctx "taumel.childSession" in
   let next_host_sandbox_preset =
-    Taumel.Capability_profile.sandbox_of_string (get_string snapshot "sandboxMode")
+    Option.bind (optional_string_field snapshot "sandboxMode")
+      Taumel.Capability_profile.sandbox_of_string
   in
   let next_host_network_mode =
-    Taumel.Permissions.network_of_string (get_string snapshot "networkMode")
+    Option.bind (optional_string_field snapshot "networkMode")
+      Taumel.Permissions.network_of_string
   in
   let next_host_no_sandbox =
     if has_property snapshot "noSandbox" then Some (get_bool snapshot "noSandbox")
-    else bool_of_flag_string (get_string snapshot "noSandboxFlag")
+    else
+      Option.bind (optional_string_field snapshot "noSandboxFlag")
+        bool_of_flag_string
   in
   host_sandbox_preset := next_host_sandbox_preset;
   host_network_mode := next_host_network_mode;
@@ -215,8 +220,10 @@ let update_session_state host ctx =
       state.cwd <- snapshot_cwd;
       state.footer_cwd <- snapshot_cwd;
       state.provider <- get_string snapshot "provider";
-      state.model <- get_string snapshot "model";
-      state.thinking <- get_string snapshot "thinking";
+      state.model <-
+        Option.value (optional_string_field snapshot "model") ~default:"";
+      state.thinking <-
+        Option.value (optional_string_field snapshot "thinking") ~default:"";
       state.total_cost <-
         (match total_cost_from_ctx ctx with
         | Some cost -> cost

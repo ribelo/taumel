@@ -40,7 +40,11 @@ let prepare_close params ctx =
         with
         | None -> error_obj "agent_close.agent_id is required"
         | Some agent_id -> (
-            let delete_worktree = get_bool params "delete_worktree" in
+            let delete_worktree =
+              if has_property params "delete_worktree" then
+                get_bool params "delete_worktree"
+              else false
+            in
             let owner = owner_id ctx in
             match
               Taumel.Agents.owned_identity !agent_state ~owner_session_id:owner
@@ -320,4 +324,3 @@ let record_close_cleanup_failure facts ctx =
       match commit_agent_state ctx next with
       | Ok () -> core_ack ()
       | Error message -> error_obj message)
-

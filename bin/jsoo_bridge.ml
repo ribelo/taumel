@@ -94,15 +94,24 @@ let optional_field obj name =
 
 let function_field obj name = Option.bind (property_value obj name) function_value
 
+let invalid_field name expected =
+  invalid_arg
+    (Printf.sprintf "Invalid Taumel field %s: expected %s" name expected)
+
 let get_string obj name =
   match Option.bind (object_field obj name) string_value with
   | Some value -> value
-  | None -> ""
+  | None -> invalid_field name "string"
 
 let get_bool obj name =
   match object_field obj name with
   | Some value when is_js_boolean value -> Js.to_bool (Unsafe.coerce value)
-  | _ -> false
+  | _ -> invalid_field name "boolean"
+
+let get_bool_property obj name =
+  match property_value obj name with
+  | Some value when is_js_boolean value -> Js.to_bool (Unsafe.coerce value)
+  | _ -> invalid_field name "boolean"
 
 let float_value value =
   if is_js_number value then

@@ -333,7 +333,10 @@ let prepare_send params ctx =
         | Some agent_id when List.mem agent_id !agent_closing_ids ->
             error_obj ("agent is closing: " ^ agent_id)
         | Some agent_id ->
-            let interrupt = get_bool params "interrupt" in
+            let interrupt =
+              if has_property params "interrupt" then get_bool params "interrupt"
+              else false
+            in
             let message =
               match optional_string_field params "message" with
               | None -> ""

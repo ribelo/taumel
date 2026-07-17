@@ -286,7 +286,7 @@ let timer_clear timer =
   | None -> ()
   | Some clear_timeout -> ignore (Unsafe.fun_call clear_timeout [| timer |])
 let signal_aborted signal =
-  (not (is_nullish signal)) && get_bool signal "aborted"
+  (not (is_nullish signal)) && get_bool_property signal "aborted"
 let add_abort_listener signal callback =
   if is_nullish signal then fun () -> ()
   else

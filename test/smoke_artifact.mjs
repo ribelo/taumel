@@ -133,6 +133,17 @@ for (const [name, params, expectedError] of [
     );
   }
 }
+let malformedLegacyField = "";
+try {
+  core.call("cancelAgentBrokerSessions", [{ agent_id: false }]);
+} catch (error) {
+  malformedLegacyField = error instanceof Error ? error.message : String(error);
+}
+if (!/agent_id.*expected string/.test(malformedLegacyField)) {
+  throw new Error(
+    `legacy TS-to-OCaml field access silently defaulted: ${JSON.stringify({ malformedLegacyField })}`,
+  );
+}
 let decodedCommandReads = 0;
 const decodedCommandParams = {};
 Object.defineProperty(decodedCommandParams, "cmd", {

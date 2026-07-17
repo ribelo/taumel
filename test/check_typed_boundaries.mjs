@@ -74,9 +74,17 @@ if (generation.status !== 0) {
 }
 
 const generatedRoot = join(binRoot.pathname, "generated");
+const jsooBridge = readFileSync(join(binRoot.pathname, "jsoo_bridge.ml"), "utf8");
+if (!/let get_string[\s\S]*?\| None -> invalid_field name "string"/.test(jsooBridge)) {
+  failures.push("legacy string field access must reject instead of silently defaulting");
+}
+if (!/let get_bool[\s\S]*?\| _ -> invalid_field name "boolean"/.test(jsooBridge)) {
+  failures.push("legacy boolean field access must reject instead of silently defaulting");
+}
 // shared-qaqr: generation must preserve the private, Result-decoded boundary.
 const safeImplementation = readFileSync(join(generatedRoot, "tool_contracts.ml"), "utf8");
 const safeInterface = readFileSync(join(generatedRoot, "tool_contracts.mli"), "utf8");
+const ts2ocamlInterface = readFileSync(join(generatedRoot, "ts2ocaml.mli"), "utf8");
 const toolParamDecoders = readFileSync(join(generatedRoot, "tool_param_decoders.ml"), "utf8");
 const generatedDune = readFileSync(join(generatedRoot, "dune"), "utf8");
 const generatedModules = [...safeImplementation.matchAll(/^module ([A-Za-z0-9_]+) = struct$/gm)];
@@ -90,8 +98,11 @@ if (/^  type t =/m.test(safeInterface)) {
 if (/let (?:rec )?t_of_js\s*:\s*Ojs\.t -> t\s*=\s*fun/.test(safeImplementation)) {
   failures.push("generated public contract decoder is an identity cast");
 }
-if (!/\(private_modules raw_tool_contracts contract_decoder contract_schemas\)/.test(generatedDune)) {
+if (!/\(private_modules ts2ocaml_internal raw_tool_contracts contract_decoder contract_schemas\)/.test(generatedDune)) {
   failures.push("generated raw contract representation is not private");
+}
+if (/\b(?:unsafe_cast|cast_from|absurd|intersection[2-8]_of_js|union[2-8]_of_js)\b|\bval t_of_js\b/.test(ts2ocamlInterface)) {
+  failures.push("public ts2ocaml representation helpers can forge a decoded contract");
 }
 if (!/Tool_contracts\.[A-Za-z0-9_]+\.t_of_js value\s+\|> Result\.map/g.test(toolParamDecoders)) {
   failures.push("model-facing tools do not have generated reverse-boundary decoders");

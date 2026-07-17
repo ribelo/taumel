@@ -78,7 +78,7 @@ try {
       null,
       {},
     ]),
-    /authority plan is invalid|already consumed/,
+    /authority plan is invalid|already consumed|planId.*expected string/,
   );
   assert.equal(
     existsSync(forgedOutput),
