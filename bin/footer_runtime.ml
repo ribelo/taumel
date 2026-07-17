@@ -162,17 +162,19 @@ let refresh_state ctx =
   core_ack ()
 
 let update_thinking thinking ctx =
-  (* thinking_level_select can originate from any in-process session;
-     isolated children must not move the parent's footer. Legacy callers
-     without a context stay allowed; a present context whose ownership
-     cannot be determined fails closed, since a dropped parent update is
-     repaired by the next parent event while an applied child update is
-     the cross-talk this guard exists to prevent. *)
-  let child =
-    if not (is_property_container (inject ctx)) then false
-    else (try Session_sync.session_is_isolated_child ctx with _ -> true)
+  (* thinking_level_select can originate from any in-process session, so
+     the retained parent thinking moves only for a provable main-session
+     context. Everything else — child sessions, missing or unreadable
+     contexts — fails closed: a dropped parent update is repaired by the
+     next parent event, while an applied child update is the cross-talk
+     this guard exists to prevent. *)
+  let main_session =
+    try
+      is_property_container (inject ctx)
+      && not (Session_sync.session_is_isolated_child ctx)
+    with _ -> false
   in
-  if child then core_ack ()
+  if not main_session then core_ack ()
   else (
     state.thinking <- thinking;
     emit_changed (active_host_or_empty ());
