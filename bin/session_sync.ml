@@ -661,17 +661,26 @@ let try_sync_session_from_host_with ?(scope = "session sync")
     sync_persisted_session_snapshot ~reset_missing ~clear_retained_outputs
       snapshot;
     finish_goal_load ctx snapshot;
-    Some snapshot
+    Ok snapshot
   with error ->
     report_session_sync_error scope error;
-    None
+    Error
+      ("session synchronization failed (" ^ scope ^ "): "
+     ^ Printexc.to_string error)
 
 let try_sync_session_from_host ?(scope = "session sync") ?(reset_missing = true) ctx =
-  Option.is_some
-    (try_sync_session_from_host_with ~scope ~reset_missing (active_host_or_empty ()) ctx)
+  Result.map (fun _ -> ())
+    (try_sync_session_from_host_with ~scope ~reset_missing
+       (active_host_or_empty ()) ctx)
 
 let sync_session_from_host ?(scope = "session sync") ?(reset_missing = true) ctx =
-  ignore (try_sync_session_from_host ~scope ~reset_missing ctx)
+  try_sync_session_from_host ~scope ~reset_missing ctx
+
+let require_session_from_host ?(scope = "session sync")
+    ?(reset_missing = true) ctx =
+  match sync_session_from_host ~scope ~reset_missing ctx with
+  | Ok () -> ()
+  | Error message -> failwith message
 
 let save_goal_state ctx =
   Session_store.append_custom_entry ctx "taumel.goal"

@@ -99,10 +99,13 @@ let plan_continuation raw_facts =
     |> Option.value ~default:(Unsafe.obj [||])
   in
   let initial = Tool_contracts.GoalContinuationFacts.get_initial facts in
-  if not (Session_sync.try_sync_session_from_host ~scope:"goal continuation" ctx) then
-    Boundary_contracts.GoalContinuationNone.create ()
-    |> Tool_contracts.GoalContinuationNone.t_to_js |> inject
-  else
+  match
+    Session_sync.try_sync_session_from_host ~scope:"goal continuation" ctx
+  with
+  | Error _ ->
+      Boundary_contracts.GoalContinuationNone.create ()
+      |> Tool_contracts.GoalContinuationNone.t_to_js |> inject
+  | Ok () ->
     match
       Taumel.Goal.plan_continuation ~initial
         (continuation_facts facts)

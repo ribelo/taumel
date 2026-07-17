@@ -20,9 +20,9 @@ let load_state ctx =
       | Error _ -> cron_state := Taumel.Cron.empty)
 
 let sync ctx =
-  if not (Session_sync.try_sync_session_from_host ~scope:"cron sync" ctx) then
-    false
-  else
+  match Session_sync.try_sync_session_from_host ~scope:"cron sync" ctx with
+  | Error _ -> false
+  | Ok () ->
     let session_id = Session_store.session_id_from_ctx ctx in
     if !cron_loaded_session_id <> Some session_id then (
       load_state ctx;
@@ -403,9 +403,11 @@ let goal_facts raw_facts =
     Tool_contracts.CronGoalFacts.create ~goalSlotFree ~goalDriving ()
     |> Tool_contracts.CronGoalFacts.t_to_js |> inject
   in
-  if not (Session_sync.try_sync_session_from_host ~scope:"cron goal facts" ctx) then
-    result false true
-  else
+  match
+    Session_sync.try_sync_session_from_host ~scope:"cron goal facts" ctx
+  with
+  | Error _ -> result false true
+  | Ok () ->
     let goal_slot_free, goal_driving =
       match !App_state.current_goal with
       | None -> (true, false)

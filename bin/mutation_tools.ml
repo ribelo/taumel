@@ -614,7 +614,7 @@ let apply_patch_to_files raw_facts =
   let params = Tool_contracts.PatchApplicationFacts.get_params facts |> Ts2ocaml.unknown_to_js |> js_of_ojs in
   let files = Tool_contracts.PatchApplicationFacts.get_files facts |> Ts2ocaml.unknown_to_js |> js_of_ojs in
   let ctx = Tool_contracts.PatchApplicationFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> js_of_ojs in
-  Session_sync.sync_session_from_host ~scope:"apply_patch files" ctx;
+  Session_sync.require_session_from_host ~scope:"apply_patch files" ctx;
   let approved = Tool_contracts.PatchApplicationFacts.get_filesystemApproval facts in
   let mutation_error message =
     Boundary_contracts.MutationError.create ~message ()

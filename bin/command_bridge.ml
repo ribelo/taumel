@@ -16,7 +16,7 @@ let plan_execution raw_facts =
     |> Option.map (fun value -> Ts2ocaml.unknown_to_js value |> js_of_ojs)
     |> Option.value ~default:(Unsafe.obj [||])
   in
-  Session_sync.sync_session_from_host ~scope:"command plan" ctx;
+  Session_sync.require_session_from_host ~scope:"command plan" ctx;
   let ralph_start_denial =
     match name with
     | "ralph" -> (match authorize_ralph_start () with Ok () -> None | Error message -> Some message)
@@ -134,7 +134,7 @@ let handle raw_facts =
   let ctx = Tool_contracts.HandleCommandFacts.get_ctx facts
     |> Ts2ocaml.unknown_to_js |> js_of_ojs
   in
-  Session_sync.sync_session_from_host ~scope:"command handle" ctx;
+  Session_sync.require_session_from_host ~scope:"command handle" ctx;
   match name with
   | "permissions" -> Permissions_commands.handle args ctx
   | "network" -> Permissions_commands.handle_network args ctx

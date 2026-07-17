@@ -108,6 +108,30 @@ const core = bootstrap.init({
 if (!core || typeof core.call !== "function" || Object.keys(core).join(",") !== "call") {
   throw new Error("Taumel initialization did not return the private core bridge");
 }
+// shared-st03/shared-st04/shared-st08: failed synchronization cannot fall back
+// to another session's loaded authorization state.
+const failedSyncCtx = {
+  ...ctx,
+  sessionManager: {
+    getSessionId: () => "failed-sync-session",
+    getEntries: () => {
+      throw new Error("forced session synchronization failure");
+    },
+    getBranch: () => [],
+  },
+};
+let failedSyncRejection = "";
+try {
+  const prepared = core.call("prepareTool", [{ name: "exec_command", params: { cmd: "echo unauthorized" }, ctx: failedSyncCtx }]);
+  failedSyncRejection = typeof prepared?.error === "string" ? prepared.error : "";
+} catch (error) {
+  failedSyncRejection = error instanceof Error ? error.message : String(error);
+}
+if (!/session synchronization failed.*forced session synchronization failure/i.test(failedSyncRejection)) {
+  throw new Error(
+    `generic preparation continued after failed session synchronization: ${JSON.stringify({ failedSyncRejection })}`,
+  );
+}
 // shared-0gc2: malformed reverse-boundary values reject before application logic.
 for (const [name, params, expectedError] of [
   [

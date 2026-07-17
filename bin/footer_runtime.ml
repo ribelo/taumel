@@ -77,8 +77,8 @@ let register_handlers host =
               Session_sync.try_sync_session_from_host_with
                 ~scope:"footer session sync" ~clear_retained_outputs:true host ctx
             with
-            | None -> ()
-            | Some snapshot ->
+            | Error _ -> ()
+            | Ok snapshot ->
                 let isolated_child =
                   Session_sync.persisted_session_snapshot_is_isolated_child snapshot
                 in
@@ -120,8 +120,8 @@ let register_handlers host =
 	                     Session_sync.try_sync_session_from_host_with
 	                       ~scope:"footer turn_end sync" host ctx
 	                   with
-	                   | None -> ()
-	                   | Some _ ->
+		                   | Error _ -> ()
+		                   | Ok _ ->
 	                       capture_loaded_footer_permissions ();
 	                       ignore
 	                         (Session_sync.try_account_goal_turn_end

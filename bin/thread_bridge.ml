@@ -253,7 +253,7 @@ let run raw_facts =
   let params = Tool_contracts.ThreadToolFacts.get_params facts |> Ts2ocaml.unknown_to_js |> js_of_ojs in
   let catalog = Tool_contracts.ThreadToolFacts.get_catalog facts |> Ts2ocaml.unknown_to_js |> js_of_ojs in
   let ctx = Tool_contracts.ThreadToolFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> js_of_ojs in
-  Session_sync.sync_session_from_host ~scope:"thread tool run" ctx;
+  Session_sync.require_session_from_host ~scope:"thread tool run" ctx;
   let result =
     match name with
     | `V_query_threads -> run_query params catalog
