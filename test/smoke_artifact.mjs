@@ -108,6 +108,42 @@ const core = bootstrap.init({
 if (!core || typeof core.call !== "function" || Object.keys(core).join(",") !== "call") {
   throw new Error("Taumel initialization did not return the private core bridge");
 }
+const malformedDecisionPolicy = core.call("refreshExecPolicy", [{
+  scopes: [{
+    scope: "global",
+    execPolicy: {
+      rules: [
+        { pattern: ["rm"], decision: "forbiden" },
+        { pattern: ["curl"] },
+        { pattern: ["wget"], decision: 1 },
+        { pattern: ["echo"], decision: "prompt" },
+      ],
+    },
+  }],
+}]);
+if (
+  malformedDecisionPolicy?.activeRuleCount !== 1 ||
+  !Array.isArray(malformedDecisionPolicy.errors) ||
+  malformedDecisionPolicy.errors.length !== 3
+) {
+  throw new Error(
+    `invalid exec-policy decisions were not rejected per rule: ${JSON.stringify(malformedDecisionPolicy)}`,
+  );
+}
+const malformedDecisionCheck = core.call("handleCommand", [{
+  name: "execpolicy",
+  args: "check rm -rf target",
+  ctx,
+}]);
+if (
+  malformedDecisionCheck?.details?.decision !== "prompt" ||
+  malformedDecisionCheck?.details?.defaultedToPrompt !== true
+) {
+  throw new Error(
+    `invalid exec-policy decision widened command authority: ${JSON.stringify(malformedDecisionCheck)}`,
+  );
+}
+core.call("refreshExecPolicy", [{ scopes: [] }]);
 const policyNames = core.call("toolPolicyNames", []);
 const allowedNames = core.call("allowedToolNames", []);
 const commandSpecs = core.call("commandSpecs", []);

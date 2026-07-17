@@ -307,38 +307,59 @@ let raw_rule_from_js obj =
     | Ok [] -> Error "rule pattern must not be empty"
     | Ok raw_pattern ->
         let decision =
-          match Taumel.Exec_policy.decision_of_string (get_string obj "decision") with
-          | Some decision -> decision
-          | None -> Taumel.Exec_policy.Allow
+          match object_field obj "decision" with
+          | None -> Error "rule decision is required"
+          | Some value -> (
+              match string_value value with
+              | None ->
+                  Error
+                    "rule decision must be allow, prompt, or forbidden"
+              | Some value -> (
+                  match Taumel.Exec_policy.decision_of_string value with
+                  | Some decision -> Ok decision
+                  | None ->
+                      Error
+                        "rule decision must be allow, prompt, or forbidden"))
         in
-        let match_field = if has_property obj "notMatch" then "notMatch" else "not_match" in
-        match (parse_array "match" example_from_js obj, parse_array match_field example_from_js obj) with
-        | Ok raw_match_examples, Ok raw_not_match_examples ->
-            Ok
-              Taumel.Exec_policy.{
-                raw_id = optional_string_field obj "id";
-                raw_pattern;
-                raw_decision = decision;
-                raw_justification = optional_string_field obj "justification";
-                raw_match_examples;
-                raw_not_match_examples;
-              }
-        | Error message, _ | _, Error message -> Error message
+        (match decision with
+        | Error _ as error -> error
+        | Ok decision ->
+            let match_field =
+              if has_property obj "notMatch" then "notMatch" else "not_match"
+            in
+            match
+              ( parse_array "match" example_from_js obj,
+                parse_array match_field example_from_js obj )
+            with
+            | Ok raw_match_examples, Ok raw_not_match_examples ->
+                Ok
+                  Taumel.Exec_policy.{
+                    raw_id = optional_string_field obj "id";
+                    raw_pattern;
+                    raw_decision = decision;
+                    raw_justification = optional_string_field obj "justification";
+                    raw_match_examples;
+                    raw_not_match_examples;
+                  }
+            | Error message, _ | _, Error message -> Error message)
 
 let scope_rules_from_js obj =
   if not (is_js_object obj) then Error "execPolicy must be an object"
   else
     match object_field obj "rules" with
-    | None -> Ok []
+    | None -> Ok ([], [])
     | Some rules when is_js_array rules ->
-        let rec loop acc = function
-          | [] -> Ok (List.rev acc)
+        let rec loop rule_index valid errors = function
+          | [] -> Ok (List.rev valid, List.rev errors)
           | item :: rest -> (
               match raw_rule_from_js item with
-              | Ok rule -> loop (rule :: acc) rest
-              | Error _ as error -> error)
+              | Ok rule -> loop (rule_index + 1) (rule :: valid) errors rest
+              | Error message ->
+                  loop (rule_index + 1) valid
+                    ((rule_index, message) :: errors)
+                    rest)
         in
-        loop [] (array_items rules)
+        loop 0 [] [] (array_items rules)
     | Some _ -> Error "execPolicy.rules must be an array"
 
 let compile_settings settings =
@@ -355,7 +376,15 @@ let compile_settings settings =
              |> Ts2ocaml.unknown_to_js |> Obj.magic
            in
            match scope_rules_from_js policy with
-           | Ok rules -> ((name, rules) :: scopes, errors)
+           | Ok (rules, rule_errors) ->
+               let errors =
+                 List.fold_left
+                   (fun errors (rule_index, message) ->
+                     { Taumel.Exec_policy.scope = name; rule_index; message }
+                     :: errors)
+                   errors rule_errors
+               in
+               ((name, rules) :: scopes, errors)
            | Error message ->
                let error = { Taumel.Exec_policy.scope = name; rule_index = -1; message } in
                ((name, []) :: scopes, error :: errors))

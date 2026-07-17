@@ -44,6 +44,7 @@ already-authorized running session and stays out of scope for v1, matching codex
 - When a session starts or resumes, the system shall load and compile the rule set into core state; the exec path shall evaluate against the compiled set. ^execpolicy-n7l2
 - If a rule's `match` or `not_match` examples fail validation, then the system shall surface the error through a notification and skip that rule while keeping the valid rules. ^execpolicy-v8a1
 - If a scope's config block is malformed, then the system shall surface the error through a notification and keep the valid rules from the other scope. ^execpolicy-b3e7
+- If a rule omits `decision` or supplies a value other than a recognized exec-policy decision, then the system shall surface a validation error, reject that rule, and keep valid sibling rules; it shall never default an invalid authority decision to `allow`. ^execpolicy-ae04
 - While any scope holds a validation error, the system shall use `prompt` as the no-match default. ^execpolicy-f6c9
 - The system shall layer explicit user and project rules over the existing exec authorization, adding rules and keeping the baseline. ^execpolicy-j2d8
 - When a command needs approval, the system shall present a three-way choice — deny, allow once, allow always — and on "allow always" shall append an `allow` prefix rule whose pattern is the prompted command's full token sequence and update the in-memory rule set. ^execpolicy-amd3
@@ -68,9 +69,9 @@ Documentation example for the JSON shape; not a recommended runtime default.
           "notMatch": [["git","reset","--keep"], "git reset --merge"] },
         { "pattern": ["cp"], "decision": "prompt",
           "match": [["cp","foo","bar"], "cp -r src dest"] },
-        { "pattern": ["ls"], "match": [["ls"], ["ls","-l"]] },
-        { "pattern": ["cat"], "match": [["cat","file.txt"]] },
-        { "pattern": ["pwd"], "match": [["pwd"]] }
+        { "pattern": ["ls"], "decision": "allow", "match": [["ls"], ["ls","-l"]] },
+        { "pattern": ["cat"], "decision": "allow", "match": [["cat","file.txt"]] },
+        { "pattern": ["pwd"], "decision": "allow", "match": [["pwd"]] }
       ]
     }
   }
