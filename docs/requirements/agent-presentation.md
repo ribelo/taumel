@@ -16,7 +16,7 @@ human-readable expanded view and a separate model-facing tool contract.
 - When an agent completion notification is displayed compactly, the agent presentation shall omit the agent kind and a readiness label. ^agentui-ald0
 - When an agent completion notification is displayed compactly, the agent presentation shall omit the agent run ID. ^agentui-4lce
 - When an agent completion notification is expanded, the agent presentation shall show the agent run ID as a labeled field. ^agentui-go7t
-- When an agent completion notification is expanded, the agent presentation shall show labeled Agent, Run, Description, and Status fields. ^agentui-3txs
+- When an agent completion notification is expanded, the agent presentation shall show labeled Agent, Run ID, Description, and Status fields. ^agentui-3txs
 - When `agent_send` accepts a message, the compact agent presentation shall show the agent handle and agent task description without a running-status label. ^agentui-u65i
 - When an agent completion notification is expanded, the agent presentation shall display human-readable labeled fields rather than its protocol serialization. ^agentui-pz83
 - When an agent completion notification is expanded, the agent presentation shall omit the agent response. ^agentui-e5yj

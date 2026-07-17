@@ -93,6 +93,17 @@ work in compact displays without reproducing the full instruction or becoming
 part of the child's instruction.
 _Avoid_: Agent prompt, generated summary, clipped instruction
 
+**Tool presentation**:
+The user-facing representation of any tool invocation in compact and expanded
+transcript forms, independent of the model-facing tool contract.
+_Avoid_: Tool rendering, renderer callback, tool slot
+
+**Presentation grammar**:
+The shared style rules governing every tool presentation and Taumel message
+rendering: header shape, state-dot colors, facts placement, label style, and
+typography.
+_Avoid_: Theme, style guide, formatting conventions
+
 **Agent presentation**:
 The user-facing representation of an agent tool invocation or agent completion
 notification, independent of the model-facing tool contract.

@@ -76,7 +76,7 @@ does not pause the goal lifecycle.
 - When `/goal <objective>` successfully starts a goal, the system shall not emit a goal summary or transient notification in addition to the visible goal objective submission. ^goal-cm12
 - Goal inspection shall render compact as `Goal` followed by status, objective, and active time, and expanded shall show objective, lifecycle status, automation state, tokens used, active time, and the time limit when present; when no goal exists, compact inspection shall render `Goal · none`. ^goal-cm13
 - A successful `/goal pause` command shall emit exactly one transient goal acknowledgement and shall not create a transcript message or submit content to the agent. ^goal-cm14
-- A successful `/goal resume` shall emit its persisted visible `Goal continuation` entry without an additional transient acknowledgement or goal summary. ^goal-cm15
+- A successful `/goal resume` shall emit its persisted visible `goal.continue` entry without an additional transient acknowledgement or goal summary. ^goal-cm15
 - If a `/goal` command is invalid, the system shall emit exactly one transient warning and shall not create a transcript entry or submit content to the agent. ^goal-cm16
 - When `/goal resume` targets an already active goal with enabled automation, the system shall leave state unchanged, emit exactly one transient `Goal already active.` acknowledgement, and shall not send a continuation. ^goal-cm17
 - The slash-command interface shall not provide `complete` or `blocked`; only the agent-facing `update_goal` tool may request those lifecycle transitions, and the user may resume or clear an incorrect model-directed terminal state. ^goal-cm18
@@ -97,7 +97,7 @@ does not pause the goal lifecycle.
 - The system shall not require or represent a model-counted consecutive-turn blocker threshold and shall not add cross-turn repetition tracking to decide whether `blocked` is valid. ^goal-co08
 - While a goal is `paused`, `blocked`, `usage_limited`, or `time_limited`, the system shall not inject its objective or status into unrelated normal user turns; inactive goal state shall remain available through the footer, `/goal`, and `get_goal` until explicitly resumed or cleared. ^goal-co09
 - The system shall show every automated goal continuation to the user as system-authored activity visually distinct from user-authored messages. ^goal-co10
-- The compact continuation rendering shall be the single-line label `Goal continuation` followed by the goal objective; the expanded rendering shall show the exact full continuation content sent to the agent. ^goal-co11
+- The compact continuation rendering shall be the single-line header `goal.continue` followed by the goal objective; the expanded rendering shall show the exact full continuation content sent to the agent. ^goal-co11
 - Each delivered goal continuation shall persist as a system-authored transcript entry and shall retain the same compact and expanded rendering after session reload. ^goal-co12
 - Each persisted continuation shall carry typed rendering metadata, including objective, lifecycle status, automation state, and telemetry, separately from the exact opaque agent-facing continuation content; renderers shall not recover metadata by parsing the agent-facing text. ^goal-co13
 
