@@ -18,7 +18,19 @@ globalThis.require = createRequire(import.meta.url);
 globalThis.taumelPhoton = globalThis.require("@silvia-odwyer/photon-node");
 createRequire(import.meta.url)(artifact);
 
-const result = globalThis.taumel.call("viewMedia", [{ path: image, defaultCwd: tempDir }]);
+const core = globalThis.taumel.init({
+  on: () => undefined,
+  eventsOn: () => () => undefined,
+  emit: () => undefined,
+  exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+  setFooter: () => undefined,
+  sessionSnapshot: () => ({ cwd: tempDir, provider: "test", model: "test" }),
+  getGitBranch: () => "main",
+  onBranchChange: () => () => undefined,
+  requestRender: () => undefined,
+  themeFg: (_theme, _color, value) => value,
+});
+const result = core.call("viewMedia", [{ path: image, defaultCwd: tempDir }]);
 if (result?.details?.ok !== true) {
   throw new Error(`view_media failed to resolve its image dependency: ${JSON.stringify(result?.details)}`);
 }

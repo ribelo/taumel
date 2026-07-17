@@ -264,8 +264,8 @@ let test_shutdown_suspends_running_not_lost () =
   | Error message -> failwith message
   | Ok (state, _identity, run) -> (
       let suspended =
-        Agents.suspend_running_for_owner state ~now:9 ~owner_session_id:"parent-1"
-          ~reason_code:Agents.Parent_shutdown
+        Agent_registry.suspend_running_for_owner state ~now:9
+          ~owner_session_id:"parent-1" ~reason_code:Agents.Parent_shutdown
       in
       match Agents.find_run suspended run.run_id with
       | None -> failwith "run missing"
@@ -275,6 +275,35 @@ let test_shutdown_suspends_running_not_lost () =
           assert_equal "reason" "parent_shutdown"
             (Option.fold ~none:"" ~some:Agents.reason_code_to_string
                run.run_reason_code))
+
+let test_close_cleanup_failure_suspends_only_selected_agent () =
+  match spawn Agents.empty_session_state with
+  | Error message -> failwith message
+  | Ok (state, identity, run) -> (
+      match
+        Agent_registry.suspend_running_for_agent state ~now:10
+          ~owner_session_id:"parent-1" ~agent_id:identity.identity_agent_id
+          ~reason_code:Agents.Close_cleanup_failed
+      with
+      | Error message -> failwith message
+      | Ok suspended -> (
+          match Agents.find_run suspended run.run_id with
+          | None -> failwith "run missing"
+          | Some run ->
+              assert_equal "close cleanup status" "suspended"
+                (Agents.run_status_to_string run.run_status);
+              assert_equal "close cleanup reason" "close_cleanup_failed"
+                (Option.fold ~none:"" ~some:Agents.reason_code_to_string
+                   run.run_reason_code);
+              match Agents_codec.decode (Agents_codec.encode suspended) with
+              | Error message -> failwith message
+              | Ok decoded ->
+                  assert_equal "persisted close cleanup reason"
+                    "close_cleanup_failed"
+                    (Option.bind (Agents.find_run decoded run.run_id)
+                       (fun item -> item.run_reason_code)
+                    |> Option.fold ~none:""
+                         ~some:Agents.reason_code_to_string)))
 
 let test_process_loss_uses_child_session_availability () =
   match spawn Agents.empty_session_state with
@@ -484,6 +513,7 @@ let () =
   test_wait_rejects_unknown_before_claiming ();
   test_close_removes_identity_and_runs ();
   test_shutdown_suspends_running_not_lost ();
+  test_close_cleanup_failure_suspends_only_selected_agent ();
   test_process_loss_uses_child_session_availability ();
   test_identity_limit ();
   test_codec_roundtrip_and_legacy_rejection ();

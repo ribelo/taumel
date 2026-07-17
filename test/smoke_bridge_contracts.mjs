@@ -813,20 +813,18 @@ for (const invalid of [
 }
 const preparedRead = decodePreparedToolAction({ ok: true, action: "read", path: "README.md", limit: 10 });
 const preparedExec = decodePreparedToolAction({
-  ok: true, action: "exec_command", cmd: "pwd", workdir: "", tty: false,
+  ok: true, action: "exec_command", planId: "plan-exec", cmd: "pwd", workdir: "", tty: false,
   sandbox: { filesystemMode: "workspace-write", networkMode: "disabled", workspaceRoots: ["/workspace"], noSandbox: false, isolatedChild: false },
 });
 const preparedExecWithYield = decodePreparedToolAction({
-  ok: true, action: "exec_command", cmd: "pwd", workdir: "", yieldTimeMs: 250, tty: false,
+  ok: true, action: "exec_command", planId: "plan-exec-yield", cmd: "pwd", workdir: "", yieldTimeMs: 250, tty: false,
   sandbox: { filesystemMode: "workspace-write", networkMode: "disabled", workspaceRoots: ["/workspace"], noSandbox: false, isolatedChild: false },
 });
 const preparedExa = decodePreparedToolAction({
-  ok: true, action: "exa_fetch", toolName: "web_search_exa", method: "POST", path: "/search",
-  bodyJson: '{"query":"test"}',
+  ok: true, action: "exa_fetch", planId: "plan-exa", toolName: "web_search_exa",
 });
 const preparedExaApproval = decodePreparedToolAction({
-  ok: true, action: "exa_agent_create_run_approval", toolName: "exa_agent_create_run",
-  method: "POST", path: "/agent/runs", bodyJson: '{"query":"test"}',
+  ok: true, action: "exa_agent_create_run_approval", planId: "plan-exa-approval", toolName: "exa_agent_create_run",
   approvalTitle: "Approve Exa Agent run", approvalPrompt: "Create run?", approvalTimeoutMs: 30000,
 });
 if (!("action" in preparedRead) || preparedRead.action !== "read" || !("action" in preparedExec) || !("action" in preparedExecWithYield) || preparedExa.action !== "exa_fetch" || preparedExaApproval.action !== "exa_agent_create_run_approval") {
@@ -835,10 +833,10 @@ if (!("action" in preparedRead) || preparedRead.action !== "read" || !("action" 
 for (const invalid of [
   { ok: true, action: "read", path: "", extra: true },
   { ok: true, action: "write_stdin", sessionId: 0, chars: "", outputMode: "delta" },
-  { ok: true, action: "exec_command", cmd: "pwd", workdir: "", tty: false, sandbox: { filesystemMode: "workspace-write" } },
-  { ok: true, action: "exec_command", cmd: "pwd", workdir: "", yieldTimeMs: null, tty: false, sandbox: { filesystemMode: "workspace-write", networkMode: "disabled", workspaceRoots: ["/workspace"], noSandbox: false, isolatedChild: false } },
-  { ok: true, action: "exa_fetch", toolName: "web_search_exa", method: "POST", path: "/search", apiKeyPresent: true },
-  { ok: true, action: "exa_agent_create_run_approval", toolName: "exa_agent_create_run", method: "POST", path: "/agent/runs", approvalTitle: "Approve", approvalPrompt: "Create?", approvalTimeoutMs: 30000, apiKeyPresent: true },
+  { ok: true, action: "exec_command", planId: "plan", cmd: "pwd", workdir: "", tty: false, sandbox: { filesystemMode: "workspace-write" } },
+  { ok: true, action: "exec_command", planId: "plan", cmd: "pwd", workdir: "", yieldTimeMs: null, tty: false, sandbox: { filesystemMode: "workspace-write", networkMode: "disabled", workspaceRoots: ["/workspace"], noSandbox: false, isolatedChild: false } },
+  { ok: true, action: "exa_fetch", planId: "plan", toolName: "web_search_exa", method: "POST" },
+  { ok: true, action: "exa_agent_create_run_approval", planId: "plan", toolName: "exa_agent_create_run", approvalTitle: "Approve", approvalPrompt: "Create?", approvalTimeoutMs: 30000, apiKeyPresent: true },
   { ok: true, action: "unregistered" },
 ]) {
   let rejected = false;

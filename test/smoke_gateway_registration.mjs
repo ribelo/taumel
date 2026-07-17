@@ -88,6 +88,7 @@ const ownershipCore = {
     if (method === "prepareTool") return {
       ok: true,
       action: "exec_command_approval",
+      planId: "plan-ownership",
       cmd: "echo test",
       workdir: "/tmp",
       tty: false,
@@ -114,6 +115,7 @@ const ownershipCore = {
         },
       };
     }
+    if (method === "discardAuthorityPlan") return { ok: true };
     if (method === "toolResultEnvelope") return {
       content: [{ type: "text", text: args[0].error ?? "result" }],
       details: args[0].details ?? {},
@@ -160,6 +162,7 @@ const queueCore = {
     if (method === "prepareTool") return {
       ok: true,
       action: "exec_command_approval",
+      planId: `plan-${args[0].params.cmd}`,
       cmd: args[0].params.cmd,
       workdir: "/tmp",
       tty: false,
@@ -177,6 +180,7 @@ const queueCore = {
       this.finishOutcomes.push(args[0].outcome);
       return { kind: "denied", result: { content: [{ type: "text", text: "denied" }], details: {} } };
     }
+    if (method === "discardAuthorityPlan") return { ok: true };
     if (method === "toolResultEnvelope") return {
       content: [{ type: "text", text: args[0].error ?? "result" }], details: args[0].details ?? {},
     };
@@ -318,13 +322,14 @@ const crossToolCore = {
       approvalAction: "write", approvalTitle: "Approve write", approvalPrompt: "Write file?", approvalTimeoutMs: 0,
     };
     if (method === "prepareTool" && args[0].name === "exa_agent_create_run") return {
-      ok: true, action: "exa_agent_create_run_approval", toolName: "exa_agent_create_run",
-      method: "POST", path: "/agent/runs", approvalTitle: "Approve Exa", approvalPrompt: "Create run?", approvalTimeoutMs: 0,
+      ok: true, action: "exa_agent_create_run_approval", planId: "plan-exa", toolName: "exa_agent_create_run",
+      approvalTitle: "Approve Exa", approvalPrompt: "Create run?", approvalTimeoutMs: 0,
     };
     if (method === "planExecApprovalPrompt") return {
       kind: "confirm", title: args[0].approvalTitle, prompt: args[0].approvalPrompt,
     };
     if (method === "goalClockPauseStart" || method === "goalClockPauseEnd") return null;
+    if (method === "discardAuthorityPlan") return { ok: true };
     if (method === "toolResultEnvelope") return {
       content: [{ type: "text", text: args[0].error ?? "ok" }], details: args[0].details ?? {},
     };
@@ -389,7 +394,7 @@ const allowAlwaysCore = {
     if (method === "prepareTool") {
       if (allowRuleActive) return { ok: true, action: "tool_result", text: "allowed by persisted rule", details: { allowed: true } };
       return {
-        ok: true, action: "exec_command_approval", cmd: "echo persistent", workdir: "/tmp", tty: false,
+        ok: true, action: "exec_command_approval", planId: "plan-persistent", cmd: "echo persistent", workdir: "/tmp", tty: false,
         sandbox: {
           filesystemMode: "read-only", networkMode: "disabled", workspaceRoots: ["/tmp"],
           noSandbox: false, isolatedChild: true, approvalPolicy: "on-request",
@@ -415,6 +420,7 @@ const allowAlwaysCore = {
       allowAlwaysCalls.push(args[0].outcome);
       return { kind: "denied", result: { content: [{ type: "text", text: "planned" }], details: {} } };
     }
+    if (method === "discardAuthorityPlan") return { ok: true };
     if (method === "goalClockPauseStart" || method === "goalClockPauseEnd") return null;
     throw new Error(`unexpected allow-always core call: ${method}`);
   },
@@ -450,7 +456,7 @@ const truncation = {
 const retryCore = {
   call(method) {
     if (method === "prepareTool") return {
-      ok: true, action: "exec_command", cmd: "touch probe", workdir: "/tmp", tty: false,
+      ok: true, action: "exec_command", planId: "plan-retry", cmd: "touch probe", workdir: "/tmp", tty: false,
       sandbox: {
         filesystemMode: "read-only", networkMode: "disabled", workspaceRoots: ["/tmp"],
         noSandbox: false, isolatedChild: true, approvalPolicy: "on-failure",
@@ -468,6 +474,7 @@ const retryCore = {
       tempRootCandidates: ["/tmp"], systemRoPathCandidates: ["/usr", "/bin"],
     };
     if (method === "sandboxMetadataDirNames") return { names: [".git"] };
+    if (method === "discardAuthorityPlan") return { ok: true };
     if (method === "goalClockPauseStart" || method === "goalClockPauseEnd") return null;
     throw new Error(`unexpected retry core call: ${method}`);
   },

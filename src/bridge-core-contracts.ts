@@ -308,6 +308,7 @@ export const ChildSessionStartPlanSchema = Type.Object(
     modelId: Type.Optional(Type.String({ minLength: 1 })),
     thinkingLevel: Type.Optional(Type.String({ minLength: 1 })),
     activeTools: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+    privateSessionDirectory: Type.Optional(Type.String({ minLength: 1 })),
     setupEntries: Type.Array(ChildSessionCustomEntrySchema),
   },
   { $id: "ChildSessionStartPlan", additionalProperties: false },
@@ -494,11 +495,7 @@ export const ExecCompletionWaitResultSchema = Type.Object(
 );
 export const BridgeToolExecutionResultSchema = Type.Union([BridgeToolResultSchema, BridgeErrorResultSchema]);
 export const ExaExecutionFactsSchema = Type.Object(
-  {
-    toolName: Type.String({ minLength: 1 }), method: Type.String({ minLength: 1 }),
-    path: Type.String({ minLength: 1 }), bodyJson: Type.Optional(Type.String()),
-    lastEventId: Type.Optional(Type.String()),
-  },
+  { planId: Type.String({ minLength: 1 }), ctx: Type.Unknown() },
   { $id: "ExaExecutionFacts", additionalProperties: false },
 );
 export type BridgeToolExecutionResult = Static<typeof BridgeToolExecutionResultSchema>;
@@ -588,6 +585,7 @@ export const ExecToolResultSchema = Type.Object(
 export type ExecToolResult = Static<typeof ExecToolResultSchema>;
 export const ExecApprovalOutcomeFactsSchema = Type.Object(
   {
+    planId: Type.String({ minLength: 1 }), ctx: Type.Unknown(),
     outcome: Type.Union([
       Type.Literal("approved"), Type.Literal("denied_by_user"),
       Type.Literal("timed_out"), Type.Literal("unavailable"), Type.Literal("interrupted"),
@@ -605,6 +603,15 @@ export const ExecApprovalDeniedSchema = Type.Object(
 );
 export const ExecApprovalResultSchema = Type.Union([ExecApprovalRunSchema, ExecApprovalDeniedSchema]);
 export type ExecApprovalResult = Static<typeof ExecApprovalResultSchema>;
+export const AuthorityPlanRefSchema = Type.Object(
+  { planId: Type.String({ minLength: 1 }), ctx: Type.Unknown() },
+  { $id: "AuthorityPlanRef", additionalProperties: false },
+);
+export const AuthorityPlanIssuedSchema = Type.Object(
+  { planId: Type.String({ minLength: 1 }) },
+  { $id: "AuthorityPlanIssued", additionalProperties: false },
+);
+export type AuthorityPlanIssued = Static<typeof AuthorityPlanIssuedSchema>;
 export const CommandChildDispatchFactsSchema = Type.Object(
   { result: BridgeCommandResultSchema, bridge: Type.Unknown() },
   { $id: "CommandChildDispatchFacts", additionalProperties: false },

@@ -305,8 +305,7 @@ let ephemeral_cleanup_plan ctx =
       ~owner_session_id:(owner_id ctx)
     |> List.map (fun (identity : Taumel.Agents.identity) ->
            Tool_contracts.AgentCleanupItem.create
-             ~agentId:identity.identity_agent_id
-             ?childSessionFile:identity.identity_child_session_file ())
+             ~agentId:identity.identity_agent_id ())
   in
   Tool_contracts.AgentCleanupPlan.create ~agents ()
   |> Tool_contracts.AgentCleanupPlan.t_to_js |> inject
@@ -394,14 +393,179 @@ let finish_ephemeral_cleanup ctx =
   match !agent_state_load_error with
   | Some message -> error_obj ("agent state is unavailable: " ^ message)
   | None ->
-      let next, _ =
-        Taumel.Agent_registry.close_all_for_owner !agent_state
-          ~owner_session_id:(owner_id ctx)
+      let owner = owner_id ctx in
+      match Agent_ephemeral_cleanup.acquire ~owner_session_id:owner with
+      | Error error ->
+          error_obj
+            ("cleanup_failed: "
+            ^ Agent_ephemeral_cleanup.lease_error_message error)
+      | Ok _lease ->
+      let previous = !agent_state in
+      let previous_claims = !agent_notification_claims in
+      let identities =
+        Taumel.Agents.owned_identities !agent_state ~owner_session_id:owner
       in
-      agent_state := next;
-      agent_notification_claims := [];
-      save_agent_state ctx;
-      core_ack ()
+      let existing_pending =
+        (!agent_state).cleanup_pending
+        |> List.filter (fun item ->
+               item.Taumel.Agents.cleanup_owner_session_id = owner)
+      in
+      let unstage_all staged_items =
+        Agent_child_session_host.unstage_private_sessions
+          (List.map snd staged_items)
+      in
+      let rec stage_all acc = function
+        | [] -> Ok (List.rev acc)
+        | identity :: rest -> (
+            match
+              Agent_child_session_host.recover_uncommitted_envelope_for_identity
+                ~identity
+            with
+            | Error message -> Error message
+            | Ok _ -> (
+                match
+                  Agent_child_session_host.authorized_private_session ~identity
+                with
+                | Error message -> Error message
+                | Ok authorized -> (
+                    match
+                      Agent_child_session_host.stage_authorized_private_session
+                        ~ephemeral:true ~identity authorized
+                    with
+                    | Error message -> (
+                        match unstage_all (List.rev acc) with
+                        | Ok () -> Error message
+                        | Error unstage_message ->
+                            Error
+                              (message ^ "; unstage failed: " ^ unstage_message))
+                    | Ok staged -> stage_all ((identity, staged) :: acc) rest)))
+      in
+      let rec tombstone state pending_acc = function
+        | [] -> Ok (state, List.rev pending_acc)
+        | (identity, staged) :: rest -> (
+            match Agent_child_session_host.staged_cleanup_nonce staged with
+            | None -> (
+                match
+                  Taumel.Agent_registry.record_close state ~owner_session_id:owner
+                    ~agent_id:identity.Taumel.Agents.identity_agent_id
+                with
+                | Error message -> Error message
+                | Ok (next, _) -> tombstone next pending_acc rest)
+            | Some cleanup_nonce -> (
+                match
+                  Taumel.Agent_registry.record_close_with_cleanup state
+                    ~owner_session_id:owner
+                    ~agent_id:identity.Taumel.Agents.identity_agent_id
+                    ~cleanup_nonce ~remaining_artifacts:[ "private_session" ]
+                with
+                | Error message -> Error message
+                | Ok (next, _identity, pending_item) ->
+                    tombstone next (pending_item :: pending_acc) rest))
+      in
+      let finalize_pending state pending_items =
+        List.fold_left
+          (fun result pending_item ->
+            match result with
+            | Error _ as error -> error
+            | Ok current -> (
+                match
+                  Agent_child_session_host.finalize_cleanup_pending pending_item
+                with
+                | Error message -> Error message
+                | Ok () -> (
+                    ignore
+                      (Agent_child_session_host.remove_cleanup_journal_record
+                         ~owner_session_id:pending_item.cleanup_owner_session_id
+                         ~agent_id:pending_item.cleanup_agent_id
+                         ~cleanup_nonce:pending_item.cleanup_nonce);
+                    Taumel.Agent_registry.complete_cleanup current
+                      ~owner_session_id:pending_item.cleanup_owner_session_id
+                      ~agent_id:pending_item.cleanup_agent_id
+                      ~cleanup_nonce:pending_item.cleanup_nonce)))
+          (Ok state) pending_items
+      in
+      match stage_all [] identities with
+      | Error message -> error_obj ("cleanup_failed: " ^ message)
+      | Ok staged_items -> (
+          match tombstone !agent_state [] staged_items with
+          | Error message -> (
+              match unstage_all staged_items with
+              | Ok () -> error_obj ("cleanup_failed: " ^ message)
+              | Error unstage_message ->
+                  error_obj
+                    ("cleanup_failed: " ^ message ^ "; unstage failed: "
+                   ^ unstage_message))
+          | Ok (tombstoned_state, new_pending) ->
+              agent_state := tombstoned_state;
+              agent_notification_claims := [];
+              try
+                save_agent_state ctx;
+                (* Journal only after tombstones are committed. Ephemeral state is
+                   not restart-durable, so a journal failure must not strand the
+                   already staged envelopes: finish them directly while their
+                   in-process cleanup authority is still available. *)
+                let journal_error =
+                  match
+                    Agent_child_session_host.append_cleanup_journal_records
+                      new_pending
+                  with
+                  | Ok () -> None
+                  | Error message -> Some message
+                in
+                let all_pending = existing_pending @ new_pending in
+                (match finalize_pending !agent_state all_pending with
+                | Error message -> (
+                    match journal_error with
+                    | None -> error_obj ("cleanup_failed: " ^ message)
+                    | Some journal_message ->
+                        error_obj
+                          ("cleanup_failed: cleanup journal publication failed: "
+                         ^ journal_message
+                         ^ "; cleanup finalization failed: " ^ message))
+                | Ok completed ->
+                    agent_state := completed;
+                    try
+                      save_agent_state ctx;
+                      core_ack ()
+                    with error ->
+                      error_obj
+                        ("agent state persistence failed: "
+                       ^ Printexc.to_string error))
+              with error ->
+                agent_state := previous;
+                agent_notification_claims := previous_claims;
+                let unstage_error =
+                  match unstage_all staged_items with
+                  | Ok () -> None
+                  | Error message -> Some message
+                in
+                let restore_error =
+                  try
+                    save_agent_state ctx;
+                    None
+                  with restore_exn -> Some (Printexc.to_string restore_exn)
+                in
+                error_obj
+                  (Agent_child_session_host.restore_failure_detail
+                     ~primary:
+                       ("agent state persistence failed: "
+                      ^ Printexc.to_string error)
+                     ~unstage_error ~restore_error))
+
+let release_ephemeral_cleanup_lease ctx =
+  let owner = owner_id ctx in
+  if
+    !agent_state_load_error <> None
+    || Taumel.Agents.owned_identities !agent_state ~owner_session_id:owner <> []
+  then
+    (* A failed shutdown may have restored usable identities. Retain the
+       lifetime lease until process death so deferred markers cannot be
+       promoted while those identities remain live. *)
+    core_ack ()
+  else
+    match Agent_ephemeral_cleanup.release_owner owner with
+    | Ok () -> core_ack ()
+    | Error message -> error_obj ("cleanup_failed: " ^ message)
 
 let suspend_owner_on_shutdown ctx =
   match !agent_state_load_error with
@@ -409,8 +573,9 @@ let suspend_owner_on_shutdown ctx =
   | None ->
       let owner = owner_id ctx in
       let next =
-        Taumel.Agents.suspend_running_for_owner !agent_state ~now:(now_seconds ())
-          ~owner_session_id:owner ~reason_code:Taumel.Agents.Parent_shutdown
+        Taumel.Agent_registry.suspend_running_for_owner !agent_state
+          ~now:(now_seconds ()) ~owner_session_id:owner
+          ~reason_code:Taumel.Agents.Parent_shutdown
       in
       agent_state := next;
       save_agent_state ctx;

@@ -93,6 +93,8 @@ let delete_worktree facts ctx =
                 | Error message -> error_obj ("cleanup_failed: " ^ message))))))
 let reconcile_provisional_worktrees () =
   Agent_worktree_host.reconcile_provisional_markers ();
+  ignore (Agent_ephemeral_cleanup.reconcile_deferred ());
+  ignore (Agent_child_session_host.reconcile_cleanup_journal ());
   core_ack ()
 
 let identity_metadata ~(identity : Taumel.Agents.identity) ?child_session_file () =

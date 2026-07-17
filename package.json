@@ -22,6 +22,7 @@
     "smoke:tool-metadata-requirements": "bun test/smoke_tool_metadata_requirements.mjs",
     "smoke:agent-contracts": "bun test/smoke_agent_contracts.mjs",
     "smoke:agent-lifecycle": "nix develop -c node test/smoke_agent_lifecycle.mjs",
+    "smoke:agent-child-session-cleanup": "bun test/smoke_agent_child_session_cleanup.mjs",
     "smoke:agent-runs-manager": "bun test/smoke_agent_runs_manager.mjs",
     "smoke:agent-async": "bun test/smoke_agent_async.mjs",
     "smoke:agent-worktrees": "bun test/smoke_agent_worktrees.mjs",
@@ -33,6 +34,7 @@
     "smoke:tool-renderers": "bun test/smoke_tool_renderers.mjs",
     "smoke:exec-notifications": "bun test/smoke_exec_notifications.mjs",
     "smoke:prepared-exec-contract": "bun test/smoke_prepared_exec_contract.mjs",
+    "smoke:authority-plans": "node test/smoke_authority_plans.mjs",
     "smoke:exec-pty": "node --experimental-loader ./test/markdown-loader.mjs test/smoke_exec_pty.mjs",
     "smoke:gateway-registration": "bun test/smoke_gateway_registration.mjs",
     "smoke:global-settings": "bun test/smoke_global_settings.mjs",
@@ -44,7 +46,7 @@
     "smoke:util": "bun test/smoke_util.mjs",
     "check:typed-boundaries": "node test/check_typed_boundaries.mjs",
     "check:source-file-sizes": "node test/check_source_file_sizes.mjs",
-    "gate": "npm run typecheck && npm run check:typed-boundaries && npm run check:source-file-sizes && npm run build && npm run test:ocaml && npm run smoke:artifact && npm run smoke:extension-artifact && npm run smoke:path-authorization && npm run smoke:view-media-resolution && npm run smoke:tool-contracts && npm run smoke:tool-metadata-requirements && npm run smoke:agent-contracts && npm run smoke:agent-lifecycle && npm run smoke:agent-runs-manager && npm run smoke:agent-async && npm run smoke:agent-worktrees && npm run smoke:agent-worktree-runtime && npm run smoke:exa-contracts && npm run smoke:cron-loop && npm run smoke:cron-persistence && npm run smoke:compaction-model && npm run smoke:tool-renderers && npm run smoke:exec-notifications && npm run smoke:prepared-exec-contract && npm run smoke:exec-pty && npm run smoke:gateway-registration && npm run smoke:global-settings && npm run smoke:visibility-manager && npm run smoke:goal-commands && npm run smoke:usage-inspection && npm run smoke:bridge-contracts && npm run smoke:thinking-shortcuts && npm run smoke:util"
+    "gate": "npm run typecheck && npm run check:typed-boundaries && npm run check:source-file-sizes && npm run build && npm run test:ocaml && npm run smoke:artifact && npm run smoke:extension-artifact && npm run smoke:path-authorization && npm run smoke:view-media-resolution && npm run smoke:tool-contracts && npm run smoke:tool-metadata-requirements && npm run smoke:agent-contracts && npm run smoke:agent-lifecycle && npm run smoke:agent-child-session-cleanup && npm run smoke:agent-runs-manager && npm run smoke:agent-async && npm run smoke:agent-worktrees && npm run smoke:agent-worktree-runtime && npm run smoke:exa-contracts && npm run smoke:cron-loop && npm run smoke:cron-persistence && npm run smoke:compaction-model && npm run smoke:tool-renderers && npm run smoke:exec-notifications && npm run smoke:prepared-exec-contract && npm run smoke:authority-plans && npm run smoke:exec-pty && npm run smoke:gateway-registration && npm run smoke:global-settings && npm run smoke:visibility-manager && npm run smoke:goal-commands && npm run smoke:usage-inspection && npm run smoke:bridge-contracts && npm run smoke:thinking-shortcuts && npm run smoke:util"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.79.9",

@@ -6,26 +6,15 @@ const artifact = new URL("../dist/taumel.cjs", import.meta.url);
 const require = createRequire(import.meta.url);
 require(fileURLToPath(artifact));
 
-const core = globalThis.taumel;
+const bootstrap = globalThis.taumel;
 
-if (!core || typeof core !== "object" || typeof core.init !== "function" || typeof core.call !== "function") {
+if (!bootstrap || typeof bootstrap !== "object" || typeof bootstrap.init !== "function") {
   throw new Error("taumel core was not exported by the jsoo artifact");
 }
 
-const exportedKeys = Object.keys(core).sort();
-if (JSON.stringify(exportedKeys) !== JSON.stringify(["call", "init"])) {
+const exportedKeys = Object.keys(bootstrap).sort();
+if (JSON.stringify(exportedKeys) !== JSON.stringify(["init"])) {
   throw new Error(`unexpected Taumel artifact exports: ${JSON.stringify(exportedKeys)}`);
-}
-
-const policyNames = core.call("toolPolicyNames", []);
-const allowedNames = core.call("allowedToolNames", []);
-const commandSpecs = core.call("commandSpecs", []);
-if (
-  !Array.isArray(policyNames?.names) ||
-  !Array.isArray(allowedNames?.names) ||
-  !Array.isArray(commandSpecs?.specs)
-) {
-  throw new Error("Taumel artifact specs did not return typed result objects");
 }
 
 const handlers = new Map();
@@ -79,7 +68,7 @@ const ctx = {
   },
 };
 
-core.init({
+const core = bootstrap.init({
   resolveAuthorizationPath: realpathSync,
   on: pushHandler,
   eventsOn: () => () => undefined,
@@ -116,6 +105,15 @@ core.init({
     return value;
   },
 });
+if (!core || typeof core.call !== "function" || Object.keys(core).join(",") !== "call") {
+  throw new Error("Taumel initialization did not return the private core bridge");
+}
+const policyNames = core.call("toolPolicyNames", []);
+const allowedNames = core.call("allowedToolNames", []);
+const commandSpecs = core.call("commandSpecs", []);
+if (!Array.isArray(policyNames?.names) || !Array.isArray(allowedNames?.names) || !Array.isArray(commandSpecs?.specs)) {
+  throw new Error("Taumel artifact specs did not return typed result objects");
+}
 
 const preparedWrite = core.call("prepareTool", [{
   name: "write",

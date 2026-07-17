@@ -213,6 +213,12 @@ let patch_authorization_for_child child_metadata sandbox patch =
 let child_rejects_filesystem_approval child_metadata approval =
   worktree_metadata child_metadata <> None && approval <> None
 
+let exec_host_runtime sandbox workdir =
+  match path_authorization sandbox workdir with
+  | Error _ as error -> error
+  | Ok (authorization_cwd, workspace_roots) ->
+      Exec_host_runtime.facts ~workspace_roots ~authorization_cwd
+
 let prepare_exec_command params ctx =
   match Session_store.child_session_metadata ctx with
   | Error message -> error_obj message
@@ -327,43 +333,107 @@ let prepare_exec_command params ctx =
           else
           (match resolve_trusted_git () with
           | Error message -> error_obj message
-          | Ok trusted_git ->
-              Boundary_contracts.PreparedExec.create ~cmd:request.cmd ~workdir
-                ~tty:false ~sandbox:sandbox_cfg ~brokeredGit:true
-                ~directCommand:trusted_git ~directArgv:argv ~gitDir:git_dir
-                ~gitWorkTree:worktree
-                ?brokerAgentId:(if agent_id = "" then None else Some agent_id)
-                ~brokerSubcommand:
-                  (Taumel.Agent_git_broker.subcommand_to_string subcommand) ()
-              |> Tool_contracts.PreparedExec.t_to_js |> inject)
+          | Ok trusted_git -> (
+              match exec_host_runtime sandbox workdir with
+              | Error message -> error_obj message
+              | Ok (host, shell) ->
+                  let subcommand =
+                    Taumel.Agent_git_broker.subcommand_to_string subcommand
+                  in
+                  let plan =
+                    {
+                      Authority_plans.cmd = request.cmd;
+                      workdir;
+                      yield_time_ms = request.yield_time_ms;
+                      max_output_tokens = request.max_output_tokens;
+                      tty = false;
+                      sandbox;
+                      host;
+                      shell;
+                      brokered_git =
+                        Some
+                          {
+                            Authority_plans.command = trusted_git;
+                            argv;
+                            git_dir;
+                            git_work_tree = worktree;
+                            agent_id =
+                              if agent_id = "" then None else Some agent_id;
+                            subcommand;
+                          };
+                    }
+                  in
+                  let planId =
+                    Authority_plans.issue_exec
+                      ~owner_id:(Session_store.session_id_from_ctx ctx)
+                      ~owner_context:ctx ~approval_required:false plan
+                  in
+                  Boundary_contracts.PreparedExec.create ~planId
+                    ~cmd:request.cmd ~workdir ~tty:false ~sandbox:sandbox_cfg
+                    ~brokeredGit:true ()
+                  |> Tool_contracts.PreparedExec.t_to_js |> inject))
       | Error message when message <> "" && worktree_ctx <> None ->
           error_obj message
       | Error _ ->
       match Taumel.Mutation_plan.plan_exec ?policy_decision ?policy_message sandbox request with
       | Error message -> error_obj message
       | Ok plan ->
-          let sandbox = typed_sandbox_config sandbox in
+          let sandbox_cfg = typed_sandbox_config sandbox in
           let yieldTimeMs = plan.yield_time_ms in
           let maxOutputTokens = Option.map float_of_int plan.max_output_tokens in
-          (match plan.approval with
-          | None ->
-              Boundary_contracts.PreparedExec.create ~cmd:plan.cmd
-                ~workdir:plan.workdir ?yieldTimeMs ?maxOutputTokens ~tty:plan.tty
-                ~sandbox ()
-              |> Tool_contracts.PreparedExec.t_to_js |> inject
-          | Some approval ->
-              let execPolicyAllowAlwaysTokens =
-                if not (String.starts_with ~prefix:"exec policy requires approval" approval.message) then None
-                else if Exec_policy_bridge.explicit_prompt_or_forbidden request.cmd then None
-                else Exec_policy_bridge.allow_amendment_tokens request.cmd
+          (match exec_host_runtime sandbox plan.workdir with
+          | Error message -> error_obj message
+          | Ok (host, shell) ->
+              let authority_plan =
+                {
+                  Authority_plans.cmd = plan.cmd;
+                  workdir = plan.workdir;
+                  yield_time_ms = plan.yield_time_ms;
+                  max_output_tokens = plan.max_output_tokens;
+                  tty = plan.tty;
+                  sandbox;
+                  host;
+                  shell;
+                  brokered_git = None;
+                }
               in
-              Boundary_contracts.PreparedExecApproval.create ~cmd:plan.cmd
-                ~workdir:plan.workdir ?yieldTimeMs ?maxOutputTokens ~tty:plan.tty
-                ~sandbox ~approvalMessage:approval.message
-                ~approvalTitle:approval.title ~approvalPrompt:approval.prompt
-                ~approvalTimeoutMs:(float_of_int approval.timeout_ms)
-                ?execPolicyAllowAlwaysTokens ()
-              |> Tool_contracts.PreparedExecApproval.t_to_js |> inject))
+              (match plan.approval with
+              | None ->
+                  let planId =
+                    Authority_plans.issue_exec
+                      ~owner_id:(Session_store.session_id_from_ctx ctx)
+                      ~owner_context:ctx ~approval_required:false authority_plan
+                  in
+                  Boundary_contracts.PreparedExec.create ~planId ~cmd:plan.cmd
+                    ~workdir:plan.workdir ?yieldTimeMs ?maxOutputTokens
+                    ~tty:plan.tty ~sandbox:sandbox_cfg ()
+                  |> Tool_contracts.PreparedExec.t_to_js |> inject
+              | Some approval ->
+                  let execPolicyAllowAlwaysTokens =
+                    if
+                      not
+                        (String.starts_with
+                           ~prefix:"exec policy requires approval" approval.message)
+                    then None
+                    else if
+                      Exec_policy_bridge.explicit_prompt_or_forbidden request.cmd
+                    then None
+                    else Exec_policy_bridge.allow_amendment_tokens request.cmd
+                  in
+                  let planId =
+                    Authority_plans.issue_exec
+                      ~owner_id:(Session_store.session_id_from_ctx ctx)
+                      ~owner_context:ctx ~approval_required:true authority_plan
+                  in
+                  Boundary_contracts.PreparedExecApproval.create ~planId
+                    ~cmd:plan.cmd ~workdir:plan.workdir ?yieldTimeMs
+                    ?maxOutputTokens ~tty:plan.tty ~sandbox:sandbox_cfg
+                    ~approvalMessage:approval.message
+                    ~approvalTitle:approval.title
+                    ~approvalPrompt:approval.prompt
+                    ~approvalTimeoutMs:(float_of_int approval.timeout_ms)
+                    ?execPolicyAllowAlwaysTokens ()
+                  |> Tool_contracts.PreparedExecApproval.t_to_js |> inject)))
 
 let prepare_write_stdin params =
   with_gateway_authorized "write_stdin" (fun _sandbox ->

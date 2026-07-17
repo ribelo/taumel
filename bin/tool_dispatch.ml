@@ -29,14 +29,14 @@ let prepare raw_facts =
   | "read_thread" -> Thread_bridge.prepare_read params
   | "cron_create" | "cron_list" | "cron_delete" -> Cron_tools.prepare name params ctx
   | "ralph_continue" | "ralph_finish" -> Ralph_tools.prepare_child_tool name params ctx
-  | "web_search_exa" -> Exa_bridge.prepare_web_search params
-  | "crawling_exa" -> Exa_bridge.prepare_crawling params
-  | "get_code_context_exa" -> Exa_bridge.prepare_code_context params
-  | "exa_agent_create_run" -> Exa_bridge.prepare_agent_create_run params
-  | "exa_agent_get_run" -> Exa_bridge.prepare_agent_get_run params
-  | "exa_agent_list_runs" -> Exa_bridge.prepare_agent_list_runs params
-  | "exa_agent_cancel_run" -> Exa_bridge.prepare_agent_cancel_run params
-  | "exa_agent_list_events" -> Exa_bridge.prepare_agent_list_events params
+  | "web_search_exa" -> Exa_bridge.prepare_web_search params ctx
+  | "crawling_exa" -> Exa_bridge.prepare_crawling params ctx
+  | "get_code_context_exa" -> Exa_bridge.prepare_code_context params ctx
+  | "exa_agent_create_run" -> Exa_bridge.prepare_agent_create_run params ctx
+  | "exa_agent_get_run" -> Exa_bridge.prepare_agent_get_run params ctx
+  | "exa_agent_list_runs" -> Exa_bridge.prepare_agent_list_runs params ctx
+  | "exa_agent_cancel_run" -> Exa_bridge.prepare_agent_cancel_run params ctx
+  | "exa_agent_list_events" -> Exa_bridge.prepare_agent_list_events params ctx
   | other ->
       Boundary_contracts.GatewayCommandError.create
         ~error:("tool executor is not connected yet: " ^ other) ()

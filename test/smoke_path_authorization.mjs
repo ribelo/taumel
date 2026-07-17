@@ -7,7 +7,8 @@ import { basename, dirname, join } from "node:path";
 
 const require = createRequire(import.meta.url);
 require("../dist/taumel.cjs");
-const core = globalThis.taumel;
+const bootstrap = globalThis.taumel;
+let core;
 
 function resolveAuthorizationPath(path) {
   try {
@@ -40,7 +41,7 @@ try {
   await symlink(metadata, metadataAlias);
   await symlink(join(root, "missing-target.txt"), brokenAlias);
 
-  core.init({
+  core = bootstrap.init({
     resolveAuthorizationPath,
     on: () => undefined,
     eventsOn: () => () => undefined,
@@ -122,17 +123,7 @@ try {
   assert.equal(preparedExec.ok, true, JSON.stringify(preparedExec));
   const execPlan = core.call("planExecHostCall", [
     preparedExec,
-    {
-      platform: "linux",
-      tempRoots: ["/tmp"],
-      systemRoPaths: ["/bin", "/usr", "/lib"],
-      homeMount: "",
-      workspaceRoots: [realpathSync(workspace)],
-      authorizationCwd: realpathSync(alias),
-      workspaceMetadataListings: [],
-    },
-    { defaultCwd: workspace, bashPath: "/bin/bash" },
-    false,
+    ctx,
   ]);
   assert.equal(execPlan.ok, true, JSON.stringify(execPlan));
   assert.equal(execPlan.options.cwd, realpathSync(workspace));

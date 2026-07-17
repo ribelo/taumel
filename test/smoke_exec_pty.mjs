@@ -30,9 +30,10 @@ assert.equal(result.exitCode, 0);
 assert.match(output, /pty-ok/);
 
 require("../dist/taumel.cjs");
-const core = globalThis.taumel;
+const bootstrap = globalThis.taumel;
+let core;
 const cwd = process.cwd();
-core.init({
+core = bootstrap.init({
   resolveAuthorizationPath: (path) => realpathSync(path),
   on: () => undefined,
   eventsOn: () => () => undefined,
@@ -74,25 +75,14 @@ const ctx = {
     getBranch: () => [],
   },
 };
-const host = {
-  platform: process.platform,
-  tempRoots: ["/tmp"],
-  systemRoPaths: [],
-  homeMount: "/home",
-  workspaceRoots: [cwd],
-  authorizationCwd: cwd,
-  workspaceMetadataListings: [],
-};
 async function runExec(cmd) {
   const prepared = core.call("prepareTool", [{ name: "exec_command", params: { cmd }, ctx }]);
   assert.equal(prepared.ok, true, JSON.stringify(prepared));
   return core.call("runExecCommand", [
     prepared,
-    host,
-    { defaultCwd: cwd, bashPath: bash },
     "exec-pty-smoke",
     null,
-    true,
+    ctx,
   ]);
 }
 
@@ -132,7 +122,7 @@ const environmentResult = await runExec(
 );
 assert.match(
   environmentResult.details.output,
-  new RegExp(`1\\|dumb\\|C\\.UTF-8\\|C\\.UTF-8\\|C\\.UTF-8\\|\\|cat\\|cat\\|${bash.replaceAll("/", "\\/")}\\|0`),
+  new RegExp(`1\\|dumb\\|C\\.UTF-8\\|C\\.UTF-8\\|C\\.UTF-8\\|\\|cat\\|cat\\|${realpathSync(bash).replaceAll("/", "\\/")}\\|0`),
 );
 assert.match(environmentResult.details.output, /ambient-token-ok/);
 assert.match(environmentResult.details.output, /24 80/);

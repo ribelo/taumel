@@ -5,10 +5,11 @@ import { decodePreparedToolAction } from "../src/bridge-contracts.ts";
 
 const require = createRequire(import.meta.url);
 require("../dist/taumel.cjs");
-const core = globalThis.taumel;
+const bootstrap = globalThis.taumel;
+let core;
 const cwd = process.cwd();
 
-core.init({
+core = bootstrap.init({
   resolveAuthorizationPath: (path) => path,
   on: () => undefined,
   eventsOn: () => () => undefined,

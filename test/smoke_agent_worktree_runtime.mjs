@@ -44,8 +44,9 @@ try {
 
   const require = createRequire(import.meta.url);
   require(fileURLToPath(new URL("../dist/taumel.cjs", import.meta.url)));
-  const core = globalThis.taumel;
-  core.init({
+const bootstrap = globalThis.taumel;
+let core;
+  core = bootstrap.init({
     resolveAuthorizationPath: (path) => path,
     on: () => undefined,
     eventsOn: () => () => undefined,
@@ -119,7 +120,7 @@ try {
   };
   const plan = core.call("planChildSessionStart", [{
     metadata, parentSessionId: "parent", parentSessionFile: "",
-  }]);
+  }, parentCtx]);
   const marker = plan.setupEntries.find((entry) => entry.customType === "taumel.childSession")?.data;
   assert.equal(marker?.workspaceDirectory, worktree, "worktree metadata was lost at the child-session bridge");
   assert.equal(marker?.mainRepositoryRoot, main, "repository metadata was lost at the child-session bridge");
@@ -163,16 +164,15 @@ try {
     name: "exec_command", params: { cmd: "git add --all" }, ctx: childCtx,
   }]);
   assert.equal(childGitAdd.brokeredGit, true, "isolated child git add bypassed broker routing");
-  assert.equal(childGitAdd.gitWorkTree, worktree);
-  const malformedBroker = { ...childGitAdd };
-  delete malformedBroker.directCommand;
-  const malformedBrokerPlan = core.call("planExecHostCall", [
-    malformedBroker,
-    {},
-    { defaultCwd: worktree, bashPath: "/bin/bash" },
-    false,
+  assert.equal(typeof childGitAdd.planId, "string");
+  assert.equal(Object.hasOwn(childGitAdd, "gitWorkTree"), false);
+  assert.equal(Object.hasOwn(childGitAdd, "directCommand"), false);
+  const brokerHostPlan = core.call("planExecHostCall", [
+    childGitAdd,
+    childCtx,
   ]);
-  assert.equal(malformedBrokerPlan.ok, false, "missing trusted Git executable fell back to PATH");
+  assert.equal(brokerHostPlan.ok, true, JSON.stringify(brokerHostPlan));
+  assert.equal(brokerHostPlan.command.startsWith("/"), true, "broker plan lost trusted Git executable");
 
   let runExecCalls = 0;
   const guardedCore = {

@@ -41,4 +41,82 @@ assert.match(result.message, /model=provider\/model/);
 assert.match(result.message, /recommendation=call_agent_wait/);
 assert.match(result.message, /description=Inspect agent lifecycle/);
 
+const closeCalls = [];
+const closeCore = {
+  call(name, args) {
+    closeCalls.push([name, args]);
+    if (name === "prepareTool") {
+      return {
+        ok: true,
+        action: "agent_close",
+        text: JSON.stringify({ agent_id: "agent-abcd", status: "closed" }),
+        details: { agent_id: "agent-abcd", status: "closed" },
+        agentId: "agent-abcd",
+        runIds: ["agent-abcd-run-1"],
+      };
+    }
+    if (name === "finishAgentClose") return { ok: true };
+    if (name === "releaseAgentClose") return { ok: true };
+    throw new Error(`unexpected close core call: ${name}`);
+  },
+};
+const closeCtx = {
+  ui: { select: async () => "Confirm close" },
+};
+const closeResult = await executeAgentRunsManager(
+  {},
+  closeCore,
+  new Map(),
+  "close agent-abcd",
+  closeCtx,
+);
+assert.equal(closeResult.ok, true);
+const finishCall = closeCalls.find(([name]) => name === "finishAgentClose");
+assert.deepEqual(finishCall?.[1], [{ agent_id: "agent-abcd" }, closeCtx]);
+assert.equal(
+  closeCalls.some(([name]) => name === "deleteAgentChildSession"),
+  false,
+  "manager close must not host-delete before durable finishAgentClose",
+);
+assert.equal(
+  closeCalls.some(([, args]) => JSON.stringify(args).includes("/private/agent-abcd")),
+  false,
+  "the manager close path forwarded persisted child-session path authority",
+);
+
+const failedCloseCalls = [];
+const failedCloseCore = {
+  call(name) {
+    failedCloseCalls.push(name);
+    if (name === "prepareTool") {
+      return {
+        ok: true,
+        action: "agent_close",
+        text: "{}",
+        details: {},
+        agentId: "agent-abcd",
+        runIds: ["agent-abcd-run-1"],
+      };
+    }
+    if (name === "finishAgentClose") throw new Error("cleanup_failed: marker mismatch");
+    if (name === "recordAgentCloseCleanupFailure" || name === "releaseAgentClose") {
+      return { ok: true };
+    }
+    throw new Error(`unexpected failed-close core call: ${name}`);
+  },
+};
+const failedChildren = new Map([[
+  "current\0agent-abcd",
+  { close: async () => undefined },
+]]);
+const failedClose = await executeAgentRunsManager(
+  {},
+  failedCloseCore,
+  failedChildren,
+  "close agent-abcd",
+  closeCtx,
+);
+assert.equal(failedClose.ok, false);
+assert.equal(failedCloseCalls.includes("recordAgentCloseCleanupFailure"), true);
+
 console.log("agent runs manager smoke: all assertions passed");

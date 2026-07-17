@@ -101,6 +101,7 @@ let test_spawn_persists_worktree_binding () =
                runs = [];
                issued_identity_counts =
                  { Agents.generic = 1; finder = 0; oracle = 0 };
+               cleanup_pending = [];
              })
       with
       | Error message -> failwith message

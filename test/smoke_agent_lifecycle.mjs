@@ -4,8 +4,9 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 require("../dist/taumel.cjs");
-const core = globalThis.taumel;
-assert.ok(core && typeof core.call === "function" && typeof core.init === "function");
+const bootstrap = globalThis.taumel;
+let core;
+assert.ok(bootstrap && typeof bootstrap.init === "function");
 
 const entries = [];
 entries.push({
@@ -33,7 +34,7 @@ const ctx = {
   },
 };
 
-core.init({
+core = bootstrap.init({
   resolveAuthorizationPath: realpathSync,
   on: (event, handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
   eventsOn: () => () => undefined,

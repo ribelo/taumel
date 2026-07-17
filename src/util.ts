@@ -357,11 +357,12 @@ export function childSessionStartPlan(
   core: CoreBridge,
   metadata: ChildSessionMetadata,
   parent: SessionInfo,
+  ctx?: unknown,
 ): ChildSessionStartPlan {
   return decodeChildSessionStartPlan(core.call("planChildSessionStart", [{ metadata,
     parentSessionId: parent.sessionId ?? "",
     parentSessionFile: parent.sessionFile ?? "",
-  }]));
+  }, ctx]));
 }
 
 export function setActiveToolsOn(receiver: unknown, toolNames: readonly string[]): boolean {

@@ -23,6 +23,7 @@ patch parsing stay separate from each other and from execution.
 - The system shall keep no execution, filesystem-mutation, or approval path that reaches host effects outside the sandbox gateway. ^sandbox-gw02
 - The system shall let the tool gateway decide whether a tool may run and let the sandbox decide how execution and mutation are constrained. ^sandbox-gw03
 - The system shall hold a security level at least equal to Tau. ^sandbox-gw04
+- The system shall expose effect-bearing core dispatch only through the private bridge capability returned by one-time core initialization and shall not publish that dispatcher on the global bootstrap object. ^sandbox-a69j
 
 ### Modes and configuration
 

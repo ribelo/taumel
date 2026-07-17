@@ -4,14 +4,12 @@ import {
   getAgentDir,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
-import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
-import { join } from "node:path";
 import finderPromptResource from "../resources/agents/finder.md" with { type: "text" };
 import oraclePromptResource from "../resources/agents/oracle.md" with { type: "text" };
 import subagentPromptResource from "../resources/agents/subagent.md" with { type: "text" };
 import type { ChildDispatchCompletion, ChildDispatchResult, ChildSessionCustomEntry, ChildSessionMetadata } from "./bridge-contracts.ts";
-import { decodeChildDispatchPlan } from "./bridge-contracts.ts";
+import { decodeChildDispatchPlan, decodeCoreAck } from "./bridge-contracts.ts";
 
 import type {
   ChildSessionBridge,
@@ -451,25 +449,16 @@ async function closeChildSession(child: ChildSessionBridge | undefined, reason: 
   }
 }
 
-async function removeNewPrivateSessionArtifacts(sessionManager: unknown, agentId: string): Promise<void> {
-  const file = sessionInfoFromManager(sessionManager).sessionFile;
-  if (typeof file !== "string" || file === "") return;
-  const fs = await import("node:fs/promises");
-  const path = await import("node:path");
-  const directory = path.dirname(file);
-  if (path.basename(directory) === agentId) {
-    await fs.rm(directory, { recursive: true, force: true });
-  } else {
-    await fs.rm(file, { force: true });
-  }
+export function deleteAgentChildSession(core: CoreBridge, agentId: string, ctx: unknown): void {
+  decodeCoreAck(core.call("deleteAgentChildSession", [{ agent_id: agentId }, ctx]));
 }
 
-function ownerSessionDirectoryToken(parent: SessionInfo): string {
-  const sessionId = nonEmptyString(parent.sessionId);
-  if (sessionId !== undefined) return createHash("sha256").update(sessionId).digest("hex");
-  const sessionFile = nonEmptyString(parent.sessionFile);
-  if (sessionFile !== undefined) return `file-${createHash("sha256").update(sessionFile).digest("hex")}`;
-  return `ephemeral-${process.pid}`;
+async function removeNewPrivateSessionArtifacts(
+  core: CoreBridge,
+  ctx: unknown,
+  agentId: string,
+): Promise<void> {
+  deleteAgentChildSession(core, agentId, ctx);
 }
 
 export async function createChildSession(
@@ -479,7 +468,7 @@ export async function createChildSession(
   metadata: ChildSessionMetadata,
 ): Promise<ChildSessionBridge | undefined> {
   const parent = sessionInfoFromContext(ctx);
-  const plan = childSessionStartPlan(core, metadata, parent);
+  const plan = childSessionStartPlan(core, metadata, parent, ctx);
   const activeTools = plan.activeTools;
   const modelId = plan.modelId;
   const thinkingLevel = plan.thinkingLevel;
@@ -532,6 +521,10 @@ export async function createChildSession(
   const usePrivatePersistentSession =
     (childKind === "agent" || childKind === "generic" || childKind === "finder" || childKind === "oracle")
     && (agentId !== "" || existingSessionFile !== "");
+  const privateSessionDirectory = plan.privateSessionDirectory;
+  if (usePrivatePersistentSession && existingSessionFile === "" && privateSessionDirectory === undefined) {
+    return { error: "private_child_session_directory_missing" };
+  }
   const cwd = usePrivatePersistentSession ? boundWorkspace : parentCwd;
   if (cwd === undefined) return { error: "identity_workspace_missing" };
   try {
@@ -561,7 +554,7 @@ export async function createChildSession(
         ? SessionManager.open(existingSessionFile)
         : SessionManager.create(
           cwd,
-          join(getAgentDir(), "taumel", "agents", "owners", ownerSessionDirectoryToken(parent), agentId),
+          privateSessionDirectory as string,
         ))
       : SessionManager.inMemory(cwd);
     createdSessionManager = sessionManager;
@@ -587,7 +580,7 @@ export async function createChildSession(
     const session = hostObject<SdkSession>(hostObject<CreatedSession>(result)?.session);
     if (session === undefined) {
       if (usePrivatePersistentSession && existingSessionFile === "") {
-        await removeNewPrivateSessionArtifacts(sessionManager, agentId);
+        await removeNewPrivateSessionArtifacts(core, ctx, agentId);
       }
       return { error: "createAgentSession did not return a session" };
     }
@@ -596,7 +589,7 @@ export async function createChildSession(
       if (!Array.isArray(available) || !available.includes(thinkingLevel)) {
         if (typeof session.dispose === "function") session.dispose.call(session);
         if (usePrivatePersistentSession && existingSessionFile === "") {
-          await removeNewPrivateSessionArtifacts(session.sessionManager ?? sessionManager, agentId);
+          await removeNewPrivateSessionArtifacts(core, ctx, agentId);
         }
         return { error: `thinking_level_unavailable: ${thinkingLevel}` };
       }
@@ -616,7 +609,7 @@ export async function createChildSession(
         : setupInfo.sessionFile;
     if (!sessionId && !sessionFile) {
       if (usePrivatePersistentSession && existingSessionFile === "") {
-        await removeNewPrivateSessionArtifacts(childSessionManager, agentId);
+        await removeNewPrivateSessionArtifacts(core, ctx, agentId);
       }
       return { missingSessionIdentifier: true };
     }
@@ -646,7 +639,7 @@ export async function createChildSession(
   } catch (error) {
     if (usePrivatePersistentSession && existingSessionFile === "" && createdSessionManager !== undefined) {
       try {
-        await removeNewPrivateSessionArtifacts(createdSessionManager, agentId);
+        await removeNewPrivateSessionArtifacts(core, ctx, agentId);
       } catch {
         // Preserve the original creation error; the identity rollback remains authoritative.
       }

@@ -48,6 +48,18 @@ let completion_message identity run =
              ] );
        ])
 
+let find_cleanup_pending state ~owner_session_id agent_id =
+  List.find_opt
+    (fun pending ->
+      pending.cleanup_owner_session_id = owner_session_id
+      && pending.cleanup_agent_id = agent_id)
+    state.cleanup_pending
+
+let owned_cleanup_pending state ~owner_session_id agent_id =
+  match find_cleanup_pending state ~owner_session_id agent_id with
+  | None -> Error ("unknown agent: " ^ agent_id)
+  | Some pending -> Ok pending
+
 let record_close state ~owner_session_id ~agent_id =
   match owned_identity state ~owner_session_id agent_id with
   | Error _ as error -> error
@@ -57,8 +69,91 @@ let record_close state ~owner_session_id ~agent_id =
             identities = remove_identity identity.identity_agent_id state.identities;
             runs = remove_runs_for_agent identity.identity_agent_id state.runs;
             issued_identity_counts = state.issued_identity_counts;
+            cleanup_pending = state.cleanup_pending;
           },
           identity )
+
+let record_close_with_cleanup state ~owner_session_id ~agent_id ~cleanup_nonce
+    ~remaining_artifacts =
+  match owned_identity state ~owner_session_id agent_id with
+  | Error _ as error -> error
+  | Ok identity ->
+      let pending =
+        {
+          cleanup_owner_session_id = owner_session_id;
+          cleanup_agent_id = agent_id;
+          cleanup_nonce;
+          cleanup_remaining_artifacts = remaining_artifacts;
+        }
+      in
+      let cleanup_pending =
+        pending
+        :: List.filter
+             (fun item ->
+               not
+                 (item.cleanup_owner_session_id = owner_session_id
+                 && item.cleanup_agent_id = agent_id))
+             state.cleanup_pending
+      in
+      Ok
+        ( {
+            identities = remove_identity identity.identity_agent_id state.identities;
+            runs = remove_runs_for_agent identity.identity_agent_id state.runs;
+            issued_identity_counts = state.issued_identity_counts;
+            cleanup_pending;
+          },
+          identity,
+          pending )
+
+let complete_cleanup state ~owner_session_id ~agent_id ~cleanup_nonce =
+  match owned_cleanup_pending state ~owner_session_id agent_id with
+  | Error _ as error -> error
+  | Ok pending when pending.cleanup_nonce <> cleanup_nonce ->
+      Error ("cleanup nonce mismatch for agent: " ^ agent_id)
+  | Ok _ ->
+      Ok
+        {
+          state with
+          cleanup_pending =
+            List.filter
+              (fun item ->
+                not
+                  (item.cleanup_owner_session_id = owner_session_id
+                  && item.cleanup_agent_id = agent_id))
+              state.cleanup_pending;
+        }
+
+let suspend_running_for_owner state ~now ~owner_session_id ~reason_code =
+  let runs =
+    List.map
+      (fun run ->
+        match find_identity state run.run_agent_id with
+        | Some identity
+          when identity.identity_owner_session_id = owner_session_id
+               && run.run_status = Running -> (
+            match suspend_run run ~now reason_code with
+            | Ok updated -> updated
+            | Error _ -> run)
+        | _ -> run)
+      state.runs
+  in
+  { state with runs }
+
+let suspend_running_for_agent state ~now ~owner_session_id ~agent_id ~reason_code =
+  match owned_identity state ~owner_session_id agent_id with
+  | Error _ as error -> error
+  | Ok _ ->
+      let runs =
+        List.map
+          (fun run ->
+            if run.run_agent_id = agent_id && run.run_status = Running then
+              match suspend_run run ~now reason_code with
+              | Ok updated -> updated
+              | Error _ -> run
+            else run)
+          state.runs
+      in
+      Ok { state with runs }
 
 let close_all_for_owner state ~owner_session_id =
   let closing = owned_identities state ~owner_session_id in
@@ -73,6 +168,7 @@ let close_all_for_owner state ~owner_session_id =
           (fun run -> not (List.mem run.run_agent_id closing_ids))
           state.runs;
       issued_identity_counts = state.issued_identity_counts;
+      cleanup_pending = state.cleanup_pending;
     },
     closing )
 

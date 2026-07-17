@@ -6,6 +6,7 @@ import {
 } from "./manager-kit.ts";
 import {
   applyChildSessionUpdate,
+  childSessionCacheKey,
   childSessionCacheKeyScopeFromContext,
 } from "./child-sessions.ts";
 import type { ChildSessionBridge } from "./types.ts";
@@ -84,33 +85,43 @@ async function closeAgent(
     ctx,
   }]));
   if (prepared.ok !== true || prepared.action !== "agent_close") return prepared;
+  let childExecutionInterrupted = false;
+  const failClose = (message: string) => {
+    let transitionError = "";
+    if (childExecutionInterrupted) {
+      try {
+        decodeCoreAck(core.call("recordAgentCloseCleanupFailure", [{ agent_id: agentId }, ctx]));
+      } catch (error) {
+        transitionError = error instanceof Error ? error.message : String(error);
+      }
+    }
+    decodeCoreAck(core.call("releaseAgentClose", [{ agent_id: agentId }]));
+    const fullMessage = transitionError === "" ? message : `${message}; ${transitionError}`;
+    return commandResult(false, `Agent close failed: ${fullMessage}`, {
+      agent_id: agentId,
+      error: fullMessage,
+    });
+  };
   try {
     const keyScope = childSessionCacheKeyScopeFromContext(ctx);
+    childExecutionInterrupted = childSessions.has(childSessionCacheKey(agentId, keyScope));
     await applyChildSessionUpdate(childSessions, {
       action: "delete_child_session",
       key: agentId,
       reason: "agent_closed",
     }, undefined, keyScope);
-    const sessionFile = prepared.childSessionFile;
-    if (typeof sessionFile === "string" && sessionFile !== "") {
-      const fs = await import("node:fs/promises");
-      const path = await import("node:path");
-      const directory = path.dirname(sessionFile);
-      if (path.basename(directory) === agentId) {
-        await fs.rm(directory, { recursive: true, force: true });
-      } else {
-        await fs.rm(sessionFile, { force: true });
-      }
-    }
   } catch (error) {
-    decodeCoreAck(core.call("releaseAgentClose", [{ agent_id: agentId }]));
     const message = error instanceof Error ? error.message : String(error);
-    return commandResult(false, `Agent close failed: ${message}`, { agent_id: agentId, error: message });
+    return failClose(message);
   }
-  const finished = decodeCoreAck(core.call("finishAgentClose", [{ agent_id: agentId }, ctx]));
+  let finished;
+  try {
+    finished = decodeCoreAck(core.call("finishAgentClose", [{ agent_id: agentId }, ctx]));
+  } catch (error) {
+    return failClose(error instanceof Error ? error.message : String(error));
+  }
   if (finished.ok !== true) {
-    decodeCoreAck(core.call("releaseAgentClose", [{ agent_id: agentId }]));
-    return finished;
+    return failClose("agent close state removal failed");
   }
   return commandResult(true, `Closed ${agentId}.`, {
     agent_id: agentId,

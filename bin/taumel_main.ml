@@ -35,24 +35,27 @@ let core_call name_js args_js =
   | "validateWorkspaceMutationPaths" ->
       Sandbox_bridge.validate_workspace_mutation_paths (arg 0)
   | "sandboxHostPathPlan" -> Sandbox_bridge.sandbox_host_path_plan (arg 0)
-   | "planChildSessionStart" -> Child_session_bridge.plan_child_session_start (arg 0)
+   | "planChildSessionStart" ->
+       Child_session_bridge.plan_child_session_start (arg 0) (arg 1)
   | "planChildDispatch" -> Child_session_bridge.plan_child_dispatch (arg 0)
   | "prepareTool" -> Tool_dispatch.prepare (arg 0)
    | "applyPatchToFiles" ->
        Mutation_tools.apply_patch_to_files (arg 0)
    | "applyEditToFile" -> Mutation_tools.apply_edit_to_file (arg 0)
   | "planExecHostCall" ->
-      Sandbox_bridge.plan_exec_host_call (arg 0) (arg 1) (arg 2) (arg 3)
+      Sandbox_bridge.plan_exec_host_call (arg 0) (arg 1)
   | "formatExecResult" ->
       Sandbox_bridge.format_exec_result (arg 0) (arg 1) (arg 2) (arg 3)
    | "planExecApprovalPrompt" ->
        Sandbox_bridge.plan_exec_approval_prompt (arg 0)
   | "finishExecApproval" -> Sandbox_bridge.finish_exec_approval (arg 0)
+  | "discardAuthorityPlan" -> Sandbox_bridge.discard_authority_plan (arg 0)
+  | "reissueExecPlan" -> Sandbox_bridge.reissue_exec_plan (arg 0)
   | "planWriteStdinHostCall" ->
       Sandbox_bridge.plan_write_stdin_host_call (arg 0) (arg 1)
   | "runExecCommand" ->
-      Exec_session.run_exec_command (arg 0) (arg 1) (arg 2)
-        (string_arg args 3) (arg 4) (arg 5)
+      Exec_session.run_exec_command (arg 0) (string_arg args 1) (arg 2)
+        (arg 3)
    | "writeExecStdin" ->
        Exec_session.write_stdin (arg 0)
    | "readFile" -> Read_tool.read_file (arg 0)
@@ -132,6 +135,8 @@ let core_call name_js args_js =
   | "ephemeralAgentCleanupPlan" -> Agent_lifecycle.ephemeral_cleanup_plan (arg 0)
   | "agentManagerSnapshot" -> Agent_lifecycle.manager_snapshot (arg 0)
   | "finishEphemeralAgentCleanup" -> Agent_lifecycle.finish_ephemeral_cleanup (arg 0)
+  | "releaseEphemeralAgentCleanupLease" ->
+      Agent_lifecycle.release_ephemeral_cleanup_lease (arg 0)
   | "suspendOwnerAgentsOnShutdown" -> Agent_lifecycle.suspend_owner_on_shutdown (arg 0)
   | "finishAgentWait" -> Agent_lifecycle.finish_wait (arg 0) (arg 1)
   | "finishAgentClose" -> Agent_tools.finish_close (arg 0) (arg 1)
@@ -145,6 +150,9 @@ let core_call name_js args_js =
       let clean = Exec_session.cancel_broker_sessions_for_agent agent_id in
       if clean then core_ack ()
       else error_obj "cleanup_failed: could not terminate identity-owned broker sessions"
+  | "deleteAgentChildSession" -> Agent_tools.delete_child_session (arg 0) (arg 1)
+  | "recordAgentCloseCleanupFailure" ->
+      Agent_tools.record_close_cleanup_failure (arg 0) (arg 1)
   | "handleCommand" -> Command_bridge.handle (arg 0)
   | "handleComposerCommand" -> Composer_commands.handle (arg 0)
    | "planCommandNotification" ->
@@ -172,14 +180,20 @@ let core_call name_js args_js =
   | "openAiUsageHostParams" -> Usage_bridge.openai_host_params (arg 0)
   | "executeOpenAiUsage" -> Usage_bridge.execute_openai (arg 0) (arg 1)
    | "executeExa" -> Exa_bridge.execute (arg 0)
+  | "approveExaPlan" -> Exa_bridge.approve_plan (arg 0)
   | other -> failwith ("unknown Taumel core method: " ^ other)
+
+let initialized = ref false
+
+let initialize host =
+  if !initialized then failwith "Taumel core is already initialized"
+  else (
+    initialized := true;
+    Footer_runtime.init host;
+    Unsafe.obj [| ("call", inject (Js.wrap_callback core_call)) |])
 
 let () =
   let exported =
-    Unsafe.obj
-      [|
-        ("init", inject (Js.wrap_callback Footer_runtime.init));
-        ("call", inject (Js.wrap_callback core_call));
-      |]
+    Unsafe.obj [| ("init", inject (Js.wrap_callback initialize)) |]
   in
   Unsafe.set Unsafe.global "taumel" exported

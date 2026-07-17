@@ -91,23 +91,44 @@ let plan_child_dispatch facts =
     ~result:(Tool_contracts.ChildDispatchResult.t_of_js (ojs_of_js (json_to_js plan.result))) ()
   |> Tool_contracts.ChildDispatchPlan.t_to_js |> inject
 
-let plan_child_session_start raw_facts =
+let plan_child_session_start raw_facts ctx =
   let facts = Tool_contracts.ChildSessionStartFacts.t_of_js (ojs_of_js raw_facts) in
-  let metadata =
+  let metadata_js =
     Tool_contracts.ChildSessionStartFacts.get_metadata facts
     |> Tool_contracts.ChildSessionMetadata.t_to_js |> Obj.magic
-    |> child_session_metadata_from_js
   in
-  let parent_session_id = Tool_contracts.ChildSessionStartFacts.get_parentSessionId facts in
+  let metadata = child_session_metadata_from_js metadata_js in
+  let parent_session_id = Some (Session_store.session_id_from_ctx ctx) in
   let parent_session_file = Tool_contracts.ChildSessionStartFacts.get_parentSessionFile facts in
   let plan =
     Taumel.Child_session.start_plan ~metadata ~parent_session_id
       ~parent_session_file
   in
   let result =
+    let privateSessionDirectory =
+      match get_string metadata_js "agentId" |> Taumel.Shared.trim_non_empty with
+      | None -> None
+      | Some agent_id -> (
+          (if
+             Option.bind parent_session_file Taumel.Shared.trim_non_empty = None
+           then
+             match
+               Agent_ephemeral_cleanup.register
+                 ~owner_session_id:(Session_store.session_id_from_ctx ctx)
+                 ~agent_id
+             with
+             | Ok () -> ()
+             | Error message -> failwith message);
+          match
+            Agent_child_session_host.private_directory
+              ~owner_session_id:(Session_store.session_id_from_ctx ctx) ~agent_id
+          with
+          | Ok directory -> Some directory
+          | Error message -> failwith message)
+    in
     Tool_contracts.ChildSessionStartPlan.create ?parentSession:plan.parent_session
       ?modelId:plan.model_id ?thinkingLevel:plan.thinking_level
-      ?activeTools:plan.active_tools
+      ?activeTools:plan.active_tools ?privateSessionDirectory
       ~setupEntries:(List.map js_child_session_custom_entry plan.setup_entries) ()
   in
   Tool_contracts.ChildSessionStartPlan.t_to_js result |> inject

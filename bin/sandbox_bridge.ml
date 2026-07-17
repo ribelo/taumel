@@ -108,24 +108,19 @@ let positive_float_option obj name =
   | Some value when value > 0.0 -> Some value
   | _ -> None
 
-let exec_host_options_from_js prepared runtime =
-  let shell =
-    match optional_string_field runtime "bashPath" with
-    | Some value when String.trim value <> "" -> String.trim value
-    | _ -> "bash"
-  in
+let exec_host_options_from_plan (plan : Authority_plans.exec_plan) =
   let cwd =
-    match optional_string_field prepared "workdir" with
-    | Some value when String.trim value <> "" -> String.trim value
-    | _ -> get_string runtime "defaultCwd"
+    match Taumel.Shared.trim_non_empty plan.workdir with
+    | Some value -> value
+    | None -> plan.host.authorization_cwd
   in
   {
-    Taumel.Sandbox.cmd = get_string prepared "cmd";
+    Taumel.Sandbox.cmd = plan.cmd;
     cwd;
-    shell;
-    timeout_ms = positive_float_option prepared "timeout";
-    yield_time_ms = positive_float_option prepared "yieldTimeMs";
-    tty = get_bool prepared "tty";
+    shell = plan.shell;
+    timeout_ms = None;
+    yield_time_ms = plan.yield_time_ms;
+    tty = plan.tty;
   }
 
 let js_optional_float_field name = function
@@ -142,50 +137,44 @@ let js_exec_host_call (call : Taumel.Sandbox.exec_host_call) =
     ~escalated:call.escalated ()
   |> Tool_contracts.ExecHostCall.t_to_js |> inject
 
-let planned_exec_host_call prepared host runtime force_unsandboxed =
-  if get_bool prepared "brokeredGit" then
-    if Js.to_bool (Unsafe.coerce force_unsandboxed) then
-      Error "brokered agent Git rejects escalated unsandboxed execution"
-    else (
-      match optional_string_field prepared "directCommand" with
-      | None -> Error "brokered agent Git requires a trusted executable"
-      | Some value when String.trim value = "" ->
-          Error "brokered agent Git requires a trusted executable"
-      | Some value ->
-    let command = String.trim value in
-    let args =
-      if has_property prepared "directArgv" then get_string_array prepared "directArgv"
-      else []
-    in
-    let cwd =
-      match optional_string_field prepared "workdir" with
-      | Some value when String.trim value <> "" -> String.trim value
-      | _ -> get_string runtime "defaultCwd"
-    in
-    (* Brokered Git is invoked as a direct argv against the trusted git
-       executable; the shell is never used. GIT_DIR / GIT_WORK_TREE come from
-       verified registration fields on the prepared action. *)
-    Ok
-      {
-        Taumel.Sandbox.invocation =
-          { command; args; sandboxed = true };
-        cwd;
-        timeout_ms = positive_float_option prepared "timeout";
-        yield_time_ms = positive_float_option prepared "yieldTimeMs";
-        tty = false;
-        escalated = false;
-      })
-  else
-  let sandbox = sandbox_config_from_js (Unsafe.get prepared "sandbox") in
-  let host = exec_host_facts_from_js host in
-  let options = exec_host_options_from_js prepared runtime in
-  Taumel.Sandbox.plan_exec_host_call sandbox host options
-    ~force_unsandboxed:(Js.to_bool (Unsafe.coerce force_unsandboxed))
+let planned_exec_host_call (plan : Authority_plans.exec_plan) _host _runtime
+    force_unsandboxed =
+  match plan.brokered_git with
+  | Some broker ->
+      if force_unsandboxed then
+        Error "brokered agent Git rejects escalated unsandboxed execution"
+      else
+        let cwd = plan.host.authorization_cwd in
+        Ok
+          {
+            Taumel.Sandbox.invocation =
+              {
+                command = broker.command;
+                args = broker.argv;
+                sandboxed = true;
+              };
+            cwd;
+            timeout_ms = None;
+            yield_time_ms = plan.yield_time_ms;
+            tty = false;
+            escalated = false;
+          }
+  | None ->
+      let options = exec_host_options_from_plan plan in
+      Taumel.Sandbox.plan_exec_host_call plan.sandbox plan.host options
+        ~force_unsandboxed
 
-let plan_exec_host_call prepared host runtime force_unsandboxed =
-  match planned_exec_host_call prepared host runtime force_unsandboxed with
-  | Ok call -> js_exec_host_call call
+let plan_exec_host_call prepared owner_context =
+  let plan_id = get_string prepared "planId" in
+  match Authority_plans.inspect_exec ~owner_context plan_id with
   | Error message -> error_obj message
+  | Ok (plan, force_unsandboxed) -> (
+      match
+        planned_exec_host_call plan (inject Js.null) (inject Js.null)
+          force_unsandboxed
+      with
+      | Ok call -> js_exec_host_call call
+      | Error message -> error_obj message)
 
 let exec_result_from_js result =
   {
@@ -211,6 +200,11 @@ let format_exec_result prepared result sandboxed escalated =
 
 let finish_exec_approval raw_facts =
   let facts = Tool_contracts.ExecApprovalOutcomeFacts.t_of_js (ojs_of_js raw_facts) in
+  let plan_id = Tool_contracts.ExecApprovalOutcomeFacts.get_planId facts in
+  let owner_context =
+    Tool_contracts.ExecApprovalOutcomeFacts.get_ctx facts
+    |> Ts2ocaml.unknown_to_js |> Obj.magic
+  in
   let outcome =
     match Boundary_contracts.ExecApprovalOutcomeFacts.get_outcome facts with
     | `V_approved -> Taumel.Sandbox.Approval_approved
@@ -220,14 +214,46 @@ let finish_exec_approval raw_facts =
     | `V_unavailable -> Taumel.Sandbox.Approval_unavailable
   in
   match Taumel.Sandbox.exec_approval_outcome ~outcome with
-  | Taumel.Sandbox.Approval_granted ->
-      Boundary_contracts.ExecApprovalRun.create ()
-      |> Tool_contracts.ExecApprovalRun.t_to_js |> inject
+  | Taumel.Sandbox.Approval_granted -> (
+      match Authority_plans.approve_exec ~owner_context plan_id with
+      | Ok () ->
+          Boundary_contracts.ExecApprovalRun.create ()
+          |> Tool_contracts.ExecApprovalRun.t_to_js |> inject
+      | Error message -> error_obj message)
   | Taumel.Sandbox.Approval_denied denied ->
+      ignore (Authority_plans.discard ~owner_context plan_id);
       let result = text_result_with_details denied.message denied.details in
       Boundary_contracts.ExecApprovalDenied.create
         ~result:(Tool_contracts.ToolResultEnvelope.t_of_js (ojs_of_js result)) ()
       |> Tool_contracts.ExecApprovalDenied.t_to_js |> inject
+
+let discard_authority_plan raw_facts =
+  let facts = Tool_contracts.AuthorityPlanRef.t_of_js (ojs_of_js raw_facts) in
+  let owner_context =
+    Tool_contracts.AuthorityPlanRef.get_ctx facts
+    |> Ts2ocaml.unknown_to_js |> Obj.magic
+  in
+  match
+    Authority_plans.discard ~owner_context
+      (Tool_contracts.AuthorityPlanRef.get_planId facts)
+  with
+  | Ok () -> core_ack ()
+  | Error message -> error_obj message
+
+let reissue_exec_plan raw_facts =
+  let facts = Tool_contracts.AuthorityPlanRef.t_of_js (ojs_of_js raw_facts) in
+  let owner_context =
+    Tool_contracts.AuthorityPlanRef.get_ctx facts
+    |> Ts2ocaml.unknown_to_js |> Obj.magic
+  in
+  match
+    Authority_plans.reissue_exec_retry ~owner_context
+      (Tool_contracts.AuthorityPlanRef.get_planId facts)
+  with
+  | Error message -> error_obj message
+  | Ok planId ->
+      Tool_contracts.AuthorityPlanIssued.create ~planId ()
+      |> Tool_contracts.AuthorityPlanIssued.t_to_js |> inject
 
 let plan_exec_approval_prompt raw_facts =
   let facts = Tool_contracts.ExecApprovalPromptFacts.t_of_js (ojs_of_js raw_facts) in

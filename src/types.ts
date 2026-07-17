@@ -169,10 +169,13 @@ export type ComposerController = {
 };
 
 export type CoreBridge = {
-  readonly init: (host: ExtensionHost) => void;
   readonly call: (name: string, args?: readonly unknown[]) => unknown;
 };
 
+export type CoreBootstrap = {
+  readonly init: (host: ExtensionHost) => CoreBridge;
+};
+
 export type TaumelGlobal = {
-  readonly taumel?: CoreBridge;
+  readonly taumel?: CoreBootstrap;
 };

@@ -1,6 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -17,7 +16,6 @@ import {
 import { toolContracts } from "./tool-contract-catalog.ts";
 
 import {
-  execHostFacts,
   cwdFromContext,
   modelRegistryFrom,
   openAiCredentialRaw,
@@ -40,7 +38,7 @@ import {
 } from "./child-sessions.ts";
 import { installExecNotificationLifecycle, startExecCompletionWaiter } from "./exec-notifications.ts";
 import { executeAgentPrepared, installAgentLifecycle } from "./agent-orchestration.ts";
-import { decodeBridgeToolExecutionResult, decodeBridgeToolResult, decodeChildSessionMetadata, decodeEditApplicationResult, decodeExecApprovalPromptPlan, decodeExecApprovalResult, decodeExecPolicyAllowRuleResult, decodeExecToolResult, decodePatchApplicationResult, decodeToolNamesResult, decodeToolResultEnvelope, decodeViewMediaResultEnvelope, type PreparedToolAction, type ToolResultEnvelope } from "./bridge-contracts.ts";
+import { decodeAuthorityPlanIssued, decodeBridgeToolResult, decodeChildSessionMetadata, decodeEditApplicationResult, decodeExecApprovalPromptPlan, decodeExecApprovalResult, decodeExecPolicyAllowRuleResult, decodeExecToolResult, decodePatchApplicationResult, decodeToolNamesResult, decodeToolResultEnvelope, decodeViewMediaResultEnvelope, type PreparedToolAction, type ToolResultEnvelope } from "./bridge-contracts.ts";
 import {
   decodeOpenAiUsageHostAuth,
   decodeOpenAiUsageHostParams,
@@ -54,7 +52,7 @@ import {
   preparedAction,
   preparedToolResult,
 } from "./tool-results.ts";
-
+import { authorityPlanId, discardPreparedAuthorityPlan, executeApprovedExaInCore, executeExaInCore } from "./authority-plans.ts";
 type SettingsObject = { [key: string]: unknown };
 type ToolContext = { readonly cwd?: unknown; readonly model?: unknown; readonly ui?: unknown; readonly hasUI?: unknown; readonly sessionManager?: unknown };
 type SessionManagerHost = { readonly getEntries?: () => unknown };
@@ -70,9 +68,7 @@ type ChildSessionMarker =
 type ImageModel = { readonly input?: unknown };
 type EditReplacement = { readonly oldText?: unknown; readonly newText?: unknown };
 type NodeError = { readonly code?: unknown };
-
 type PreparedSuccess = Exclude<PreparedToolAction, { ok: false }>;
-type PreparedExaAction = Extract<PreparedSuccess, { action: "exa_fetch" | "exa_agent_create_run_approval" }>;
 type PreparedOpenAiAction = Extract<PreparedSuccess, { action: "openai_usage_fetch" }>;
 type PreparedApprovalAction = Extract<PreparedSuccess, { action: "exec_command_approval" | "write_approval" | "edit_approval" | "apply_patch_approval" | "exa_agent_create_run_approval" }>;
 type PreparedMutationAction = Extract<PreparedSuccess, { action: "write" | "write_approval" | "edit" | "edit_approval" | "apply_patch" | "apply_patch_approval" }>;
@@ -325,22 +321,6 @@ async function executeOpenAiUsageInCore(
   return preparedToolResult(core, { ...rendered });
 }
 
-async function executeExaInCore(
-  core: CoreBridge,
-  prepared: PreparedExaAction,
-) {
-  const bodyJson = prepared.bodyJson;
-  const lastEventId = prepared.lastEventId;
-  const rendered = decodeBridgeToolExecutionResult(await core.call("executeExa", [{
-    toolName: prepared.toolName, method: prepared.method, path: prepared.path,
-    ...(bodyJson === undefined ? {} : { bodyJson }),
-    ...(lastEventId === undefined ? {} : { lastEventId }),
-  }]));
-  if (!rendered.ok) {
-    return errorToolResult(core, rendered.error, { ...rendered });
-  }
-  return preparedToolResult(core, { ...rendered });
-}
 
 export async function executeOpenAiUsageWithHostAuth(
   pi: PiLike,
@@ -370,28 +350,6 @@ export async function executeOpenAiUsageWithHostAuth(
       ...tokenFacts,
     }),
   );
-}
-
-// exec_command always runs under bash, never $SHELL. Resolve like Pi:
-// /bin/bash -> `which bash` (handles NixOS, where /bin/bash does not exist and
-// bash lives in the nix store on PATH) -> sh as a last resort.
-let cachedBashPath: string | undefined;
-function resolveBashPath(): string {
-  if (cachedBashPath !== undefined) return cachedBashPath;
-  let resolved = "bash";
-  if (existsSync("/bin/bash")) {
-    resolved = "/bin/bash";
-  } else {
-    try {
-      const which = spawnSync("which", ["bash"], { encoding: "utf-8" });
-      const first = which.status === 0 ? which.stdout.trim().split(/\r?\n/)[0] : "";
-      resolved = first !== "" ? first : "sh";
-    } catch {
-      resolved = "sh";
-    }
-  }
-  cachedBashPath = resolved;
-  return resolved;
 }
 
 async function requestSandboxRetryApproval(
@@ -436,27 +394,37 @@ async function runPreparedExec(
   replan?: () => Promise<GatewayToolResult>,
 ) {
   const ownerId = sessionInfoFromContext(ctx).sessionId ?? "current";
-  const result = decodeExecToolResult(await core.call("runExecCommand", [
-    prepared,
-    execHostFacts(core, prepared),
-    {
-      defaultCwd: process.cwd(),
-      bashPath: resolveBashPath(),
-    },
-    ownerId,
-    signal ?? null,
-    forceUnsandboxed,
-  ]));
+  let result: ReturnType<typeof decodeExecToolResult>;
+  try {
+    result = decodeExecToolResult(await core.call("runExecCommand", [
+      prepared,
+      ownerId,
+      signal ?? null,
+      ctx,
+    ]));
+  } catch (error) {
+    discardPreparedAuthorityPlan(core, prepared, ctx);
+    throw error;
+  }
   if (!forceUnsandboxed && shouldOfferSandboxRetry(prepared, result)) {
     const outcome = await requestSandboxRetryApproval(core, prepared, ctx, signal, validateApproval);
     if (outcome === "replan") {
+      discardPreparedAuthorityPlan(core, prepared, ctx);
       if (replan !== undefined) return replan();
       throw new Error("approval policy changed; retry the command");
     }
-    if (outcome === "approved") return runPreparedExec(pi, core, prepared, ctx, signal, true);
+    if (outcome === "approved") {
+      const retry = decodeAuthorityPlanIssued(core.call("reissueExecPlan", [{
+        planId: prepared.planId,
+        ctx,
+      }]));
+      return runPreparedExec(pi, core, { ...prepared, planId: retry.planId }, ctx, signal, true);
+    }
+    discardPreparedAuthorityPlan(core, prepared, ctx);
     if (outcome === "denied_by_user") throw new Error("rejected by user");
     throw new Error(approvalOutcomeMessage("command retry", outcome));
   }
+  discardPreparedAuthorityPlan(core, prepared, ctx);
   // The command outlived the first yield window and is now a background session.
   // Start a detached waiter that delivers its completion if the parent is idle
   // when it exits (the exec analogue of isolated_child onCompletion); turn_end/idle
@@ -622,8 +590,12 @@ async function withMutationApproval(
   run: () => Promise<ToolResultEnvelope> | ToolResultEnvelope,
 ): Promise<GatewayToolResult> {
   const outcome = await confirmExecApproval(core, prepared, ctx, signal, validate);
-  if (outcome === "replan") return replan();
+  if (outcome === "replan") {
+    discardPreparedAuthorityPlan(core, prepared, ctx);
+    return replan();
+  }
   if (outcome !== "approved") {
+    discardPreparedAuthorityPlan(core, prepared, ctx);
     return mutationApprovalDenied(core, action, outcome);
   }
   return run();
@@ -829,7 +801,19 @@ export async function executeTool(
   }
   const approvalStillCurrent = () => {
     try {
-      return JSON.stringify(preparedAction(core, name, parsed.params, ctx)) === JSON.stringify(prepared);
+      const candidate = preparedAction(core, name, parsed.params, ctx);
+      const candidatePlanId = authorityPlanId(candidate as PreparedSuccess);
+      const currentPlanId = authorityPlanId(prepared);
+      if (candidatePlanId !== undefined) {
+        discardPreparedAuthorityPlan(core, candidate as PreparedSuccess, ctx);
+      }
+      const withoutPlanId = (value: PreparedSuccess) => {
+        if (!("planId" in value)) return value;
+        const { planId: _planId, ...rest } = value;
+        return rest;
+      };
+      return JSON.stringify(withoutPlanId(candidate as PreparedSuccess)) === JSON.stringify(withoutPlanId(prepared))
+        && (candidatePlanId === undefined) === (currentPlanId === undefined);
     } catch {
       return false;
     }
@@ -854,10 +838,10 @@ export async function executeTool(
     case "openai_usage_fetch":
       return executeOpenAiUsageWithHostAuth(pi, core, prepared, ctx);
     case "exa_fetch":
-      return executeExaInCore(core, prepared);
+      return executeExaInCore(core, prepared, ctx);
     case "exa_agent_create_run_approval":
       return withMutationApproval(core, "exa_agent_create_run", prepared, ctx, signal, approvalStillCurrent, replan, () =>
-        executeExaInCore(core, prepared)
+        executeApprovedExaInCore(core, prepared, ctx)
       );
     case "query_threads":
     case "read_thread": {
@@ -868,17 +852,17 @@ export async function executeTool(
       return runPreparedExec(pi, core, prepared, ctx, signal, false, approvalStillCurrent, replan);
     case "exec_command_approval": {
       const outcome = await confirmExecApproval(core, prepared, ctx, signal, approvalStillCurrent);
-      if (outcome === "replan") return replan();
+      if (outcome === "replan") {
+        discardPreparedAuthorityPlan(core, prepared, ctx);
+        return replan();
+      }
       const approvalPlan = decodeExecApprovalResult(core.call("finishExecApproval", [{
+        planId: prepared.planId,
+        ctx,
         outcome: outcome === "approved_always" ? "approved" : outcome,
       }]));
       if (approvalPlan.kind === "denied") return approvalPlan.result;
-      // Finder/Oracle/worktree children and brokered Git must never escape the sandbox.
-      const preparedFields = prepared as { readonly [key: string]: unknown };
-      const sandbox = preparedFields.sandbox as { isolatedChild?: unknown } | undefined;
-      const restrictedChild = sandbox?.isolatedChild === true || preparedFields.brokeredGit === true;
-      const forceUnsandboxed = restrictedChild ? false : approvalPlan.forceUnsandboxed === true;
-      return runPreparedExec(pi, core, { ...prepared, action: "exec_command" }, ctx, signal, forceUnsandboxed);
+      return runPreparedExec(pi, core, { ...prepared, action: "exec_command" }, ctx, signal, false);
     }
     case "write_stdin":
       return writePreparedStdin(core, prepared, ctx, signal);

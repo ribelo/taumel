@@ -88,6 +88,19 @@ let encode_run (run : agent_run) =
       ("active_tool_count", Shared.Number (float_of_int run.run_active_tool_count));
     ]
 
+let encode_cleanup_pending (pending : cleanup_pending) =
+  Shared.Object
+    [
+      ("owner_session_id", Shared.String pending.cleanup_owner_session_id);
+      ("agent_id", Shared.String pending.cleanup_agent_id);
+      ("cleanup_nonce", Shared.String pending.cleanup_nonce);
+      ( "remaining_artifacts",
+        Shared.Array
+          (List.map
+             (fun value -> Shared.String value)
+             pending.cleanup_remaining_artifacts) );
+    ]
+
 let encode (state : session_state) =
   Shared.Object
     [
@@ -95,6 +108,8 @@ let encode (state : session_state) =
       ("issued_identity_counts", encode_issued_identity_counts state.issued_identity_counts);
       ("identities", Shared.Array (List.map encode_identity state.identities));
       ("runs", Shared.Array (List.map encode_run state.runs));
+      ( "cleanup_pending",
+        Shared.Array (List.map encode_cleanup_pending state.cleanup_pending) );
     ]
 
 let decode_string_list path = function
@@ -303,5 +318,38 @@ let decode = function
             | None -> Error "runs is required"
             | Some value -> decode_list "runs" decode_run value
           in
-          Ok { identities; runs; issued_identity_counts })
+          let* cleanup_pending =
+            match List.assoc_opt "cleanup_pending" fields with
+            | None -> Ok []
+            | Some value ->
+                decode_list "cleanup_pending"
+                  (fun path fields ->
+                    let ( let* ) = Result.bind in
+                    let* owner_session_id =
+                      Shared.json_required_string path fields "owner_session_id"
+                    in
+                    let* agent_id =
+                      Shared.json_required_string path fields "agent_id"
+                    in
+                    let* cleanup_nonce =
+                      Shared.json_required_string path fields "cleanup_nonce"
+                    in
+                    let* remaining_artifacts =
+                      match List.assoc_opt "remaining_artifacts" fields with
+                      | None -> Error (path ^ ".remaining_artifacts is required")
+                      | Some artifacts ->
+                          decode_string_list
+                            (Shared.json_path path "remaining_artifacts")
+                            artifacts
+                    in
+                    Ok
+                      {
+                        cleanup_owner_session_id = owner_session_id;
+                        cleanup_agent_id = agent_id;
+                        cleanup_nonce;
+                        cleanup_remaining_artifacts = remaining_artifacts;
+                      })
+                  value
+          in
+          Ok { identities; runs; issued_identity_counts; cleanup_pending })
   | _ -> Error "agents state must be an object"

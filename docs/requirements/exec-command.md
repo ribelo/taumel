@@ -45,6 +45,8 @@ and user-facing rendering remains Taumel-owned.
 - The system shall provide `write_stdin.output_mode = status` for passive waits that drain process output without adding it to model context. ^exec-tc06
 - The system shall represent command session ids as opaque numeric locators and require `write_stdin` to receive the exact id returned by `exec_command`. ^exec-tc07
 - The repository gate shall verify that actual built OCaml prepared-exec outputs, both with and without optional `exec_command` parameters, are accepted by the TypeScript prepared-action decoder. ^exec-2q9v
+- The system shall retain each authorized command, resolved executable, canonical working directory, sandbox mounts, and broker invocation in the OCaml core and expose only an opaque plan locator bound to the owning session context for execution. ^exec-z6yp
+- If an execution plan locator is unknown, belongs to another session, or has already been redeemed, then the system shall reject it before any host process or broker operation starts. ^exec-cnzd
 
 ### Shell selection
 

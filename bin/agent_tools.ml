@@ -154,6 +154,13 @@ let start_details ~(identity : Taumel.Agents.identity) ~(run : Taumel.Agents.age
         fields @ [ ("tier", js_string (Taumel.Agents.effort_to_string effort)) ]
   in
   Unsafe.obj (Array.of_list fields)
+let recover_owned_private_sessions ~owner_session_id =
+  Taumel.Agents.owned_identities !agent_state ~owner_session_id
+  |> List.iter (fun identity ->
+         ignore
+           (Agent_child_session_host.recover_uncommitted_envelope_for_identity
+              ~identity))
+
 let prepare_start name params ctx =
   if is_agent_child ctx then reject_nested name
   else
@@ -353,6 +360,12 @@ let prepare_send params ctx =
                 (match commit_agent_state ctx delivery.delivery_state with
                 | Error message -> error_obj message
                 | Ok () ->
+                (match Taumel.Agents.find_identity !agent_state agent_id with
+                | Some identity ->
+                    ignore
+                      (Agent_child_session_host
+                       .recover_uncommitted_envelope_for_identity ~identity)
+                | None -> ());
                 let outcome =
                   Taumel.Agents.send_outcome_to_string delivery.delivery_outcome
                 in
@@ -786,119 +799,12 @@ let prepare_list ctx =
                ("ok", js_bool true);
                ("agents", js_array (List.map inject agents));
              |]))
-let prepare_close params ctx =
-  if is_agent_child ctx then reject_nested "agent_close"
-  else
-    with_gateway_authorized "agent_close" (fun _ ->
-        match
-          Option.bind (optional_string_field params "agent_id")
-            Taumel.Shared.trim_non_empty
-        with
-        | None -> error_obj "agent_close.agent_id is required"
-        | Some agent_id -> (
-            let delete_worktree = get_bool params "delete_worktree" in
-            match
-              Taumel.Agents.owned_identity !agent_state
-                ~owner_session_id:(owner_id ctx) agent_id
-            with
-            | Error message -> error_obj message
-            | Ok (identity : Taumel.Agents.identity) ->
-                let isolation = Taumel.Agents.identity_isolation identity in
-                if
-                  delete_worktree
-                  && isolation = Taumel.Agent_workspace.None
-                then
-                  error_obj Taumel.Agent_worktree.delete_worktree_on_none_message
-                else (
-                agent_closing_ids :=
-                  if List.mem agent_id !agent_closing_ids then !agent_closing_ids
-                  else agent_id :: !agent_closing_ids;
-                let details =
-                  Unsafe.obj
-                    [|
-                      ("agent_id", js_string agent_id);
-                      ("status", js_string "closed");
-                    |]
-                in
-                let run_ids =
-                  Taumel.Agents.runs_for_agent !agent_state agent_id
-                  |> List.map (fun (run : Taumel.Agents.agent_run) -> run.run_id)
-                in
-                let worktree_fields =
-                  match identity.identity_workspace_binding with
-                  | Taumel.Agent_workspace.Shared _ -> None
-                  | Taumel.Agent_workspace.Worktree _ as binding -> (
-                      match
-                        Taumel.Agent_workspace.derive
-                          ~agent_home:(Agent_worktree_host.pi_agent_dir ())
-                          ~owner_session_id:identity.identity_owner_session_id
-                          ~agent_id:identity.identity_agent_id binding
-                      with
-                      | Ok derived -> Some derived
-                      | Error _ -> None)
-                in
-                Boundary_contracts.PreparedAgentClose.create
-                  ~text:
-                    (json_success
-                       [
-                         ("agent_id", Taumel.Shared.String agent_id);
-                         ("status", Taumel.Shared.String "closed");
-                       ])
-                  ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details))
-                  ~agentId:agent_id ~runIds:run_ids
-                  ?childSessionFile:identity.identity_child_session_file
-                  ~deleteWorktree:delete_worktree
-                  ?worktreePath:
-                    (Option.map
-                       (fun d -> d.Taumel.Agent_workspace.worktree_path)
-                       worktree_fields)
-                  ?worktreeBranch:
-                    (Option.map
-                       (fun d -> d.Taumel.Agent_workspace.branch)
-                       worktree_fields)
-                  ?mainRepositoryRoot:
-                    (Option.map
-                       (fun d -> d.Taumel.Agent_workspace.main_repository_root)
-                       worktree_fields)
-                  ?isolation:
-                    (Some
-                       (Boundary_contracts.PreparedAgentClose.isolation_to_contract
-                          (match isolation with
-                          | Taumel.Agent_workspace.None -> `V_none
-                          | Taumel.Agent_workspace.Worktree -> `V_worktree)))
-                  ()
-                |> Tool_contracts.PreparedAgentClose.t_to_js |> inject)))
-let finish_close facts ctx =
-  Session_sync.sync_persisted_session ctx;
-  let agent_id = get_string facts "agent_id" in
-  match
-    Taumel.Agent_registry.record_close !agent_state ~owner_session_id:(owner_id ctx)
-      ~agent_id
-  with
-  | Error message -> error_obj message
-  | Ok (next, _) ->
-      let previous = !agent_state in
-      agent_closing_ids :=
-        List.filter (fun value -> value <> agent_id) !agent_closing_ids;
-      agent_notification_claims :=
-        List.filter
-          (fun run_id ->
-            match Taumel.Agents.find_run !agent_state run_id with
-            | Some run -> run.run_agent_id <> agent_id
-            | None -> false)
-          !agent_notification_claims;
-      agent_state := next;
-      (try
-         save_agent_state ctx;
-         core_ack ()
-       with error ->
-         agent_state := previous;
-         error_obj ("agent state persistence failed: " ^ Printexc.to_string error))
-let release_close facts =
-  let agent_id = get_string facts "agent_id" in
-  agent_closing_ids :=
-    List.filter (fun value -> value <> agent_id) !agent_closing_ids;
-  core_ack ()
+let prepare_close = Agent_close.prepare_close
+let finish_close = Agent_close.finish_close
+let release_close = Agent_close.release_close
+let delete_child_session = Agent_close.delete_child_session
+let record_close_cleanup_failure = Agent_close.record_close_cleanup_failure
+
 let accept_worktree_start = Agent_worktree_ops.accept_worktree_start
 let rollback_worktree_start = Agent_worktree_ops.rollback_worktree_start
 let delete_worktree = Agent_worktree_ops.delete_worktree

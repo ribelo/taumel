@@ -3,7 +3,7 @@
 
 module String_set = Shared.String_set
 
-let schema_version = 4
+let schema_version = 5
 let max_identities_per_owner = 64
 let max_error_chars = 4096
 let nano_id_alphabet = "abcdefghjkmnpqrstuvwxyz23456789"
@@ -40,6 +40,7 @@ type reason_code =
   | Interrupted_by_parent
   | Parent_shutdown
   | Process_interrupted
+  | Close_cleanup_failed
   | Host_cancelled
   | Dispatch_failed
   | Agent_failed
@@ -106,10 +107,18 @@ type issued_identity_counts = {
   oracle : int;
 }
 
+type cleanup_pending = {
+  cleanup_owner_session_id : string;
+  cleanup_agent_id : string;
+  cleanup_nonce : string;
+  cleanup_remaining_artifacts : string list;
+}
+
 type session_state = {
   identities : identity list;
   runs : agent_run list;
   issued_identity_counts : issued_identity_counts;
+  cleanup_pending : cleanup_pending list;
 }
 
 type send_delivery = {
@@ -148,8 +157,12 @@ type wait_result = {
 let empty_issued_identity_counts = { generic = 0; finder = 0; oracle = 0 }
 
 let empty_session_state =
-  { identities = []; runs = []; issued_identity_counts = empty_issued_identity_counts }
-
+  {
+    identities = [];
+    runs = [];
+    issued_identity_counts = empty_issued_identity_counts;
+    cleanup_pending = [];
+  }
 let agent_kind_to_string = function
   | Generic -> "generic"
   | Finder -> "finder"
@@ -208,6 +221,7 @@ let reason_code_to_string = function
   | Interrupted_by_parent -> "interrupted_by_parent"
   | Parent_shutdown -> "parent_shutdown"
   | Process_interrupted -> "process_interrupted"
+  | Close_cleanup_failed -> "close_cleanup_failed"
   | Host_cancelled -> "host_cancelled"
   | Dispatch_failed -> "dispatch_failed"
   | Agent_failed -> "agent_failed"
@@ -218,6 +232,7 @@ let reason_code_of_string = function
   | "interrupted_by_parent" -> Ok Interrupted_by_parent
   | "parent_shutdown" -> Ok Parent_shutdown
   | "process_interrupted" -> Ok Process_interrupted
+  | "close_cleanup_failed" -> Ok Close_cleanup_failed
   | "host_cancelled" -> Ok Host_cancelled
   | "dispatch_failed" -> Ok Dispatch_failed
   | "agent_failed" -> Ok Agent_failed
@@ -272,7 +287,8 @@ let reason_compatible status reason =
   | Running, None | Completed, None -> true
   | Suspended, Some Interrupted_by_parent
   | Suspended, Some Parent_shutdown
-  | Suspended, Some Process_interrupted -> true
+  | Suspended, Some Process_interrupted
+  | Suspended, Some Close_cleanup_failed -> true
   | Cancelled, Some Host_cancelled -> true
   | Failed, Some Dispatch_failed
   | Failed, Some Agent_failed
@@ -572,6 +588,7 @@ let record_spawn state ~now ~owner_session_id ~kind ?effort ~model ~thinking
         runs = run :: state.runs;
         issued_identity_counts =
           with_issued_count state.issued_identity_counts kind next_issued_count;
+        cleanup_pending = state.cleanup_pending;
       }
     in
     Ok (state, identity, run)
@@ -614,6 +631,7 @@ let rollback_unaccepted_spawn state ~owner_session_id ~agent_id ~run_id
               runs =
                 List.filter (fun item -> item.run_agent_id <> agent_id) state.runs;
               issued_identity_counts = state.issued_identity_counts;
+              cleanup_pending = state.cleanup_pending;
             }
       | _ -> Error ("agent spawn is already accepted: " ^ agent_id))
 
@@ -783,7 +801,8 @@ let rollback_send_preflight state ~owner_session_id ~agent_id ~run_id
                 match previous_reason_code with
                 | Some value
                   when value = Interrupted_by_parent || value = Parent_shutdown
-                       || value = Process_interrupted ->
+                       || value = Process_interrupted
+                       || value = Close_cleanup_failed ->
                     value
                 | _ -> Process_interrupted
               in
@@ -942,22 +961,6 @@ let suspend_run run ~now reason_code =
         run_activity_state = Inactive;
         run_active_tool_count = 0;
       }
-
-let suspend_running_for_owner state ~now ~owner_session_id ~reason_code =
-  let runs =
-    List.map
-      (fun run ->
-        match find_identity state run.run_agent_id with
-        | Some identity
-          when identity.identity_owner_session_id = owner_session_id
-               && run.run_status = Running -> (
-            match suspend_run run ~now reason_code with
-            | Ok updated -> updated
-            | Error _ -> run)
-        | _ -> run)
-      state.runs
-  in
-  { state with runs }
 
 let mark_running_after_process_loss state ~now ~child_session_available =
   let runs =

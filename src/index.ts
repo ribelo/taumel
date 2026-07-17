@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
-import type { ChildSessionBridge, CoreBridge, PiLike, TaumelGlobal } from "./types.ts";
+import type { ChildSessionBridge, CoreBootstrap, CoreBridge, PiLike, TaumelGlobal } from "./types.ts";
 import { createComposerController, installSkillAutocomplete } from "./composer.ts";
 import { makeHost } from "./host.ts";
 import { registerGatewayTools } from "./tool-executor.ts";
@@ -40,14 +40,14 @@ function objectAdapter<T extends object>(value: unknown): Partial<T> | undefined
     : undefined;
 }
 
-function requireCoreBridge(core: CoreBridge | undefined): CoreBridge {
-  if (!core) {
+function requireCoreBootstrap(bootstrap: CoreBootstrap | undefined): CoreBootstrap {
+  if (!bootstrap) {
     throw new Error("taumel artifact did not export globalThis.taumel; run `npm run build:ocaml`");
   }
-  if (typeof core.init !== "function" || typeof core.call !== "function") {
+  if (typeof bootstrap.init !== "function") {
     throw new Error("taumel artifact did not export the core bridge; run `npm run build:ocaml`");
   }
-  return core;
+  return bootstrap;
 }
 
 function syncSandboxToolActivation(pi: PiLike, core: CoreBridge, ctx?: unknown): void {
@@ -164,9 +164,7 @@ export default async function taumel(pi: PiLike) {
   require(fileURLToPath(artifact));
 
   const coreGlobal = globalThis as typeof globalThis & TaumelGlobal;
-  const core = requireCoreBridge(coreGlobal.taumel);
-
-  core.init(makeHost(pi));
+  const core = requireCoreBootstrap(coreGlobal.taumel).init(makeHost(pi));
   installThinkingFooterRefresh(pi, core);
   registerThinkingShortcuts(pi, core);
   installVisibilityLifecycle(pi, core);

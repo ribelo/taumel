@@ -102,6 +102,8 @@ export const bridgeDtsSchemas = [
   ["ExecApprovalOutcomeFacts", schemas.ExecApprovalOutcomeFactsSchema],
   ["ExecApprovalRun", schemas.ExecApprovalRunSchema],
   ["ExecApprovalDenied", schemas.ExecApprovalDeniedSchema],
+  ["AuthorityPlanRef", schemas.AuthorityPlanRefSchema],
+  ["AuthorityPlanIssued", schemas.AuthorityPlanIssuedSchema],
   ["CommandChildDispatchFacts", schemas.CommandChildDispatchFactsSchema],
   ["CommandBridgeUpdate", schemas.CommandBridgeUpdateSchema],
   ["CommandChildReturn", schemas.CommandChildReturnSchema],

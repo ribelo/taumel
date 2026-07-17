@@ -30,6 +30,7 @@ re-authorized before execution.
 - The system shall not expose fields marked deprecated by the current Exa API contract; known removals include `web_search_exa.startCrawlDate`, `web_search_exa.endCrawlDate`, `highlights.numSentences`, `highlights.highlightsPerUrl`, and `exa_agent_create_run.budget`, and the highlights options shall expose optional positive-integer `maxCharacters` instead of the two deprecated highlight controls. ^exa-tl13
 - The system shall keep Pi-facing schemas, descriptions, and prompt snippets in TypeScript and keep gateway policy, network authorization, approval planning, Eta HTTP execution, and result normalization in OCaml. ^exa-ar01
 - The system shall register every Exa tool as a `network` effect and re-authorize it before execution. ^exa-ef01
+- The system shall retain each authorized Exa method, endpoint, body, and event cursor in an owner-bound one-shot OCaml plan and expose only its opaque locator across the TypeScript bridge. ^exa-gaf4
 - When `EXA_API_KEY` is absent, the system shall return a clear tool result and shall still register the tools. ^exa-ak01
 - When the model invokes `exa_agent_create_run`, the system shall require explicit user approval before sending the request, even when network is enabled. ^exa-ap01
 - When an Exa approval is denied, times out, is interrupted, or has no UI, the system shall use the sandbox escalation approval-outcome taxonomy. ^exa-ap02

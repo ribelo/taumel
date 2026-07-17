@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { executeAgentPrepared } from "../src/agent-orchestration.ts";
 import { executeTool } from "../src/tool-executor.ts";
@@ -11,7 +11,8 @@ const root = mkdtempSync(join(tmpdir(), "taumel-agent-async-"));
 process.env.PI_CODING_AGENT_DIR = root;
 const require = createRequire(import.meta.url);
 require("../dist/taumel.cjs");
-const core = globalThis.taumel;
+const bootstrap = globalThis.taumel;
+let core;
 
 const parentEntries = [];
 const ctx = {
@@ -25,7 +26,7 @@ const ctx = {
     appendCustomEntry: (customType, data) => parentEntries.push({ type: "custom", customType, data }),
   },
 };
-core.init({
+core = bootstrap.init({
   resolveAuthorizationPath: realpathSync,
   on: () => undefined, eventsOn: () => () => undefined, emit: () => undefined,
   exec: async () => ({ code: 0, stdout: "", stderr: "" }), setFooter: () => undefined,
@@ -69,6 +70,11 @@ const pi = {
   createAgentSession: async (options) => {
     if (createSessionError !== undefined) throw new Error(createSessionError);
     allocatedSessionFile = options.sessionManager.getSessionFile();
+    mkdirSync(dirname(allocatedSessionFile), { recursive: true });
+    writeFileSync(
+      allocatedSessionFile,
+      `${options.sessionManager.getEntries().map((entry) => JSON.stringify(entry)).join("\n")}\n`,
+    );
     allocatedResourceLoader = options.resourceLoader;
     allocatedAppendPrompt = options.resourceLoader.getAppendSystemPrompt();
     return ({
@@ -124,7 +130,7 @@ assert.equal(
   "private child storage must be namespaced by owner rather than the public handle alone",
 );
 assert.equal(typeof settle, "function", "start must dispatch without waiting for completion");
-assert.equal(core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]).details.agents[0].status, "running");
+assert.equal(core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]).details.agents[0].status, "running", "initial dispatch remained running");
 
 settle();
 await new Promise((resolve) => setTimeout(resolve, 0));
@@ -186,7 +192,7 @@ const failedSend = core.call("prepareTool", [{
 assert.notEqual(failedSend.runId, failedPreflightRunId, "rolled-back run id must remain retired");
 const failedSendResult = await executeAgentPrepared(pi, core, childSessions, pendingWaits, failedSend, ctx);
 assert.equal(failedSendResult.details.status, "running");
-assert.equal(core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]).details.agents[0].status, "running");
+assert.equal(core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]).details.agents[0].status, "running", "failed-send dispatch remained running before settlement");
 assert.equal(subscribers.size, 1);
 settle({ role: "assistant", content: [], stopReason: "error", errorMessage: "provider failed" });
 await new Promise((resolve) => setTimeout(resolve, 0));
@@ -225,7 +231,7 @@ const send = core.call("prepareTool", [{
   name: "agent_send", params: { agent_id: prepared.agentId, message: "run again", description: "Run agent again" }, ctx,
 }]);
 await executeAgentPrepared(pi, core, childSessions, pendingWaits, send, ctx);
-assert.equal(core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]).details.agents[0].status, "running");
+assert.equal(core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]).details.agents[0].status, "running", "close-test dispatch remained running");
 // agent-id20/agent-id22: a queued follow-up keeps its subscription through agent_settled.
 const steered = core.call("prepareTool", [{
   name: "agent_send", params: { agent_id: prepared.agentId, message: "steer queued", description: "Steer queued work" }, ctx,

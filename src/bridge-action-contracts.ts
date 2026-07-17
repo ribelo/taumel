@@ -134,22 +134,16 @@ export const PreparedWriteStdinSchema = Type.Object(
 );
 export const PreparedExecSchema = Type.Object(
   {
-    ok: Type.Literal(true), action: Type.Literal("exec_command"), cmd: Type.String({ minLength: 1 }),
+    ok: Type.Literal(true), action: Type.Literal("exec_command"), planId: Type.String({ minLength: 1 }), cmd: Type.String({ minLength: 1 }),
     workdir: Type.String(), yieldTimeMs: Type.Optional(Type.Number({ minimum: 0 })), maxOutputTokens: Type.Optional(Type.Integer({ minimum: 0 })), tty: Type.Boolean(),
     sandbox: SandboxConfigSchema,
     brokeredGit: Type.Optional(Type.Boolean()),
-    directCommand: Type.Optional(Type.String({ minLength: 1 })),
-    directArgv: Type.Optional(Type.Array(Type.String())),
-    gitDir: Type.Optional(Type.String({ minLength: 1 })),
-    gitWorkTree: Type.Optional(Type.String({ minLength: 1 })),
-    brokerAgentId: Type.Optional(Type.String({ minLength: 1 })),
-    brokerSubcommand: Type.Optional(Type.String({ minLength: 1 })),
   },
   { $id: "PreparedExec", additionalProperties: false },
 );
 export const PreparedExecApprovalSchema = Type.Object(
   {
-    ok: Type.Literal(true), action: Type.Literal("exec_command_approval"), cmd: Type.String({ minLength: 1 }),
+    ok: Type.Literal(true), action: Type.Literal("exec_command_approval"), planId: Type.String({ minLength: 1 }), cmd: Type.String({ minLength: 1 }),
     workdir: Type.String(), yieldTimeMs: Type.Optional(Type.Number({ minimum: 0 })), maxOutputTokens: Type.Optional(Type.Integer({ minimum: 0 })), tty: Type.Boolean(),
     sandbox: SandboxConfigSchema, approvalMessage: Type.String(), ...approvalFields,
     execPolicyAllowAlwaysTokens: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
@@ -199,11 +193,11 @@ export const PreparedThreadReadSchema = Type.Object(
   { $id: "PreparedThreadRead", additionalProperties: false },
 );
 export const PreparedExaSchema = Type.Object(
-  { ok: Type.Literal(true), action: Type.Literal("exa_fetch"), toolName: Type.String({ minLength: 1 }), method: Type.String({ minLength: 1 }), path: Type.String({ minLength: 1 }), bodyJson: Type.Optional(Type.String()), lastEventId: Type.Optional(Type.String()) },
+  { ok: Type.Literal(true), action: Type.Literal("exa_fetch"), planId: Type.String({ minLength: 1 }), toolName: Type.String({ minLength: 1 }) },
   { $id: "PreparedExa", additionalProperties: false },
 );
 export const PreparedExaApprovalSchema = Type.Object(
-  { ok: Type.Literal(true), action: Type.Literal("exa_agent_create_run_approval"), toolName: Type.String({ minLength: 1 }), method: Type.String({ minLength: 1 }), path: Type.String({ minLength: 1 }), bodyJson: Type.Optional(Type.String()), lastEventId: Type.Optional(Type.String()), ...approvalFields },
+  { ok: Type.Literal(true), action: Type.Literal("exa_agent_create_run_approval"), planId: Type.String({ minLength: 1 }), toolName: Type.String({ minLength: 1 }), ...approvalFields },
   { $id: "PreparedExaApproval", additionalProperties: false },
 );
 export const PreparedAgentStartSchema = Type.Object(
@@ -259,7 +253,6 @@ export const PreparedAgentCloseSchema = Type.Object(
     details: Type.Unknown(),
     agentId: Type.String({ minLength: 1 }),
     runIds: Type.Array(Type.String({ minLength: 1 })),
-    childSessionFile: Type.Optional(Type.String()),
     deleteWorktree: Type.Optional(Type.Boolean()),
     worktreePath: Type.Optional(Type.String()),
     worktreeBranch: Type.Optional(Type.String()),
@@ -292,10 +285,7 @@ export const AgentActiveCountResultSchema = Type.Object(
   { $id: "AgentActiveCountResult", additionalProperties: false },
 );
 export const AgentCleanupItemSchema = Type.Object(
-  {
-    agentId: Type.String({ minLength: 1 }),
-    childSessionFile: Type.Optional(Type.String()),
-  },
+  { agentId: Type.String({ minLength: 1 }) },
   { $id: "AgentCleanupItem", additionalProperties: false },
 );
 export const AgentCleanupPlanSchema = Type.Object(

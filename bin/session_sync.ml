@@ -495,6 +495,14 @@ let load_agent_state_data ~recover_running = function
       | Ok state ->
           agent_state_load_error := None;
           let state = if recover_running then reconcile_settled_runs state else state in
+          (* Recover uncommitted cleanup envelopes before classifying process-loss
+             availability, so exact private sessions are restored to their live path. *)
+          List.iter
+            (fun identity ->
+              ignore
+                (Agent_child_session_host.recover_uncommitted_envelope_for_identity
+                   ~identity))
+            state.identities;
           agent_state :=
             if recover_running then
               Taumel.Agents.mark_running_after_process_loss state

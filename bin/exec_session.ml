@@ -791,8 +791,10 @@ let retain_completed_session session =
       retained_exit_code = session.exit_code;
     };
   prune_retained_sessions session.owner_id
-let finish_session ?(output_mode = "delta") ?max_output_tokens session extra resolve =
+let finish_session ?(output_mode = "delta") ?max_output_tokens ?on_finish session
+    extra resolve =
   let result = make_result ~output_mode ?max_output_tokens session in
+  Option.iter (fun finish -> finish result) on_finish;
   if session.exited then (
     session.terminal_consumed <- true;
     close_temp session;
@@ -814,7 +816,7 @@ let resolved_promise value =
     |]
 let promise_of_session session yield_ms ?timeout_ms
     ?(abort_disposition = `Kill_session) ?(write_stdin_waiter = false)
-    ?(output_mode = "delta") ?max_output_tokens signal
+    ?(output_mode = "delta") ?max_output_tokens ?on_finish signal
     extra =
   Unsafe.new_obj (Unsafe.get Unsafe.global "Promise")
     [|
@@ -836,7 +838,8 @@ let promise_of_session session yield_ms ?timeout_ms
                  settled := true;
                  cleanup ();
                  clear_write_stdin_waiter ();
-                 finish_session ~output_mode ?max_output_tokens session extra resolve)
+                 finish_session ~output_mode ?max_output_tokens ?on_finish session
+                   extra resolve)
              in
              let reject_once ?(kill = false) message =
                if not !settled then (
@@ -871,83 +874,103 @@ let promise_of_session session yield_ms ?timeout_ms
                  ~on_abort;
                ())));
     |]
-let run_exec_command prepared host runtime owner_id signal force_unsandboxed =
-  match Sandbox_bridge.planned_exec_host_call prepared host runtime force_unsandboxed with
-  | Error message -> rejected_promise message
-  | Ok call ->
-      let session = new_session owner_id call.tty in
-      let broker_agent_id =
-        match optional_string_field prepared "brokerAgentId" with
-        | Some value when String.trim value <> "" -> Some (String.trim value)
-        | _ -> None
-      in
-      (match broker_agent_id with
-      | None -> ()
-      | Some agent_id -> (
-          match Taumel.Agent_git_broker.Lease.try_acquire agent_id with
-          | Error message -> failwith message
-          | Ok () -> session.broker_agent_id <- Some agent_id));
-            (if get_bool prepared "brokeredGit"
-          && optional_string_field prepared "brokerSubcommand" = Some "add"
-       then
-         let worktree =
-           match optional_string_field prepared "gitWorkTree" with
-           | Some value -> value
-           | None -> call.cwd
-         in
-         let argv =
-           if has_property prepared "directArgv" then get_string_array prepared "directArgv"
-           else []
-         in
-         match Agent_worktree_host.perform_secure_broker_add ~worktree_path:worktree argv with
-         | Error message ->
-             release_broker_lease session;
-             failwith message
-         | Ok () ->
-             (* Staging completed via filter-free plumbing; release lease and mark
-                the synthetic session successful without spawning git add. *)
-             session.exited <- true;
-             session.exit_code <- Some 0;
-             release_broker_lease session);
+let authority_retry_eligible (plan : Authority_plans.exec_plan)
+    (call : Taumel.Sandbox.exec_host_call) result =
+  let policy_allows_retry =
+    match plan.sandbox.approval_policy with
+    | Taumel.Sandbox.On_failure | Taumel.Sandbox.Untrusted -> true
+    | Taumel.Sandbox.Never | Taumel.Sandbox.On_request -> false
+  in
+  policy_allows_retry
+  && result.session_id = None
+  &&
+  match result.exit_code with
+  | None | Some 0 -> false
+  | Some exit_code ->
+      Taumel.Sandbox.failure_diagnostic
+        ~filesystem_mode:plan.sandbox.filesystem_mode
+        ~network_mode:plan.sandbox.network_mode
+        ~sandboxed:call.invocation.sandboxed ~exit_code ~stdout:result.output
+        ~stderr:""
+      <> None
 
-      (try
-         if session.exited then ()
-         else
-	         let env =
-	           if not (get_bool prepared "brokeredGit") then None
-	           else
-	             match
-	               ( optional_string_field prepared "gitDir",
-	                 optional_string_field prepared "gitWorkTree" )
-	             with
-	             | Some git_dir, Some git_work_tree ->
-	                 Some
-	                   (Trusted_git.broker_environment ~git_dir ~git_work_tree
-	                      ~commit:
-	                        (optional_string_field prepared "brokerSubcommand"
-	                        = Some "commit"))
-	             | _ -> failwith "brokered Git requires verified repository paths"
-         in
-         spawn_session session ~file:call.invocation.command
-           ~args:call.invocation.args ~cwd:call.cwd ?env ()
-       with exn ->
-         let message = Printexc.to_string exn ^ "\n" in
-         ignore (add_output session message);
-         session.exited <- true;
-         session.exit_code <- Some 1;
-         release_broker_lease session);
-      Hashtbl.replace sessions session.id session;
-      let extra =
-        Unsafe.obj
-          [|
-            ("sandboxed", js_bool call.invocation.sandboxed);
-            ("escalated", js_bool call.escalated);
-          |]
-      in
-      promise_of_session session
-        (normalize_exec_yield_ms call.yield_time_ms)
-        ?timeout_ms:call.timeout_ms
-        ?max_output_tokens:(int_field prepared "maxOutputTokens") signal extra
+let run_exec_command prepared owner_id signal owner_context =
+  let plan_id = get_string prepared "planId" in
+  match Authority_plans.claim_exec ~owner_context plan_id with
+  | Error message -> rejected_promise message
+  | Ok (plan, force_unsandboxed) -> (
+      match
+        Sandbox_bridge.planned_exec_host_call plan (inject Js.null)
+          (inject Js.null) force_unsandboxed
+      with
+      | Error message ->
+          ignore
+            (Authority_plans.finish_exec ~owner_context plan_id
+               ~retry_eligible:false);
+          rejected_promise message
+      | Ok call ->
+          let session = new_session owner_id call.tty in
+          let broker_agent_id =
+            Option.bind plan.brokered_git (fun broker -> broker.agent_id)
+          in
+          (match broker_agent_id with
+          | None -> ()
+          | Some agent_id -> (
+              match Taumel.Agent_git_broker.Lease.try_acquire agent_id with
+              | Error message -> failwith message
+              | Ok () -> session.broker_agent_id <- Some agent_id));
+          (match plan.brokered_git with
+          | Some broker when broker.subcommand = "add" -> (
+              match
+                Agent_worktree_host.perform_secure_broker_add
+                  ~worktree_path:broker.git_work_tree broker.argv
+              with
+              | Error message ->
+                  release_broker_lease session;
+                  failwith message
+              | Ok () ->
+                  (* Staging completed via filter-free plumbing; release lease and
+                     mark the synthetic session successful without spawning Git. *)
+                  session.exited <- true;
+                  session.exit_code <- Some 0;
+                  release_broker_lease session)
+          | Some _ | None -> ());
+          (try
+             if session.exited then ()
+             else
+               let env =
+                 Option.map
+                   (fun (broker : Authority_plans.brokered_git) ->
+                     Trusted_git.broker_environment ~git_dir:broker.git_dir
+                       ~git_work_tree:broker.git_work_tree
+                       ~commit:(broker.subcommand = "commit"))
+                   plan.brokered_git
+               in
+               spawn_session session ~file:call.invocation.command
+                 ~args:call.invocation.args ~cwd:call.cwd ?env ()
+           with exn ->
+             let message = Printexc.to_string exn ^ "\n" in
+             ignore (add_output session message);
+             session.exited <- true;
+             session.exit_code <- Some 1;
+             release_broker_lease session);
+          Hashtbl.replace sessions session.id session;
+          let extra =
+            Unsafe.obj
+              [|
+                ("sandboxed", js_bool call.invocation.sandboxed);
+                ("escalated", js_bool call.escalated);
+              |]
+          in
+          promise_of_session session
+            (normalize_exec_yield_ms call.yield_time_ms)
+            ?timeout_ms:call.timeout_ms
+            ?max_output_tokens:plan.max_output_tokens
+            ~on_finish:(fun result ->
+              ignore
+                (Authority_plans.finish_exec ~owner_context plan_id
+                   ~retry_eligible:(authority_retry_eligible plan call result)))
+            signal extra)
 let write_stdin raw_facts =
   let facts = Tool_contracts.WriteStdinFacts.t_of_js (ojs_of_js raw_facts) in
   let session_id = Tool_contracts.WriteStdinFacts.get_sessionId facts |> int_of_float in
@@ -1040,6 +1063,7 @@ let write_stdin raw_facts =
                  (Tool_contracts.WriteStdinFacts.get_maxOutputTokens facts))
             signal extra)
 let shutdown_owner owner_id =
+  Authority_plans.discard_owner owner_id;
   Hashtbl.filter_map_inplace
     (fun _ session ->
       if session.owner_id = owner_id then (

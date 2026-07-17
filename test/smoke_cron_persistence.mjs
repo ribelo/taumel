@@ -10,12 +10,13 @@ const artifact = new URL("../dist/taumel.cjs", import.meta.url);
 const require = createRequire(import.meta.url);
 require(fileURLToPath(artifact));
 
-const core = globalThis.taumel;
-if (!core || typeof core.call !== "function" || typeof core.init !== "function") {
+const bootstrap = globalThis.taumel;
+let core;
+if (!bootstrap || typeof bootstrap.init !== "function") {
   throw new Error("taumel core was not exported by the jsoo artifact");
 }
 
-core.init({
+core = bootstrap.init({
   on: () => undefined,
   eventsOn: () => () => undefined,
   emit: () => undefined,

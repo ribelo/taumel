@@ -9,6 +9,7 @@ import {
   childSessionCacheKey,
   childSessionCacheKeyScopeFromContext,
   createChildSession,
+  deleteAgentChildSession,
   latestAssistantEntryId,
   refreshOwnedChildPermissions,
   sendToChildSession,
@@ -42,6 +43,7 @@ function stringField(value: UnknownFields, key: string): string {
 }
 
 function childFailureCode(message: string): string {
+  if (/cleanup_failed|cleanup failed/.test(message)) return "cleanup_failed";
   if (/model|authentication|thinking/.test(message)) return "routing_unavailable";
   if (/workspace/.test(message)) return "workspace_unavailable";
   if (/child_session|agent_mismatch|owner_mismatch|identity_missing/.test(message)) return "child_session_unavailable";
@@ -224,15 +226,8 @@ async function rollbackUnacceptedStart(
       key: agentId,
       reason: "unaccepted_start",
     }, bridge, keyScope);
-    if (typeof bridge.sessionFile === "string" && bridge.sessionFile !== "") {
-      try {
-        const fs = await import("node:fs/promises");
-        await fs.rm(bridge.sessionFile, { force: true });
-      } catch {
-        // Best-effort physical cleanup after authoritative state rollback.
-      }
-    }
   }
+  deleteAgentChildSession(core, agentId, ctx);
   decodeCoreAck(core.call("rollbackUnacceptedAgentStart", [{
     agent_id: agentId,
     run_id: stringField(prepared, "runId"),
@@ -307,7 +302,11 @@ export async function executeAgentPrepared(
         } catch (error) {
           cleanupError = error instanceof Error ? error.message : String(error);
         }
-        await rollbackUnacceptedStart(core, childSessions, prepared, ctx, bridge);
+        try {
+          await rollbackUnacceptedStart(core, childSessions, prepared, ctx, bridge);
+        } catch (error) {
+          cleanupError ??= error instanceof Error ? error.message : String(error);
+        }
         return cleanupError;
       };
       if (bridge?.error !== undefined || bridge?.missingSessionIdentifier) {
@@ -546,6 +545,22 @@ export async function executeAgentPrepared(
       const keyScope = childSessionCacheKeyScopeFromContext(ctx);
       const key = childSessionCacheKey(agentId, keyScope);
       const bridge = childSessions.get(key);
+      let childExecutionInterrupted = false;
+      const failClose = (code: string, message: string) => {
+        let transitionError = "";
+        // Only pre-tombstone interruptions need suspended/close_cleanup_failed.
+        // After durable permanent close, cleanup retries use the tombstone path.
+        if (childExecutionInterrupted && !/unknown agent:/.test(message)) {
+          try {
+            decodeCoreAck(core.call("recordAgentCloseCleanupFailure", [{ agent_id: agentId }, ctx]));
+          } catch (error) {
+            transitionError = error instanceof Error ? error.message : String(error);
+          }
+        }
+        decodeCoreAck(core.call("releaseAgentClose", [{ agent_id: agentId }]));
+        const fullMessage = transitionError === "" ? message : `${message}; ${transitionError}`;
+        return agentErrorToolResult(core, code, fullMessage);
+      };
       try {
         // Cancel identity-owned broker sessions before cleanliness/removal inspection.
         try {
@@ -559,11 +574,11 @@ export async function executeAgentPrepared(
         // cleanup succeeds so close remains retryable on cleanup_failed.
         if (bridge?.stop !== undefined) {
           try {
+            childExecutionInterrupted = true;
             await bridge.stop("agent_closed");
           } catch (error) {
-            decodeCoreAck(core.call("releaseAgentClose", [{ agent_id: agentId }]));
             const message = error instanceof Error ? error.message : String(error);
-            return agentErrorToolResult(core, "cleanup_failed", `agent stop failed: ${message}`);
+            return failClose("cleanup_failed", `agent stop failed: ${message}`);
           }
         }
         if (prepared.deleteWorktree === true) {
@@ -575,43 +590,35 @@ export async function executeAgentPrepared(
               branch: prepared.worktreeBranch,
             }, ctx]));
           } catch (error) {
-            decodeCoreAck(core.call("releaseAgentClose", [{ agent_id: agentId }]));
             const message = error instanceof Error ? error.message : String(error);
-            return agentErrorToolResult(core, "cleanup_failed", message || "worktree deletion failed");
+            return failClose("cleanup_failed", message || "worktree deletion failed");
           }
         }
+        if (bridge !== undefined) childExecutionInterrupted = true;
+        // Drop only the live bridge. finishAgentClose stages and finalizes the
+        // private session while the identity is still listed, then removes durable
+        // state. Physical failure unstages and retains identity + exact session.
         await applyChildSessionUpdate(childSessions, {
           action: "delete_child_session",
           key: agentId,
           reason: "agent_closed",
         }, bridge, keyScope);
-        const sessionFile = prepared.childSessionFile;
-        if (typeof sessionFile === "string" && sessionFile !== "") {
-          const fs = await import("node:fs/promises");
-          const path = await import("node:path");
-          const directory = path.dirname(sessionFile);
-          if (path.basename(directory) === agentId) {
-            await fs.rm(directory, { recursive: true, force: true });
-          } else {
-            await fs.rm(sessionFile, { force: true });
-          }
-        }
       } catch (error) {
-        decodeCoreAck(core.call("releaseAgentClose", [{ agent_id: agentId }]));
         const message = error instanceof Error ? error.message : String(error);
-        return agentErrorToolResult(core, "cleanup_failed", `agent_close cleanup failed: ${message}`);
+        return failClose("cleanup_failed", `agent_close cleanup failed: ${message}`);
       }
       let finished;
       try {
         finished = decodeCoreAck(core.call("finishAgentClose", [{ agent_id: agentId }, ctx]));
       } catch (error) {
-        decodeCoreAck(core.call("releaseAgentClose", [{ agent_id: agentId }]));
-        return agentErrorToolResult(core, "persistence_failed", error instanceof Error ? error.message : String(error));
+        const message = error instanceof Error ? error.message : String(error);
+        return failClose(
+          /cleanup_failed/.test(message) ? "cleanup_failed" : "persistence_failed",
+          message,
+        );
       }
       if (finished.ok !== true) {
-        decodeCoreAck(core.call("releaseAgentClose", [{ agent_id: agentId }]));
-        const message = "agent close state removal failed";
-        return agentErrorToolResult(core, "persistence_failed", message);
+        return failClose("persistence_failed", "agent close state removal failed");
       }
       return preparedToolResult(core, {
         text: stringField(prepared, "text"),
@@ -702,19 +709,15 @@ export function installAgentLifecycle(
             key: agentId,
             reason: "parent_shutdown",
           }, undefined, keyScope);
-          const sessionFile = agent.childSessionFile ?? "";
-          if (sessionFile !== "") {
-            const fs = await import("node:fs/promises");
-            const path = await import("node:path");
-            const directory = path.dirname(sessionFile);
-            if (path.basename(directory) === agentId) {
-              await fs.rm(directory, { recursive: true, force: true });
-            } else {
-              await fs.rm(sessionFile, { force: true });
-            }
-          }
         }
-        decodeCoreAck(core.call("finishEphemeralAgentCleanup", [ctx]));
+        // A process lease prevents another reconciler from promoting prepared
+        // ephemeral tombstones until this shutdown transaction has removed the
+        // in-process identities or rolled staging back.
+        try {
+          decodeCoreAck(core.call("finishEphemeralAgentCleanup", [ctx]));
+        } finally {
+          decodeCoreAck(core.call("releaseEphemeralAgentCleanupLease", [ctx]));
+        }
         return;
       }
       decodeCoreAck(core.call("suspendOwnerAgentsOnShutdown", [ctx]));
