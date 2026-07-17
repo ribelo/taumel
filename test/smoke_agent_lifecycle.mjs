@@ -34,7 +34,7 @@ const ctx = {
   },
 };
 
-core = bootstrap.init({
+const host = {
   resolveAuthorizationPath: realpathSync,
   on: (event, handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
   eventsOn: () => () => undefined,
@@ -54,7 +54,8 @@ core = bootstrap.init({
   onBranchChange: () => () => undefined,
   requestRender: () => undefined,
   themeFg: (_theme, _color, value) => value,
-});
+};
+core = bootstrap.init(host);
 
 const start = core.call("prepareTool", [{
   name: "agent_spawn",
@@ -326,6 +327,27 @@ assert.equal(afterShutdownList.details.agents[0].status, "suspended",
   "owner runs must be suspended on shutdown");
 assert.equal(afterShutdownList.details.agents[0].turn_count, 1,
   "journaled activity must survive shutdown with a child projection loaded");
+
+// Round-5 regression: with a child projection loaded last, a parent agent tool
+// whose host session snapshot fails must fail closed. Proceeding would load
+// the owner registry while state.cwd still points at the child workspace and
+// durably bind a parent identity to the wrong repository.
+core.call("agentManagerSnapshot", [swapChildCtx]);
+const originalSnapshot = host.sessionSnapshot;
+host.sessionSnapshot = () => { throw new Error("host unavailable"); };
+const hostFailSpawn = core.call("prepareTool", [{
+  name: "agent_spawn",
+  params: { message: "host failure", description: "Spawn during host failure", tier: "low" },
+  ctx,
+}]);
+host.sessionSnapshot = originalSnapshot;
+assert.notEqual(hostFailSpawn.ok, true,
+  "agent tools must fail closed when the host session snapshot is unavailable");
+assert.equal(
+  core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]).details.agents.length,
+  1,
+  "a failed-closed spawn must not append or provision an identity",
+);
 
 rmSync(childDirectory, { recursive: true, force: true });
 

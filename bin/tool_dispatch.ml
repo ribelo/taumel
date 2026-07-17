@@ -10,11 +10,21 @@ let prepare raw_facts =
   let ctx = Tool_contracts.PrepareToolFacts.get_ctx facts
     |> Ts2ocaml.unknown_to_js |> Obj.magic
   in
-  Session_sync.sync_session_from_host ~scope:"tool prepare"
-    ~reset_missing:(name <> "ralph_continue" && name <> "ralph_finish") ctx;
+  (* Agent tools read and mutate the owner registry and bind new identities
+     to the current workspace, so they need both a successful host/session
+     refresh AND the owner projection. A failed host snapshot must fail
+     closed here: proceeding would let require_agent_owner load the parent
+     registry while state.cwd still points at a child's workspace, durably
+     binding a parent identity to the wrong repository. *)
+  let host_synced =
+    Session_sync.try_sync_session_from_host ~scope:"tool prepare"
+      ~reset_missing:(name <> "ralph_continue" && name <> "ralph_finish") ctx
+  in
   match name with
   | "agent_spawn" | "agent_send" | "agent_wait" | "agent_list" | "agent_close"
-  | "finder" | "oracle" -> Agent_tools.prepare name params ctx
+  | "finder" | "oracle" ->
+      if not host_synced then error_obj "agent session state is unavailable"
+      else Agent_tools.prepare name params ctx
   | "exec_command" -> Mutation_tools.prepare_exec_command params ctx
   | "write_stdin" -> Mutation_tools.prepare_write_stdin params
   | "apply_patch" -> Mutation_tools.prepare_apply_patch params ctx
