@@ -1,7 +1,8 @@
 open Jsoo_bridge
 open App_state
 
-let accept_worktree_start facts _ctx =
+let accept_worktree_start facts ctx =
+  Session_sync.require_agent_owner ctx;
   let agent_id = get_string facts "agentId" in
   match Taumel.Agents.find_identity !agent_state agent_id with
   | None -> core_ack ()
@@ -15,7 +16,8 @@ let accept_worktree_start facts _ctx =
           with
           | Ok () -> core_ack ()
           | Error message -> error_obj message))
-let rollback_worktree_start facts _ctx =
+let rollback_worktree_start facts ctx =
+  Session_sync.require_agent_owner ctx;
   let agent_id = get_string facts "agentId" in
   match Taumel.Agents.find_identity !agent_state agent_id with
   | None -> error_obj ("unknown agent: " ^ agent_id)
@@ -40,6 +42,7 @@ let rollback_worktree_start facts _ctx =
               | Ok () -> core_ack ()
               | Error (_code, message) -> error_obj message)))
 let delete_worktree facts ctx =
+  Session_sync.require_agent_owner ctx;
   let agent_id = get_string facts "agent_id" in
   match
     Taumel.Agents.owned_identity !agent_state

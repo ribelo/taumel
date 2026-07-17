@@ -15,17 +15,7 @@ let is_agent_child ctx =
 let reject_nested name =
   error_obj (name ^ " is unavailable inside a child agent")
 
-let save_agent_state ctx =
-  Session_store.append_custom_entry ctx "taumel.agents.v4"
-    (Taumel.Agents_codec.encode !agent_state);
-  (* A persisted snapshot includes every journaled effect for this owner.
-     Only clear when the loaded projection really is that owner's registry;
-     otherwise the save itself is suspect and the journal must survive. *)
-  if !loaded_session_id = Some (owner_id ctx) then
-    agent_activity_journal :=
-      List.filter
-        (fun entry -> entry.journal_owner <> owner_id ctx)
-        !agent_activity_journal
+let save_agent_state = Session_sync.save_agent_state
 
 let commit_agent_state ctx next =
   let previous = !agent_state in
@@ -151,7 +141,7 @@ let prepare_close params ctx =
                     |> Tool_contracts.PreparedAgentClose.t_to_js |> inject)))
 
 let finish_close facts ctx =
-  Session_sync.sync_persisted_session ctx;
+  Session_sync.require_agent_owner ctx;
   let agent_id = get_string facts "agent_id" in
   let owner = owner_id ctx in
   let clear_agent_tracking () =
@@ -305,7 +295,7 @@ let release_close facts =
   core_ack ()
 
 let delete_child_session facts ctx =
-  Session_sync.sync_persisted_session ctx;
+  Session_sync.require_agent_owner ctx;
   let agent_id = get_string facts "agent_id" in
   match
     Taumel.Agents.owned_identity !agent_state ~owner_session_id:(owner_id ctx)
@@ -318,7 +308,7 @@ let delete_child_session facts ctx =
       | Error message -> error_obj ("cleanup_failed: " ^ message))
 
 let record_close_cleanup_failure facts ctx =
-  Session_sync.sync_persisted_session ctx;
+  Session_sync.require_agent_owner ctx;
   let agent_id = get_string facts "agent_id" in
   match
     Taumel.Agent_registry.suspend_running_for_agent !agent_state

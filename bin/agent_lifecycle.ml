@@ -4,7 +4,7 @@ open Runtime_access
 open Agent_tools
 
 let record_child_session_start facts ctx =
-  Session_sync.sync_persisted_session ctx;
+  Session_sync.require_agent_owner ctx;
   let agent_id = get_string facts "agent_id" in
   let child_session_id =
     Option.bind (optional_string_field facts "sessionId") Taumel.Shared.trim_non_empty
@@ -23,7 +23,7 @@ let record_child_session_start facts ctx =
       core_ack ()
 
 let rollback_unaccepted_start facts ctx =
-  Session_sync.sync_persisted_session ctx;
+  Session_sync.require_agent_owner ctx;
   let agent_id = get_string facts "agent_id" in
   let run_id = get_string facts "run_id" in
   let submission_id = get_string facts "submission_id" in
@@ -38,7 +38,7 @@ let rollback_unaccepted_start facts ctx =
       core_ack ()
 
 let rollback_send_preflight facts ctx =
-  Session_sync.sync_persisted_session ctx;
+  Session_sync.require_agent_owner ctx;
   let agent_id = get_string facts "agent_id" in
   let run_id = get_string facts "run_id" in
   let submission_id = get_string facts "submission_id" in
@@ -68,7 +68,7 @@ let rollback_send_preflight facts ctx =
           core_ack ()))
 
 let record_send_dispatch_failure facts ctx =
-  Session_sync.sync_persisted_session ctx;
+  Session_sync.require_agent_owner ctx;
   let run_id = get_string facts "run_id" in
   let submission_id =
     Option.bind (optional_string_field facts "submission_id")
@@ -89,7 +89,7 @@ let record_send_dispatch_failure facts ctx =
       core_ack ()
 
 let rollback_failed_interruption facts ctx =
-  Session_sync.sync_persisted_session ctx;
+  Session_sync.require_agent_owner ctx;
   let agent_id = get_string facts "agent_id" in
   let run_id = get_string facts "run_id" in
   match
@@ -103,7 +103,7 @@ let rollback_failed_interruption facts ctx =
       core_ack ()
 
 let record_dispatch_completion facts ctx =
-  Session_sync.sync_persisted_session ctx;
+  Session_sync.require_agent_owner ctx;
   let run_id = get_string facts "run_id" in
   let submission_id =
     Option.bind (optional_string_field facts "submission_id")
@@ -195,7 +195,7 @@ let flush_pending_activity () =
     (fun (owner, ctx) ->
       if List.exists (fun entry -> entry.journal_owner = owner) !agent_activity_journal then
         try
-          Session_sync.sync_persisted_session ctx;
+          Session_sync.require_agent_owner ctx;
           save_agent_state ctx;
           last_activity_persist_at := now_milliseconds ()
         with _ -> ())
@@ -222,7 +222,7 @@ let schedule_activity_flush ctx =
     | None -> ())
 
 let record_activity facts ctx =
-  Session_sync.sync_persisted_session ctx;
+  Session_sync.require_agent_owner ctx;
   let run_id = get_string facts "run_id" in
   let submission_id = get_string facts "submission_id" in
   let event = get_string facts "event" in
@@ -251,7 +251,7 @@ let record_activity facts ctx =
   core_ack ()
 
 let record_dispatch_boundary facts ctx =
-  Session_sync.sync_persisted_session ctx;
+  Session_sync.require_agent_owner ctx;
   let run_id = get_string facts "run_id" in
   let submission_id = get_string facts "submission_id" in
   let previous_assistant_entry_id =
@@ -269,7 +269,7 @@ let record_dispatch_boundary facts ctx =
       | Error message -> error_obj message)
 
 let reconcile_live_dispatches facts ctx =
-  Session_sync.sync_persisted_session ctx;
+  Session_sync.require_agent_owner ctx;
   let live_agent_ids = Option.value (optional_string_array facts "live_agent_ids") ~default:[] in
   let next =
     Taumel.Agent_registry.reconcile_live_dispatches !agent_state
@@ -282,6 +282,7 @@ let reconcile_live_dispatches facts ctx =
     | Error message -> error_obj message
 
 let pending_agent_notifications ctx =
+  Session_sync.require_agent_owner ctx;
   let owner = owner_id ctx in
   let pending =
     Taumel.Agent_registry.pending_notifications !agent_state ~owner_session_id:owner
@@ -318,7 +319,7 @@ let pending_agent_notifications ctx =
   |> Tool_contracts.PendingAgentNotificationsResult.t_to_js |> inject
 
 let record_background_notification facts ctx =
-  Session_sync.sync_persisted_session ctx;
+  Session_sync.require_agent_owner ctx;
   let run_id = get_string facts "run_id" in
   let owned =
     match Taumel.Agents.find_run !agent_state run_id with
@@ -347,6 +348,7 @@ let release_background_notification facts =
   core_ack ()
 
 let validate_background_notification_claim facts ctx =
+  Session_sync.require_agent_owner ctx;
   let run_id = get_string facts "run_id" in
   let valid =
     List.mem run_id !agent_notification_claims
@@ -365,6 +367,7 @@ let validate_background_notification_claim facts ctx =
   |> Tool_contracts.AgentNotificationClaimValidation.t_to_js |> inject
 
 let count_active_child_runs ctx =
+  Session_sync.require_agent_owner ctx;
   let count =
     Taumel.Agent_registry.count_active_child_runs !agent_state ~owner_session_id:(owner_id ctx)
   in
@@ -372,7 +375,7 @@ let count_active_child_runs ctx =
   |> Tool_contracts.AgentActiveCountResult.t_to_js |> inject
 
 let ephemeral_cleanup_plan ctx =
-  Session_sync.sync_persisted_session ctx;
+  Session_sync.require_agent_owner ctx;
   let agents =
     Taumel.Agents.owned_identities !agent_state
       ~owner_session_id:(owner_id ctx)
@@ -384,7 +387,7 @@ let ephemeral_cleanup_plan ctx =
   |> Tool_contracts.AgentCleanupPlan.t_to_js |> inject
 
 let manager_snapshot ctx =
-  Session_sync.sync_persisted_session ctx;
+  Session_sync.require_agent_owner ctx;
   let reconciled = Session_sync.reconcile_settled_runs !agent_state in
   if reconciled != !agent_state then (
     match commit_agent_state ctx reconciled with
@@ -463,7 +466,7 @@ let manager_snapshot ctx =
   |> Tool_contracts.AgentManagerSnapshot.t_to_js |> inject
 
 let finish_ephemeral_cleanup ctx =
-  Session_sync.sync_persisted_session ctx;
+  Session_sync.require_agent_owner ctx;
   match !agent_state_load_error with
   | Some message -> error_obj ("agent state is unavailable: " ^ message)
   | None ->
@@ -642,7 +645,7 @@ let release_ephemeral_cleanup_lease ctx =
     | Error message -> error_obj ("cleanup_failed: " ^ message)
 
 let suspend_owner_on_shutdown ctx =
-  Session_sync.sync_persisted_session ctx;
+  Session_sync.require_agent_owner ctx;
   match !agent_state_load_error with
   | Some message -> error_obj ("agent state is unavailable: " ^ message)
   | None ->
@@ -657,7 +660,7 @@ let suspend_owner_on_shutdown ctx =
       core_ack ()
 
 let finish_wait facts ctx =
-  Session_sync.sync_persisted_session ctx;
+  Session_sync.require_agent_owner ctx;
   let run_ids =
     match optional_string_array facts "run_ids" with
     | None -> []
@@ -722,7 +725,7 @@ let stop_active_run state ~now ~owner_session_id ~agent_id =
       | _ -> Ok (state, false, ""))
 
 let handle_agent_runs_command args ctx =
-  Session_sync.sync_persisted_session ctx;
+  Session_sync.require_agent_owner ctx;
   match !agent_state_load_error with
   | Some message -> error_obj ("agent state is unavailable: " ^ message)
   | None ->

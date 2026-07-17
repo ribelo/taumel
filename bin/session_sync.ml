@@ -610,6 +610,33 @@ let sync_persisted_session ?(reset_missing = true)
 let persisted_session_snapshot_is_isolated_child snapshot =
   session_is_isolated_child_data snapshot.child_session
 
+(* The single owner-bound boundary for agent registry access. Every entry
+   point that reads the registry goes through this: after it returns, the
+   loaded projection is the context owner's registry with all pending
+   activity replayed. Fails closed otherwise, so a missed synchronization
+   can never become silent cross-session corruption. *)
+let require_agent_owner ctx =
+  sync_persisted_session ctx;
+  let owner = Session_store.session_id_from_ctx ctx in
+  if !loaded_session_id <> Some owner then
+    failwith ("agent registry projection unavailable for owner " ^ owner)
+
+(* The single agent-registry persistence point. Refuses to append unless
+   the loaded projection is this owner's replayed registry, so persisting a
+   foreign projection is unrepresentable. A persisted snapshot includes
+   every journaled effect for the owner, so the journal clears on save. *)
+let save_agent_state ctx =
+  let owner = Session_store.session_id_from_ctx ctx in
+  if !loaded_session_id <> Some owner then
+    failwith
+      ("agent registry projection mismatch: refusing to persist for " ^ owner);
+  Session_store.append_custom_entry ctx "taumel.agents.v4"
+    (Taumel.Agents_codec.encode !agent_state);
+  agent_activity_journal :=
+    List.filter
+      (fun entry -> entry.journal_owner <> owner)
+      !agent_activity_journal
+
 let try_sync_session_from_host_with ?(scope = "session sync")
     ?(reset_missing = true) ?(clear_retained_outputs = false) host ctx =
   try
