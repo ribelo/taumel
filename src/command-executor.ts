@@ -30,7 +30,7 @@ import {
   liveToolNames,
 } from "./util.ts";
 import { toolNames } from "./tool-contracts.ts";
-import { decodeActiveToolsPlan, decodeCommandChildSessionPlan, decodeCommandExecutionPlan, decodeCommandNotificationPlan, decodeCommandSpecsResult } from "./bridge-contracts.ts";
+import { decodeActiveToolsPlan, decodeCommandChildSessionPlan, decodeCommandExecutionPlan, decodeCommandNotificationPlan, decodeCommandSpecsResult, decodeCoreAck } from "./bridge-contracts.ts";
 import { decodeBridgeCommandResult, decodeCommandChildDispatchPlan, decodeGatewayCommandOutput, decodeGoalContinuationPlan, decodeGoalRollbackResult, decodePermissionsCommandResult, decodePermissionsPrompt, decodePermissionsPromptPlan, type GatewayCommandOutput, type GoalContinuationFacts, type ToolResultEnvelope } from "./bridge-contracts.ts";
 
 type CommandContext = {
@@ -396,6 +396,7 @@ export async function executeGatewayCommand(
   name: string,
   args: string,
   ctx: unknown,
+  childExtensionFactory?: (pi: PiLike) => void,
 ): Promise<unknown> {
   refreshOwnedChildPermissions(childSessions, ctx);
   if (name === "taumel") {
@@ -455,7 +456,7 @@ export async function executeGatewayCommand(
     currentActiveTools: currentActiveToolNames ?? [],
   }]));
   const metadata = childSessionPlan.metadata;
-  const bridge = await createChildSession(pi, core, ctx, metadata);
+  const bridge = await createChildSession(pi, core, ctx, metadata, childExtensionFactory);
 
   const childContextKey = plan.childSessionContextKey;
   if (childContextKey !== "" && bridge?.sessionId && !bridge.cancelled && !bridge.error) {
@@ -472,6 +473,9 @@ export async function executeGatewayCommand(
 
   await applyChildSessionUpdate(childSessions, dispatchPlan.bridgeUpdate, bridge);
   const dispatch = await sendToChildSession(pi, core, bridge, dispatchPlan.prompt);
+  if (name === "ralph") {
+    decodeCoreAck(core.call("persistRalphControllerState", [ctx]));
+  }
   const finished = decodeBridgeCommandResult(core.call("finishCommandChildDispatch", [{
     result: plannedResult,
     dispatch,
@@ -484,6 +488,7 @@ export function registerGatewayCommands(
   core: CoreBridge,
   childSessions: Map<string, ChildSessionBridge>,
   composer?: ComposerController,
+  childExtensionFactory?: (pi: PiLike) => void,
 ): void {
   if (typeof pi.registerCommand !== "function") return;
   pi.registerCommand("system-prompt", {
@@ -511,6 +516,7 @@ export function registerGatewayCommands(
             name,
             _args,
             ctx,
+            childExtensionFactory,
           );
         } finally {
           if (name === "usage" && typeof ui?.setStatus === "function") {

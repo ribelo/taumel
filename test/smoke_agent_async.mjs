@@ -83,6 +83,7 @@ const pi = {
       messages: sessionMessages,
       get isStreaming() { return streaming; },
       getAvailableThinkingLevels: () => ["off", "low", "medium", "high"],
+      getActiveToolNames: () => options.tools,
       subscribe: (handler) => {
         subscribers.add(handler);
         return () => { subscribers.delete(handler); };

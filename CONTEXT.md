@@ -231,6 +231,11 @@ The side-effect authority within which tools execute, including sandbox,
 approval, network, and no-sandbox constraints.
 _Avoid_: Tool surface, active tools
 
+**Assigned tool surface**:
+The fixed set of tool contracts promised to a child identity and required to be
+present in each effective child session before work is accepted.
+_Avoid_: Permission envelope, provider tool list, best-effort tools
+
 **Protected workspace metadata**:
 Version-control control data under `.git`, `.hg`, or `.svn` that remains
 non-mutable in restricted filesystem modes even when ordinary workspace files

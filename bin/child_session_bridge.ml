@@ -106,7 +106,10 @@ let plan_child_session_start raw_facts ctx =
   in
   let result =
     let privateSessionDirectory =
-      match get_string metadata_js "agentId" |> Taumel.Shared.trim_non_empty with
+      match
+        Option.bind (optional_string_field metadata_js "agentId")
+          Taumel.Shared.trim_non_empty
+      with
       | None -> None
       | Some agent_id -> (
           (if

@@ -98,3 +98,7 @@ let handle_command args ctx =
       (match plan.start_details with
       | None -> command_result plan.message
       | Some details -> command_result ~details:(start_details details) plan.message)
+
+let persist_controller_state ctx =
+  Session_sync.save_ralph_state ctx;
+  core_ack ()

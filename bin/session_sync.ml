@@ -563,20 +563,29 @@ let sync_persisted_session_snapshot ?(reset_missing = true)
     !loaded_session_id <> Some session_id
     && (reset_missing || has_persisted_component_entry snapshot)
   then (
+    let load_if_present loader value =
+      if reset_missing || Option.is_some value then loader value
+    in
     let forked =
-      load_goal_state_data ~session_id:snapshot.session_id snapshot.goal
+      if reset_missing || Option.is_some snapshot.goal then
+        load_goal_state_data ~session_id:snapshot.session_id snapshot.goal
+      else false
     in
     if forked then goal_automation := Taumel.Goal.Automation_interrupted
-    else load_goal_automation_state_data snapshot.goal_automation_entry;
-    load_permissions_state_data ~child_session:snapshot.child_session
+    else
+      load_if_present load_goal_automation_state_data
+        snapshot.goal_automation_entry;
+    load_if_present
+      (load_permissions_state_data ~child_session:snapshot.child_session)
       snapshot.permissions;
-    load_ralph_state_data snapshot.ralph;
-    load_visibility_state_data snapshot.visibility;
-    load_agent_state_data
-      ~session_id:snapshot.session_id
-      ~recover_running:(first_agent_session_load snapshot.session_id)
-      snapshot.agents;
-    remember_agent_session snapshot.session_id;
+    load_if_present load_ralph_state_data snapshot.ralph;
+    load_if_present load_visibility_state_data snapshot.visibility;
+    if reset_missing || Option.is_some snapshot.agents then (
+      load_agent_state_data
+        ~session_id:snapshot.session_id
+        ~recover_running:(first_agent_session_load snapshot.session_id)
+        snapshot.agents;
+      remember_agent_session snapshot.session_id);
     last_goal_accounting_key := None;
     goal_turn_clock := Taumel.Goal.empty_clock;
     pending_goal_terminal_status := None;

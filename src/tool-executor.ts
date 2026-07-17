@@ -741,6 +741,7 @@ export async function executeTool(
   rawParams: unknown,
   ctx: unknown,
   signal?: AbortSignal,
+  childExtensionFactory?: (pi: PiLike) => void,
 ): Promise<GatewayToolResult> {
   const parsed = parseToolParams(name, rawParams);
   if (!parsed.ok) {
@@ -818,7 +819,7 @@ export async function executeTool(
       return false;
     }
   };
-  const replan = () => executeTool(pi, core, childSessions, name, parsed.params, ctx, signal);
+  const replan = () => executeTool(pi, core, childSessions, name, parsed.params, ctx, signal, childExtensionFactory);
   switch (prepared.action) {
     case "tool_result":
       return preparedToolResult(core, prepared);
@@ -834,6 +835,7 @@ export async function executeTool(
         prepared as { readonly [key: string]: unknown },
         ctx,
         signal,
+        childExtensionFactory,
       );
     case "openai_usage_fetch":
       return executeOpenAiUsageWithHostAuth(pi, core, prepared, ctx);
@@ -956,9 +958,12 @@ export function registerGatewayTools(
       promptSnippet: contract.promptSnippet ?? "",
       ...(contract.promptGuidelines !== undefined ? { promptGuidelines: contract.promptGuidelines } : {}),
       execute: async (...args: unknown[]) => {
+        const childExtensionFactory = (childPi: PiLike) =>
+          registerGatewayTools(childPi, core, childSessions);
         const result = await executeTool(
           pi, core, childSessions, name, args[1], args[4],
           args[2] instanceof AbortSignal ? args[2] : undefined,
+          childExtensionFactory,
         );
         const failure = agentFailureText(name, result);
         if (failure !== undefined) throw new Error(failure);

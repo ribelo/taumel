@@ -129,6 +129,7 @@ let core_call name_js args_js =
   | "planCommandChildSession" -> Command_bridge.plan_child_session (arg 0)
   | "planCommandChildDispatch" -> Command_bridge.plan_child_dispatch (arg 0)
   | "finishCommandChildDispatch" -> Command_bridge.finish_child_dispatch (arg 0)
+  | "persistRalphControllerState" -> Ralph_tools.persist_controller_state (arg 0)
   | "recordAgentChildSessionStart" -> Agent_lifecycle.record_child_session_start (arg 0) (arg 1)
   | "agentRoutingDiagnostics" -> Agent_tools.routing_diagnostics ()
   | "rollbackUnacceptedAgentStart" ->

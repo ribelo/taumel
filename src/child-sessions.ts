@@ -4,7 +4,8 @@ import {
   getAgentDir,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
-import { statSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import finderPromptResource from "../resources/agents/finder.md" with { type: "text" };
 import oraclePromptResource from "../resources/agents/oracle.md" with { type: "text" };
 import subagentPromptResource from "../resources/agents/subagent.md" with { type: "text" };
@@ -52,11 +53,13 @@ type SdkSession = {
   readonly followUp?: (prompt: string) => Promise<unknown>;
   readonly prompt?: (prompt: string, options: { streamingBehavior: string }) => Promise<unknown>;
   readonly getAvailableThinkingLevels?: () => readonly string[];
+  readonly getActiveToolNames?: () => readonly string[];
   readonly sessionManager?: unknown; readonly sessionId?: unknown; readonly sessionFile?: unknown;
   readonly abort?: (reason?: string) => Promise<unknown>; readonly dispose?: () => unknown;
 };
 type CreatedSession = { readonly session?: unknown };
 type NamedTool = { readonly name?: unknown };
+type LoadedExtension = { readonly tools?: ReadonlyMap<string, unknown> };
 type ChildSendContext = { readonly sendUserMessage?: (content: string, options: MessageDeliveryOptions) => Promise<unknown>; readonly sessionManager?: unknown };
 type HostCompletion = {
   readonly finalOutput?: unknown; readonly output?: unknown; readonly result?: unknown; readonly content?: unknown;
@@ -83,6 +86,37 @@ function loadSpecialistPrompt(kind: string): string | undefined {
 function loadSubagentPrompt(): string | undefined {
   const text = subagentPromptResource.trim();
   return text === "" ? undefined : text;
+}
+
+function withoutRecursiveTaumelError<
+  T extends { readonly errors: readonly { readonly path?: unknown; readonly error?: unknown }[] },
+>(
+  result: T,
+): T {
+  const extensionPath = realpathSync(fileURLToPath(import.meta.url));
+  return {
+    ...result,
+    errors: result.errors.filter((entry) => {
+      if (typeof entry.path !== "string" || typeof entry.error !== "string") return true;
+      let sourcePath: string;
+      try {
+        sourcePath = realpathSync(entry.path);
+      } catch {
+        return true;
+      }
+      return sourcePath !== extensionPath
+        || !entry.error.endsWith("Taumel core is already initialized");
+    }),
+  };
+}
+
+function childResourceToolNames(resourceLoader: DefaultResourceLoader): Set<string> {
+  const names = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
+  for (const extension of resourceLoader.getExtensions().extensions as LoadedExtension[]) {
+    if (extension.tools === undefined) continue;
+    for (const name of extension.tools.keys()) names.add(name);
+  }
+  return names;
 }
 
 function specialistPromptForMetadata(metadata: Partial<{ readonly kind?: unknown; readonly agentKind?: unknown }> | undefined): string | undefined {
@@ -466,6 +500,7 @@ export async function createChildSession(
   core: CoreBridge,
   ctx: unknown,
   metadata: ChildSessionMetadata,
+  childExtensionFactory?: (pi: PiLike) => void,
 ): Promise<ChildSessionBridge | undefined> {
   const parent = sessionInfoFromContext(ctx);
   const plan = childSessionStartPlan(core, metadata, parent, ctx);
@@ -542,11 +577,29 @@ export async function createChildSession(
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir: getAgentDir(),
+    ...(childExtensionFactory === undefined
+      ? {}
+      : {
+        extensionFactories: [(childPi) => childExtensionFactory(childPi as unknown as PiLike)],
+        extensionsOverride: withoutRecursiveTaumelError,
+      }),
     ...(specialistPrompt === undefined
       ? {}
       : { systemPromptOverride: () => specialistPrompt }),
     appendSystemPromptOverride: (base) => [...base, subagentPrompt],
   });
+  try {
+    await resourceLoader.reload();
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+  if (childExtensionFactory !== undefined) {
+    const resourceNames = childResourceToolNames(resourceLoader);
+    const missingResources = activeTools.filter((name) => !resourceNames.has(name));
+    if (missingResources.length > 0) {
+      return { error: `tool_surface_unavailable: ${missingResources.join(", ")}` };
+    }
+  }
   let createdSessionManager: unknown;
   try {
     const sessionManager = usePrivatePersistentSession
@@ -564,7 +617,6 @@ export async function createChildSession(
     } else {
       appendSetupEntries(sessionManager, setupEntries);
     }
-    await resourceLoader.reload();
     const options = {
       cwd,
       sessionManager,
@@ -614,6 +666,18 @@ export async function createChildSession(
       return { missingSessionIdentifier: true };
     }
     const activeToolsApplied = activeTools === undefined ? false : applyChildActiveTools(session, activeTools);
+    const effectiveActiveTools = typeof session.getActiveToolNames === "function"
+      ? session.getActiveToolNames.call(session)
+      : [];
+    const effectiveNames = new Set(effectiveActiveTools);
+    const missingActiveTools = activeTools.filter((name) => !effectiveNames.has(name));
+    if (missingActiveTools.length > 0) {
+      if (usePrivatePersistentSession && existingSessionFile === "") {
+        await removeNewPrivateSessionArtifacts(core, ctx, agentId);
+      }
+      if (typeof session.dispose === "function") session.dispose.call(session);
+      return { error: `tool_surface_unavailable: ${missingActiveTools.join(", ")}` };
+    }
     return {
       sessionId: sessionId ?? sessionFile,
       sessionFile,

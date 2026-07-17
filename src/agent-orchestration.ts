@@ -256,6 +256,7 @@ async function createAgentChildSession(
   childSessions: Map<string, ChildSessionBridge>,
   prepared: UnknownFields,
   ctx: unknown,
+  childExtensionFactory?: (pi: PiLike) => void,
 ): Promise<ChildSessionBridge | undefined> {
   const metadata = prepared.metadata;
   if (!isObject(metadata)) return { error: "missing agent metadata" };
@@ -265,7 +266,7 @@ async function createAgentChildSession(
   } catch {
     return { error: "invalid agent metadata" };
   }
-  const bridge = await createChildSession(pi, core, ctx, typedMetadata);
+  const bridge = await createChildSession(pi, core, ctx, typedMetadata, childExtensionFactory);
   if (bridge === undefined || bridge.error !== undefined || bridge.missingSessionIdentifier) {
     return bridge;
   }
@@ -289,11 +290,12 @@ export async function executeAgentPrepared(
   prepared: UnknownFields,
   ctx: unknown,
   signal?: AbortSignal,
+  childExtensionFactory?: (pi: PiLike) => void,
 ) {
   const action = stringField(prepared, "action");
   switch (action) {
     case "agent_start": {
-      const bridge = await createAgentChildSession(pi, core, childSessions, prepared, ctx);
+      const bridge = await createAgentChildSession(pi, core, childSessions, prepared, ctx, childExtensionFactory);
       const rollbackWorktreeThenState = async () => {
         // Physical worktree rollback must run while identity/binding still exists.
         let cleanupError: string | undefined;
@@ -396,7 +398,7 @@ export async function executeAgentPrepared(
       }
       if (bridge === undefined) {
         try {
-          bridge = await createAgentChildSession(pi, core, childSessions, prepared, ctx);
+          bridge = await createAgentChildSession(pi, core, childSessions, prepared, ctx, childExtensionFactory);
         } catch (error) {
           rollbackAgentSendPreflight(core, prepared, ctx);
           return agentErrorToolResult(

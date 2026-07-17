@@ -171,12 +171,14 @@ export default async function taumel(pi: PiLike) {
   const childSessions = new Map<string, ChildSessionBridge>();
   const composer = await createComposerController(pi);
   installSkillAutocomplete(pi, core, composer);
+  const registerChildGateway = (childPi: PiLike) =>
+    registerGatewayTools(childPi, core, childSessions);
   registerGatewayTools(pi, core, childSessions);
   if (typeof pi.registerMessageRenderer === "function") {
     pi.registerMessageRenderer("skill", skillMessageRenderer());
     pi.registerMessageRenderer("taumel.cron.fire", cronFireMessageRenderer());
   }
-  registerGatewayCommands(pi, core, childSessions, composer);
+  registerGatewayCommands(pi, core, childSessions, composer, registerChildGateway);
   installGoalContinuationLoop(pi, core);
   installCronLoop(pi, core);
   installSandboxToolActivation(pi, core);
