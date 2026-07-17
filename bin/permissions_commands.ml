@@ -110,9 +110,9 @@ let finish_prompt_impl prompt selection ctx =
       | Some value -> apply_menu_value value ctx
 
 let plan_prompt raw_facts =
-  let facts = Tool_contracts.PermissionsPromptFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts = decode_ojs_contract Tool_contracts.PermissionsPromptFacts.t_of_js (ojs_of_js raw_facts) in
   let prompt = Tool_contracts.PermissionsPromptFacts.get_prompt facts
-    |> Tool_contracts.PermissionsPrompt.t_to_js |> Obj.magic
+    |> Tool_contracts.PermissionsPrompt.t_to_js |> js_of_ojs
   in
   let options =
     get_object_array prompt "options" |> List.map menu_option_from_js
@@ -127,7 +127,7 @@ let plan_prompt raw_facts =
         finish_prompt_impl prompt
           (Unsafe.obj [| ("status", js_string "unavailable") |])
           (Unsafe.obj [||])
-        |> ojs_of_js |> Tool_contracts.PermissionsCommandResult.t_of_js
+        |> ojs_of_js |> decode_ojs_contract Tool_contracts.PermissionsCommandResult.t_of_js
       in
       Boundary_contracts.PermissionsPromptResult.create ~result ()
       |> Tool_contracts.PermissionsPromptResult.t_to_js |> inject
@@ -137,14 +137,14 @@ let plan_prompt raw_facts =
       |> Tool_contracts.PermissionsPromptSelect.t_to_js |> inject
 
 let finish_prompt raw_facts =
-  let facts = Tool_contracts.PermissionsPromptFinishFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts = decode_ojs_contract Tool_contracts.PermissionsPromptFinishFacts.t_of_js (ojs_of_js raw_facts) in
   let prompt = Tool_contracts.PermissionsPromptFinishFacts.get_prompt facts
-    |> Tool_contracts.PermissionsPrompt.t_to_js |> Obj.magic
+    |> Tool_contracts.PermissionsPrompt.t_to_js |> js_of_ojs
   in
   let selection = Tool_contracts.PermissionsPromptFinishFacts.get_selection facts
-    |> Tool_contracts.PermissionsSelection.t_to_js |> Obj.magic
+    |> Tool_contracts.PermissionsSelection.t_to_js |> js_of_ojs
   in
   let ctx = Tool_contracts.PermissionsPromptFinishFacts.get_ctx facts
-    |> Ts2ocaml.unknown_to_js |> Obj.magic
+    |> Ts2ocaml.unknown_to_js |> js_of_ojs
   in
   finish_prompt_impl prompt selection ctx

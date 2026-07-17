@@ -48,7 +48,7 @@ let child_bridge_details facts =
        (child_session_bridge_from_js facts))
 
 let plan_child_dispatch facts =
-  let facts = Tool_contracts.ChildDispatchFacts.t_of_js (ojs_of_js facts) in
+  let facts = decode_ojs_contract Tool_contracts.ChildDispatchFacts.t_of_js (ojs_of_js facts) in
   let bridge =
     if not (Tool_contracts.ChildDispatchFacts.get_available facts) then None
     else
@@ -88,14 +88,14 @@ let plan_child_dispatch facts =
   |> fun plan ->
   Tool_contracts.ChildDispatchPlan.create ~send:plan.send ~prompt:plan.prompt
     ~deliverAs:plan.deliver_as
-    ~result:(Tool_contracts.ChildDispatchResult.t_of_js (ojs_of_js (json_to_js plan.result))) ()
+    ~result:(decode_ojs_contract Tool_contracts.ChildDispatchResult.t_of_js (ojs_of_js (json_to_js plan.result))) ()
   |> Tool_contracts.ChildDispatchPlan.t_to_js |> inject
 
 let plan_child_session_start raw_facts ctx =
-  let facts = Tool_contracts.ChildSessionStartFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts = decode_ojs_contract Tool_contracts.ChildSessionStartFacts.t_of_js (ojs_of_js raw_facts) in
   let metadata_js =
     Tool_contracts.ChildSessionStartFacts.get_metadata facts
-    |> Tool_contracts.ChildSessionMetadata.t_to_js |> Obj.magic
+    |> Tool_contracts.ChildSessionMetadata.t_to_js |> js_of_ojs
   in
   let metadata = child_session_metadata_from_js metadata_js in
   let parent_session_id = Some (Session_store.session_id_from_ctx ctx) in

@@ -12,7 +12,7 @@ let model_string = function
   | Model value -> value
 
 let plan_command raw_facts =
-  let facts = Tool_contracts.CompactionCommandFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts = decode_ojs_contract Tool_contracts.CompactionCommandFacts.t_of_js (ojs_of_js raw_facts) in
   let args = Tool_contracts.CompactionCommandFacts.get_args facts in
   let settings = Tool_contracts.CompactionCommandFacts.get_settings facts |> settings_from_typed in
   match Taumel.Compaction_model.plan_command ~settings args with
@@ -36,7 +36,7 @@ let plan_command raw_facts =
           |> Tool_contracts.CompactionOpenPicker.t_to_js |> inject)
 
 let plan_session_before_compact raw_settings =
-  let settings = Tool_contracts.CompactionSettings.t_of_js (ojs_of_js raw_settings) |> settings_from_typed in
+  let settings = decode_ojs_contract Tool_contracts.CompactionSettings.t_of_js (ojs_of_js raw_settings) |> settings_from_typed in
   match Taumel.Compaction_model.plan_session_before_compact settings with
   | Use_default ->
       Boundary_contracts.CompactionDefault.create ()

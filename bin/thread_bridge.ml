@@ -94,7 +94,7 @@ let js_catalog_scan (scan : Taumel.Thread_tools.catalog_scan) =
     ~suffix:scan.suffix ()
 
 let plan_catalog_scans facts =
-  let facts = Tool_contracts.ThreadCatalogFacts.t_of_js (ojs_of_js facts) in
+  let facts = decode_ojs_contract Tool_contracts.ThreadCatalogFacts.t_of_js (ojs_of_js facts) in
   let override =
     Option.bind (Tool_contracts.ThreadCatalogFacts.get_override facts)
       Taumel.Shared.trim_non_empty
@@ -248,11 +248,11 @@ let run_read params catalog =
       |> Tool_contracts.BridgeToolResult.t_to_js |> inject
 
 let run raw_facts =
-  let facts = Tool_contracts.ThreadToolFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts = decode_ojs_contract Tool_contracts.ThreadToolFacts.t_of_js (ojs_of_js raw_facts) in
   let name = Boundary_contracts.ThreadToolFacts.get_name facts in
-  let params = Tool_contracts.ThreadToolFacts.get_params facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
-  let catalog = Tool_contracts.ThreadToolFacts.get_catalog facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
-  let ctx = Tool_contracts.ThreadToolFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
+  let params = Tool_contracts.ThreadToolFacts.get_params facts |> Ts2ocaml.unknown_to_js |> js_of_ojs in
+  let catalog = Tool_contracts.ThreadToolFacts.get_catalog facts |> Ts2ocaml.unknown_to_js |> js_of_ojs in
+  let ctx = Tool_contracts.ThreadToolFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> js_of_ojs in
   Session_sync.sync_session_from_host ~scope:"thread tool run" ctx;
   let result =
     match name with

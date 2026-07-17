@@ -21,7 +21,7 @@ let js_require name =
 
 let prepare params =
   with_gateway_authorized "view_media" (fun _sandbox ->
-      let params = Tool_contracts.ViewMediaParams.t_of_js (ojs_of_js params) in
+      let params = decode_ojs_contract Tool_contracts.ViewMediaParams.t_of_js (ojs_of_js params) in
       let path = Tool_contracts.ViewMediaParams.get_path params in
       if String.trim path = "" then error_obj "view_media requires a non-empty path"
       else
@@ -471,7 +471,7 @@ let success_result ~path ~full_path ~original_mime_type candidate ~original_widt
   success_envelope text details candidate
 
 let view_media raw_facts =
-  let facts = Tool_contracts.ViewMediaFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts = decode_ojs_contract Tool_contracts.ViewMediaFacts.t_of_js (ojs_of_js raw_facts) in
   let path = Tool_contracts.ViewMediaFacts.get_path facts in
   let cwd = Tool_contracts.ViewMediaFacts.get_defaultCwd facts in
   if String.trim path = "" then error_result "view_media requires a non-empty path"

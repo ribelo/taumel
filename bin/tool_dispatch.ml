@@ -2,13 +2,15 @@ open Jsoo_bridge
 open App_state
 
 let prepare raw_facts =
-  let facts = Tool_contracts.PrepareToolFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts = decode_ojs_contract Tool_contracts.PrepareToolFacts.t_of_js (ojs_of_js raw_facts) in
   let name = Tool_contracts.PrepareToolFacts.get_name facts in
-  let params = Tool_contracts.PrepareToolFacts.get_params facts
-    |> Ts2ocaml.unknown_to_js |> Obj.magic
+  let params =
+    Tool_contracts.PrepareToolFacts.get_params facts
+    |> Ts2ocaml.unknown_to_js |> Tool_param_decoders.decode name
+    |> require_contract |> js_of_ojs
   in
   let ctx = Tool_contracts.PrepareToolFacts.get_ctx facts
-    |> Ts2ocaml.unknown_to_js |> Obj.magic
+    |> Ts2ocaml.unknown_to_js |> js_of_ojs
   in
   (* Agent tools read and mutate the owner registry and bind new identities
      to the current workspace, so they need both a successful host/session

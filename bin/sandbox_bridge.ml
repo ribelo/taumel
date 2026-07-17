@@ -78,7 +78,7 @@ let resolved_mutation_path_from_js obj =
   }
 
 let validate_workspace_mutation_paths raw_facts =
-  let facts = Tool_contracts.WorkspaceMutationFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts = decode_ojs_contract Tool_contracts.WorkspaceMutationFacts.t_of_js (ojs_of_js raw_facts) in
   let paths = Tool_contracts.WorkspaceMutationFacts.get_paths facts |> List.map resolved_mutation_path_from_js in
   match
     Taumel.Sandbox.validate_resolved_workspace_mutation_paths
@@ -93,7 +93,7 @@ let validate_workspace_mutation_paths raw_facts =
       |> Tool_contracts.WorkspaceMutationInvalid.t_to_js |> inject
 
 let sandbox_host_path_plan facts =
-  let facts = Tool_contracts.SandboxHostPathFacts.t_of_js (ojs_of_js facts) in
+  let facts = decode_ojs_contract Tool_contracts.SandboxHostPathFacts.t_of_js (ojs_of_js facts) in
   let tempRootCandidates =
     Taumel.Sandbox.temp_root_candidates
       ~tmp_dir:(Tool_contracts.SandboxHostPathFacts.get_tmpDir facts)
@@ -199,11 +199,11 @@ let format_exec_result prepared result sandboxed escalated =
     (Taumel.Sandbox.exec_result_details ~sandboxed ~escalated ?diagnostic result)
 
 let finish_exec_approval raw_facts =
-  let facts = Tool_contracts.ExecApprovalOutcomeFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts = decode_ojs_contract Tool_contracts.ExecApprovalOutcomeFacts.t_of_js (ojs_of_js raw_facts) in
   let plan_id = Tool_contracts.ExecApprovalOutcomeFacts.get_planId facts in
   let owner_context =
     Tool_contracts.ExecApprovalOutcomeFacts.get_ctx facts
-    |> Ts2ocaml.unknown_to_js |> Obj.magic
+    |> Ts2ocaml.unknown_to_js |> js_of_ojs
   in
   let outcome =
     match Boundary_contracts.ExecApprovalOutcomeFacts.get_outcome facts with
@@ -224,14 +224,14 @@ let finish_exec_approval raw_facts =
       ignore (Authority_plans.discard ~owner_context plan_id);
       let result = text_result_with_details denied.message denied.details in
       Boundary_contracts.ExecApprovalDenied.create
-        ~result:(Tool_contracts.ToolResultEnvelope.t_of_js (ojs_of_js result)) ()
+        ~result:(decode_ojs_contract Tool_contracts.ToolResultEnvelope.t_of_js (ojs_of_js result)) ()
       |> Tool_contracts.ExecApprovalDenied.t_to_js |> inject
 
 let discard_authority_plan raw_facts =
-  let facts = Tool_contracts.AuthorityPlanRef.t_of_js (ojs_of_js raw_facts) in
+  let facts = decode_ojs_contract Tool_contracts.AuthorityPlanRef.t_of_js (ojs_of_js raw_facts) in
   let owner_context =
     Tool_contracts.AuthorityPlanRef.get_ctx facts
-    |> Ts2ocaml.unknown_to_js |> Obj.magic
+    |> Ts2ocaml.unknown_to_js |> js_of_ojs
   in
   match
     Authority_plans.discard ~owner_context
@@ -241,10 +241,10 @@ let discard_authority_plan raw_facts =
   | Error message -> error_obj message
 
 let reissue_exec_plan raw_facts =
-  let facts = Tool_contracts.AuthorityPlanRef.t_of_js (ojs_of_js raw_facts) in
+  let facts = decode_ojs_contract Tool_contracts.AuthorityPlanRef.t_of_js (ojs_of_js raw_facts) in
   let owner_context =
     Tool_contracts.AuthorityPlanRef.get_ctx facts
-    |> Ts2ocaml.unknown_to_js |> Obj.magic
+    |> Ts2ocaml.unknown_to_js |> js_of_ojs
   in
   match
     Authority_plans.reissue_exec_retry ~owner_context
@@ -256,7 +256,7 @@ let reissue_exec_plan raw_facts =
       |> Tool_contracts.AuthorityPlanIssued.t_to_js |> inject
 
 let plan_exec_approval_prompt raw_facts =
-  let facts = Tool_contracts.ExecApprovalPromptFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts = decode_ojs_contract Tool_contracts.ExecApprovalPromptFacts.t_of_js (ojs_of_js raw_facts) in
   let prompt =
     {
       Taumel.Sandbox.title = Tool_contracts.ExecApprovalPromptFacts.get_approvalTitle facts;
@@ -300,7 +300,7 @@ let plan_write_stdin_host_call prepared facts =
   | Taumel.Sandbox.Stdin_result result ->
       let result =
         text_result_with_details result.message result.details
-        |> ojs_of_js |> Tool_contracts.ToolResultEnvelope.t_of_js
+        |> ojs_of_js |> decode_ojs_contract Tool_contracts.ToolResultEnvelope.t_of_js
       in
       Boundary_contracts.WriteStdinHostResult.create ~result ()
       |> Tool_contracts.WriteStdinHostResult.t_to_js |> inject

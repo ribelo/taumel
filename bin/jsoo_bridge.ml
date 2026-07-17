@@ -10,6 +10,15 @@ let js_string value = inject (Js.string value)
 let js_number value = inject (Js.number_of_float value)
 let js_bool value = inject (Js.bool value)
 let ojs_of_js value : Ojs.t = Obj.magic value
+let js_of_ojs (value : Ojs.t) : Unsafe.any = Obj.magic value
+let unknown_of_js value = Ts2ocaml.unknown_of_js (ojs_of_js value)
+let js_of_unknown value = Ts2ocaml.unknown_to_js value |> js_of_ojs
+
+let require_contract = function
+  | Ok value -> value
+  | Error message -> invalid_arg message
+
+let decode_ojs_contract decoder value = decoder value |> require_contract
 
 let call0 obj name = Unsafe.fun_call (Unsafe.get obj name) [||]
 let call1 obj name a = Unsafe.fun_call (Unsafe.get obj name) [| a |]

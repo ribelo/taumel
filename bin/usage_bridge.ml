@@ -14,7 +14,7 @@ let openai_host_auth () =
 
 let openai_host_params params =
   let params =
-    Tool_contracts.OpenAiUsageHostLookupFacts.t_of_js (ojs_of_js params)
+    decode_ojs_contract Tool_contracts.OpenAiUsageHostLookupFacts.t_of_js (ojs_of_js params)
   in
   let lookup =
     Taumel.Usage.token_lookup_from_host

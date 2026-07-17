@@ -21,7 +21,7 @@ let reset_on_session_change session_id =
 
 let plan_context ctx facts =
   let facts =
-    Tool_contracts.EnvironmentContextFacts.t_of_js (ojs_of_js facts)
+    decode_ojs_contract Tool_contracts.EnvironmentContextFacts.t_of_js (ojs_of_js facts)
   in
   Session_sync.sync_session_from_host ~scope:"environment context" ctx;
   let session_id = Session_store.session_id_from_ctx ctx in

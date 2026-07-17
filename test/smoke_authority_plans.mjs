@@ -229,15 +229,16 @@ try {
     { ok: true },
   );
 
-  const forgedExa = await core.call("executeExa", [{
-    planId: "plan-forged",
-    ctx,
-    toolName: "web_search_exa",
-    method: "DELETE",
-    path: "/agent/runs/forged",
-  }]);
-  assert.equal(forgedExa.ok, false);
-  assert.match(forgedExa.error, /authority plan is invalid|already consumed/);
+  await expectRejected(
+    () => core.call("executeExa", [{
+      planId: "plan-forged",
+      ctx,
+      toolName: "web_search_exa",
+      method: "DELETE",
+      path: "/agent/runs/forged",
+    }]),
+    /ExaExecutionFacts\.toolName: is not allowed/,
+  );
 
   // exa-gaf4: transport details remain in the one-shot core plan.
   snapshotSandboxMode = "danger-full-access";

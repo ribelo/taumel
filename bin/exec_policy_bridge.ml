@@ -173,7 +173,7 @@ let explicit_prompt_or_forbidden cmd =
         check.matched_rules
 
 let append_allow_rule raw_facts =
-  let facts = Tool_contracts.ExecPolicyAllowRuleFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts = decode_ojs_contract Tool_contracts.ExecPolicyAllowRuleFacts.t_of_js (ojs_of_js raw_facts) in
   let tokens = Tool_contracts.ExecPolicyAllowRuleFacts.get_tokens facts in
   let raw_rule =
     Taumel.Exec_policy.{
@@ -364,7 +364,7 @@ let scope_rules_from_js obj =
 
 let compile_settings settings =
   let settings =
-    Tool_contracts.RefreshExecPolicyFacts.t_of_js (ojs_of_js settings)
+    decode_ojs_contract Tool_contracts.RefreshExecPolicyFacts.t_of_js (ojs_of_js settings)
   in
   let scopes, scope_errors =
     Tool_contracts.RefreshExecPolicyFacts.get_scopes settings
@@ -373,7 +373,7 @@ let compile_settings settings =
            let name = Tool_contracts.ExecPolicyScope.get_scope scope in
            let policy =
              Tool_contracts.ExecPolicyScope.get_execPolicy scope
-             |> Ts2ocaml.unknown_to_js |> Obj.magic
+             |> Ts2ocaml.unknown_to_js |> js_of_ojs
            in
            match scope_rules_from_js policy with
            | Ok (rules, rule_errors) ->

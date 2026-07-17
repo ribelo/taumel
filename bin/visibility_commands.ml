@@ -135,7 +135,7 @@ let save_result category ctx =
       |> Boundary_contracts.VisibilitySavePlan.category_to_contract)
     ~disabled:(Taumel.Visibility.disabled category !visibility_state)
     ~details:
-      (Tool_contracts.VisibilityRowsResult.t_of_js
+      (decode_ojs_contract Tool_contracts.VisibilityRowsResult.t_of_js
          (ojs_of_js (visibility_details category ctx))) ()
   |> Tool_contracts.VisibilitySavePlan.t_to_js |> inject
 
@@ -202,16 +202,16 @@ let toggle_row_for category name ctx =
            (name ^ if disabling then " disabled" else " enabled"))
 
 let toggle_row raw_facts =
-  let facts = Tool_contracts.VisibilityToggleFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts = decode_ojs_contract Tool_contracts.VisibilityToggleFacts.t_of_js (ojs_of_js raw_facts) in
   let category = category_of_contract (Boundary_contracts.VisibilityToggleFacts.get_category facts) in
   let name = Tool_contracts.VisibilityToggleFacts.get_name facts in
-  let ctx = Tool_contracts.VisibilityToggleFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
+  let ctx = Tool_contracts.VisibilityToggleFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> js_of_ojs in
   let result = toggle_row_for category name ctx in
   if get_bool result "ok" then
-    Tool_contracts.VisibilityToggleSuccess.t_of_js (ojs_of_js result)
+    decode_ojs_contract Tool_contracts.VisibilityToggleSuccess.t_of_js (ojs_of_js result)
     |> Tool_contracts.VisibilityToggleSuccess.t_to_js |> inject
   else
-    Tool_contracts.VisibilityToggleError.t_of_js (ojs_of_js result)
+    decode_ojs_contract Tool_contracts.VisibilityToggleError.t_of_js (ojs_of_js result)
     |> Tool_contracts.VisibilityToggleError.t_to_js |> inject
 
 let handle category args ctx =
@@ -228,9 +228,9 @@ let handle category args ctx =
   | _ -> error_obj (usage category)
 
 let rows raw_facts =
-  let facts = Tool_contracts.VisibilityRowsFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts = decode_ojs_contract Tool_contracts.VisibilityRowsFacts.t_of_js (ojs_of_js raw_facts) in
   let category = category_of_contract (Boundary_contracts.VisibilityRowsFacts.get_category facts) in
-  let ctx = Tool_contracts.VisibilityRowsFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
+  let ctx = Tool_contracts.VisibilityRowsFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> js_of_ojs in
   Session_sync.sync_persisted_session ctx;
   let visible_rows =
     visibility_rows category ctx
@@ -248,24 +248,24 @@ let rows raw_facts =
   |> Tool_contracts.VisibilityRowsResult.t_to_js |> inject
 
 let category_context_from_facts raw_facts =
-  let facts = Tool_contracts.VisibilityRowsFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts = decode_ojs_contract Tool_contracts.VisibilityRowsFacts.t_of_js (ojs_of_js raw_facts) in
   let category = category_of_contract (Boundary_contracts.VisibilityRowsFacts.get_category facts) in
-  let ctx = Tool_contracts.VisibilityRowsFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
+  let ctx = Tool_contracts.VisibilityRowsFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> js_of_ojs in
   (category, ctx)
 
 let save_project_plan raw_facts =
   let category, ctx = category_context_from_facts raw_facts in
   Session_sync.sync_persisted_session ctx;
-  save_result category ctx |> ojs_of_js |> Tool_contracts.VisibilitySavePlan.t_of_js
+  save_result category ctx |> ojs_of_js |> decode_ojs_contract Tool_contracts.VisibilitySavePlan.t_of_js
   |> Tool_contracts.VisibilitySavePlan.t_to_js |> inject
 
 let list_command raw_facts =
   let category, ctx = category_context_from_facts raw_facts in
-  handle category "list" ctx |> ojs_of_js |> Tool_contracts.VisibilityListResult.t_of_js
+  handle category "list" ctx |> ojs_of_js |> decode_ojs_contract Tool_contracts.VisibilityListResult.t_of_js
   |> Tool_contracts.VisibilityListResult.t_to_js |> inject
 
 let warnings raw_facts =
-  let facts = Tool_contracts.VisibilityWarningFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts = decode_ojs_contract Tool_contracts.VisibilityWarningFacts.t_of_js (ojs_of_js raw_facts) in
   let category_available name =
     if name = "tools" then Tool_contracts.VisibilityWarningFacts.get_tools facts
     else Tool_contracts.VisibilityWarningFacts.get_skills facts

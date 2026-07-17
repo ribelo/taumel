@@ -972,13 +972,13 @@ let run_exec_command prepared owner_id signal owner_context =
                    ~retry_eligible:(authority_retry_eligible plan call result)))
             signal extra)
 let write_stdin raw_facts =
-  let facts = Tool_contracts.WriteStdinFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts = decode_ojs_contract Tool_contracts.WriteStdinFacts.t_of_js (ojs_of_js raw_facts) in
   let session_id = Tool_contracts.WriteStdinFacts.get_sessionId facts |> int_of_float in
   let chars = Tool_contracts.WriteStdinFacts.get_chars facts in
   let owner_id = Tool_contracts.WriteStdinFacts.get_ownerId facts in
   let signal =
     Tool_contracts.WriteStdinFacts.get_signal facts
-    |> Option.map (fun value -> Ts2ocaml.unknown_to_js value |> Obj.magic)
+    |> Option.map (fun value -> Ts2ocaml.unknown_to_js value |> js_of_ojs)
     |> Option.value ~default:(inject Js.null)
   in
   match Hashtbl.find_opt sessions session_id with

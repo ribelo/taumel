@@ -171,7 +171,7 @@ let skill_enabled name =
   Taumel.Visibility.is_enabled !visibility_state Taumel.Visibility.Skills name
 
 let list_skills params =
-  let params = Tool_contracts.SkillListFacts.t_of_js (ojs_of_js params) in
+  let params = decode_ojs_contract Tool_contracts.SkillListFacts.t_of_js (ojs_of_js params) in
   let cwd = Tool_contracts.SkillListFacts.get_cwd params in
   let include_disabled =
     Option.value (Tool_contracts.SkillListFacts.get_includeDisabled params)
@@ -186,12 +186,12 @@ let list_skills params =
   Tool_contracts.SkillListResult.t_to_js result |> inject
 
 let resolve_mentions params =
-  let params = Tool_contracts.SkillResolveFacts.t_of_js (ojs_of_js params) in
+  let params = decode_ojs_contract Tool_contracts.SkillResolveFacts.t_of_js (ojs_of_js params) in
   (match Tool_contracts.SkillResolveFacts.get_ctx params with
   | None -> ()
   | Some ctx ->
       Session_sync.sync_persisted_session
-        (Ts2ocaml.unknown_to_js ctx |> Obj.magic));
+        (Ts2ocaml.unknown_to_js ctx |> js_of_ojs));
   let prompt = Tool_contracts.SkillResolveFacts.get_prompt params in
   let names = Taumel.Skill_resolver.mentions prompt in
   if names = [] then

@@ -217,14 +217,14 @@ let update_task_impl params ctx =
         command_result ("Updated cron task " ^ id ^ ".") (updated_task_details id)
 
 let update_task raw_facts =
-  let facts = Tool_contracts.CronTaskUpdateFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts = decode_ojs_contract Tool_contracts.CronTaskUpdateFacts.t_of_js (ojs_of_js raw_facts) in
   let params = Tool_contracts.CronTaskUpdateFacts.get_patch facts
-    |> Tool_contracts.CronTaskPatch.t_to_js |> Obj.magic
+    |> Tool_contracts.CronTaskPatch.t_to_js |> js_of_ojs
   in
   let ctx = Tool_contracts.CronTaskUpdateFacts.get_ctx facts
-    |> Ts2ocaml.unknown_to_js |> Obj.magic
+    |> Ts2ocaml.unknown_to_js |> js_of_ojs
   in
-  update_task_impl params ctx |> ojs_of_js |> Tool_contracts.CronCommandResult.t_of_js
+  update_task_impl params ctx |> ojs_of_js |> decode_ojs_contract Tool_contracts.CronCommandResult.t_of_js
   |> Tool_contracts.CronCommandResult.t_to_js |> inject
 
 let handle_command args ctx =
@@ -260,12 +260,12 @@ let handle_command args ctx =
   | _ -> command_result ~ok:false "Usage: /cron [enable|disable]" (Unsafe.obj [||])
 
 let handle_manager_command raw_facts =
-  let facts = Tool_contracts.CronManagerCommandFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts = decode_ojs_contract Tool_contracts.CronManagerCommandFacts.t_of_js (ojs_of_js raw_facts) in
   let args = Tool_contracts.CronManagerCommandFacts.get_args facts in
   let ctx = Tool_contracts.CronManagerCommandFacts.get_ctx facts
-    |> Ts2ocaml.unknown_to_js |> Obj.magic
+    |> Ts2ocaml.unknown_to_js |> js_of_ojs
   in
-  handle_command args ctx |> ojs_of_js |> Tool_contracts.CronCommandResult.t_of_js
+  handle_command args ctx |> ojs_of_js |> decode_ojs_contract Tool_contracts.CronCommandResult.t_of_js
   |> Tool_contracts.CronCommandResult.t_to_js |> inject
 
 let task_label (task : Taumel.Cron.task) =
@@ -296,12 +296,12 @@ let plan_prompt_impl prompt =
              ("tasks", tasks_array !cron_state.tasks);
            |])
   in
-  result |> ojs_of_js |> Tool_contracts.CronCommandResult.t_of_js
+  result |> ojs_of_js |> decode_ojs_contract Tool_contracts.CronCommandResult.t_of_js
 
 let plan_prompt raw_facts =
-  let facts = Tool_contracts.CronPromptFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts = decode_ojs_contract Tool_contracts.CronPromptFacts.t_of_js (ojs_of_js raw_facts) in
   let prompt = Tool_contracts.CronPromptFacts.get_prompt facts
-    |> Tool_contracts.CronPrompt.t_to_js |> Obj.magic
+    |> Tool_contracts.CronPrompt.t_to_js |> js_of_ojs
   in
   let result = plan_prompt_impl prompt in
   Boundary_contracts.CronPromptPlan.create ~result ()
@@ -346,8 +346,8 @@ let facts_from_js facts =
   }
 
 let poll raw_facts =
-  let facts = Tool_contracts.CronPollFacts.t_of_js (ojs_of_js raw_facts) in
-  let ctx = Tool_contracts.CronPollFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
+  let facts = decode_ojs_contract Tool_contracts.CronPollFacts.t_of_js (ojs_of_js raw_facts) in
+  let ctx = Tool_contracts.CronPollFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> js_of_ojs in
   let none () =
     Boundary_contracts.CronPollNone.create ()
     |> Tool_contracts.CronPollNone.t_to_js |> inject
@@ -371,8 +371,8 @@ let poll raw_facts =
         |> Tool_contracts.CronPollDelivery.t_to_js |> inject
 
 let delivered raw_facts =
-  let facts = Tool_contracts.CronDeliveredFacts.t_of_js (ojs_of_js raw_facts) in
-  let ctx = Tool_contracts.CronDeliveredFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
+  let facts = decode_ojs_contract Tool_contracts.CronDeliveredFacts.t_of_js (ojs_of_js raw_facts) in
+  let ctx = Tool_contracts.CronDeliveredFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> js_of_ojs in
   let result acknowledged =
     Tool_contracts.CronDeliveredResult.create ~acknowledged ()
     |> Tool_contracts.CronDeliveredResult.t_to_js |> inject
@@ -397,8 +397,8 @@ let delivered raw_facts =
         result true
 
 let goal_facts raw_facts =
-  let facts = Tool_contracts.CronContextFacts.t_of_js (ojs_of_js raw_facts) in
-  let ctx = Tool_contracts.CronContextFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
+  let facts = decode_ojs_contract Tool_contracts.CronContextFacts.t_of_js (ojs_of_js raw_facts) in
+  let ctx = Tool_contracts.CronContextFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> js_of_ojs in
   let result goalSlotFree goalDriving =
     Tool_contracts.CronGoalFacts.create ~goalSlotFree ~goalDriving ()
     |> Tool_contracts.CronGoalFacts.t_to_js |> inject
@@ -428,8 +428,8 @@ let startup_reason = function
   | _ -> Taumel.Cron.Other
 
 let startup raw_facts =
-  let facts = Tool_contracts.CronStartupFacts.t_of_js (ojs_of_js raw_facts) in
-  let ctx = Tool_contracts.CronStartupFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
+  let facts = decode_ojs_contract Tool_contracts.CronStartupFacts.t_of_js (ojs_of_js raw_facts) in
+  let ctx = Tool_contracts.CronStartupFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> js_of_ojs in
   let none () =
     Boundary_contracts.CronStartupNone.create ()
     |> Tool_contracts.CronStartupNone.t_to_js |> inject

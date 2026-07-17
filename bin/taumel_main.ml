@@ -4,16 +4,33 @@ let arg_at args index =
   if index < Array.length args then args.(index) else Unsafe.inject Js.undefined
 
 let string_arg args index =
-  Js.to_string (Unsafe.coerce (arg_at args index))
+  match string_value (arg_at args index) with
+  | Some value -> value
+  | None ->
+      invalid_arg
+        (Printf.sprintf "core.call argument %d: expected string" index)
 
 let int_arg args index =
   match float_value (arg_at args index) with
-  | Some value -> int_of_float value
-  | None -> -1
+  | Some value
+    when Float.is_finite value && Float.floor value = value
+         && value >= float_of_int min_int && value <= float_of_int max_int ->
+      int_of_float value
+  | _ ->
+      invalid_arg
+        (Printf.sprintf "core.call argument %d: expected integer" index)
 
 let core_call name_js args_js =
-  let name = Js.to_string name_js in
-  let args = Option.value (array_value args_js) ~default:[||] in
+  let name =
+    match string_value (inject name_js) with
+    | Some value -> value
+    | None -> invalid_arg "core.call name: expected string"
+  in
+  let args =
+    match array_value args_js with
+    | Some value -> value
+    | None -> invalid_arg "core.call arguments: expected array"
+  in
   let arg = arg_at args in
   match name with
   | "toolPolicyNames" -> Tool_catalog_bridge.tool_policy_names_js ()

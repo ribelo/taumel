@@ -65,7 +65,7 @@ let patch_authorization (sandbox : Taumel.Sandbox.config) patch =
       | Error _ as error, _ | _, (Error _ as error) -> error)
 
 let exec_request_from_params params =
-  let params = Tool_contracts.ExecCommandParams.t_of_js (ojs_of_js params) in
+  let params = decode_ojs_contract Tool_contracts.ExecCommandParams.t_of_js (ojs_of_js params) in
   let sandbox_permissions =
     match Tool_contracts.ExecCommandParams.get_with_escalated_permissions params with
     | Some true ->
@@ -93,7 +93,7 @@ let exec_request_from_params params =
     : Taumel.Mutation_plan.exec_request)
 
 let write_stdin_request_from_params params =
-  let params = Tool_contracts.WriteStdinParams.t_of_js (ojs_of_js params) in
+  let params = decode_ojs_contract Tool_contracts.WriteStdinParams.t_of_js (ojs_of_js params) in
   ({
      Taumel.Mutation_plan.session_id =
        int_of_float (Tool_contracts.WriteStdinParams.get_session_id params);
@@ -111,7 +111,7 @@ let write_stdin_request_from_params params =
     : Taumel.Mutation_plan.write_stdin_request)
 
 let write_request_from_params params =
-  let params = Tool_contracts.WriteParams.t_of_js (ojs_of_js params) in
+  let params = decode_ojs_contract Tool_contracts.WriteParams.t_of_js (ojs_of_js params) in
   ({
      Taumel.Mutation_plan.path = Tool_contracts.WriteParams.get_path params;
      contents = Tool_contracts.WriteParams.get_content params;
@@ -130,7 +130,7 @@ let edit_replacement_from_params edit =
     : Taumel.Sandbox.edit_replacement)
 
 let edit_request_from_params params =
-  let params = Tool_contracts.EditParams.t_of_js (ojs_of_js params) in
+  let params = decode_ojs_contract Tool_contracts.EditParams.t_of_js (ojs_of_js params) in
   ({
      Taumel.Mutation_plan.path = Tool_contracts.EditParams.get_path params;
      edits =
@@ -140,7 +140,7 @@ let edit_request_from_params params =
     : Taumel.Mutation_plan.edit_request)
 
 let patch_request_from_params params =
-  let params = Tool_contracts.ApplyPatchParams.t_of_js (ojs_of_js params) in
+  let params = decode_ojs_contract Tool_contracts.ApplyPatchParams.t_of_js (ojs_of_js params) in
   Taumel.Mutation_plan.patch_request_of_values
     (Tool_contracts.ApplyPatchParams.get_input params)
 
@@ -502,7 +502,7 @@ let prepare_write params ctx =
 
 let prepare_read params =
   with_gateway_authorized "read" (fun _sandbox ->
-      let params = Tool_contracts.ReadParams.t_of_js (ojs_of_js params) in
+      let params = decode_ojs_contract Tool_contracts.ReadParams.t_of_js (ojs_of_js params) in
       let path = Tool_contracts.ReadParams.get_path params in
       if String.trim path = "" then error_obj "read requires a non-empty path"
       else
@@ -545,8 +545,8 @@ let prepare_edit params ctx =
                   |> Tool_contracts.PreparedEditApproval.t_to_js |> inject))))
 
 let apply_edit_to_file raw_facts =
-  let facts = Tool_contracts.EditApplicationFacts.t_of_js (ojs_of_js raw_facts) in
-  let prepared = Tool_contracts.EditApplicationFacts.get_prepared facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
+  let facts = decode_ojs_contract Tool_contracts.EditApplicationFacts.t_of_js (ojs_of_js raw_facts) in
+  let prepared = Tool_contracts.EditApplicationFacts.get_prepared facts |> Ts2ocaml.unknown_to_js |> js_of_ojs in
   let contents = Tool_contracts.EditApplicationFacts.get_contents facts in
   let request = edit_request_from_params prepared in
   let path = request.path in
@@ -610,10 +610,10 @@ let files_map_from_js obj =
        Taumel.Shared.String_map.empty
 
 let apply_patch_to_files raw_facts =
-  let facts = Tool_contracts.PatchApplicationFacts.t_of_js (ojs_of_js raw_facts) in
-  let params = Tool_contracts.PatchApplicationFacts.get_params facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
-  let files = Tool_contracts.PatchApplicationFacts.get_files facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
-  let ctx = Tool_contracts.PatchApplicationFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
+  let facts = decode_ojs_contract Tool_contracts.PatchApplicationFacts.t_of_js (ojs_of_js raw_facts) in
+  let params = Tool_contracts.PatchApplicationFacts.get_params facts |> Ts2ocaml.unknown_to_js |> js_of_ojs in
+  let files = Tool_contracts.PatchApplicationFacts.get_files facts |> Ts2ocaml.unknown_to_js |> js_of_ojs in
+  let ctx = Tool_contracts.PatchApplicationFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> js_of_ojs in
   Session_sync.sync_session_from_host ~scope:"apply_patch files" ctx;
   let approved = Tool_contracts.PatchApplicationFacts.get_filesystemApproval facts in
   let mutation_error message =

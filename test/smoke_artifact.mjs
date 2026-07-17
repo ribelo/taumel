@@ -108,6 +108,50 @@ const core = bootstrap.init({
 if (!core || typeof core.call !== "function" || Object.keys(core).join(",") !== "call") {
   throw new Error("Taumel initialization did not return the private core bridge");
 }
+// shared-0gc2: malformed reverse-boundary values reject before application logic.
+for (const [name, params, expectedError] of [
+  [
+    "exec_command",
+    { cmd: "echo safe", with_escalated_permissions: "false" },
+    /ExecCommandParams.*with_escalated_permissions.*boolean/,
+  ],
+  ["write", { path: "artifact.txt", content: "safe", mode: "truncate" }, /WriteParams.*mode/],
+  ["agent_send", { agent_id: "agent-test", interrupt: "false" }, /AgentSendParams.*interrupt.*boolean/],
+  ["query_threads", { query: "safe", includeTools: "false" }, /QueryThreadsParams.*includeTools.*boolean/],
+  ["web_search_exa", { query: 42 }, /WebSearchExaParams.*query.*string/],
+  ["get_goal", { unexpected: true }, /EmptyParams.*unexpected.*not allowed/],
+]) {
+  let rejection = "";
+  try {
+    core.call("prepareTool", [{ name, params, ctx }]);
+  } catch (error) {
+    rejection = error instanceof Error ? error.message : String(error);
+  }
+  if (!expectedError.test(rejection)) {
+    throw new Error(
+      `malformed TS-to-OCaml ${name} input was not runtime-decoded: ${JSON.stringify({ rejection })}`,
+    );
+  }
+}
+let decodedCommandReads = 0;
+const decodedCommandParams = {};
+Object.defineProperty(decodedCommandParams, "cmd", {
+  enumerable: true,
+  get() {
+    decodedCommandReads += 1;
+    return decodedCommandReads === 1 ? "echo snapshotted" : 42;
+  },
+});
+const decodedCommand = core.call("prepareTool", [{
+  name: "exec_command",
+  params: decodedCommandParams,
+  ctx,
+}]);
+if (decodedCommandReads !== 1 || decodedCommand?.cmd !== "echo snapshotted") {
+  throw new Error(
+    `TS-to-OCaml decoding did not snapshot known input fields: ${JSON.stringify({ decodedCommandReads, decodedCommand })}`,
+  );
+}
 const malformedDecisionPolicy = core.call("refreshExecPolicy", [{
   scopes: [{
     scope: "global",

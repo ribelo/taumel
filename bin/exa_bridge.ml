@@ -59,7 +59,10 @@ let prepared_fetch ?body_json ?last_event_id ~owner_id ~owner_context ~tool_name
 let prepared_missing_key tool_name =
   prepared_result_from_json (Taumel.Exa.missing_api_key_result tool_name)
 
-let prepare_body_tool tool_name params path ctx =
+let prepare_body_tool decoder encoder tool_name params path ctx =
+  let params =
+    decode_ojs_contract decoder (ojs_of_js params) |> encoder |> js_of_ojs
+  in
   with_gateway_authorized tool_name (fun _sandbox ->
       if not (api_key_present ()) then prepared_missing_key tool_name
       else
@@ -70,21 +73,28 @@ let prepare_body_tool tool_name params path ctx =
               ~owner_context:ctx ~tool_name ~method_:"POST" ~path ~body_json ())
 
 let prepare_web_search params ctx =
-  prepare_body_tool "web_search_exa" params "/search" ctx
+  prepare_body_tool Tool_contracts.WebSearchExaParams.t_of_js
+    Tool_contracts.WebSearchExaParams.t_to_js "web_search_exa" params "/search"
+    ctx
 
 let prepare_crawling params ctx =
-  prepare_body_tool "crawling_exa" params "/contents" ctx
+  prepare_body_tool Tool_contracts.CrawlingExaParams.t_of_js
+    Tool_contracts.CrawlingExaParams.t_to_js "crawling_exa" params "/contents" ctx
 
 let prepare_code_context params ctx =
-  prepare_body_tool "get_code_context_exa" params "/context" ctx
+  prepare_body_tool Tool_contracts.GetCodeContextExaParams.t_of_js
+    Tool_contracts.GetCodeContextExaParams.t_to_js "get_code_context_exa" params
+    "/context" ctx
 
 let prepare_agent_create_run params ctx =
+  let typed =
+    decode_ojs_contract Tool_contracts.ExaAgentCreateRunParams.t_of_js
+      (ojs_of_js params)
+  in
+  let params = Tool_contracts.ExaAgentCreateRunParams.t_to_js typed |> js_of_ojs in
   with_gateway_authorized Taumel.Exa.create_run_tool_name (fun _sandbox ->
       if not (api_key_present ()) then prepared_missing_key Taumel.Exa.create_run_tool_name
       else
-        let typed =
-          Tool_contracts.ExaAgentCreateRunParams.t_of_js (ojs_of_js params)
-        in
         match stringify_json params with
         | Error message -> error_obj message
         | Ok body_json ->
@@ -112,10 +122,13 @@ let prepare_agent_create_run params ctx =
             |> Tool_contracts.PreparedExaApproval.t_to_js |> inject)
 
 let prepare_agent_get_run params ctx =
+  let typed =
+    decode_ojs_contract Tool_contracts.ExaAgentRunIdParams.t_of_js
+      (ojs_of_js params)
+  in
   with_gateway_authorized "exa_agent_get_run" (fun _sandbox ->
       if not (api_key_present ()) then prepared_missing_key "exa_agent_get_run"
       else
-        let typed = Tool_contracts.ExaAgentRunIdParams.t_of_js (ojs_of_js params) in
         prepared_fetch ~owner_id:(Session_store.session_id_from_ctx ctx)
           ~owner_context:ctx
           ~tool_name:"exa_agent_get_run" ~method_:"GET"
@@ -123,12 +136,13 @@ let prepare_agent_get_run params ctx =
           ())
 
 let prepare_agent_list_runs params ctx =
+  let typed =
+    decode_ojs_contract Tool_contracts.ExaAgentListRunsParams.t_of_js
+      (ojs_of_js params)
+  in
   with_gateway_authorized "exa_agent_list_runs" (fun _sandbox ->
       if not (api_key_present ()) then prepared_missing_key "exa_agent_list_runs"
       else
-        let typed =
-          Tool_contracts.ExaAgentListRunsParams.t_of_js (ojs_of_js params)
-        in
         let query =
           [
             optional_int_query "limit"
@@ -144,10 +158,13 @@ let prepare_agent_list_runs params ctx =
           ~path:(path_with_query "/agent/runs" query) ())
 
 let prepare_agent_cancel_run params ctx =
+  let typed =
+    decode_ojs_contract Tool_contracts.ExaAgentRunIdParams.t_of_js
+      (ojs_of_js params)
+  in
   with_gateway_authorized "exa_agent_cancel_run" (fun _sandbox ->
       if not (api_key_present ()) then prepared_missing_key "exa_agent_cancel_run"
       else
-        let typed = Tool_contracts.ExaAgentRunIdParams.t_of_js (ojs_of_js params) in
         prepared_fetch ~owner_id:(Session_store.session_id_from_ctx ctx)
           ~owner_context:ctx
           ~tool_name:"exa_agent_cancel_run" ~method_:"POST"
@@ -158,12 +175,13 @@ let prepare_agent_cancel_run params ctx =
           ())
 
 let prepare_agent_list_events params ctx =
+  let typed =
+    decode_ojs_contract Tool_contracts.ExaAgentListEventsParams.t_of_js
+      (ojs_of_js params)
+  in
   with_gateway_authorized "exa_agent_list_events" (fun _sandbox ->
       if not (api_key_present ()) then prepared_missing_key "exa_agent_list_events"
       else
-        let typed =
-          Tool_contracts.ExaAgentListEventsParams.t_of_js (ojs_of_js params)
-        in
         let query =
           [
             optional_int_query "limit"
@@ -205,11 +223,11 @@ let http_body body_json =
   | Some body -> Eta_http.Request.Fixed [ Bytes.of_string body ]
 
 let execute_effect raw_prepared =
-  let facts = Tool_contracts.ExaExecutionFacts.t_of_js (ojs_of_js raw_prepared) in
+  let facts = decode_ojs_contract Tool_contracts.ExaExecutionFacts.t_of_js (ojs_of_js raw_prepared) in
   let plan_id = Tool_contracts.ExaExecutionFacts.get_planId facts in
   let owner_context =
     Tool_contracts.ExaExecutionFacts.get_ctx facts
-    |> Ts2ocaml.unknown_to_js |> Obj.magic
+    |> Ts2ocaml.unknown_to_js |> js_of_ojs
   in
   match Authority_plans.consume_exa ~owner_context plan_id with
   | Error message ->
@@ -271,10 +289,10 @@ let execute_effect raw_prepared =
 let execute prepared = js_promise_of_effect (execute_effect prepared)
 
 let approve_plan raw_facts =
-  let facts = Tool_contracts.AuthorityPlanRef.t_of_js (ojs_of_js raw_facts) in
+  let facts = decode_ojs_contract Tool_contracts.AuthorityPlanRef.t_of_js (ojs_of_js raw_facts) in
   let owner_context =
     Tool_contracts.AuthorityPlanRef.get_ctx facts
-    |> Ts2ocaml.unknown_to_js |> Obj.magic
+    |> Ts2ocaml.unknown_to_js |> js_of_ojs
   in
   match
     Authority_plans.approve_exa ~owner_context

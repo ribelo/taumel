@@ -6,7 +6,7 @@ let js_command_spec (spec : Taumel.Tool_catalog.command_spec) =
     ~description:spec.description ()
 
 let plan_command_notification facts =
-  let facts = Tool_contracts.CommandNotificationFacts.t_of_js (ojs_of_js facts) in
+  let facts = decode_ojs_contract Tool_contracts.CommandNotificationFacts.t_of_js (ojs_of_js facts) in
   let notification =
     Taumel.Tool_catalog.command_notification
       ~command_name:(Tool_contracts.CommandNotificationFacts.get_commandName facts)
@@ -61,10 +61,10 @@ let agent_child_context ctx =
   | None -> false
 
 let plan_active_tools_sync_js facts =
-  let facts = Tool_contracts.ActiveToolsSyncFacts.t_of_js (ojs_of_js facts) in
+  let facts = decode_ojs_contract Tool_contracts.ActiveToolsSyncFacts.t_of_js (ojs_of_js facts) in
   let ctx =
     Tool_contracts.ActiveToolsSyncFacts.get_ctx facts
-    |> Option.map Obj.magic |> Option.value ~default:(Unsafe.obj [||])
+    |> Option.map js_of_unknown |> Option.value ~default:(Unsafe.obj [||])
   in
   Session_sync.refresh_session_state_from_host ~scope:"active tools sync" ctx;
   Session_sync.sync_persisted_session ctx;

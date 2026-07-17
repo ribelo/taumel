@@ -92,10 +92,10 @@ let continuation_facts facts =
   }
 
 let plan_continuation raw_facts =
-  let facts = Tool_contracts.GoalContinuationFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts = decode_ojs_contract Tool_contracts.GoalContinuationFacts.t_of_js (ojs_of_js raw_facts) in
   let ctx =
     Tool_contracts.GoalContinuationFacts.get_ctx facts
-    |> Option.map (fun value -> Ts2ocaml.unknown_to_js value |> Obj.magic)
+    |> Option.map (fun value -> Ts2ocaml.unknown_to_js value |> js_of_ojs)
     |> Option.value ~default:(Unsafe.obj [||])
   in
   let initial = Tool_contracts.GoalContinuationFacts.get_initial facts in
@@ -112,7 +112,7 @@ let plan_continuation raw_facts =
         Boundary_contracts.GoalContinuationSend.create
           ~customType:plan.custom_type ~content:plan.content ~display:plan.display
           ~triggerTurn:plan.trigger_turn ~deliverAs:plan.deliver_as
-          ~details:(Obj.magic details) ()
+          ~details:(unknown_of_js details) ()
         |> Tool_contracts.GoalContinuationSend.t_to_js |> inject
     | Taumel.Goal.No_continuation ->
         Boundary_contracts.GoalContinuationNone.create ()
@@ -169,7 +169,7 @@ let prepare_get () =
 
 let prepare_create params ctx =
   with_gateway_authorized "create_goal" (fun _ ->
-      let params = Tool_contracts.CreateGoalParams.t_of_js (ojs_of_js params) in
+      let params = decode_ojs_contract Tool_contracts.CreateGoalParams.t_of_js (ojs_of_js params) in
       let objective = Tool_contracts.CreateGoalParams.get_objective params in
       let time_limit_seconds =
         Option.map int_of_float
@@ -189,13 +189,13 @@ let prepare_create params ctx =
           tool_result (Some goal) "Goal created.")
 
 let create_from_cron raw_facts =
-  let facts = Tool_contracts.CronGoalCreationFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts = decode_ojs_contract Tool_contracts.CronGoalCreationFacts.t_of_js (ojs_of_js raw_facts) in
   let objective = Tool_contracts.CronGoalCreationFacts.get_objective facts in
   let ctx = Tool_contracts.CronGoalCreationFacts.get_ctx facts
-    |> Ts2ocaml.unknown_to_js |> Obj.magic
+    |> Ts2ocaml.unknown_to_js |> js_of_ojs
   in
   let params = Tool_contracts.CreateGoalParams.create ~objective ()
-    |> Tool_contracts.CreateGoalParams.t_to_js |> Obj.magic
+    |> Tool_contracts.CreateGoalParams.t_to_js |> js_of_ojs
   in
   let result = prepare_create params ctx in
   Tool_contracts.CronGoalCreationResult.create ~created:(get_bool result "ok") ()
@@ -203,7 +203,7 @@ let create_from_cron raw_facts =
 
 let prepare_update params ctx =
   with_gateway_authorized "update_goal" (fun _ ->
-      let params = Tool_contracts.UpdateGoalParams.t_of_js (ojs_of_js params) in
+      let params = decode_ojs_contract Tool_contracts.UpdateGoalParams.t_of_js (ojs_of_js params) in
       let status = Boundary_contracts.UpdateGoalParams.get_status params in
       let status =
         match status with
@@ -284,9 +284,9 @@ let handle_command args ctx =
         ?start_objective ?rollback plan.goal plan.message
 
 let rollback_goal_command raw_facts =
-  let facts = Tool_contracts.GoalRollbackFacts.t_of_js (ojs_of_js raw_facts) in
-  let snapshot = Tool_contracts.GoalRollbackFacts.get_snapshot facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
-  let ctx = Tool_contracts.GoalRollbackFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> Obj.magic in
+  let facts = decode_ojs_contract Tool_contracts.GoalRollbackFacts.t_of_js (ojs_of_js raw_facts) in
+  let snapshot = Tool_contracts.GoalRollbackFacts.get_snapshot facts |> Ts2ocaml.unknown_to_js |> js_of_ojs in
+  let ctx = Tool_contracts.GoalRollbackFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> js_of_ojs in
   current_goal := goal_store_of_js (Unsafe.get snapshot "goal");
   goal_automation := automation_of_js (Unsafe.get snapshot "automation");
   pending_goal_terminal_status := None;

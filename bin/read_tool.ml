@@ -31,7 +31,7 @@ let is_symbolic_link fs path =
    / directories), read it as UTF-8, and hand the content to the pure formatter.
    NUL/binary content and out-of-range offsets become actionable errors. *)
 let read_file raw_facts =
-  let facts = Tool_contracts.ReadFileFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts = decode_ojs_contract Tool_contracts.ReadFileFacts.t_of_js (ojs_of_js raw_facts) in
   let path = Tool_contracts.ReadFileFacts.get_path facts in
   let cwd = Tool_contracts.ReadFileFacts.get_defaultCwd facts in
   let offset = Tool_contracts.ReadFileFacts.get_offset facts |> Option.map int_of_float in

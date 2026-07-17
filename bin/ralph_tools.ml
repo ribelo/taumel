@@ -37,7 +37,7 @@ let tool_result task message =
 
 let prepare_child_tool name params ctx =
   with_gateway_authorized name (fun _ ->
-      let params = Tool_contracts.RalphTaskParams.t_of_js (ojs_of_js params) in
+      let params = decode_ojs_contract Tool_contracts.RalphTaskParams.t_of_js (ojs_of_js params) in
       let task_id = Tool_contracts.RalphTaskParams.get_task_id params in
       match Taumel.Shared.trim_non_empty task_id with
       | None -> error_obj (name ^ ".task_id is required")
