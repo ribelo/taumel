@@ -604,7 +604,8 @@ let test_goal_turn_accounting () =
   in
   let accounted =
     Goal.account_turn_end ~session_id:"session" ~now:20
-      ~active_time_seconds:10 ~last_accounting_key:None ~branch (Some goal)
+      ~active_time_seconds:10 ~last_accounting_key:None
+      ~latest_usage:(Goal.latest_assistant_usage branch) (Some goal)
   in
   assert_bool "goal accounting changed" accounted.changed;
   let updated =
@@ -643,7 +644,8 @@ let test_goal_turn_accounting () =
   in
   let pi_accounted =
     Goal.account_turn_end ~session_id:"session" ~now:50
-      ~active_time_seconds:7 ~last_accounting_key:None ~branch:pi_usage_branch
+      ~active_time_seconds:7 ~last_accounting_key:None
+      ~latest_usage:(Goal.latest_assistant_usage pi_usage_branch)
       (Some pi_usage_goal)
   in
   assert_bool "pi-native goal accounting changed" pi_accounted.changed;
@@ -659,7 +661,7 @@ let test_goal_turn_accounting () =
   let repeated =
     Goal.account_turn_end ~session_id:"session" ~now:30
       ~active_time_seconds:10 ~last_accounting_key:accounted.accounting_key
-      ~branch accounted.goal
+      ~latest_usage:(Goal.latest_assistant_usage branch) accounted.goal
   in
   assert_bool "goal accounting dedupes same turn" (not repeated.changed);
   let repeated_goal =

@@ -182,15 +182,7 @@ let session_is_isolated_child ctx =
 let update_session_state host ctx =
   let snapshot = call1 host "sessionSnapshot" (inject ctx) in
   let snapshot_cwd = get_string snapshot "cwd" in
-  let operational_cwd =
-    match Session_store.child_session_metadata ctx with
-    | Ok None -> snapshot_cwd
-    | Ok (Some metadata) ->
-        Option.value
-          (Taumel.Child_session.effective_workspace metadata)
-          ~default:snapshot_cwd
-    | Error _ -> ""
-  in
+  let child_session = Session_store.custom_entry_data ctx "taumel.childSession" in
   let next_host_sandbox_preset =
     Taumel.Capability_profile.sandbox_of_string (get_string snapshot "sandboxMode")
   in
@@ -201,47 +193,37 @@ let update_session_state host ctx =
     if has_property snapshot "noSandbox" then Some (get_bool snapshot "noSandbox")
     else bool_of_flag_string (get_string snapshot "noSandboxFlag")
   in
-  let next_session_state =
-    if session_is_isolated_child ctx then None
-    else
-      Some
-        (
-          snapshot_cwd,
-          get_string snapshot "provider",
-          get_string snapshot "model",
-          get_string snapshot "thinking",
-          (match total_cost_from_ctx ctx with
-          | Some cost -> cost
-          | None -> float_field_default snapshot "totalCost" 0.0),
-          float_field_default snapshot "contextPercent" 0.0,
-          float_field_default snapshot "contextWindow" 0.0 )
-  in
   host_sandbox_preset := next_host_sandbox_preset;
   host_network_mode := next_host_network_mode;
   host_no_sandbox := next_host_no_sandbox;
-  match next_session_state with
+  match child_session with
+  | Some _ ->
+      (* Isolated child: keep the enforcement cwd current, but never move the
+         footer or any other main-session display state. *)
+      let operational_cwd =
+        match Session_store.child_session_metadata_of_data child_session with
+        | Ok None -> snapshot_cwd
+        | Ok (Some metadata) ->
+            Option.value
+              (Taumel.Child_session.effective_workspace metadata)
+              ~default:snapshot_cwd
+        | Error _ -> ""
+      in
+      state.cwd <- operational_cwd
   | None ->
-      let previous_cwd = state.cwd in
-      state.cwd <- operational_cwd;
-      if previous_cwd <> "" && previous_cwd <> state.cwd then
-        state.git_delta <- Model.empty_git_delta
-  | Some
-      ( next_cwd,
-        next_provider,
-        next_model,
-        next_thinking,
-        next_total_cost,
-        next_context_percent,
-        next_context_window ) ->
-      let previous_cwd = state.cwd in
-      state.cwd <- next_cwd;
-      state.provider <- next_provider;
-      state.model <- next_model;
-      state.thinking <- next_thinking;
-      state.total_cost <- next_total_cost;
-      state.context_percent <- next_context_percent;
-      state.context_window <- next_context_window;
-      if previous_cwd <> "" && previous_cwd <> state.cwd then
+      let previous_footer_cwd = state.footer_cwd in
+      state.cwd <- snapshot_cwd;
+      state.footer_cwd <- snapshot_cwd;
+      state.provider <- get_string snapshot "provider";
+      state.model <- get_string snapshot "model";
+      state.thinking <- get_string snapshot "thinking";
+      state.total_cost <-
+        (match total_cost_from_ctx ctx with
+        | Some cost -> cost
+        | None -> float_field_default snapshot "totalCost" 0.0);
+      state.context_percent <- float_field_default snapshot "contextPercent" 0.0;
+      state.context_window <- float_field_default snapshot "contextWindow" 0.0;
+      if previous_footer_cwd <> "" && previous_footer_cwd <> state.footer_cwd then
         state.git_delta <- Model.empty_git_delta
 
 let try_refresh_session_state_from_host ?(scope = "session state refresh") ctx =
@@ -592,9 +574,17 @@ let finish_goal_load ctx snapshot =
 
 let sync_persisted_session ?(reset_missing = true)
     ?(clear_retained_outputs = false) ctx =
-  let snapshot = persisted_session_snapshot ctx in
-  sync_persisted_session_snapshot ~reset_missing ~clear_retained_outputs snapshot;
-  finish_goal_load ctx snapshot
+  let session_id = Session_store.session_id_from_ctx ctx in
+  if !loaded_session_id = Some session_id && not clear_retained_outputs then
+    (* Already-loaded session: the snapshot would be built and discarded, so
+       skip the seven full entry scans. The fork-repair append in
+       [finish_goal_load] can only fire for a foreign-thread goal, which an
+       already-loaded session cannot have. *)
+    notify_pending_goal_warning ctx
+  else
+    let snapshot = persisted_session_snapshot ctx in
+    sync_persisted_session_snapshot ~reset_missing ~clear_retained_outputs snapshot;
+    finish_goal_load ctx snapshot
 
 let persisted_session_snapshot_is_isolated_child snapshot =
   session_is_isolated_child_data snapshot.child_session
@@ -655,6 +645,41 @@ let save_visibility_state ctx =
   Session_store.append_custom_entry ctx "taumel.visibility"
     (Taumel.Visibility.codec.encode !visibility_state)
 
+(* Scan the branch backwards for the latest assistant usage without
+   converting the whole branch. Only candidate assistant entries cross the
+   JSON boundary; everything else is skipped on cheap JS property reads.
+   Mirrors [Taumel.Goal.message_usage]: the message gate falls back to the
+   entry itself when no message object is present. *)
+let latest_branch_usage ctx =
+  match Session_store.branch_entries_array_opt ctx with
+  | None -> None
+  | Some entries -> (
+      let rec probe index =
+        if index < 0 then None
+        else
+          let entry = entries.(index) in
+          let message =
+            match optional_field entry "message" with
+            | Some value -> value
+            | None -> entry
+          in
+          let assistant =
+            is_property_container (inject message)
+            && string_value (Unsafe.get message "role") = Some "assistant"
+          in
+          if not assistant then probe (index - 1)
+          else
+            match json_from_js entry with
+            | Error _ -> probe (index - 1)
+            | Ok json -> (
+                match Taumel.Goal.message_usage json with
+                | Some _ as usage -> usage
+                | None -> probe (index - 1))
+      in
+      match probe (Array.length entries - 1) with
+      | None -> None
+      | Some usage -> Some (Array.length entries, usage))
+
 let account_goal_turn_end ctx =
   let active_time_seconds, next_clock =
     Taumel.Goal.finish_turn_clock ~now_ms:(now_milliseconds ()) !goal_turn_clock
@@ -666,7 +691,7 @@ let account_goal_turn_end ctx =
       ?pending_terminal_status:!pending_goal_terminal_status
       ~session_id:(Session_store.session_id_from_ctx ctx) ~now
       ~active_time_seconds ~last_accounting_key:!last_goal_accounting_key
-      ~branch:(Session_store.branch_json_entries ctx) !current_goal
+      ~latest_usage:(latest_branch_usage ctx) !current_goal
   in
   pending_goal_terminal_status := None;
   if result.changed then (

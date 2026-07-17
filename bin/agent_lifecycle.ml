@@ -167,15 +167,30 @@ let record_dispatch_completion facts ctx =
       save_agent_state ctx;
       core_ack ()
 
+(* Activity events arrive per child turn/tool update; persisting every one
+   rewrites the session several times per second and bloats it (measured:
+   ~90% of a 186MB session's recent growth). In-memory state stays exact for
+   agent_list/agent_wait; file persistence is coalesced to one append per
+   2s. Terminal transitions still persist immediately via the completion
+   path, so crash recovery loses at most a couple of seconds of activity
+   bookkeeping, which the reconcile path already tolerates. *)
+let last_activity_persist_at = ref 0
+
 let record_activity facts ctx =
   Session_sync.sync_persisted_session ctx;
   let run_id = get_string facts "run_id" in
   let submission_id = get_string facts "submission_id" in
   let event = get_string facts "event" in
-  agent_state :=
-    Taumel.Agent_registry.record_activity_event !agent_state ~run_id ~submission_id
-      ~now:(now_seconds ()) ~event;
-  save_agent_state ctx;
+  let previous = !agent_state in
+  let next =
+    Taumel.Agent_registry.record_activity_event previous ~run_id ~submission_id
+      ~now:(now_seconds ()) ~event
+  in
+  agent_state := next;
+  let now_ms = now_milliseconds () in
+  if next != previous && now_ms - !last_activity_persist_at >= 2000 then (
+    last_activity_persist_at := now_ms;
+    save_agent_state ctx);
   core_ack ()
 
 let record_dispatch_boundary facts ctx =

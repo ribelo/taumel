@@ -67,7 +67,8 @@ let test_pending_terminal_accounting () =
   let accounted =
     Goal.account_turn_end ~pending_terminal_status:Goal.Complete
       ~session_id:"session" ~now:9 ~active_time_seconds:4
-      ~last_accounting_key:None ~branch (Some terminal_goal)
+      ~last_accounting_key:None
+      ~latest_usage:(Goal.latest_assistant_usage branch) (Some terminal_goal)
   in
   assert_bool "pending terminal accounting changed" accounted.changed;
   match accounted.goal with

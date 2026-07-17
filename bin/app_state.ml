@@ -4,6 +4,9 @@ module Model = Taumel.Footer_model
 
 type state = {
   mutable cwd : string;
+  (* Footer-owned view of the main session cwd. Isolated child sessions keep
+     [cwd] current for enforcement, but must never move the footer. *)
+  mutable footer_cwd : string;
   mutable filesystem_mode : string;
   mutable git_delta : Model.git_delta;
   mutable git_repo : bool;
@@ -26,6 +29,7 @@ type footer_permissions = {
 let state =
   {
     cwd = "";
+    footer_cwd = "";
     filesystem_mode = "workspace-write";
     git_delta = Model.empty_git_delta;
     git_repo = false;

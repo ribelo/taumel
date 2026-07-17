@@ -348,14 +348,14 @@ let apply_pending_terminal_status ~now pending_terminal_status result =
   | None, _ -> result
 
 let account_turn_end ?pending_terminal_status ~session_id ~now
-    ~active_time_seconds ~last_accounting_key ~branch (store : store) =
+    ~active_time_seconds ~last_accounting_key ~latest_usage (store : store) =
   let accounting_store =
     match (pending_terminal_status, store) with
     | Some _, Some goal -> Some { goal with status = Active }
     | _ -> store
   in
   let result =
-    match (accounting_store, latest_assistant_usage branch) with
+    match (accounting_store, latest_usage) with
     | Some goal, Some (branch_length, usage) when goal.status = Active ->
         let accounting_key = account_turn_key ~session_id ~branch_length usage in
         if last_accounting_key = Some accounting_key then

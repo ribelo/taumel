@@ -72,7 +72,7 @@ let register_handlers host =
         if Session_sync.session_is_isolated_child ctx then ()
         else
           ignore_stale "footer session lifecycle" (fun () ->
-            let previous_cwd = state.cwd in
+            let previous_cwd = state.footer_cwd in
             match
               Session_sync.try_sync_session_from_host_with
                 ~scope:"footer session sync" ~clear_retained_outputs:true host ctx
@@ -83,7 +83,7 @@ let register_handlers host =
                   Session_sync.persisted_session_snapshot_is_isolated_child snapshot
                 in
                 if not isolated_child then capture_loaded_footer_permissions ();
-                if state.cwd <> previous_cwd then (
+                if state.footer_cwd <> previous_cwd then (
                   state.git_delta <- Model.empty_git_delta;
                   state.git_repo <- false;
                   state.git_error <- false;
@@ -100,14 +100,20 @@ let register_handlers host =
   ignore
     (call2 host "on" (js_string "turn_start")
        (inject
-          (Js.wrap_callback (fun _event _ctx ->
-               Session_sync.start_goal_turn ();
-               ensure_refresh_loop host;
-               emit_changed host))));
+          (Js.wrap_callback (fun _event ctx ->
+               (* Isolated child turns must not touch the shared goal clock or
+                  move the parent's footer. *)
+               if Session_sync.session_is_isolated_child ctx then ()
+               else (
+                 Session_sync.start_goal_turn ();
+                 ensure_refresh_loop host;
+                 emit_changed host)))));
   ignore
     (call2 host "on" (js_string "turn_end")
 	       (inject
 	          (Js.wrap_callback (fun _event ctx ->
+               if Session_sync.session_is_isolated_child ctx then ()
+               else
 	               ignore_stale "footer turn_end" (fun () ->
 	                   match
 	                     Session_sync.try_sync_session_from_host_with
@@ -115,8 +121,7 @@ let register_handlers host =
 	                   with
 	                   | None -> ()
 	                   | Some _ ->
-	                       if not (Session_sync.session_is_isolated_child ctx) then
-	                         capture_loaded_footer_permissions ();
+	                       capture_loaded_footer_permissions ();
 	                       ignore
 	                         (Session_sync.try_account_goal_turn_end
 	                            ~scope:"footer goal accounting" ctx);

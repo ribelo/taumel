@@ -45,11 +45,11 @@ let collect_git_line_delta host cwd =
       else `Error
 
 let refresh_footer_hygiene_now host =
-  if state.cwd = "" then ()
+  if state.footer_cwd = "" then ()
   else
-    let cwd = state.cwd in
+    let cwd = state.footer_cwd in
     let next = collect_git_line_delta host cwd in
-    if state.cwd = cwd then (
+    if state.footer_cwd = cwd then (
       let delta, repo, error =
         match next with
         | `Ready delta -> (delta, true, false)
@@ -97,7 +97,7 @@ let snapshot_for_render host footer_data =
     | _ -> ""
   in
   {
-    Model.cwd = state.cwd;
+    Model.cwd = state.footer_cwd;
     branch;
     filesystem_mode = permissions.footer_filesystem_mode;
     network_mode = network_mode_string permissions.footer_network_mode;
