@@ -464,7 +464,26 @@ let remember_agent_session session_id =
   if not (List.mem session_id !seen_agent_session_ids) then
     seen_agent_session_ids := session_id :: !seen_agent_session_ids
 
-let load_agent_state_data ~recover_running = function
+(* Replay unpersisted activity on top of a freshly loaded registry. Parent/
+   child projection swaps can reload a persisted snapshot that predates the
+   last coalesced persist; the journal holds exactly the events applied
+   since that snapshot, so replaying restores the pre-swap state. *)
+let replay_agent_activity_journal ~session_id state =
+  match !agent_activity_journal with
+  | [] -> state
+  | entries ->
+      List.fold_left
+        (fun acc entry ->
+          if entry.journal_owner <> session_id then acc
+          else
+            Taumel.Agent_registry.record_activity_event acc
+              ~run_id:entry.journal_run_id
+              ~submission_id:entry.journal_submission_id
+              ~now:entry.journal_now ~event:entry.journal_event)
+        state (List.rev entries)
+
+let load_agent_state_data ~session_id ~recover_running agents =
+  (match agents with
   | None ->
       agent_notification_claims := [];
       agent_closing_ids := [];
@@ -499,8 +518,8 @@ let load_agent_state_data ~recover_running = function
           agent_state_load_error := Some message;
           report_session_sync_error "agents load"
             (Failure ("Ignoring incompatible saved Taumel agents entry: " ^ message));
-          agent_state := Taumel.Agents.empty_session_state)
-
+          agent_state := Taumel.Agents.empty_session_state));
+  agent_state := replay_agent_activity_journal ~session_id !agent_state
 let load_session_state ctx =
   let snapshot = persisted_session_snapshot ctx in
   let forked = load_goal_state_data ~session_id:snapshot.session_id snapshot.goal in
@@ -511,6 +530,7 @@ let load_session_state ctx =
   load_ralph_state_data snapshot.ralph;
   load_visibility_state_data snapshot.visibility;
   load_agent_state_data
+    ~session_id:snapshot.session_id
     ~recover_running:(first_agent_session_load snapshot.session_id)
     snapshot.agents;
   remember_agent_session snapshot.session_id;
@@ -546,6 +566,7 @@ let sync_persisted_session_snapshot ?(reset_missing = true)
     load_ralph_state_data snapshot.ralph;
     load_visibility_state_data snapshot.visibility;
     load_agent_state_data
+      ~session_id:snapshot.session_id
       ~recover_running:(first_agent_session_load snapshot.session_id)
       snapshot.agents;
     remember_agent_session snapshot.session_id;
@@ -576,10 +597,10 @@ let sync_persisted_session ?(reset_missing = true)
     ?(clear_retained_outputs = false) ctx =
   let session_id = Session_store.session_id_from_ctx ctx in
   if !loaded_session_id = Some session_id && not clear_retained_outputs then
-    (* Already-loaded session: the snapshot would be built and discarded, so
-       skip the seven full entry scans. The fork-repair append in
-       [finish_goal_load] can only fire for a foreign-thread goal, which an
-       already-loaded session cannot have. *)
+    (* This session id is already the loaded one: the snapshot would be
+       built and discarded, so skip the seven full entry scans. The
+       fork-repair append in [finish_goal_load] can only fire for a
+       foreign-thread goal, which the already-loaded session cannot have. *)
     notify_pending_goal_warning ctx
   else
     let snapshot = persisted_session_snapshot ctx in
@@ -611,7 +632,8 @@ let sync_session_from_host ?(scope = "session sync") ?(reset_missing = true) ctx
 
 let save_goal_state ctx =
   Session_store.append_custom_entry ctx "taumel.goal"
-    (Taumel.Goal.codec.encode !current_goal)
+    (Taumel.Goal.codec.encode !current_goal);
+  if not (session_is_isolated_child ctx) then capture_loaded_footer_goal ()
 
 let save_goal_automation_state ctx =
   Session_store.append_custom_entry ctx "taumel.goal_automation"

@@ -83,6 +83,7 @@ let register_handlers host =
                   Session_sync.persisted_session_snapshot_is_isolated_child snapshot
                 in
                 if not isolated_child then capture_loaded_footer_permissions ();
+                capture_loaded_footer_goal ();
                 if state.footer_cwd <> previous_cwd then (
                   state.git_delta <- Model.empty_git_delta;
                   state.git_repo <- false;
@@ -106,6 +107,7 @@ let register_handlers host =
                if Session_sync.session_is_isolated_child ctx then ()
                else (
                  Session_sync.start_goal_turn ();
+                 capture_loaded_footer_goal ();
                  ensure_refresh_loop host;
                  emit_changed host)))));
   ignore
@@ -125,6 +127,7 @@ let register_handlers host =
 	                       ignore
 	                         (Session_sync.try_account_goal_turn_end
 	                            ~scope:"footer goal accounting" ctx);
+	                       capture_loaded_footer_goal ();
 	                       ensure_refresh_loop host;
 	                       emit_changed host)))));
   ignore

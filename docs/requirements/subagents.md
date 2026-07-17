@@ -181,6 +181,7 @@ agents, goal-mode continuation, Librarian, Review, and Painter.
 - An accepted run shall begin in `starting`; authoritative Pi `agent_start` or `turn_start` shall set `reasoning`; the first active `tool_execution_start` shall set `using_tool`; parallel tool execution shall keep that state until the last active `tool_execution_end`, which shall restore `reasoning`; suspension or terminal settlement shall set `inactive`; and reconciliation without a live authoritative dispatch shall set `orphaned`. ^agent-id20
 - Authoritative Pi `turn_end` shall increment `turn_count` and update `last_activity_at`; `tool_execution_start`, `tool_execution_update`, and `tool_execution_end` shall update `last_activity_at`; phase-only `agent_start` and `turn_start` events shall not update that timestamp. ^agent-id21
 - Pi `agent_end` shall not settle a Taumel run or force an inactive phase because Pi may retry, compact, or process follow-up work; authoritative `agent_settled` shall determine terminal settlement after those continuations finish. ^agent-id22
+- Observed run activity may be persisted coalesced rather than synchronously, provided that every accepted activity event is applied to the in-memory registry immediately, that any reload of a persisted registry replays all not-yet-persisted events so no observed activity is lost, and that terminal lifecycle transitions are persisted synchronously. ^agent-id23
 
 ### Run snapshots and metrics
 

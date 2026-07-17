@@ -62,6 +62,13 @@ let loaded_footer_permissions =
       footer_approval_policy = !active_profile_state.approval_policy;
       footer_no_sandbox = !active_no_sandbox;
     }
+(* Parent-only footer goal line. The shared goal state is swapped out while
+   isolated children load their own projection, so the footer renders this
+   retained presentation, captured only from main-session contexts. *)
+let loaded_footer_goal = ref None
+let capture_loaded_footer_goal () =
+  loaded_footer_goal :=
+    Option.map (Taumel.Goal.present !goal_automation) !current_goal
 let host_sandbox_preset : Taumel.Capability_profile.sandbox_preset option ref = ref None
 let host_network_mode : Taumel.Sandbox.network_mode option ref = ref None
 let host_no_sandbox : bool option ref = ref None
@@ -72,6 +79,20 @@ let visibility_warning_flags : Taumel.Visibility.warning_flags ref =
   ref Taumel.Visibility.empty_warning_flags
 let agent_state : Taumel.Agents.session_state ref =
   ref Taumel.Agents.empty_session_state
+(* Activity events whose persistence is still pending. Activity bookkeeping
+   is applied to the in-memory registry immediately but persisted coalesced;
+   when a parent/child projection swap reloads the owner's persisted
+   registry, these events are replayed on top so no observed activity is
+   lost. Entries are prepended and cleared when the owner's registry is
+   persisted (a persisted snapshot includes every journaled effect). *)
+type agent_activity_journal_entry = {
+  journal_owner : string;
+  journal_run_id : string;
+  journal_submission_id : string;
+  journal_event : string;
+  journal_now : int;
+}
+let agent_activity_journal : agent_activity_journal_entry list ref = ref []
 let agent_notification_claims : string list ref = ref []
 let agent_state_load_error : string option ref = ref None
 let agent_closing_ids : string list ref = ref []

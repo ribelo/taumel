@@ -81,10 +81,7 @@ let network_mode_string = function
   | Taumel.Sandbox.Network_enabled -> "enabled"
   | Taumel.Sandbox.Network_disabled -> "disabled"
 
-let goal_presentation () =
-  Option.map
-    (Taumel.Goal.present !goal_automation)
-    !current_goal
+let goal_presentation () = !loaded_footer_goal
 
 let snapshot_for_render host footer_data =
   let permissions = !loaded_footer_permissions in

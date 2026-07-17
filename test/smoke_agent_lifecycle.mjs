@@ -94,6 +94,29 @@ assert.equal(activeList.details.agents[0].turn_count, 1);
 assert.match(activeList.details.agents[0].activity.last_at, /[+-]\d\d:\d\d$/);
 assert.equal("model" in JSON.parse(activeList.text)[0], false);
 assert.equal("thinking" in JSON.parse(activeList.text)[0], false);
+// agent-id14/agent-id16/agent-id20/agent-id21: coalesced activity persistence must
+// not lose journaled events when a child/parent projection swap reloads an
+// older persisted registry. Only the first loop event above was persisted;
+// the rest are pending in the journal.
+const swapChildCtx = {
+  ...ctx,
+  sessionManager: {
+    sessionId: "journal-swap-child-session",
+    getSessionId() { return this.sessionId; },
+    getSessionFile: () => "/tmp/journal-swap-child.jsonl",
+    getEntries: () => [{
+      type: "custom",
+      customType: "taumel.childSession",
+      data: { kind: "agent", isolated_child: true, parentSessionId: "agent-lifecycle-smoke" },
+    }],
+    getBranch: () => [],
+  },
+};
+core.call("agentManagerSnapshot", [swapChildCtx]);
+core.call("agentManagerSnapshot", [ctx]);
+const afterSwapList = core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]);
+assert.equal(afterSwapList.details.agents[0].turn_count, 1, "journaled activity must survive child/parent projection swaps");
+assert.equal(afterSwapList.details.agents[0].activity.state, "reasoning", "journaled activity phase must survive child/parent projection swaps");
 const offsetMinutes = -new Date().getTimezoneOffset();
 const expectedOffset = `${offsetMinutes < 0 ? "-" : "+"}${String(Math.floor(Math.abs(offsetMinutes) / 60)).padStart(2, "0")}:${String(Math.abs(offsetMinutes) % 60).padStart(2, "0")}`;
 assert.equal(activeList.details.agents[0].created_at.endsWith(expectedOffset), true, "agent-rs15 timestamps must include the DST-aware local offset");

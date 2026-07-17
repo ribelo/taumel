@@ -17,7 +17,12 @@ let reject_nested name =
 
 let save_agent_state ctx =
   Session_store.append_custom_entry ctx "taumel.agents.v4"
-    (Taumel.Agents_codec.encode !agent_state)
+    (Taumel.Agents_codec.encode !agent_state);
+  (* A persisted snapshot includes every journaled effect for this owner. *)
+  agent_activity_journal :=
+    List.filter
+      (fun entry -> entry.journal_owner <> owner_id ctx)
+      !agent_activity_journal
 
 let commit_agent_state ctx next =
   let previous = !agent_state in

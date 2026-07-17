@@ -169,11 +169,13 @@ let record_dispatch_completion facts ctx =
 
 (* Activity events arrive per child turn/tool update; persisting every one
    rewrites the session several times per second and bloats it (measured:
-   ~90% of a 186MB session's recent growth). In-memory state stays exact for
-   agent_list/agent_wait; file persistence is coalesced to one append per
-   2s. Terminal transitions still persist immediately via the completion
-   path, so crash recovery loses at most a couple of seconds of activity
-   bookkeeping, which the reconcile path already tolerates. *)
+   ~90% of a 186MB session's recent growth). Events are applied to the
+   in-memory registry immediately and journaled; a parent/child projection
+   swap that reloads an older persisted snapshot replays the journal, so
+   observed activity is never lost. File persistence is coalesced to one
+   append per 2s; terminal transitions still persist immediately via the
+   completion path, so crash recovery loses only the last few seconds of
+   activity bookkeeping, which the reconcile path already tolerates. *)
 let last_activity_persist_at = ref 0
 
 let record_activity facts ctx =
@@ -181,16 +183,27 @@ let record_activity facts ctx =
   let run_id = get_string facts "run_id" in
   let submission_id = get_string facts "submission_id" in
   let event = get_string facts "event" in
+  let now = now_seconds () in
   let previous = !agent_state in
   let next =
     Taumel.Agent_registry.record_activity_event previous ~run_id ~submission_id
-      ~now:(now_seconds ()) ~event
+      ~now ~event
   in
   agent_state := next;
-  let now_ms = now_milliseconds () in
-  if next != previous && now_ms - !last_activity_persist_at >= 2000 then (
-    last_activity_persist_at := now_ms;
-    save_agent_state ctx);
+  if next != previous then (
+    agent_activity_journal :=
+      {
+        journal_owner = owner_id ctx;
+        journal_run_id = run_id;
+        journal_submission_id = submission_id;
+        journal_event = event;
+        journal_now = now;
+      }
+      :: !agent_activity_journal;
+    let now_ms = now_milliseconds () in
+    if now_ms - !last_activity_persist_at >= 2000 then (
+      last_activity_persist_at := now_ms;
+      save_agent_state ctx));
   core_ack ()
 
 let record_dispatch_boundary facts ctx =
