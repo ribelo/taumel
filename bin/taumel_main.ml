@@ -85,7 +85,8 @@ let core_call name_js args_js =
   | "cronUpdateTask" -> Cron_tools.update_task (arg 0)
   | "handleCronManagerCommand" -> Cron_tools.handle_manager_command (arg 0)
   | "refreshFooterState" -> Footer_runtime.refresh_state (arg 0)
-  | "updateFooterThinking" -> Footer_runtime.update_thinking (string_arg args 0)
+  | "updateFooterThinking" ->
+      Footer_runtime.update_thinking (string_arg args 0) (arg 1)
   | "planChildGoalContinuation" ->
       Goal_tools.plan_child_goal_continuation (arg 0)
   | "startGoalTurn" ->

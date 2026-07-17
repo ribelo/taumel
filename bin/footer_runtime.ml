@@ -162,7 +162,14 @@ let refresh_state ctx =
   emit_changed host;
   core_ack ()
 
-let update_thinking thinking =
-  state.thinking <- thinking;
-  emit_changed (active_host_or_empty ());
-  core_ack ()
+let update_thinking thinking ctx =
+  (* thinking_level_select can originate from any in-process session;
+     isolated children must not move the parent's footer. *)
+  if
+    is_property_container (inject ctx)
+    && Session_sync.session_is_isolated_child ctx
+  then core_ack ()
+  else (
+    state.thinking <- thinking;
+    emit_changed (active_host_or_empty ());
+    core_ack ())

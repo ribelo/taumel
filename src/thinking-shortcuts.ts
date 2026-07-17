@@ -15,8 +15,8 @@ function currentThinkingLevel(pi: PiLike): ThinkingLevel {
   return isThinkingLevel(level) ? level : "off";
 }
 
-function updateFooterThinking(core: CoreBridge, level: ThinkingLevel): void {
-  core.call("updateFooterThinking", [level]);
+function updateFooterThinking(core: CoreBridge, level: ThinkingLevel, ctx?: unknown): void {
+  core.call("updateFooterThinking", [level, ctx]);
 }
 
 function stepThinkingLevel(pi: PiLike, core: CoreBridge, ctx: unknown, delta: -1 | 1): void {
@@ -26,7 +26,7 @@ function stepThinkingLevel(pi: PiLike, core: CoreBridge, ctx: unknown, delta: -1
   const nextIndex = Math.max(0, Math.min(thinkingLevels.length - 1, index + delta));
   pi.setThinkingLevel(thinkingLevels[nextIndex]);
   const after = currentThinkingLevel(pi);
-  updateFooterThinking(core, after);
+  updateFooterThinking(core, after, ctx);
   const context = typeof ctx === "object" && ctx !== null ? ctx as ThinkingNotificationContext : undefined;
   const ui = context?.ui;
   const notify = ui?.notify;
@@ -34,11 +34,11 @@ function stepThinkingLevel(pi: PiLike, core: CoreBridge, ctx: unknown, delta: -1
 }
 
 export function installThinkingFooterRefresh(pi: PiLike, core: CoreBridge): void {
-  pi.on("thinking_level_select", (event: unknown) => {
+  pi.on("thinking_level_select", (event: unknown, ctx?: unknown) => {
     const level = typeof event === "object" && event !== null
       ? (event as ThinkingSelectEvent).level
       : undefined;
-    if (isThinkingLevel(level)) updateFooterThinking(core, level);
+    if (isThinkingLevel(level)) updateFooterThinking(core, level, ctx);
   });
 }
 

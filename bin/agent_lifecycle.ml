@@ -178,6 +178,43 @@ let record_dispatch_completion facts ctx =
    activity bookkeeping, which the reconcile path already tolerates. *)
 let last_activity_persist_at = ref 0
 
+(* Trailing flush: leading-edge persistence alone would leave the last
+   journal entries unpersisted until the next state transition. Schedule a
+   one-shot timer so pending activity is persisted within ~2s even when no
+   further events arrive. The timer is unref'd so it never keeps the
+   process alive, and the flush is best-effort: on any failure the journal
+   survives for the next persist or replay. *)
+let activity_flush_scheduled = ref false
+let last_activity_ctx : Unsafe.any option ref = ref None
+
+let flush_pending_activity () =
+  activity_flush_scheduled := false;
+  match !last_activity_ctx with
+  | None -> ()
+  | Some ctx -> (
+      try
+        if
+          List.exists
+            (fun entry -> entry.journal_owner = owner_id ctx)
+            !agent_activity_journal
+        then (
+          Session_sync.sync_persisted_session ctx;
+          save_agent_state ctx)
+      with _ -> ())
+
+let schedule_activity_flush ctx =
+  last_activity_ctx := Some ctx;
+  if not !activity_flush_scheduled then (
+    activity_flush_scheduled := true;
+    let timer =
+      Unsafe.fun_call
+        (Unsafe.get Unsafe.global "setTimeout")
+        [| inject (Js.wrap_callback flush_pending_activity); js_number 2000.0 |]
+    in
+    match function_field timer "unref" with
+    | Some _ -> ignore (call0 timer "unref")
+    | None -> ())
+
 let record_activity facts ctx =
   Session_sync.sync_persisted_session ctx;
   let run_id = get_string facts "run_id" in
@@ -203,7 +240,8 @@ let record_activity facts ctx =
     let now_ms = now_milliseconds () in
     if now_ms - !last_activity_persist_at >= 2000 then (
       last_activity_persist_at := now_ms;
-      save_agent_state ctx));
+      save_agent_state ctx)
+    else schedule_activity_flush ctx);
   core_ack ()
 
 let record_dispatch_boundary facts ctx =

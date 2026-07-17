@@ -117,6 +117,13 @@ core.call("agentManagerSnapshot", [ctx]);
 const afterSwapList = core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]);
 assert.equal(afterSwapList.details.agents[0].turn_count, 1, "journaled activity must survive child/parent projection swaps");
 assert.equal(afterSwapList.details.agents[0].activity.state, "reasoning", "journaled activity phase must survive child/parent projection swaps");
+// agent-id23: pending activity is persisted within a bounded delay even when no
+// further events arrive (trailing flush), not just on later state transitions.
+const agentsEntriesBeforeFlush = entries.filter((e) => e.customType === "taumel.agents.v4").length;
+assert.equal(core.call("recordAgentActivity", [{ run_id: runId, submission_id: submissionId, event: "turn_start" }, ctx]).ok, true);
+await new Promise((resolve) => setTimeout(resolve, 2300));
+const agentsEntriesAfterFlush = entries.filter((e) => e.customType === "taumel.agents.v4").length;
+assert.ok(agentsEntriesAfterFlush > agentsEntriesBeforeFlush, "agent-id23: trailing flush must persist pending activity without further events");
 const offsetMinutes = -new Date().getTimezoneOffset();
 const expectedOffset = `${offsetMinutes < 0 ? "-" : "+"}${String(Math.floor(Math.abs(offsetMinutes) / 60)).padStart(2, "0")}:${String(Math.abs(offsetMinutes) % 60).padStart(2, "0")}`;
 assert.equal(activeList.details.agents[0].created_at.endsWith(expectedOffset), true, "agent-rs15 timestamps must include the DST-aware local offset");
