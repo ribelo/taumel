@@ -637,7 +637,14 @@ let save_goal_state ctx =
 
 let save_goal_automation_state ctx =
   Session_store.append_custom_entry ctx "taumel.goal_automation"
-    (Taumel.Goal.automation_codec.encode !goal_automation)
+    (Taumel.Goal.automation_codec.encode !goal_automation);
+  (* Automation changes must reach the retained footer goal immediately;
+     there may be no following turn to repair a stale presentation. *)
+  if not (session_is_isolated_child ctx) then (
+    capture_loaded_footer_goal ();
+    match !active_host with
+    | Some host -> emit_changed host
+    | None -> ())
 
 let set_goal_automation ctx automation =
   if !goal_automation <> automation then (

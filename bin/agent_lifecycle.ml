@@ -181,29 +181,35 @@ let last_activity_persist_at = ref 0
 (* Trailing flush: leading-edge persistence alone would leave the last
    journal entries unpersisted until the next state transition. Schedule a
    one-shot timer so pending activity is persisted within ~2s even when no
-   further events arrive. The timer is unref'd so it never keeps the
-   process alive, and the flush is best-effort: on any failure the journal
-   survives for the next persist or replay. *)
+   further events arrive. Contexts are tracked per owner (one global timer
+   would starve other owners) and released once their journal drains, so a
+   closed session is not retained. The timer is unref'd so it never keeps
+   the process alive, and the flush is best-effort: on any failure the
+   journal survives for the next persist or replay. *)
 let activity_flush_scheduled = ref false
-let last_activity_ctx : Unsafe.any option ref = ref None
+let activity_flush_contexts : (string * Unsafe.any) list ref = ref []
 
 let flush_pending_activity () =
   activity_flush_scheduled := false;
-  match !last_activity_ctx with
-  | None -> ()
-  | Some ctx -> (
-      try
-        if
-          List.exists
-            (fun entry -> entry.journal_owner = owner_id ctx)
-            !agent_activity_journal
-        then (
+  List.iter
+    (fun (owner, ctx) ->
+      if List.exists (fun entry -> entry.journal_owner = owner) !agent_activity_journal then
+        try
           Session_sync.sync_persisted_session ctx;
-          save_agent_state ctx)
-      with _ -> ())
+          save_agent_state ctx;
+          last_activity_persist_at := now_milliseconds ()
+        with _ -> ())
+    !activity_flush_contexts;
+  activity_flush_contexts :=
+    List.filter
+      (fun (owner, _) ->
+        List.exists (fun entry -> entry.journal_owner = owner) !agent_activity_journal)
+      !activity_flush_contexts
 
 let schedule_activity_flush ctx =
-  last_activity_ctx := Some ctx;
+  let owner = owner_id ctx in
+  activity_flush_contexts :=
+    (owner, ctx) :: List.remove_assoc owner !activity_flush_contexts;
   if not !activity_flush_scheduled then (
     activity_flush_scheduled := true;
     let timer =
@@ -366,6 +372,7 @@ let count_active_child_runs ctx =
   |> Tool_contracts.AgentActiveCountResult.t_to_js |> inject
 
 let ephemeral_cleanup_plan ctx =
+  Session_sync.sync_persisted_session ctx;
   let agents =
     Taumel.Agents.owned_identities !agent_state
       ~owner_session_id:(owner_id ctx)
@@ -456,6 +463,7 @@ let manager_snapshot ctx =
   |> Tool_contracts.AgentManagerSnapshot.t_to_js |> inject
 
 let finish_ephemeral_cleanup ctx =
+  Session_sync.sync_persisted_session ctx;
   match !agent_state_load_error with
   | Some message -> error_obj ("agent state is unavailable: " ^ message)
   | None ->
@@ -634,6 +642,7 @@ let release_ephemeral_cleanup_lease ctx =
     | Error message -> error_obj ("cleanup_failed: " ^ message)
 
 let suspend_owner_on_shutdown ctx =
+  Session_sync.sync_persisted_session ctx;
   match !agent_state_load_error with
   | Some message -> error_obj ("agent state is unavailable: " ^ message)
   | None ->

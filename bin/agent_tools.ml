@@ -14,11 +14,14 @@ let reject_nested name =
 let save_agent_state ctx =
   Session_store.append_custom_entry ctx "taumel.agents.v4"
     (Taumel.Agents_codec.encode !agent_state);
-  (* A persisted snapshot includes every journaled effect for this owner. *)
-  agent_activity_journal :=
-    List.filter
-      (fun entry -> entry.journal_owner <> owner_id ctx)
-      !agent_activity_journal
+  (* A persisted snapshot includes every journaled effect for this owner.
+     Only clear when the loaded projection really is that owner's registry;
+     otherwise the save itself is suspect and the journal must survive. *)
+  if !loaded_session_id = Some (owner_id ctx) then
+    agent_activity_journal :=
+      List.filter
+        (fun entry -> entry.journal_owner <> owner_id ctx)
+        !agent_activity_journal
 let commit_agent_state ctx next =
   let previous = !agent_state in
   agent_state := next;

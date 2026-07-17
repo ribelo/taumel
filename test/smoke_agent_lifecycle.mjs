@@ -302,6 +302,31 @@ assert.match(replacement.agentId, /^agent-[abcdefghjkmnpqrstuvwxyz23456789]{4}$/
 assert.notEqual(replacement.agentId, agentId, "closed agent handles must remain retired");
 assert.equal(core.call("finishAgentClose", [{ agent_id: replacement.agentId }, ctx]).ok, true);
 
+// agent-ps12/shared-st03 regression: shutdown entry points must synchronize the
+// owner projection before touching the registry. With a child projection
+// loaded last, an unsynchronized shutdown would read the foreign (empty)
+// registry, persist it over the owner's, and drop pending journaled activity.
+const shutdownAgent = core.call("prepareTool", [{
+  name: "agent_spawn",
+  params: { message: "shutdown", description: "Agent for shutdown sync test", tier: "low" },
+  ctx,
+}]);
+assert.equal(shutdownAgent.ok, true);
+assert.equal(core.call("recordAgentActivity", [{
+  run_id: shutdownAgent.runId,
+  submission_id: shutdownAgent.submissionId,
+  event: "turn_end",
+}, ctx]).ok, true);
+core.call("agentManagerSnapshot", [swapChildCtx]);
+assert.equal(core.call("suspendOwnerAgentsOnShutdown", [ctx]).ok, true);
+const afterShutdownList = core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]);
+assert.equal(afterShutdownList.details.agents.length, 1,
+  "shutdown with a child projection loaded must not clobber the owner registry");
+assert.equal(afterShutdownList.details.agents[0].status, "suspended",
+  "owner runs must be suspended on shutdown");
+assert.equal(afterShutdownList.details.agents[0].turn_count, 1,
+  "journaled activity must survive shutdown with a child projection loaded");
+
 rmSync(childDirectory, { recursive: true, force: true });
 
 console.log("agent lifecycle smoke: all assertions passed");

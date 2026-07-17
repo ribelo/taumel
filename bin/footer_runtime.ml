@@ -107,7 +107,6 @@ let register_handlers host =
                if Session_sync.session_is_isolated_child ctx then ()
                else (
                  Session_sync.start_goal_turn ();
-                 capture_loaded_footer_goal ();
                  ensure_refresh_loop host;
                  emit_changed host)))));
   ignore
@@ -164,11 +163,15 @@ let refresh_state ctx =
 
 let update_thinking thinking ctx =
   (* thinking_level_select can originate from any in-process session;
-     isolated children must not move the parent's footer. *)
-  if
-    is_property_container (inject ctx)
-    && Session_sync.session_is_isolated_child ctx
-  then core_ack ()
+     isolated children must not move the parent's footer. A stale context
+     object must not turn a footer hint into an exception path either. *)
+  let child =
+    try
+      is_property_container (inject ctx)
+      && Session_sync.session_is_isolated_child ctx
+    with _ -> false
+  in
+  if child then core_ack ()
   else (
     state.thinking <- thinking;
     emit_changed (active_host_or_empty ());
