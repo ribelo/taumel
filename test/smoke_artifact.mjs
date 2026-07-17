@@ -164,7 +164,7 @@ if (!lines[0].includes("$0.125")) {
 if (!lines[0].includes("gpt-test")) {
   throw new Error(`footer did not render parent model: ${JSON.stringify(lines)}`);
 }
-core.call("updateFooterThinking", ["high"]);
+core.call("updateFooterThinking", ["high", ctx]);
 const thinkingLines = component.render(120);
 if (!thinkingLines[0].includes("gpt-test • high")) {
   throw new Error(`footer did not render the directly updated thinking level: ${JSON.stringify(thinkingLines)}`);
@@ -215,6 +215,11 @@ for (const handler of handlers.get("model_select") ?? []) {
 const childLines = component.render(120);
 if (!childLines[0].includes("gpt-test") || childLines[0].includes("amazon-bedrock")) {
   throw new Error(`isolated_child context overwrote parent footer model: ${JSON.stringify(childLines)}`);
+}
+core.call("updateFooterThinking", ["low", childCtx]);
+const childThinkingLines = component.render(120);
+if (!childThinkingLines[0].includes("gpt-test • high")) {
+  throw new Error(`isolated_child updateFooterThinking moved the parent footer thinking: ${JSON.stringify(childThinkingLines)}`);
 }
 if (footerInstallSessionIds.includes("artifact-child-session")) {
   throw new Error(`isolated_child session_start reinstalled the parent footer: ${JSON.stringify(footerInstallSessionIds)}`);

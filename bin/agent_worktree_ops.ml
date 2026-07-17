@@ -4,9 +4,12 @@ open App_state
 let accept_worktree_start facts ctx =
   Session_sync.require_agent_owner ctx;
   let agent_id = get_string facts "agentId" in
-  match Taumel.Agents.find_identity !agent_state agent_id with
-  | None -> core_ack ()
-  | Some identity -> (
+  match
+    Taumel.Agents.owned_identity !agent_state
+      ~owner_session_id:(Session_store.session_id_from_ctx ctx) agent_id
+  with
+  | Error message -> error_obj message
+  | Ok identity -> (
       match Taumel.Agents.identity_isolation identity with
       | Taumel.Agent_workspace.None -> core_ack ()
       | Taumel.Agent_workspace.Worktree -> (

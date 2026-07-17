@@ -809,6 +809,7 @@ let delete_worktree = Agent_worktree_ops.delete_worktree
 let reconcile_provisional_worktrees = Agent_worktree_ops.reconcile_provisional_worktrees
 
 let prepare name params ctx =
+  Session_sync.require_agent_owner ctx;
   match !agent_state_load_error with
   | Some message ->
       error_obj ("agent state is unavailable: " ^ message)

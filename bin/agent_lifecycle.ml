@@ -630,19 +630,29 @@ let finish_ephemeral_cleanup ctx =
                      ~unstage_error ~restore_error))
 
 let release_ephemeral_cleanup_lease ctx =
-  let owner = owner_id ctx in
-  if
-    !agent_state_load_error <> None
-    || Taumel.Agents.owned_identities !agent_state ~owner_session_id:owner <> []
-  then
-    (* A failed shutdown may have restored usable identities. Retain the
-       lifetime lease until process death so deferred markers cannot be
-       promoted while those identities remain live. *)
-    core_ack ()
-  else
-    match Agent_ephemeral_cleanup.release_owner owner with
-    | Ok () -> core_ack ()
-    | Error message -> error_obj ("cleanup_failed: " ^ message)
+  match
+    try
+      Session_sync.require_agent_owner ctx;
+      Ok ()
+    with error -> Error (Printexc.to_string error)
+  with
+  | Error _ ->
+      (* Ownership unprovable: fail closed and retain the lease. *)
+      core_ack ()
+  | Ok () -> (
+      let owner = owner_id ctx in
+      if
+        !agent_state_load_error <> None
+        || Taumel.Agents.owned_identities !agent_state ~owner_session_id:owner <> []
+      then
+        (* A failed shutdown may have restored usable identities. Retain the
+           lifetime lease until process death so deferred markers cannot be
+           promoted while those identities remain live. *)
+        core_ack ()
+      else
+        match Agent_ephemeral_cleanup.release_owner owner with
+        | Ok () -> core_ack ()
+        | Error message -> error_obj ("cleanup_failed: " ^ message))
 
 let suspend_owner_on_shutdown ctx =
   Session_sync.require_agent_owner ctx;
