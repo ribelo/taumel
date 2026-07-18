@@ -46,10 +46,11 @@ type exa_entry = {
   mutable state : exa_state;
 }
 type agent_action_state = Agent_issued | Agent_claimed
+type agent_action = Agent_start | Agent_send | Agent_close
 type agent_action_entry = {
   owner_id : string;
   owner_context : Unsafe.any;
-  action : string;
+  action : agent_action;
   agent_id : string;
   owner_epoch : int;
   permission_epoch : int;

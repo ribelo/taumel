@@ -58,6 +58,31 @@ const host = {
 };
 core = bootstrap.init(host);
 
+for (const [method, args] of [
+  ["recordAgentChildSessionStart", [{}, ctx]], ["rollbackUnacceptedAgentStart", [{}, ctx]],
+  ["rollbackAgentSendPreflight", [{}, ctx]], ["recordAgentSendDispatchFailure", [{}, ctx]],
+  ["rollbackFailedAgentInterruption", [{}, ctx]], ["recordAgentDispatchCompletion", [{}, ctx]],
+  ["recordAgentActivity", [{}, ctx]], ["recordAgentDispatchBoundary", [{}, ctx]],
+  ["reconcileLiveAgentDispatches", [{}, ctx]], ["recordAgentBackgroundNotification", [{}, ctx]],
+  ["validateAgentBackgroundNotificationClaim", [{}, ctx]], ["finishAgentWait", [{}, ctx]],
+  ["finishAgentClose", [{}, ctx]], ["acceptAgentWorktreeStart", [{}, ctx]],
+  ["rollbackAgentWorktreeStart", [{}, ctx]], ["deleteAgentWorktree", [{}, ctx]],
+  ["cancelAgentBrokerSessions", [{}]], ["deleteAgentChildSession", [{}, ctx]],
+  ["recordAgentCloseCleanupFailure", [{}, ctx]],
+]) {
+  assert.throws(
+    () => core.call(method, args),
+    `${method} accepted malformed lifecycle facts`,
+  );
+}
+for (const facts of [
+  { capabilityId: "missing", agentId: "agent-x", action: "agent_start", ctx },
+  { capabilityId: "missing", agentId: "agent-x", action: "agent_close", runId: "run-x", ctx },
+  { capabilityId: "missing", agentId: "agent-x", action: "agent_send", submissionId: "submission-x", ctx },
+]) {
+  assert.throws(() => core.call("claimAgentAction", [facts]), "invalid capability binding was representable at runtime");
+}
+
 const start = core.call("prepareTool", [{
   name: "agent_spawn",
   params: { message: "investigate", description: "Investigate agent lifecycle", tier: "high" },

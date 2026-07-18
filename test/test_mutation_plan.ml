@@ -28,14 +28,20 @@ let expect_error label expected = function
   | Ok _ -> fail label "expected error"
 
 let sandbox =
-  {
-    Sandbox.filesystem_mode = Sandbox.Workspace_write;
-    workspace_roots = [ "/repo" ];
-    network_mode = Sandbox.Network_disabled;
-    approval_policy = Sandbox.On_request;
-    no_sandbox = false;
-    isolated_child = false;
-  }
+  Sandbox.validated_config ~filesystem_mode:Sandbox.Workspace_write
+    ~workspace_roots:[ "/repo" ] ~network_mode:Sandbox.Network_disabled
+    ~approval_policy:Sandbox.On_request ~no_sandbox:false ~isolated_child:false
+  |> Result.get_ok
+
+let sandbox_with ?(filesystem_mode = Sandbox.Workspace_write)
+    ?(no_sandbox = false) () =
+  let network_mode =
+    if filesystem_mode = Sandbox.Danger_full_access then Sandbox.Network_enabled
+    else Sandbox.Network_disabled
+  in
+  Sandbox.validated_config ~filesystem_mode ~workspace_roots:[ "/repo" ]
+    ~network_mode ~approval_policy:Sandbox.On_request
+    ~no_sandbox ~isolated_child:false |> Result.get_ok
 
 let test_exec_plan () =
   (match
@@ -80,8 +86,14 @@ let test_exec_plan () =
         approval.title
   | None -> fail "exec approval" "expected approval");
   let expect_escalation_rejected label policy expected =
+    let policy_sandbox =
+      Sandbox.validated_config ~filesystem_mode:sandbox.filesystem_mode
+        ~workspace_roots:sandbox.workspace_roots ~network_mode:sandbox.network_mode
+        ~approval_policy:policy ~no_sandbox:sandbox.no_sandbox
+        ~isolated_child:sandbox.isolated_child |> Result.get_ok
+    in
     expect_error label expected
-      (Mutation.plan_exec { sandbox with approval_policy = policy }
+      (Mutation.plan_exec policy_sandbox
          {
            cmd = "echo hi";
            workdir = "";
@@ -154,13 +166,13 @@ let test_workspace_validation_policy () =
     (Sandbox.requires_resolved_workspace_mutation_validation sandbox);
   assert_false "no sandbox skips resolved mutation validation"
     (Sandbox.requires_resolved_workspace_mutation_validation
-       { sandbox with no_sandbox = true });
+       (sandbox_with ~no_sandbox:true ()));
   assert_false "danger full access skips resolved mutation validation"
     (Sandbox.requires_resolved_workspace_mutation_validation
-       { sandbox with filesystem_mode = Sandbox.Danger_full_access });
+       (sandbox_with ~filesystem_mode:Sandbox.Danger_full_access ()));
   assert_false "read only skips resolved mutation validation"
     (Sandbox.requires_resolved_workspace_mutation_validation
-       { sandbox with filesystem_mode = Sandbox.Read_only })
+       (sandbox_with ~filesystem_mode:Sandbox.Read_only ()))
 
 let test_apply_patch_plan () =
   let patch =

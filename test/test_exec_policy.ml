@@ -287,14 +287,10 @@ let test_approval_rank_ordering () =
 
 let test_exec_policy_prompt_under_never_allows_but_boundaries_deny () =
   let never_read_only =
-    {
-      Sandbox.filesystem_mode = Sandbox.Read_only;
-      workspace_roots = [ "/repo" ];
-      network_mode = Sandbox.Network_disabled;
-      approval_policy = Sandbox.Never;
-      no_sandbox = false;
-      isolated_child = false;
-    }
+    Sandbox.validated_config ~filesystem_mode:Sandbox.Read_only
+      ~workspace_roots:[ "/repo" ] ~network_mode:Sandbox.Network_disabled
+      ~approval_policy:Sandbox.Never ~no_sandbox:false ~isolated_child:false
+    |> Result.get_ok
   in
   (match
      Sandbox.authorize_exec ~policy_decision:Exec_policy.Prompt never_read_only

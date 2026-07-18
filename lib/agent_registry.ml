@@ -184,30 +184,29 @@ let record_activity_event state ~run_id ~submission_id ~now ~event =
   | Some run ->
       let updated =
         match event with
-        | "agent_start" | "turn_start" ->
+        | Agent_start | Turn_start ->
             { run with run_activity_state = Reasoning }
-        | "tool_execution_start" ->
+        | Tool_execution_start ->
             { run with
               run_activity_state = Using_tool;
               run_active_tool_count = run.run_active_tool_count + 1;
               run_last_activity_at = Some now }
-        | "tool_execution_update" ->
+        | Tool_execution_update ->
             { run with
               run_activity_state = Using_tool;
               run_last_activity_at = Some now }
-        | "tool_execution_end" ->
+        | Tool_execution_end ->
             let active_tool_count = max 0 (run.run_active_tool_count - 1) in
             { run with
               run_activity_state = if active_tool_count = 0 then Reasoning else Using_tool;
               run_active_tool_count = active_tool_count;
               run_last_activity_at = Some now }
-        | "turn_end" ->
+        | Turn_end ->
             { run with
               run_turn_count = run.run_turn_count + 1;
               run_last_activity_at = Some now;
               run_activity_state =
                 if run.run_active_tool_count > 0 then Using_tool else Reasoning }
-        | _ -> run
       in
       { state with runs = replace_run updated state.runs }
 

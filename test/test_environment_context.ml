@@ -20,24 +20,16 @@ let contains value needle =
   in
   loop 0
 
-let workspace_sandbox =
-  {
-    Sandbox.filesystem_mode = Sandbox.Workspace_write;
-    workspace_roots = [ "/repo" ];
-    network_mode = Sandbox.Network_disabled;
-    approval_policy = Sandbox.On_request;
-    no_sandbox = false;
-    isolated_child = false;
-  }
+let sandbox ?(workspace_roots = [ "/repo" ]) ?(network_mode = Sandbox.Network_disabled)
+    ?(approval_policy = Sandbox.On_request) filesystem_mode =
+  Sandbox.validated_config ~filesystem_mode ~workspace_roots ~network_mode
+    ~approval_policy ~no_sandbox:false ~isolated_child:false |> Result.get_ok
+
+let workspace_sandbox = sandbox Sandbox.Workspace_write
 
 let full_access_sandbox =
-  {
-    workspace_sandbox with
-    filesystem_mode = Sandbox.Danger_full_access;
-    workspace_roots = [];
-    network_mode = Sandbox.Network_enabled;
-    approval_policy = Sandbox.Never;
-  }
+  sandbox ~workspace_roots:[] ~network_mode:Sandbox.Network_enabled
+    ~approval_policy:Sandbox.Never Sandbox.Danger_full_access
 
 let test_full_context_serialization () =
   let snapshot = Env.snapshot ~cwd:"/repo" ~shell:"/bin/bash" full_access_sandbox in

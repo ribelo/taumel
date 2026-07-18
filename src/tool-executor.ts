@@ -662,7 +662,6 @@ async function executeLegacyEdit(
 
 async function executeApplyPatch(
   core: CoreBridge,
-  rawParams: unknown,
   prepared: Extract<PreparedSuccess, { action: "apply_patch" }>,
   ctx: unknown,
 ): Promise<ToolResultEnvelope> {
@@ -698,7 +697,7 @@ async function executeApplyPatch(
     files[authorization.path] = new TextDecoder().decode(read.contents);
   }
   const application = decodePatchApplicationResult(core.call("applyPatchToFiles", [{
-    params: rawParams, files, ctx, filesystemApproval: prepared.filesystemApproval === true,
+    params: { input: prepared.patch }, files, ctx, filesystemApproval: prepared.filesystemApproval === true,
     authorizedPaths: prepared.authorizedPaths,
   }]));
   if (application.kind === "error") return errorToolResult(core, application.message, { ...application });
@@ -839,7 +838,7 @@ export async function executeTool(
         core,
         childSessions,
         pendingAgentWaits,
-        prepared as { readonly [key: string]: unknown },
+        prepared,
         ctx,
         signal,
         childExtensionFactory,
@@ -910,7 +909,7 @@ export async function executeTool(
         return errorToolResult(core, "worktree-isolated child filesystem approval is forbidden", { ok: false });
       }
       return withMutationApproval(core, "apply_patch", prepared, ctx, signal, approvalStillCurrent, replan, () =>
-        executeApplyPatch(core, parsed.params, {
+        executeApplyPatch(core, {
           ...prepared,
           action: "apply_patch",
           filesystemApproval: true,
@@ -926,7 +925,7 @@ export async function executeTool(
     case "edit":
       return executeLegacyEdit(core, prepared);
     case "apply_patch":
-      return executeApplyPatch(core, parsed.params, prepared, ctx);
+      return executeApplyPatch(core, prepared, ctx);
     default:
       throw new Error(`${name} is registered by Taumel, but its executor is not connected yet.`);
   }

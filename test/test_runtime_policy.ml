@@ -36,14 +36,10 @@ let test_active_policy () =
 let test_gateway_authorization () =
   let profile = Capability.default in
   let sandbox =
-    {
-      Sandbox.filesystem_mode = Sandbox.Read_only;
-      workspace_roots = [ "/repo" ];
-      network_mode = Sandbox.Network_disabled;
-      approval_policy = Sandbox.Never;
-      no_sandbox = false;
-      isolated_child = false;
-    }
+    Sandbox.validated_config ~filesystem_mode:Sandbox.Read_only
+      ~workspace_roots:[ "/repo" ] ~network_mode:Sandbox.Network_disabled
+      ~approval_policy:Sandbox.Never ~no_sandbox:false ~isolated_child:false
+    |> Result.get_ok
   in
   (match Runtime.gateway_authorized ~profile ~sandbox "write" with
   | Error

@@ -15,27 +15,6 @@ let assert_error label = function
   | Ok _ -> failwith (label ^ ": expected error")
   | Error _ -> ()
 
-let test_mutation_authorization_requires_trusted_adapter () =
-  match
-    Agent_worktree.authorize_mutation ~operation:Provision
-      ~main_repository_root:"/repo" ~main_repository_id:"id"
-      ~worktree_path:"/wt" ~branch:"taumel/agent/x" ~trusted_adapter:false
-  with
-  | Authorized _ -> failwith "untrusted adapter must be denied"
-  | Denied _ -> ();
-  match
-    Agent_worktree.authorize_mutation ~operation:Broker
-      ~main_repository_root:"/repo" ~main_repository_id:"id"
-      ~worktree_path:"/wt" ~branch:"taumel/agent/x" ~trusted_adapter:true
-  with
-  | Denied message -> failwith message
-  | Authorized auth ->
-      assert_equal "op"
-        (Agent_worktree.lifecycle_op_to_string auth.operation)
-        "broker";
-      assert_equal "admin" auth.worktree_admin_path "/wt/.git";
-      assert_equal "branch ref" auth.branch_ref "refs/heads/taumel/agent/x"
-
 let test_marker_roundtrip_and_match () =
   let marker =
     {
@@ -45,10 +24,17 @@ let test_marker_roundtrip_and_match () =
       main_repository_id = "id";
       worktree_path = "/home/u/.pi/agent/taumel/worktrees/repo/own/agent-ab12";
       branch = "taumel/agent/repo/own/agent-ab12/deadbeef";
-      completed_steps = [ Marker_recorded; Worktree_created ];
+      completed_steps =
+        [ Marker_recorded; Worktree_creation_started; Worktree_created ];
       cleanup_incident_id = None;
     }
   in
+  assert_true "current creation journal is valid"
+    (Agent_worktree.valid_creation_steps marker.completed_steps);
+  assert_true "legacy journal is inert"
+    (not
+       (Agent_worktree.valid_creation_steps
+          [ Marker_recorded; Worktree_created ]));
   match Agent_worktree.marker_of_json (Agent_worktree.marker_to_json marker) with
   | Error message -> failwith message
   | Ok decoded ->
@@ -64,14 +50,8 @@ let test_marker_roundtrip_and_match () =
 
 let test_spawn_persists_worktree_binding () =
   let ceiling =
-    {
-      Capability_profile.model_id = "inherit";
-      thinking_level = "medium";
-      sandbox_preset = Capability_profile.Workspace_write;
-      approval_policy = Capability_profile.On_request;
-      tools = Capability_profile.All;
-      no_sandbox_allowed = false;
-    }
+    Capability_profile.resolve ~approval_policy:Capability_profile.On_request
+      Capability_profile.default
   in
   let binding =
     Agent_workspace.worktree ~source_origin:"/tmp/src"
@@ -117,36 +97,19 @@ let test_delete_worktree_message_for_none () =
   assert_true "message mentions worktree"
     (String.length Agent_worktree.delete_worktree_on_none_message > 10)
 
-let test_broker_and_sandbox_auth_compose () =
+let test_broker_authorization () =
   let parsed =
     match Agent_git_broker.parse_tokens [ "git"; "status"; "--short" ] with
     | Ok value -> value
     | Error error -> failwith (Agent_git_broker.error_message error)
   in
-  (match Agent_git_broker.authorize ~read_only:true parsed with
+  match Agent_git_broker.authorize ~read_only:true parsed with
   | Ok _ -> ()
-  | Error error -> failwith (Agent_git_broker.error_message error));
-  let mutation =
-    {
-      Sandbox.operation = Sandbox.Agent_worktree_broker;
-      main_repository_root = "/repo";
-      main_repository_id = "id";
-      worktree_path = "/wt";
-      worktree_admin_path = "/wt/.git";
-      branch = "taumel/agent/x";
-      branch_ref = "refs/heads/taumel/agent/x";
-      object_store_path = "/repo/.git/objects";
-    }
-  in
-  match Sandbox.authorize_agent_worktree_mutation ~trusted_adapter:true mutation with
-  | Sandbox.Allow -> ()
-  | Sandbox.Deny message -> failwith message
-  | Sandbox.Requires_approval _ -> failwith "unexpected approval"
+  | Error error -> failwith (Agent_git_broker.error_message error)
 
 let () =
-  test_mutation_authorization_requires_trusted_adapter ();
   test_marker_roundtrip_and_match ();
   test_spawn_persists_worktree_binding ();
   test_delete_worktree_message_for_none ();
-  test_broker_and_sandbox_auth_compose ();
+  test_broker_authorization ();
   print_endline "test_agent_worktree_lifecycle: ok"

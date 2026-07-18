@@ -19,7 +19,7 @@ export function agentErrorToolResult(core: CoreBridge, code: string, message: st
   return errorToolResult(core, JSON.stringify(payload), payload);
 }
 
-export function hostToolResult(core: CoreBridge, action: string, details: unknown): ToolResultEnvelope {
+export function hostToolResult(core: CoreBridge, action: "write_stdin" | "apply_patch" | "write" | "edit", details: unknown): ToolResultEnvelope {
   return decodeToolResultEnvelope(core.call("hostToolResult", [{ action, details }]));
 }
 

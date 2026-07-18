@@ -32,6 +32,16 @@ let expect_ok_any label = function
   | Ok value -> value
   | Error _ -> fail label "unexpected error"
 
+let sandbox ?(workspace_roots = [ "/repo" ])
+    ?network_mode ?(approval_policy = Sandbox.Never)
+    filesystem_mode =
+  let network_mode =
+    Option.value network_mode
+      ~default:(if filesystem_mode = Sandbox.Danger_full_access then Sandbox.Network_enabled else Sandbox.Network_disabled)
+  in
+  Sandbox.validated_config ~filesystem_mode ~workspace_roots ~network_mode
+    ~approval_policy ~no_sandbox:false ~isolated_child:false |> Result.get_ok
+
 let expect_error label = function
   | Ok _ -> fail label "expected an error"
   | Error _ -> ()
@@ -116,15 +126,7 @@ let test_vis_c2wn_codec_rejects_unsupported_version () =
             ("unknown", Shared.Bool true);
           ]))
 
-let sandbox_config =
-  {
-    Sandbox.filesystem_mode = Sandbox.Workspace_write;
-    workspace_roots = [ "/repo" ];
-    network_mode = Sandbox.Network_disabled;
-    approval_policy = Sandbox.Never;
-    no_sandbox = false;
-    isolated_child = false;
-  }
+let sandbox_config = sandbox Sandbox.Workspace_write
 
 let with_temp_dir label f =
   let path =
@@ -176,13 +178,10 @@ let assert_decision_kind label expected actual =
 
 let test_component_codecs () =
   let profile =
-    {
-      Capability.default with
-      sandbox_preset = Capability.Read_only;
-      approval_policy = Capability.Never;
-      tools = Capability.of_list [ "get_goal"; "usage" ];
-      no_sandbox_allowed = true;
-    }
+    Capability.resolve ~sandbox_preset:Capability.Read_only
+      ~approval_policy:Capability.Never
+      ~tools:(Capability.of_list [ "get_goal"; "usage" ])
+      ~no_sandbox_allowed:true Capability.default
   in
   let decoded_profile =
     expect_ok "profile codec"
@@ -208,7 +207,7 @@ let test_component_codecs () =
   let restrictive_permissions =
     expect_ok "restrictive permissions create for codec"
       (Permissions.create ~network_mode:Sandbox.Network_enabled
-         { profile with no_sandbox_allowed = false })
+         (Capability.resolve ~no_sandbox_allowed:false profile))
   in
   let permissions_json = Permissions.codec.encode restrictive_permissions in
   let remove_permissions_field field =
@@ -396,14 +395,7 @@ let test_component_codecs () =
 
 let test_read_only_allows_execution () =
   let read_only_config =
-    {
-      Sandbox.filesystem_mode = Sandbox.Read_only;
-      workspace_roots = [ "/repo" ];
-      network_mode = Sandbox.Network_disabled;
-      approval_policy = Sandbox.On_request;
-      no_sandbox = false;
-      isolated_child = false;
-    }
+    sandbox ~approval_policy:Sandbox.On_request Sandbox.Read_only
   in
   (* Execute must be allowed in read-only mode — the sandbox constrains how,
      not whether. *)
@@ -413,54 +405,6 @@ let test_read_only_allows_execution () =
   (match Sandbox.authorize_effect read_only_config Gateway.Mutate with
   | Error _ -> ()
   | Ok _ -> fail "read-only mutate" "expected mutation denied in read-only")
-
-let test_bwrap_keeps_dev_mount_after_root_bind () =
-  let config =
-    {
-      Sandbox.filesystem_mode = Sandbox.Danger_full_access;
-      workspace_roots = [ "/repo" ];
-      network_mode = Sandbox.Network_disabled;
-      approval_policy = Sandbox.On_request;
-      no_sandbox = false;
-      isolated_child = false;
-    }
-  in
-  let host =
-    {
-      Sandbox.platform = "linux";
-      temp_roots = [];
-      system_ro_paths = [];
-      home_mount = "";
-      workspace_roots = [ "/repo" ];
-      authorization_cwd = "/repo";
-      workspace_metadata_listings = [];
-    }
-  in
-  let invocation =
-    expect_ok "full-access network-restricted invocation"
-      (Sandbox.plan_exec_invocation config host ~shell:"bash"
-         ~shell_args:[ "-lc"; "git status" ] ~force_unsandboxed:false)
-  in
-  let rec index_of_sequence needle haystack index =
-    let rec starts_with needle haystack =
-      match (needle, haystack) with
-      | [], _ -> true
-      | expected :: needle_rest, actual :: haystack_rest ->
-          expected = actual && starts_with needle_rest haystack_rest
-      | _ :: _, [] -> false
-    in
-    match haystack with
-    | [] -> -1
-    | _ :: rest ->
-        if starts_with needle haystack then index
-        else index_of_sequence needle rest (index + 1)
-  in
-  let root_bind = index_of_sequence [ "--bind"; "/"; "/" ] invocation.args 0 in
-  let dev_mount = index_of_sequence [ "--dev"; "/dev" ] invocation.args 0 in
-  assert_bool "full-access restricted network uses bwrap" invocation.sandboxed;
-  assert_bool "root bind present" (root_bind >= 0);
-  assert_bool "dev mount present" (dev_mount >= 0);
-  assert_bool "dev mount comes after root bind" (dev_mount > root_bind)
 
 let test_sandbox_patch_metadata_protection () =
   (* apply_patch must deny writes to protected workspace metadata dirs. *)
@@ -756,11 +700,7 @@ let test_gateway_wraps_legacy_mutation_tools () =
         (Gateway.authorize registry context ~name))
     [ "edit"; "write" ];
   let read_only =
-    {
-      sandbox_config with
-      Sandbox.filesystem_mode = Sandbox.Read_only;
-      approval_policy = Sandbox.Never;
-    }
+    sandbox Sandbox.Read_only
   in
   let denied_context =
     {
@@ -939,7 +879,7 @@ let test_permissions_active_resolution () =
   assert_bool "sandbox-xg3g invalid persisted permissions deny every tool"
     (not (Capability.allow_tool invalid.profile "exec_command"));
   let refresh_profile =
-    { Capability.default with tools = Capability.of_list [ "exec_command" ] }
+    Capability.resolve ~tools:(Capability.of_list [ "exec_command" ]) Capability.default
   in
   let parent_permissions =
     expect_ok "parent permissions for child refresh"
@@ -1038,12 +978,9 @@ let test_permissions_active_resolution () =
     (flagged.network_mode = Sandbox.Network_enabled);
   assert_bool "flags override default no-sandbox" flagged.no_sandbox;
   let persisted_profile =
-    {
-      Capability.default with
-      sandbox_preset = Capability.Workspace_write;
-      approval_policy = Capability.On_failure;
-      no_sandbox_allowed = true;
-    }
+    Capability.resolve ~sandbox_preset:Capability.Workspace_write
+      ~approval_policy:Capability.On_failure ~no_sandbox_allowed:true
+      Capability.default
   in
   let persisted =
     expect_ok "persisted permissions"
@@ -1215,16 +1152,12 @@ let test_authorization_path_symlink_equivalence () =
       Unix.symlink secret escape_link;
       Unix.symlink metadata_file metadata_link;
       let never =
-        {
-          Sandbox.filesystem_mode = Sandbox.Workspace_write;
-          workspace_roots = [ allowed ];
-          network_mode = Sandbox.Network_disabled;
-          approval_policy = Sandbox.Never;
-          no_sandbox = false;
-          isolated_child = false;
-        }
+        sandbox ~workspace_roots:[ allowed ] Sandbox.Workspace_write
       in
-      let on_request = { never with approval_policy = Sandbox.On_request } in
+      let on_request =
+        sandbox ~workspace_roots:[ allowed ] ~approval_policy:Sandbox.On_request
+          Sandbox.Workspace_write
+      in
       let through_link = Filename.concat alias "inside.txt" in
       let missing_through_link =
         Filename.concat alias "created-through-link.txt"
@@ -1294,7 +1227,6 @@ let () =
   test_vis_c2wn_codec_rejects_unsupported_version ();
   test_component_codecs ();
   test_read_only_allows_execution ();
-  test_bwrap_keeps_dev_mount_after_root_bind ();
   test_sandbox_patch_metadata_protection ();
   test_sandbox_resolved_workspace_mutation_paths ();
   test_sandbox_patch_relative_paths ();

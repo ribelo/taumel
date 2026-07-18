@@ -24,17 +24,15 @@ let sandbox_config_from_js sandbox =
     | `V_disabled -> Taumel.Sandbox.Network_disabled
     | `V_enabled -> Network_enabled
   in
-  {
-    Taumel.Sandbox.filesystem_mode;
-    workspace_roots = Tool_contracts.SandboxConfig.get_workspaceRoots sandbox;
-    network_mode;
-    approval_policy =
+  Taumel.Sandbox.validated_config ~filesystem_mode
+    ~workspace_roots:(Tool_contracts.SandboxConfig.get_workspaceRoots sandbox)
+    ~network_mode ~approval_policy:
       (match Boundary_contracts.SandboxConfig.get_approval_policy sandbox with
       | `V_never -> Taumel.Sandbox.Never | `V_on_request -> On_request
-      | `V_on_failure -> On_failure | `V_untrusted -> Untrusted);
-    no_sandbox = Tool_contracts.SandboxConfig.get_noSandbox sandbox;
-    isolated_child = Tool_contracts.SandboxConfig.get_isolatedChild sandbox;
-  }
+      | `V_on_failure -> On_failure | `V_untrusted -> Untrusted)
+    ~no_sandbox:(Tool_contracts.SandboxConfig.get_noSandbox sandbox)
+    ~isolated_child:(Tool_contracts.SandboxConfig.get_isolatedChild sandbox)
+  |> Result.fold ~ok:(fun config -> config) ~error:invalid_arg
 
 let exec_workspace_metadata_listing_from_js obj =
   {

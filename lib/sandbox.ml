@@ -24,9 +24,27 @@ let approval_policy_of_profile = function
   | Capability_profile.On_failure -> On_failure
   | Capability_profile.Untrusted -> Untrusted
 
+let validated_config ~filesystem_mode ~workspace_roots ~network_mode
+    ~approval_policy ~no_sandbox ~isolated_child =
+  if isolated_child && no_sandbox then
+    Error "isolated child sessions cannot enable --no-sandbox"
+  else if isolated_child && filesystem_mode = Danger_full_access then
+    Error "danger-full-access is not allowed for isolated children"
+  else if filesystem_mode = Danger_full_access && network_mode = Network_disabled then
+    Error "danger-full-access requires network access"
+  else
+    Ok
+      { filesystem_mode; workspace_roots; network_mode; approval_policy;
+        no_sandbox; isolated_child }
+
 let config_of_profile ?(workspace_roots = []) ?(network_mode = Network_disabled)
     ?(no_sandbox = false) ?(isolated_child = false)
     (profile : Capability_profile.t) =
+  let network_mode =
+    match profile.Capability_profile.sandbox_preset with
+    | Capability_profile.Danger_full_access -> Network_enabled
+    | Capability_profile.Read_only | Capability_profile.Workspace_write -> network_mode
+  in
   if isolated_child && no_sandbox then Error "isolated child sessions cannot enable --no-sandbox"
   else if
     isolated_child
@@ -36,15 +54,21 @@ let config_of_profile ?(workspace_roots = []) ?(network_mode = Network_disabled)
   else if no_sandbox && not profile.Capability_profile.no_sandbox_allowed then
     Error "--no-sandbox is not allowed by the active capability profile"
   else
-    Ok
-      {
-        filesystem_mode = filesystem_mode_of_profile profile.sandbox_preset;
-        workspace_roots;
-        network_mode;
-        approval_policy = approval_policy_of_profile profile.approval_policy;
-        no_sandbox;
-        isolated_child;
-      }
+    validated_config
+      ~filesystem_mode:(filesystem_mode_of_profile profile.sandbox_preset)
+      ~workspace_roots ~network_mode
+      ~approval_policy:(approval_policy_of_profile profile.approval_policy)
+      ~no_sandbox ~isolated_child
+
+let fail_closed_config ~workspace_roots ~isolated_child =
+  match
+    config_of_profile ~workspace_roots ~isolated_child
+      (Capability_profile.resolve ~sandbox_preset:Capability_profile.Workspace_write
+         ~approval_policy:Capability_profile.Never ~no_sandbox_allowed:false
+         Capability_profile.default)
+  with
+  | Ok config -> config
+  | Error message -> invalid_arg message
 
 let split_path = Sandbox_paths.split_path
 let normalize_path = Sandbox_paths.normalize_path
@@ -241,26 +265,6 @@ let authorize_effect (config : config) = function
       match config.network_mode with
       | Network_enabled -> Ok ()
       | Network_disabled -> Error "network is disabled by sandbox policy")
-
-let agent_worktree_operation_to_string = function
-  | Agent_worktree_provision -> "provision"
-  | Agent_worktree_broker -> "broker"
-  | Agent_worktree_cleanup -> "cleanup"
-
-let authorize_agent_worktree_mutation ~trusted_adapter mutation =
-  (* Authorization is unforgeable only when the trusted worktree adapter asks
-     for it. Model-facing tools and child shells cannot construct this effect. *)
-  let mutation = (mutation : agent_worktree_mutation) in
-  if not trusted_adapter then
-    Deny
-      "agent_worktree_mutation is only available to the trusted worktree adapter"
-  else if String.trim mutation.worktree_path = "" then
-    Deny "agent_worktree_mutation requires a worktree path"
-  else if String.trim mutation.main_repository_root = "" then
-    Deny "agent_worktree_mutation requires a main repository"
-  else if String.trim mutation.branch = "" then
-    Deny "agent_worktree_mutation requires a dedicated branch"
-  else Allow
 
 let decision_rank = function Allow -> 0 | Requires_approval _ -> 1 | Deny _ -> 2
 

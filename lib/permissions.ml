@@ -90,7 +90,7 @@ let network_mode_for_sandbox_preset = function
 
 let profile_for_sandbox_preset (profile : Capability_profile.t)
     (sandbox_preset : Capability_profile.sandbox_preset) =
-  { profile with Capability_profile.sandbox_preset = sandbox_preset }
+  Capability_profile.resolve ~sandbox_preset profile
 
 let active_state ~(profile : Capability_profile.t) ~network_mode ~no_sandbox
     ~isolated_child =
@@ -115,14 +115,14 @@ let default_active_state ~session_isolated_child =
 let invalid_active_state ~session_isolated_child =
   active_state
     ~profile:
-      { Capability_profile.default with tools = Capability_profile.None_allowed }
+      (Capability_profile.resolve ~tools:Capability_profile.None_allowed Capability_profile.default)
     ~network_mode:Sandbox.Network_disabled ~no_sandbox:false
     ~isolated_child:session_isolated_child
 
 let persisted_active_state ~session_isolated_child permissions =
   let isolated_child = session_isolated_child || permissions.sandbox.isolated_child in
   let profile =
-    if isolated_child then { permissions.profile with no_sandbox_allowed = false }
+    if isolated_child then Capability_profile.resolve ~no_sandbox_allowed:false permissions.profile
     else permissions.profile
   in
   active_state ~profile ~network_mode:permissions.sandbox.network_mode
@@ -152,7 +152,7 @@ let apply_flag_overrides ~host_sandbox_preset ~host_network_mode
   | Some requested ->
       let no_sandbox = (not active.isolated_child) && requested in
       active_state
-        ~profile:{ active.profile with no_sandbox_allowed = no_sandbox }
+        ~profile:(Capability_profile.resolve ~no_sandbox_allowed:no_sandbox active.profile)
         ~network_mode:active.network_mode ~no_sandbox ~isolated_child:active.isolated_child
 
 let resolve_active ~host_sandbox_preset ~host_network_mode ~host_no_sandbox
@@ -167,33 +167,26 @@ let resolve_active ~host_sandbox_preset ~host_network_mode ~host_no_sandbox
   apply_flag_overrides ~host_sandbox_preset ~host_network_mode ~host_no_sandbox
     active
 
-let rebuild_sandbox (state : state) =
+let rebuild_sandbox ?network_mode ?no_sandbox (state : state) =
   let network_mode =
     match state.profile.sandbox_preset with
     | Capability_profile.Danger_full_access -> Sandbox.Network_enabled
     | Capability_profile.Read_only | Capability_profile.Workspace_write ->
-        state.sandbox.network_mode
+        Option.value network_mode ~default:state.sandbox.network_mode
   in
   Sandbox.config_of_profile ~workspace_roots:state.sandbox.workspace_roots
-    ~network_mode ~no_sandbox:state.sandbox.no_sandbox
+    ~network_mode ~no_sandbox:(Option.value no_sandbox ~default:state.sandbox.no_sandbox)
     ~isolated_child:state.sandbox.isolated_child state.profile
   |> Result.map (fun sandbox -> { state with sandbox })
 
 let apply_update (state : state) = function
   | Set_sandbox sandbox_preset ->
-      {
-        profile = profile_for_sandbox_preset state.profile sandbox_preset;
-        sandbox =
-          {
-            state.sandbox with
-            network_mode = network_mode_for_sandbox_preset sandbox_preset;
-          };
-      }
-      |> rebuild_sandbox
+      { state with profile = profile_for_sandbox_preset state.profile sandbox_preset }
+      |> rebuild_sandbox ~network_mode:(network_mode_for_sandbox_preset sandbox_preset)
   | Set_approval approval_policy ->
       {
         state with
-        profile = { state.profile with approval_policy };
+        profile = Capability_profile.resolve ~approval_policy state.profile;
       }
       |> rebuild_sandbox
   | Set_network network_mode ->
@@ -201,24 +194,21 @@ let apply_update (state : state) = function
         state.profile.sandbox_preset = Capability_profile.Danger_full_access
         && network_mode = Sandbox.Network_disabled
       then Error "full access always enables network; choose read-only or workspace-write before disabling network"
-      else { state with sandbox = { state.sandbox with network_mode } } |> rebuild_sandbox
+      else rebuild_sandbox ~network_mode state
   | Set_no_sandbox no_sandbox ->
-      {
-        profile = { state.profile with no_sandbox_allowed = no_sandbox };
-        sandbox = { state.sandbox with no_sandbox };
-      }
-      |> rebuild_sandbox
+      { state with profile = Capability_profile.resolve ~no_sandbox_allowed:no_sandbox state.profile }
+      |> rebuild_sandbox ~no_sandbox
   | Allow_tools tools ->
       Ok
         {
           state with
-          profile = { state.profile with tools = Capability_profile.of_list tools };
+          profile = Capability_profile.resolve ~tools:(Capability_profile.of_list tools) state.profile;
         }
   | Deny_all_tools ->
       Ok
         {
           state with
-          profile = { state.profile with tools = Capability_profile.None_allowed };
+          profile = Capability_profile.resolve ~tools:Capability_profile.None_allowed state.profile;
         }
 
 let network_to_string = function

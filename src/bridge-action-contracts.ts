@@ -269,6 +269,66 @@ export const AgentWaitDetailsSchema = Type.Object({
 export const AgentCloseDetailsSchema = Type.Object({
   agentId: Type.String({ minLength: 1 }), status: Type.Literal("closed"),
 }, { $id: "AgentCloseDetails", additionalProperties: false });
+export const RecordAgentChildSessionStartFactsSchema = Type.Object({
+  agent_id: Type.String({ minLength: 1 }), sessionId: Type.Optional(Type.String({ minLength: 1 })),
+  sessionFile: Type.Optional(Type.String({ minLength: 1 })),
+}, { $id: "RecordAgentChildSessionStartFacts", additionalProperties: false });
+export const RollbackUnacceptedAgentStartFactsSchema = Type.Object({
+  agent_id: Type.String({ minLength: 1 }), run_id: Type.String({ minLength: 1 }),
+  submission_id: Type.String({ minLength: 1 }),
+}, { $id: "RollbackUnacceptedAgentStartFacts", additionalProperties: false });
+export const RollbackAgentSendPreflightFactsSchema = Type.Object({
+  agent_id: Type.String({ minLength: 1 }), run_id: Type.String({ minLength: 1 }),
+  submission_id: Type.String({ minLength: 1 }), previous_submission_id: Type.String(),
+  outcome: AgentSendOutcomeSchema, previous_reason_code: Type.Optional(AgentSuspensionReasonCodeSchema),
+}, { $id: "RollbackAgentSendPreflightFacts", additionalProperties: false });
+export const RecordAgentSendDispatchFailureFactsSchema = Type.Object({
+  run_id: Type.String({ minLength: 1 }), submission_id: Type.Optional(Type.String({ minLength: 1 })),
+  error: Type.Optional(Type.String()),
+}, { $id: "RecordAgentSendDispatchFailureFacts", additionalProperties: false });
+export const RollbackFailedAgentInterruptionFactsSchema = Type.Object({
+  agent_id: Type.String({ minLength: 1 }), run_id: Type.String({ minLength: 1 }),
+}, { $id: "RollbackFailedAgentInterruptionFacts", additionalProperties: false });
+export const AgentDispatchCompletionSchema = Type.Object({
+  status: Type.Union([Type.Literal("completed"), Type.Literal("failed"), Type.Literal("cancelled"), Type.Literal("timed_out")]),
+  finalOutput: Type.Optional(Type.String()), resultEntryId: Type.Optional(Type.String({ minLength: 1 })),
+  reason: Type.Optional(Type.String()),
+}, { $id: "AgentDispatchCompletion", additionalProperties: false });
+export const AgentDispatchCompletionFactsSchema = Type.Object({
+  run_id: Type.String({ minLength: 1 }), submission_id: Type.Optional(Type.String({ minLength: 1 })),
+  completion: AgentDispatchCompletionSchema,
+}, { $id: "AgentDispatchCompletionFacts", additionalProperties: false });
+export const AgentActivityFactsSchema = Type.Object({
+  run_id: Type.String({ minLength: 1 }), submission_id: Type.String({ minLength: 1 }),
+  event: Type.Union([
+    Type.Literal("agent_start"), Type.Literal("turn_start"), Type.Literal("turn_end"),
+    Type.Literal("tool_execution_start"), Type.Literal("tool_execution_update"), Type.Literal("tool_execution_end"),
+  ]),
+}, { $id: "AgentActivityFacts", additionalProperties: false });
+export const AgentDispatchBoundaryFactsSchema = Type.Object({
+  run_id: Type.String({ minLength: 1 }), submission_id: Type.String({ minLength: 1 }),
+  previous_assistant_entry_id: Type.Optional(Type.String({ minLength: 1 })),
+}, { $id: "AgentDispatchBoundaryFacts", additionalProperties: false });
+export const LiveAgentDispatchesFactsSchema = Type.Object({
+  live_agent_ids: Type.Array(Type.String({ minLength: 1 })),
+}, { $id: "LiveAgentDispatchesFacts", additionalProperties: false });
+export const AgentRunIdFactsSchema = Type.Object({ run_id: Type.String({ minLength: 1 }) }, { $id: "AgentRunIdFacts", additionalProperties: false });
+export const FinishAgentWaitFactsSchema = Type.Object({
+  run_ids: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+}, { $id: "FinishAgentWaitFacts", additionalProperties: false });
+export const AgentIdFactsSchema = Type.Object({ agent_id: Type.String({ minLength: 1 }) }, { $id: "AgentIdFacts", additionalProperties: false });
+export const CronPromptSelectionSchema = Type.Union([
+  Type.Object({ status: Type.Literal("cancelled") }, { additionalProperties: false }),
+  Type.Object({ status: Type.Literal("selected"), selected: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
+], { $id: "CronPromptSelection" });
+export const HostToolResultFactsSchema = Type.Object({ action: Type.String({ pattern: "^(write_stdin|apply_patch|write|edit)$" }), details: Type.Unknown() }, { $id: "HostToolResultFacts", additionalProperties: false });
+export type HostToolResultFacts = { readonly action: "write_stdin" | "apply_patch" | "write" | "edit"; readonly details: unknown };
+const PreparedTextResultInputSchema = Type.Object({ text: Type.String(), details: Type.Unknown() });
+export const ToolResultConstructionFactsSchema = Type.Object({ prepared: Type.Optional(PreparedTextResultInputSchema), extraDetails: Type.Optional(Type.Unknown()), error: Type.Optional(Type.String()), text: Type.Optional(Type.String()), details: Type.Optional(Type.Unknown()) }, { $id: "ToolResultConstructionFacts", additionalProperties: false });
+export type ToolResultConstructionFacts =
+  | { readonly prepared: Static<typeof PreparedTextResultInputSchema>; readonly extraDetails: unknown; readonly error?: never; readonly text?: never; readonly details?: never }
+  | { readonly error: string; readonly details?: unknown; readonly prepared?: never; readonly extraDetails?: never; readonly text?: never }
+  | { readonly text: string; readonly details?: unknown; readonly prepared?: never; readonly extraDetails?: never; readonly error?: never };
 export const AgentNotificationDetailsSchema = Type.Object(
   { notificationId: Type.String({ pattern: "^agent_completion:.+" }) },
   { $id: "AgentNotificationDetails", additionalProperties: false },

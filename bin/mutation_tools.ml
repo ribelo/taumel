@@ -292,39 +292,28 @@ let prepare_exec_command params ctx =
                     | Error error ->
                         Error (Taumel.Agent_git_broker.error_message error)
                     | Ok authorized ->
-                        begin match
-                          Taumel.Agent_worktree.authorize_mutation ~operation:Broker
-                            ~main_repository_root:main_repo
-                            ~main_repository_id:"verified" ~worktree_path:worktree
-                            ~branch ~trusted_adapter:true
-                        with
-                        | Denied message -> Error message
-                        | Authorized _ ->
-                            let agent_id =
-                              Option.value (child_agent_id child_metadata) ~default:""
-                            in
-                            if
-                              agent_id <> ""
-                              && Taumel.Agent_git_broker.Lease.is_held agent_id
-                            then
-                              Error
-                                "brokered agent Git is already running for this identity"
-                            else
-                              begin match
-                                Agent_worktree_host.verify_broker_registration
-                                  ~worktree_path:worktree
-                                  ~main_repository_root:main_repo ~branch
-                              with
-                              | Error message -> Error message
-                              | Ok git_dir ->
-                                  Ok
-                                    ( worktree,
-                                      git_dir,
-                                      authorized.argv,
-                                      agent_id,
-                                      authorized.subcommand )
-                              end
-                        end
+                        let agent_id =
+                          Option.value (child_agent_id child_metadata) ~default:""
+                        in
+                        if
+                          agent_id <> ""
+                          && Taumel.Agent_git_broker.Lease.is_held agent_id
+                        then
+                          Error "brokered agent Git is already running for this identity"
+                        else
+                          begin match
+                            Agent_worktree_host.verify_broker_registration
+                              ~worktree_path:worktree
+                              ~main_repository_root:main_repo
+                              ~main_repository_id:worktree_context.main_repository_id
+                              ~branch
+                          with
+                          | Error message -> Error message
+                          | Ok git_dir ->
+                              Ok
+                                ( worktree, git_dir, authorized.argv, agent_id,
+                                  authorized.subcommand )
+                          end
                     end
                 end
             end

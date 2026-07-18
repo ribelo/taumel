@@ -89,7 +89,7 @@ type agent_activity_journal_entry = {
   journal_owner : string;
   journal_run_id : string;
   journal_submission_id : string;
-  journal_event : string;
+  journal_event : Taumel.Agents.activity_event;
   journal_now : int;
 }
 let agent_activity_journal : agent_activity_journal_entry list ref = ref []

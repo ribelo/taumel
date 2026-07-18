@@ -1,3 +1,6 @@
+import type { CoreBridge } from "./core-methods.ts";
+export type { CoreBridge } from "./core-methods.ts";
+
 export type EventHandler = (event: unknown, ctx?: unknown) => unknown;
 export type InternalHandler = (payload: unknown) => unknown;
 export type Unsubscribe = () => void;
@@ -166,10 +169,6 @@ export type ComposerController = {
   latestTui?: unknown;
   latestCwd?: string;
   skillEntries?: () => readonly { readonly name: string; readonly description?: string; readonly location?: string }[];
-};
-
-export type CoreBridge = {
-  readonly call: (name: string, args?: readonly unknown[]) => unknown;
 };
 
 export type CoreBootstrap = {

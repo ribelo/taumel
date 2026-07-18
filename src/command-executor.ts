@@ -453,7 +453,7 @@ export async function executeGatewayCommand(
     metadata: plan.metadata,
     activeToolsMode: plan.activeToolsMode,
     currentActiveToolsAvailable: currentActiveToolNames !== undefined,
-    currentActiveTools: currentActiveToolNames ?? [],
+    currentActiveTools: [...(currentActiveToolNames ?? [])],
   }]));
   const metadata = childSessionPlan.metadata;
   const bridge = await createChildSession(pi, core, ctx, metadata, childExtensionFactory);

@@ -307,7 +307,16 @@ let plan_prompt raw_facts =
   Boundary_contracts.CronPromptPlan.create ~result ()
   |> Tool_contracts.CronPromptPlan.t_to_js |> inject
 
-let finish_prompt _prompt selection ctx =
+let finish_prompt raw_prompt raw_selection ctx =
+  let _prompt =
+    decode_ojs_contract Tool_contracts.CronPromptPlan.t_of_js
+      (ojs_of_js raw_prompt)
+  in
+  let selection =
+    decode_ojs_contract Tool_contracts.CronPromptSelection.t_of_js
+      (ojs_of_js raw_selection)
+    |> Tool_contracts.CronPromptSelection.t_to_js |> js_of_ojs
+  in
   if not (sync ctx) then command_result ~ok:false stale_session_message (Unsafe.obj [||])
   else match get_string selection "status" with
   | "cancelled" -> command_result "Cron selection cancelled." (Unsafe.obj [||])

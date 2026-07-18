@@ -28,9 +28,27 @@ import {
   decodePendingAgentNotificationsResult,
   decodePreparedToolAction,
   decodeToolResultEnvelope,
+  type AgentActionCapabilityFacts,
+  type ChildDispatchResult,
+  type PreparedToolAction,
 } from "./bridge-contracts.ts";
 
 type UnknownFields = { readonly [key: string]: unknown };
+type PreparedAgentAction = Extract<PreparedToolAction, { action: "agent_start" | "agent_send" | "agent_wait" | "agent_close" }>;
+type PreparedDispatchAction = Extract<PreparedAgentAction, { action: "agent_start" | "agent_send" }>;
+type AgentActivityEvent = "agent_start" | "turn_start" | "turn_end" | "tool_execution_start" | "tool_execution_update" | "tool_execution_end";
+
+function agentActionCapabilityFacts(prepared: PreparedAgentAction, ctx: unknown): AgentActionCapabilityFacts | undefined {
+  if (prepared.action === "agent_wait") return undefined;
+  const common = { capabilityId: prepared.capabilityId, agentId: prepared.agentId, ctx };
+  if (prepared.action === "agent_start") {
+    return { ...common, action: "agent_start", runId: prepared.runId, submissionId: prepared.submissionId };
+  }
+  if (prepared.action === "agent_close") return { ...common, action: "agent_close" };
+  if (prepared.runId === undefined) return { ...common, action: "agent_send" };
+  if (prepared.submissionId === undefined) return { ...common, action: "agent_send", runId: prepared.runId };
+  return { ...common, action: "agent_send", runId: prepared.runId, submissionId: prepared.submissionId };
+}
 
 type PendingAgentWaits = Map<string, Set<AbortController>>;
 export const pendingAgentWaits: PendingAgentWaits = new Map();
@@ -156,13 +174,13 @@ export async function flushPendingAgentNotifications(
 function recordDispatchCompletionInBackground(
   pi: PiLike,
   core: CoreBridge,
-  prepared: UnknownFields,
+  prepared: PreparedDispatchAction,
   ctx: unknown,
   pendingAgentWaits: PendingAgentWaits,
   bridge: ChildSessionBridge | undefined,
 ) {
-  return async (dispatch: UnknownFields) => {
-    const completion = isObject(dispatch.completion) ? dispatch.completion : undefined;
+  return async (dispatch: ChildDispatchResult) => {
+    const completion = dispatch.completion;
     if (completion === undefined) return;
     const resultEntryId = typeof completion.finalOutput === "string"
       ? latestAssistantEntryId(bridge?.sessionManager)
@@ -182,39 +200,42 @@ function recordDispatchCompletionInBackground(
   };
 }
 
-function recordDispatchActivity(core: CoreBridge, prepared: UnknownFields, ctx: unknown) {
+function recordDispatchActivity(core: CoreBridge, prepared: PreparedDispatchAction, ctx: unknown) {
   return (event: unknown) => {
     if (!isObject(event) || typeof event.type !== "string") return;
-    const observed = new Set([
+    const observed = new Set<AgentActivityEvent>([
       "agent_start", "turn_start", "turn_end", "tool_execution_start",
       "tool_execution_update", "tool_execution_end",
     ]);
-    if (!observed.has(event.type)) return;
+    if (!observed.has(event.type as AgentActivityEvent)) return;
     decodeCoreAck(core.call("recordAgentActivity", [{
       run_id: stringField(prepared, "runId"),
       submission_id: stringField(prepared, "submissionId"),
-      event: event.type,
+      event: event.type as AgentActivityEvent,
     }, ctx]));
   };
 }
 
 function recordDispatchBoundary(
   core: CoreBridge,
-  prepared: UnknownFields,
+  prepared: PreparedDispatchAction,
   ctx: unknown,
   bridge: ChildSessionBridge | undefined,
 ): void {
+  const previousAssistantEntryId = latestAssistantEntryId(bridge?.sessionManager);
   decodeCoreAck(core.call("recordAgentDispatchBoundary", [{
     run_id: stringField(prepared, "runId"),
     submission_id: stringField(prepared, "submissionId"),
-    previous_assistant_entry_id: latestAssistantEntryId(bridge?.sessionManager),
+    ...(previousAssistantEntryId === undefined ? {} : {
+      previous_assistant_entry_id: previousAssistantEntryId,
+    }),
   }, ctx]));
 }
 
 async function cleanupUnacceptedStartChild(
   core: CoreBridge,
   childSessions: Map<string, ChildSessionBridge>,
-  prepared: UnknownFields,
+  prepared: Extract<PreparedAgentAction, { action: "agent_start" }>,
   ctx: unknown,
   authorizeCleanup: () => void,
   bridge?: ChildSessionBridge,
@@ -235,7 +256,7 @@ async function cleanupUnacceptedStartChild(
 
 function rollbackUnacceptedStartState(
   core: CoreBridge,
-  prepared: UnknownFields,
+  prepared: Extract<PreparedAgentAction, { action: "agent_start" }>,
   ctx: unknown,
   authorizeCleanup: () => void,
 ): void {
@@ -249,7 +270,7 @@ function rollbackUnacceptedStartState(
 
 function rollbackAgentSendPreflight(
   core: CoreBridge,
-  prepared: UnknownFields,
+  prepared: Extract<PreparedAgentAction, { action: "agent_send" }>,
   ctx: unknown,
   revalidateAuthority: () => void,
 ): void {
@@ -259,8 +280,10 @@ function rollbackAgentSendPreflight(
     run_id: stringField(prepared, "runId"),
     submission_id: stringField(prepared, "submissionId"),
     previous_submission_id: stringField(prepared, "previousSubmissionId"),
-    previous_reason_code: stringField(prepared, "previousReasonCode"),
-    outcome: stringField(prepared, "outcome"),
+    ...(prepared.previousReasonCode === undefined ? {} : {
+      previous_reason_code: prepared.previousReasonCode,
+    }),
+    outcome: prepared.outcome,
   }, ctx]));
 }
 
@@ -268,7 +291,7 @@ async function createAgentChildSession(
   pi: PiLike,
   core: CoreBridge,
   childSessions: Map<string, ChildSessionBridge>,
-  prepared: UnknownFields,
+  prepared: PreparedDispatchAction,
   ctx: unknown,
   revalidateAuthority: () => void,
   authorizeCleanup: () => void,
@@ -296,8 +319,8 @@ async function createAgentChildSession(
     revalidateAuthority();
     decodeCoreAck(core.call("recordAgentChildSessionStart", [{
       agent_id: agentId,
-      sessionId: bridge.sessionId,
-      sessionFile: bridge.sessionFile,
+      ...(bridge.sessionId === undefined ? {} : { sessionId: bridge.sessionId }),
+      ...(bridge.sessionFile === undefined ? {} : { sessionFile: bridge.sessionFile }),
     }, ctx]));
     return bridge;
   } catch (error) {
@@ -320,16 +343,16 @@ export async function executeAgentPrepared(
   core: CoreBridge,
   childSessions: Map<string, ChildSessionBridge>,
   pendingAgentWaits: PendingAgentWaits,
-  prepared: UnknownFields,
+  prepared: PreparedAgentAction,
   ctx: unknown,
   signal?: AbortSignal,
   childExtensionFactory?: (pi: PiLike) => void,
 ) {
-  const action = stringField(prepared, "action");
+  const action = prepared.action;
   let dispatchDeliverAs: "steer" | "followUp" | undefined;
   if (action === "agent_start") {
-    const details = isObject(prepared.details) ? prepared.details : {};
-    const metadata = isObject(prepared.metadata) ? prepared.metadata : {};
+    const details = prepared.details;
+    const metadata = prepared.metadata;
     const activeTools = Array.isArray(details.activeTools) ? details.activeTools : [];
     const metadataTools = Array.isArray(metadata.activeTools) ? metadata.activeTools : [];
     if (stringField(prepared, "agentId") !== stringField(details, "agentId")
@@ -411,18 +434,11 @@ export async function executeAgentPrepared(
       || prepared.isolation !== "worktree")) {
     return agentErrorToolResult(core, "internal_error", "invalid prepared agent worktree cleanup");
   }
-  const capabilityId = stringField(prepared, "capabilityId");
-  const capabilityGuarded = action === "agent_start" || action === "agent_send" || action === "agent_close";
-  const runId = stringField(prepared, "runId");
-  const submissionId = stringField(prepared, "submissionId");
-  const capabilityFacts = {
-    capabilityId, agentId: stringField(prepared, "agentId"), action,
-    ...(runId === "" ? {} : { runId }),
-    ...(submissionId === "" ? {} : { submissionId }), ctx,
-  };
+  const capabilityFacts = agentActionCapabilityFacts(prepared, ctx);
+  const capabilityGuarded = capabilityFacts !== undefined;
   if (capabilityGuarded) {
     try {
-      decodeCoreAck(core.call("claimAgentAction", [capabilityFacts]));
+      decodeCoreAck(core.call("claimAgentAction", [capabilityFacts!]));
     } catch (error) {
       return agentErrorToolResult(
         core, "persistence_failed",
@@ -432,12 +448,12 @@ export async function executeAgentPrepared(
   }
   const revalidateCapability = () => {
     if (capabilityGuarded) {
-      decodeCoreAck(core.call("revalidateAgentAction", [capabilityFacts]));
+      decodeCoreAck(core.call("revalidateAgentAction", [capabilityFacts!]));
     }
   };
   const authorizeCapabilityCleanup = () => {
     if (capabilityGuarded) {
-      decodeCoreAck(core.call("authorizeAgentActionCleanup", [capabilityFacts]));
+      decodeCoreAck(core.call("authorizeAgentActionCleanup", [capabilityFacts!]));
     }
   };
   try {
@@ -454,7 +470,7 @@ export async function executeAgentPrepared(
         }
         try {
           authorizeCapabilityCleanup();
-          decodeCoreAck(core.call("rollbackAgentWorktreeStart", [prepared, ctx]));
+          decodeCoreAck(core.call("rollbackAgentWorktreeStart", [{ agent_id: prepared.agentId }, ctx]));
         } catch (error) {
           return error instanceof Error ? error.message : String(error);
         }
@@ -515,7 +531,7 @@ export async function executeAgentPrepared(
       }
       try {
         authorizeCapabilityCleanup();
-        decodeCoreAck(core.call("acceptAgentWorktreeStart", [prepared, ctx]));
+        decodeCoreAck(core.call("acceptAgentWorktreeStart", [{ agent_id: prepared.agentId }, ctx]));
       } catch (error) {
         const cleanupError = await rollbackWorktreeThenState();
         const message = cleanupError
@@ -782,12 +798,7 @@ export async function executeAgentPrepared(
         if (prepared.deleteWorktree === true) {
           try {
             revalidateCapability();
-            decodeCoreAck(core.call("deleteAgentWorktree", [{
-              agent_id: agentId,
-              worktree_path: prepared.worktreePath,
-              main_repository_root: prepared.mainRepositoryRoot,
-              branch: prepared.worktreeBranch,
-            }, ctx]));
+            decodeCoreAck(core.call("deleteAgentWorktree", [{ agent_id: agentId }, ctx]));
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             return failClose("cleanup_failed", message || "worktree deletion failed");
@@ -838,7 +849,7 @@ export async function executeAgentPrepared(
   } finally {
     if (capabilityGuarded) {
       try {
-        decodeCoreAck(core.call("releaseAgentAction", [capabilityFacts]));
+        decodeCoreAck(core.call("releaseAgentAction", [capabilityFacts!]));
       } catch {
         // The capability is already one-shot; release is best-effort after execution.
       }

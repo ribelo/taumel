@@ -10,10 +10,7 @@ let nano_id_length = 4
 let nano_id_radix = String.length nano_id_alphabet
 let nano_id_namespace_size = nano_id_radix * nano_id_radix * nano_id_radix * nano_id_radix
 
-type agent_kind =
-  | Generic
-  | Finder
-  | Oracle
+type agent_kind = Generic | Finder | Oracle
 
 type effort =
   | Low
@@ -34,6 +31,8 @@ type activity_state =
   | Using_tool
   | Orphaned
   | Inactive
+
+type activity_event = Agent_start | Turn_start | Turn_end | Tool_execution_start | Tool_execution_update | Tool_execution_end
 
 type reason_code =
   | Interrupted_by_parent

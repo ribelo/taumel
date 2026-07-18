@@ -1,12 +1,8 @@
 (* Trusted agent-worktree lifecycle planning: paths, markers, and auth payloads. *)
 
-type lifecycle_op =
-  | Provision
-  | Broker
-  | Cleanup
-
 type creation_step =
   | Marker_recorded
+  | Worktree_creation_started
   | Worktree_created
   | Source_reproduced
   | Baseline_created
@@ -24,34 +20,9 @@ type provisional_marker = {
   cleanup_incident_id : string option;
 }
 
-type mutation_effect = {
-  operation : lifecycle_op;
-  main_repository_root : string;
-  main_repository_id : string;
-  worktree_path : string;
-  worktree_admin_path : string;
-  branch : string;
-  branch_ref : string;
-  object_store_path : string;
-}
-
-type authorization =
-  | Authorized of mutation_effect
-  | Denied of string
-
-let lifecycle_op_to_string = function
-  | Provision -> "provision"
-  | Broker -> "broker"
-  | Cleanup -> "cleanup"
-
-let lifecycle_op_of_string = function
-  | "provision" -> Ok Provision
-  | "broker" -> Ok Broker
-  | "cleanup" -> Ok Cleanup
-  | value -> Error ("invalid agent worktree operation: " ^ value)
-
 let creation_step_to_string = function
   | Marker_recorded -> "marker_recorded"
+  | Worktree_creation_started -> "worktree_creation_started"
   | Worktree_created -> "worktree_created"
   | Source_reproduced -> "source_reproduced"
   | Baseline_created -> "baseline_created"
@@ -60,6 +31,7 @@ let creation_step_to_string = function
 
 let creation_step_of_string = function
   | "marker_recorded" -> Ok Marker_recorded
+  | "worktree_creation_started" -> Ok Worktree_creation_started
   | "worktree_created" -> Ok Worktree_created
   | "source_reproduced" -> Ok Source_reproduced
   | "baseline_created" -> Ok Baseline_created
@@ -67,20 +39,30 @@ let creation_step_of_string = function
   | "identity_accepted" -> Ok Identity_accepted
   | value -> Error ("invalid creation step: " ^ value)
 
+let valid_creation_steps steps =
+  let all =
+    [ Marker_recorded; Worktree_creation_started; Worktree_created;
+      Source_reproduced; Baseline_created; Baseline_verified;
+      Identity_accepted ]
+  in
+  let rec prefix actual expected =
+    match (actual, expected) with
+    | [], _ -> true
+    | step :: rest, expected_step :: expected_rest when step = expected_step ->
+        prefix rest expected_rest
+    | _ -> false
+  in
+  prefix steps all
+
+let ready_for_acceptance steps =
+  steps =
+    [ Marker_recorded; Worktree_creation_started; Worktree_created;
+      Source_reproduced; Baseline_created; Baseline_verified ]
+
 let baseline_author_name = "Pi Baseline"
 let baseline_author_email = "pi-baseline@local"
 let baseline_committer_name = baseline_author_name
 let baseline_committer_email = baseline_author_email
-
-let worktree_admin_path ~worktree_path =
-  let trimmed = String.trim worktree_path in
-  if trimmed = "" then "" else trimmed ^ "/.git"
-
-let branch_ref branch = "refs/heads/" ^ branch
-
-let object_store_path ~main_repository_root =
-  let root = String.trim main_repository_root in
-  if root = "" then "" else root ^ "/.git/objects"
 
 let provisional_marker_path ~agent_home ~owner_component ~agent_id =
   Agent_workspace.join_path
@@ -92,37 +74,6 @@ let provisional_marker_path ~agent_home ~owner_component ~agent_id =
       owner_component;
       agent_id ^ ".json";
     ]
-
-let make_mutation_effect ~operation ~main_repository_root ~main_repository_id
-    ~worktree_path ~branch =
-  {
-    operation;
-    main_repository_root = String.trim main_repository_root;
-    main_repository_id = String.trim main_repository_id;
-    worktree_path = String.trim worktree_path;
-    worktree_admin_path = worktree_admin_path ~worktree_path;
-    branch = String.trim branch;
-    branch_ref = branch_ref (String.trim branch);
-    object_store_path = object_store_path ~main_repository_root;
-  }
-
-let authorize_mutation ~operation ~main_repository_root ~main_repository_id
-    ~worktree_path ~branch ~trusted_adapter =
-  if not trusted_adapter then
-    Denied
-      "agent_worktree_mutation is only available to the trusted worktree adapter"
-  else if String.trim main_repository_root = "" then
-    Denied "main repository root is required"
-  else if String.trim main_repository_id = "" then
-    Denied "main repository identity is required"
-  else if String.trim worktree_path = "" then
-    Denied "worktree path is required"
-  else if String.trim branch = "" then
-    Denied "dedicated branch is required"
-  else
-    Authorized
-      (make_mutation_effect ~operation ~main_repository_root
-         ~main_repository_id ~worktree_path ~branch)
 
 let marker_to_json marker =
   Shared.Object

@@ -9,6 +9,7 @@ type worktree_agent = {
   agent_id : string;
   worktree_path : string;
   main_repository_root : string;
+  main_repository_id : string;
   branch : string;
 }
 
@@ -150,7 +151,7 @@ let decode_persisted_metadata = function
                  })
         | "worktree",
           Agent_workspace.Worktree
-            { source_origin; main_repository_root; _ }
+            { source_origin; main_repository_root; main_repository_id }
           when source_workspace = source_origin ->
             let* worktree_path = required_string fields "worktreePath" in
             let* branch = required_string fields "worktreeBranch" in
@@ -174,6 +175,7 @@ let decode_persisted_metadata = function
                            agent_id;
                            worktree_path;
                            main_repository_root;
+                           main_repository_id;
                            branch;
                          };
                    })
@@ -215,7 +217,7 @@ let ralph_child_capability_profile (parent : Capability_profile.t) active_tools 
     | Capability_profile.Danger_full_access -> Capability_profile.Workspace_write
     | sandbox_preset -> sandbox_preset
   in
-  { parent with sandbox_preset; tools; no_sandbox_allowed = false }
+  Capability_profile.resolve ~sandbox_preset ~tools ~no_sandbox_allowed:false parent
 
 let enrich_command_child_metadata ~parent_profile ~current_active_tools_available
     ~current_active_tools ~active_tools_mode metadata =
@@ -268,12 +270,9 @@ let permissions_entry metadata =
 
 let fail_closed_child_permissions_entry () =
   let profile =
-    {
-      Capability_profile.default with
-      sandbox_preset = Capability_profile.Read_only;
-      approval_policy = Capability_profile.Untrusted;
-      tools = Capability_profile.None_allowed;
-    }
+    Capability_profile.resolve ~sandbox_preset:Capability_profile.Read_only
+      ~approval_policy:Capability_profile.Untrusted
+      ~tools:Capability_profile.None_allowed Capability_profile.default
   in
   match
     Permissions.create ~network_mode:Sandbox.Network_disabled ~no_sandbox:false
@@ -340,12 +339,8 @@ let refresh_permissions_entry ~host_sandbox_preset ~host_network_mode
         | _ -> Sandbox.Network_disabled
       in
       let profile =
-        {
-          ceiling with
-          sandbox_preset;
-          approval_policy;
-          no_sandbox_allowed = false;
-        }
+        Capability_profile.resolve ~sandbox_preset ~approval_policy
+          ~no_sandbox_allowed:false ceiling
       in
       (match
          Permissions.create ~network_mode ~no_sandbox:false ~isolated_child:true

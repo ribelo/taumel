@@ -4,19 +4,12 @@ let active_profile ~filesystem_mode (profile : Capability_profile.t) =
     | Some preset -> preset
     | None -> Capability_profile.Workspace_write
   in
-  { profile with sandbox_preset }
+  Capability_profile.resolve ~sandbox_preset profile
 
 let workspace_roots_of_cwd cwd = if cwd = "" then [] else [ cwd ]
 
 let fallback_sandbox ~workspace_roots ~isolated_child =
-  {
-    Sandbox.filesystem_mode = Sandbox.Workspace_write;
-    workspace_roots;
-    network_mode = Sandbox.Network_disabled;
-    approval_policy = Sandbox.Never;
-    no_sandbox = false;
-    isolated_child;
-  }
+  Sandbox.fail_closed_config ~workspace_roots ~isolated_child
 
 let active_sandbox ~cwd ~network_mode ~no_sandbox ~isolated_child
     (profile : Capability_profile.t) =

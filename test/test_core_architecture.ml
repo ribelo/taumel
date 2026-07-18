@@ -43,8 +43,8 @@ let test_gateway_enforces_profile_and_sandbox () =
     }
   in
   let registry = Gateway.empty |> Gateway.register spec in
-  let profile = { Capability.default with tools = Capability.of_list [ "exec_command" ] } in
-  let denied_profile = { Capability.default with tools = Capability.None_allowed } in
+  let profile = Capability.resolve ~tools:(Capability.of_list [ "exec_command" ]) Capability.default in
+  let denied_profile = Capability.resolve ~tools:Capability.None_allowed Capability.default in
   let allowed_context =
     { Gateway.profile; authorize_effect = (fun _ -> Ok ()) }
   in
@@ -64,14 +64,10 @@ let test_gateway_enforces_profile_and_sandbox () =
   | _ -> fail "gateway deny effect" "expected sandbox effect denial")
 
 let sandbox_config =
-  {
-    Sandbox.filesystem_mode = Sandbox.Workspace_write;
-    workspace_roots = [ "/repo" ];
-    network_mode = Sandbox.Network_disabled;
-    approval_policy = Sandbox.Never;
-    no_sandbox = false;
-    isolated_child = false;
-  }
+  Sandbox.validated_config ~filesystem_mode:Sandbox.Workspace_write
+    ~workspace_roots:[ "/repo" ] ~network_mode:Sandbox.Network_disabled
+    ~approval_policy:Sandbox.Never ~no_sandbox:false ~isolated_child:false
+  |> Result.get_ok
 
 let test_sandbox_patch_policy () =
   assert_equal "write_stdin success message" "stdin written"
@@ -278,12 +274,9 @@ let test_child_session_setup_entries () =
     "createAgentSession did not expose a child session id"
     Child_session.missing_session_identifier_error;
   let parent_profile =
-    {
-      Capability.default with
-      sandbox_preset = Capability.Danger_full_access;
-      tools = Capability.of_list [ "exec_command"; "ralph_continue" ];
-      no_sandbox_allowed = true;
-    }
+    Capability.resolve ~sandbox_preset:Capability.Danger_full_access
+      ~tools:(Capability.of_list [ "exec_command"; "ralph_continue" ])
+      ~no_sandbox_allowed:true Capability.default
   in
   let ralph_metadata =
     Child_session.enrich_command_child_metadata ~parent_profile
@@ -912,7 +905,11 @@ let test_permissions_state () =
       (Permissions.create ~isolated_child:true Capability.default)
   in
   expect_error "isolated_child cannot enable no-sandbox"
-    (Permissions.apply_update child_state (Permissions.Set_no_sandbox true))
+    (Permissions.apply_update child_state (Permissions.Set_no_sandbox true));
+  expect_error "danger-full-access cannot disable network"
+    (Sandbox.validated_config ~filesystem_mode:Sandbox.Danger_full_access
+       ~workspace_roots:[] ~network_mode:Sandbox.Network_disabled
+       ~approval_policy:Sandbox.Never ~no_sandbox:false ~isolated_child:false)
 
 let test_child_session_persisted_metadata () =
   let worktree_binding =

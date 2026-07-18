@@ -124,9 +124,14 @@ let core_call name_js args_js =
       Session_sync.clear_interrupted_goal_automation (arg 0);
       core_ack ()
   | "finalizeGoalError" ->
-      let facts = arg 0 in
-      Goal_tools.finalize_error (get_string facts "status")
-        (Unsafe.get facts "ctx");
+      let facts =
+        decode_ojs_contract Tool_contracts.FinalizeGoalErrorFacts.t_of_js
+          (ojs_of_js (arg 0))
+      in
+      Goal_tools.finalize_error
+        (Tool_contracts.FinalizeGoalErrorFacts.get_status facts)
+        (Tool_contracts.FinalizeGoalErrorFacts.get_ctx facts
+        |> Ts2ocaml.unknown_to_js |> js_of_ojs);
       core_ack ()
   | "planCommandChildSession" -> Command_bridge.plan_child_session (arg 0)
   | "planCommandChildDispatch" -> Command_bridge.plan_child_dispatch (arg 0)
@@ -171,7 +176,11 @@ let core_call name_js args_js =
   | "deleteAgentWorktree" -> Agent_tools.delete_worktree (arg 0) (arg 1)
   | "reconcileProvisionalAgentWorktrees" -> Agent_tools.reconcile_provisional_worktrees ()
   | "cancelAgentBrokerSessions" ->
-      let agent_id = get_string (arg 0) "agent_id" in
+      let facts =
+        decode_ojs_contract Tool_contracts.AgentIdFacts.t_of_js
+          (ojs_of_js (arg 0))
+      in
+      let agent_id = Tool_contracts.AgentIdFacts.get_agent_id facts in
       let clean = Exec_session.cancel_broker_sessions_for_agent agent_id in
       if clean then core_ack ()
       else error_obj "cleanup_failed: could not terminate identity-owned broker sessions"
@@ -199,8 +208,29 @@ let core_call name_js args_js =
    | "planPermissionsPrompt" -> Permissions_commands.plan_prompt (arg 0)
   | "finishPermissionsPrompt" ->
        Permissions_commands.finish_prompt (arg 0)
-  | "toolResultEnvelope" -> tool_result_envelope (arg 0)
-  | "hostToolResult" -> host_tool_result (arg 0)
+  | "toolResultEnvelope" ->
+      let facts =
+        decode_ojs_contract Tool_contracts.ToolResultConstructionFacts.t_of_js
+          (ojs_of_js (arg 0))
+      in
+      let prepared = Tool_contracts.ToolResultConstructionFacts.get_prepared facts in
+      let extra = Tool_contracts.ToolResultConstructionFacts.get_extraDetails facts in
+      let error = Tool_contracts.ToolResultConstructionFacts.get_error facts in
+      let text = Tool_contracts.ToolResultConstructionFacts.get_text facts in
+      let details = Tool_contracts.ToolResultConstructionFacts.get_details facts in
+      (match (prepared, extra, error, text, details) with
+      | Some _, Some _, None, None, None
+      | None, None, Some _, None, _
+      | None, None, None, Some _, _ -> ()
+      | _ -> invalid_arg "tool result construction facts select exactly one branch");
+      tool_result_envelope
+        (Tool_contracts.ToolResultConstructionFacts.t_to_js facts |> js_of_ojs)
+  | "hostToolResult" ->
+      let facts =
+        decode_ojs_contract Tool_contracts.HostToolResultFacts.t_of_js
+          (ojs_of_js (arg 0))
+      in
+      host_tool_result (Tool_contracts.HostToolResultFacts.t_to_js facts |> js_of_ojs)
   | "toolResultToCommandResult" -> tool_result_to_command_result (arg 0)
    | "runThreadTool" -> Thread_bridge.run (arg 0)
   | "planThreadCatalogScans" -> Thread_bridge.plan_catalog_scans (arg 0)

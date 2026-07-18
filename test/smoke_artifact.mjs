@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import assert from "node:assert/strict";
 
 const artifact = new URL("../dist/taumel.cjs", import.meta.url);
 const require = createRequire(import.meta.url);
@@ -108,6 +109,8 @@ const core = bootstrap.init({
 if (!core || typeof core.call !== "function" || Object.keys(core).join(",") !== "call") {
   throw new Error("Taumel initialization did not return the private core bridge");
 }
+assert.throws(() => core.call("hostToolResult", [{ action: "exec_command", details: {} }]));
+assert.throws(() => core.call("toolResultEnvelope", [{ error: "failed", text: "also text" }]));
 // shared-st03/shared-st04/shared-st08: failed synchronization cannot fall back
 // to another session's loaded authorization state.
 const failedSyncCtx = {
@@ -196,6 +199,18 @@ if (!/agent_id.*expected string/.test(malformedLegacyField)) {
   throw new Error(
     `legacy TS-to-OCaml field access silently defaulted: ${JSON.stringify({ malformedLegacyField })}`,
   );
+}
+let malformedLifecycleFacts = "";
+try {
+  core.call("recordAgentActivity", [{
+    run_id: "agent-test-run-1", submission_id: "agent-test-run-1-submission-1",
+    event: "future_activity",
+  }, ctx]);
+} catch (error) {
+  malformedLifecycleFacts = error instanceof Error ? error.message : String(error);
+}
+if (!/AgentActivityFacts.*event/.test(malformedLifecycleFacts)) {
+  throw new Error(`agent lifecycle facts bypassed generated decoding: ${malformedLifecycleFacts}`);
 }
 let decodedCommandReads = 0;
 const decodedCommandParams = {};

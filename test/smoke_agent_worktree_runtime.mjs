@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -68,6 +68,19 @@ let core;
     themeFg: (_theme, _color, value) => value,
   });
 
+  const externalDirectory = join(root, "must-survive-forged-marker");
+  const forgedMarkerDirectory = join(process.env.PI_CODING_AGENT_DIR, "taumel", "worktrees", ".provisional", "forged");
+  mkdirSync(externalDirectory, { recursive: true });
+  mkdirSync(forgedMarkerDirectory, { recursive: true });
+  writeFileSync(join(forgedMarkerDirectory, "forged-agent.json"), JSON.stringify({
+    owner_session_id: "forged-owner", agent_id: "forged-agent",
+    main_repository_root: main, main_repository_id: "forged-repository-id",
+    worktree_path: externalDirectory, branch: "taumel/agent/forged/forged-agent",
+    completed_steps: ["marker_recorded", "worktree_created"], cleanup_incident_id: null,
+  }));
+  assert.deepEqual(core.call("reconcileProvisionalAgentWorktrees", []), { ok: true });
+  assert.equal(existsSync(externalDirectory), true, "forged provisional marker removed an external directory");
+
   const parentEntries = [];
   const parentCtx = {
     cwd: main,
@@ -112,7 +125,11 @@ let core;
       variant: "worktree",
       source_origin: main,
       main_repository_root: main,
-      main_repository_id: "test-repository",
+      main_repository_id: (() => {
+        const gitDirectory = realpathSync(join(main, ".git"));
+        const stat = statSync(gitDirectory, { bigint: true });
+        return `${gitDirectory}\0${stat.dev}:${stat.ino}`;
+      })(),
     },
     worktreePath: worktree,
     worktreeBranch: branch,
@@ -297,7 +314,7 @@ let core;
     ctx: parentCtx,
   }]);
   assert.equal(secondStart.ok, true);
-  assert.deepEqual(core.call("acceptAgentWorktreeStart", [firstStart, parentCtx]), { ok: true });
+  assert.deepEqual(core.call("acceptAgentWorktreeStart", [{ agent_id: firstStart.agentId }, parentCtx]), { ok: true });
   assert.deepEqual(core.call("releaseAgentAction", [firstStartCapability]), { ok: true });
   assert.deepEqual(core.call("reconcileProvisionalAgentWorktrees", []), { ok: true });
   assert.equal(

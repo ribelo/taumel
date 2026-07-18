@@ -1,12 +1,7 @@
 import Type, { type Static } from "typebox";
 import { ChildSessionMetadataSchema, ChildSessionSetupEntrySchema, PermissionsStateV1Schema, type ChildSessionMetadata } from "./session-entry-contracts.ts";
 import { ApplyPatchParamsSchema, EditReplacementSchema } from "./tool-contracts.ts";
-export {
-  ChildSessionMetadataSchema,
-  ChildSessionSetupEntrySchema,
-  PermissionsStateV1Schema,
-  type ChildSessionMetadata,
-};
+export { ChildSessionMetadataSchema, ChildSessionSetupEntrySchema, PermissionsStateV1Schema, type ChildSessionMetadata };
 /** Transport contracts for values returned by OCaml to the Pi adapter. */
 export const ActiveToolsSyncFactsSchema = Type.Object(
   { tools: Type.Array(Type.String()), ctx: Type.Optional(Type.Unknown()) },
@@ -497,6 +492,8 @@ export const CoreAckSchema = Type.Object(
   { $id: "CoreAck", additionalProperties: false },
 );
 export const AgentActionCapabilityFactsSchema = Type.Object({ capabilityId: Type.String({ minLength: 1 }), agentId: Type.String({ minLength: 1 }), action: Type.String({ pattern: "^agent_(start|send|close)$" }), runId: Type.Optional(Type.String({ minLength: 1 })), submissionId: Type.Optional(Type.String({ minLength: 1 })), ctx: Type.Unknown() }, { $id: "AgentActionCapabilityFacts", additionalProperties: false });
+type AgentActionCapabilityBase = { readonly capabilityId: string; readonly agentId: string; readonly ctx: unknown };
+export type AgentActionCapabilityFacts = AgentActionCapabilityBase & ({ readonly action: "agent_start"; readonly runId: string; readonly submissionId: string } | { readonly action: "agent_send"; readonly runId: string; readonly submissionId: string } | { readonly action: "agent_send"; readonly runId: string; readonly submissionId?: never } | { readonly action: "agent_send"; readonly runId?: never; readonly submissionId?: never } | { readonly action: "agent_close"; readonly runId?: never; readonly submissionId?: never });
 export type CoreAck = Static<typeof CoreAckSchema>;
 export const ExecCompletionWaitResultSchema = Type.Object(
   { ok: Type.Literal(true), exited: Type.Boolean() },
@@ -708,6 +705,7 @@ export const GoalRollbackFactsSchema = Type.Object(
   { snapshot: Type.Unknown(), ctx: Type.Unknown() },
   { $id: "GoalRollbackFacts", additionalProperties: false },
 );
+export const FinalizeGoalErrorFactsSchema = Type.Object({ status: Type.String({ minLength: 1 }), ctx: Type.Unknown() }, { $id: "FinalizeGoalErrorFacts", additionalProperties: false });
 export const GoalRollbackResultSchema = Type.Object(
   { completed: Type.Literal(true) },
   { $id: "GoalRollbackResult", additionalProperties: false },

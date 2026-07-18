@@ -1,5 +1,9 @@
 open Jsoo_bridge
 open App_state
+
+let agent_id_from_facts facts =
+  decode_ojs_contract Tool_contracts.AgentIdFacts.t_of_js (ojs_of_js facts)
+  |> Tool_contracts.AgentIdFacts.get_agent_id
 open Runtime_access
 
 let owner_id ctx = Session_store.session_id_from_ctx ctx
@@ -95,10 +99,10 @@ let prepare_close params ctx =
                   in
                   let capability_id =
                     let expected_state = !agent_state in
-                    Agent_action_capability.issue
+                    Agent_action_capability.issue Agent_action_capability.Close
                       ~commit:(reserve_close expected_state agent_id)
                       ~release:(release_close_reservation owner agent_id)
-                      ~action:"agent_close" ~agent_id ctx
+                      ~agent_id ctx
                   in
                   Boundary_contracts.PreparedAgentClose.create
                     ~text:
@@ -142,10 +146,10 @@ let prepare_close params ctx =
                     in
                     let capability_id =
                       let expected_state = !agent_state in
-                      Agent_action_capability.issue
+                      Agent_action_capability.issue Agent_action_capability.Close
                         ~commit:(reserve_close expected_state agent_id)
                         ~release:(release_close_reservation owner agent_id)
-                        ~action:"agent_close" ~agent_id ctx
+                        ~agent_id ctx
                     in
                     Boundary_contracts.PreparedAgentClose.create
                       ~text:
@@ -160,8 +164,8 @@ let prepare_close params ctx =
                     |> Tool_contracts.PreparedAgentClose.t_to_js |> inject)))
 
 let finish_close facts ctx =
+  let agent_id = agent_id_from_facts facts in
   Session_sync.require_agent_owner ctx;
-  let agent_id = get_string facts "agent_id" in
   let owner = owner_id ctx in
   let clear_agent_tracking () =
     agent_closing_ids :=
@@ -308,8 +312,8 @@ let finish_close facts ctx =
                              ~unstage_error ~restore_error))))))
 
 let delete_child_session facts ctx =
+  let agent_id = agent_id_from_facts facts in
   Session_sync.require_agent_owner ctx;
-  let agent_id = get_string facts "agent_id" in
   match
     Taumel.Agents.owned_identity !agent_state ~owner_session_id:(owner_id ctx)
       agent_id
@@ -321,8 +325,8 @@ let delete_child_session facts ctx =
       | Error message -> error_obj ("cleanup_failed: " ^ message))
 
 let record_close_cleanup_failure facts ctx =
+  let agent_id = agent_id_from_facts facts in
   Session_sync.require_agent_owner ctx;
-  let agent_id = get_string facts "agent_id" in
   match
     Taumel.Agent_registry.suspend_running_for_agent !agent_state
       ~now:(now_seconds ()) ~owner_session_id:(owner_id ctx) ~agent_id

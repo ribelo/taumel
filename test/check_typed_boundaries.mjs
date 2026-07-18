@@ -110,6 +110,136 @@ if (!/Tool_contracts\.[A-Za-z0-9_]+\.t_of_js value\s+\|> Result\.map/g.test(tool
 if (!/Tool_param_decoders\.decode name/.test(readFileSync(join(binRoot.pathname, "tool_dispatch.ml"), "utf8"))) {
   failures.push("model-facing tool dispatch bypasses generated parameter decoding");
 }
+// eng-ds01: the static bridge must exactly cover the runtime dispatcher without a string fallback.
+const coreMethods = readFileSync(join(root.pathname, "core-methods.ts"), "utf8");
+const runtimeDispatcher = readFileSync(join(binRoot.pathname, "taumel_main.ml"), "utf8");
+const typedNames = [...coreMethods.matchAll(/^  readonly ([A-Za-z0-9_]+): readonly \[/gm)].map((match) => match[1]).sort();
+const runtimeBranches = [...runtimeDispatcher.matchAll(/\|\s*"([^"]+)"\s*->/g)];
+const runtimeNames = runtimeBranches.map((match) => match[1]).sort();
+if (JSON.stringify(typedNames) !== JSON.stringify(runtimeNames)) {
+  failures.push("CoreBridge method catalog does not exactly match the OCaml runtime dispatcher");
+}
+if (/name:\s*string|args\??:\s*readonly unknown\[\]/.test(coreMethods)) {
+  failures.push("CoreBridge retains a stringly typed fallback call signature");
+}
+for (let index = 0; index < runtimeBranches.length; index += 1) {
+  const branch = runtimeBranches[index];
+  const end = runtimeBranches[index + 1]?.index ?? runtimeDispatcher.length;
+  const body = runtimeDispatcher.slice(branch.index, end);
+  const argumentIndexes = [...body.matchAll(/(?:\barg|\bstring_arg args|\bint_arg args)\s+(\d+)/g)].map((match) => Number(match[1]));
+  const runtimeArity = argumentIndexes.length === 0 ? 0 : Math.max(...argumentIndexes) + 1;
+  const tuple = coreMethods.match(new RegExp(`^  readonly ${branch[1]}: readonly \\[(.*)\\];$`, "m"))?.[1];
+  const typedArity = tuple === "" ? 0 : (tuple?.split(",").length ?? -1);
+  if (typedArity !== runtimeArity) failures.push(`${branch[1]}: CoreBridge arity ${typedArity} does not match dispatcher arity ${runtimeArity}`);
+}
+const lifecycleMethodSchemas = {
+  recordAgentChildSessionStart: "RecordAgentChildSessionStartFactsSchema",
+  rollbackUnacceptedAgentStart: "RollbackUnacceptedAgentStartFactsSchema",
+  rollbackAgentSendPreflight: "RollbackAgentSendPreflightFactsSchema",
+  recordAgentSendDispatchFailure: "RecordAgentSendDispatchFailureFactsSchema",
+  rollbackFailedAgentInterruption: "RollbackFailedAgentInterruptionFactsSchema",
+  recordAgentDispatchCompletion: "AgentDispatchCompletionFactsSchema",
+  recordAgentActivity: "AgentActivityFactsSchema",
+  recordAgentDispatchBoundary: "AgentDispatchBoundaryFactsSchema",
+  reconcileLiveAgentDispatches: "LiveAgentDispatchesFactsSchema",
+  recordAgentBackgroundNotification: "AgentRunIdFactsSchema",
+  releaseAgentBackgroundNotification: "AgentRunIdFactsSchema",
+  validateAgentBackgroundNotificationClaim: "AgentRunIdFactsSchema",
+  finishAgentWait: "FinishAgentWaitFactsSchema",
+  finishAgentClose: "AgentIdFactsSchema",
+  acceptAgentWorktreeStart: "AgentIdFactsSchema",
+  rollbackAgentWorktreeStart: "AgentIdFactsSchema",
+  deleteAgentWorktree: "AgentIdFactsSchema",
+  cancelAgentBrokerSessions: "AgentIdFactsSchema",
+  deleteAgentChildSession: "AgentIdFactsSchema",
+  recordAgentCloseCleanupFailure: "AgentIdFactsSchema",
+};
+for (const [method, schema] of Object.entries(lifecycleMethodSchemas)) {
+  if (!new RegExp(`readonly ${method}: readonly \\[Static<typeof Action\\.${schema}>`).test(coreMethods)) {
+    failures.push(`${method}: lifecycle CoreBridge argument is not ${schema}`);
+  }
+}
+const agentLifecycle = readFileSync(join(binRoot.pathname, "agent_lifecycle.ml"), "utf8");
+if (/\b(?:get_string|optional_string_field|optional_string_array) facts\b|Unsafe\.get facts/.test(agentLifecycle)) {
+  failures.push("agent_lifecycle facts bypass generated runtime contracts");
+}
+for (const name of ["agent_close.ml", "agent_worktree_ops.ml"]) {
+  const source = readFileSync(join(binRoot.pathname, name), "utf8");
+  if (/\bget_string facts\b|Unsafe\.get facts/.test(source)) failures.push(`${name}: lifecycle facts bypass generated runtime contracts`);
+}
+for (const name of ["agent_lifecycle.ml", "agent_close.ml", "agent_worktree_ops.ml"]) {
+  const source = readFileSync(join(binRoot.pathname, name), "utf8");
+  const handlers = [...source.matchAll(/^let ([a-z_]+) (?:raw_)?facts ctx =/gm)];
+  for (let index = 0; index < handlers.length; index += 1) {
+    const body = source.slice(handlers[index].index, handlers[index + 1]?.index ?? source.length);
+    const syncAt = body.indexOf("Session_sync.require_agent_owner ctx");
+    const decodeAt = [body.indexOf("decode_ojs_contract"), body.indexOf("agent_id_from_facts")]
+      .filter((position) => position >= 0).sort((left, right) => left - right)[0] ?? -1;
+    if (syncAt >= 0 && (decodeAt < 0 || decodeAt > syncAt)) {
+      failures.push(`${name}:${handlers[index][1]} synchronizes authority state before decoding facts`);
+    }
+  }
+}
+const lifecycleOcamlDecoders = {
+  "agent_lifecycle.ml": {
+    record_child_session_start: "RecordAgentChildSessionStartFacts.t_of_js",
+    rollback_unaccepted_start: "RollbackUnacceptedAgentStartFacts.t_of_js",
+    rollback_send_preflight: "RollbackAgentSendPreflightFacts.t_of_js",
+    record_send_dispatch_failure: "RecordAgentSendDispatchFailureFacts.t_of_js",
+    rollback_failed_interruption: "RollbackFailedAgentInterruptionFacts.t_of_js",
+    record_dispatch_completion: "AgentDispatchCompletionFacts.t_of_js",
+    record_activity: "AgentActivityFacts.t_of_js",
+    record_dispatch_boundary: "AgentDispatchBoundaryFacts.t_of_js",
+    reconcile_live_dispatches: "LiveAgentDispatchesFacts.t_of_js",
+    record_background_notification: "AgentRunIdFacts.t_of_js",
+    release_background_notification: "AgentRunIdFacts.t_of_js",
+    validate_background_notification_claim: "AgentRunIdFacts.t_of_js",
+    finish_wait: "FinishAgentWaitFacts.t_of_js",
+  },
+  "agent_close.ml": { finish_close: "agent_id_from_facts", delete_child_session: "agent_id_from_facts", record_close_cleanup_failure: "agent_id_from_facts" },
+  "agent_worktree_ops.ml": { accept_worktree_start: "agent_id_from_facts", rollback_worktree_start: "agent_id_from_facts", delete_worktree: "agent_id_from_facts" },
+};
+for (const [name, handlers] of Object.entries(lifecycleOcamlDecoders)) {
+  const source = readFileSync(join(binRoot.pathname, name), "utf8");
+  const definitions = [...source.matchAll(/^let ([a-z_]+)\b/gm)];
+  for (const [handler, decoder] of Object.entries(handlers)) {
+    const index = definitions.findIndex((definition) => definition[1] === handler);
+    const body = index < 0 ? "" : source.slice(definitions[index].index, definitions[index + 1]?.index ?? source.length);
+    if (!body.includes(decoder)) failures.push(`${name}:${handler} does not use ${decoder}`);
+  }
+}
+for (const name of ["agent_close.ml", "agent_worktree_ops.ml"]) {
+  const source = readFileSync(join(binRoot.pathname, name), "utf8");
+  if (!/let agent_id_from_facts[\s\S]*?AgentIdFacts\.t_of_js/.test(source)) {
+    failures.push(`${name}: agent_id_from_facts does not use AgentIdFacts.t_of_js`);
+  }
+}
+const cancelBranch = runtimeDispatcher.slice(
+  runtimeDispatcher.indexOf('| "cancelAgentBrokerSessions"'),
+  runtimeDispatcher.indexOf('| "deleteAgentChildSession"'),
+);
+if (!cancelBranch.includes("AgentIdFacts.t_of_js")) failures.push("cancelAgentBrokerSessions does not use AgentIdFacts.t_of_js");
+const agentActionCapability = readFileSync(join(binRoot.pathname, "agent_action_capability.ml"), "utf8");
+if (!/let decode raw_facts =[\s\S]*?AgentActionCapabilityFacts\.t_of_js/.test(agentActionCapability)) {
+  failures.push("agent action capability checks do not use AgentActionCapabilityFacts.t_of_js");
+}
+for (const method of ["claimAgentAction", "revalidateAgentAction", "authorizeAgentActionCleanup", "releaseAgentAction"]) {
+  if (!new RegExp(`readonly ${method}: readonly \\[Core\\.AgentActionCapabilityFacts\\]`).test(coreMethods)) {
+    failures.push(`${method}: CoreBridge argument is not AgentActionCapabilityFacts`);
+  }
+}
+const requiredAuthorityInterfaces = [
+  ["bin/authority_plans.mli", /type exec_state|type exec_entry|type agent_action_entry/],
+  ["lib/capability_profile.mli", /type t = private \{/],
+  ["lib/permissions.mli", /type state = private \{/],
+  ["lib/sandbox.mli", /type config = private \{/],
+];
+for (const [path, expectedOrForbidden] of requiredAuthorityInterfaces) {
+  const source = readFileSync(join(projectRoot.pathname, path), "utf8");
+  if (path === "bin/authority_plans.mli" ? expectedOrForbidden.test(source) : !expectedOrForbidden.test(source)) {
+    failures.push(`${path}: authority representation is not appropriately hidden`);
+  }
+}
 for (const name of readdirSync(generatedRoot).filter((entry) => entry.endsWith(".ml"))) {
   if (/\bassert false\b/.test(readFileSync(join(generatedRoot, name), "utf8"))) {
     failures.push(`generated/${name}: generated assertions are forbidden`);

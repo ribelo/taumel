@@ -4,14 +4,11 @@ open Runtime_access
 open Agent_tools
 
 let record_child_session_start facts ctx =
+  let facts = decode_ojs_contract Tool_contracts.RecordAgentChildSessionStartFacts.t_of_js (ojs_of_js facts) in
   Session_sync.require_agent_owner ctx;
-  let agent_id = get_string facts "agent_id" in
-  let child_session_id =
-    Option.bind (optional_string_field facts "sessionId") Taumel.Shared.trim_non_empty
-  in
-  let child_session_file =
-    Option.bind (optional_string_field facts "sessionFile") Taumel.Shared.trim_non_empty
-  in
+  let agent_id = Tool_contracts.RecordAgentChildSessionStartFacts.get_agent_id facts in
+  let child_session_id = Tool_contracts.RecordAgentChildSessionStartFacts.get_sessionId facts in
+  let child_session_file = Tool_contracts.RecordAgentChildSessionStartFacts.get_sessionFile facts in
   match
     Taumel.Agents.record_child_session !agent_state ~agent_id ?child_session_id
       ?child_session_file ()
@@ -23,10 +20,11 @@ let record_child_session_start facts ctx =
       core_ack ()
 
 let rollback_unaccepted_start facts ctx =
+  let facts = decode_ojs_contract Tool_contracts.RollbackUnacceptedAgentStartFacts.t_of_js (ojs_of_js facts) in
   Session_sync.require_agent_owner ctx;
-  let agent_id = get_string facts "agent_id" in
-  let run_id = get_string facts "run_id" in
-  let submission_id = get_string facts "submission_id" in
+  let agent_id = Tool_contracts.RollbackUnacceptedAgentStartFacts.get_agent_id facts in
+  let run_id = Tool_contracts.RollbackUnacceptedAgentStartFacts.get_run_id facts in
+  let submission_id = Tool_contracts.RollbackUnacceptedAgentStartFacts.get_submission_id facts in
   match
     Taumel.Agents.rollback_unaccepted_spawn !agent_state
       ~owner_session_id:(owner_id ctx) ~agent_id ~run_id ~submission_id
@@ -38,46 +36,48 @@ let rollback_unaccepted_start facts ctx =
       core_ack ()
 
 let rollback_send_preflight facts ctx =
+  let facts = decode_ojs_contract Boundary_contracts.RollbackAgentSendPreflightFacts.t_of_js (ojs_of_js facts) in
   Session_sync.require_agent_owner ctx;
-  let agent_id = get_string facts "agent_id" in
-  let run_id = get_string facts "run_id" in
-  let submission_id = get_string facts "submission_id" in
-  let previous_submission_id = get_string facts "previous_submission_id" in
-  let outcome = Taumel.Agents.send_outcome_of_string (get_string facts "outcome") in
-  let previous_reason_code =
-    match
-      Option.bind (optional_string_field facts "previous_reason_code")
-        Taumel.Shared.trim_non_empty
-    with
-    | None -> Ok None
-    | Some value ->
-        Result.map Option.some (Taumel.Agents.reason_code_of_string value)
+  let agent_id = Tool_contracts.RollbackAgentSendPreflightFacts.get_agent_id facts in
+  let run_id = Tool_contracts.RollbackAgentSendPreflightFacts.get_run_id facts in
+  let submission_id = Tool_contracts.RollbackAgentSendPreflightFacts.get_submission_id facts in
+  let previous_submission_id = Tool_contracts.RollbackAgentSendPreflightFacts.get_previous_submission_id facts in
+  let outcome =
+    match Boundary_contracts.RollbackAgentSendPreflightFacts.get_outcome facts with
+    | `V_message_sent -> Taumel.Agents.Message_sent
+    | `V_interrupted_and_sent -> Interrupted_and_sent
+    | `V_suspended -> Suspended_outcome
+    | `V_already_suspended -> Already_suspended
+    | `V_resumed -> Resumed
+    | `V_started -> Started
+    | `V_no_active_run -> No_active_run
   in
-  (match (outcome, previous_reason_code) with
-  | Error message, _ | _, Error message -> error_obj message
-  | Ok outcome, Ok previous_reason_code -> (
-      match
-        Taumel.Agents.rollback_send_preflight !agent_state
-          ~owner_session_id:(owner_id ctx) ~agent_id ~run_id ~submission_id
-          ~outcome ~previous_submission_id ~previous_reason_code
-      with
-      | Error message -> error_obj message
-      | Ok next ->
-          agent_state := next;
-          save_agent_state ctx;
-          core_ack ()))
+  let previous_reason_code =
+    Option.map
+      (function
+        | `V_interrupted_by_parent -> Taumel.Agents.Interrupted_by_parent
+        | `V_parent_shutdown -> Parent_shutdown
+        | `V_process_interrupted -> Process_interrupted
+        | `V_close_cleanup_failed -> Close_cleanup_failed)
+      (Boundary_contracts.RollbackAgentSendPreflightFacts.get_previous_reason_code facts)
+  in
+  match
+    Taumel.Agents.rollback_send_preflight !agent_state
+      ~owner_session_id:(owner_id ctx) ~agent_id ~run_id ~submission_id
+      ~outcome ~previous_submission_id ~previous_reason_code
+  with
+  | Error message -> error_obj message
+  | Ok next ->
+      agent_state := next;
+      save_agent_state ctx;
+      core_ack ()
 
 let record_send_dispatch_failure facts ctx =
+  let facts = decode_ojs_contract Tool_contracts.RecordAgentSendDispatchFailureFacts.t_of_js (ojs_of_js facts) in
   Session_sync.require_agent_owner ctx;
-  let run_id = get_string facts "run_id" in
-  let submission_id =
-    Option.bind (optional_string_field facts "submission_id")
-      Taumel.Shared.trim_non_empty
-  in
-  let error =
-    Option.bind (optional_string_field facts "error")
-      Taumel.Shared.trim_non_empty
-  in
+  let run_id = Tool_contracts.RecordAgentSendDispatchFailureFacts.get_run_id facts in
+  let submission_id = Tool_contracts.RecordAgentSendDispatchFailureFacts.get_submission_id facts in
+  let error = Tool_contracts.RecordAgentSendDispatchFailureFacts.get_error facts in
   match
     Taumel.Agents.record_dispatch_failure !agent_state ~now:(now_seconds ())
       ~run_id ?error ?submission_id ()
@@ -89,9 +89,10 @@ let record_send_dispatch_failure facts ctx =
       core_ack ()
 
 let rollback_failed_interruption facts ctx =
+  let facts = decode_ojs_contract Tool_contracts.RollbackFailedAgentInterruptionFacts.t_of_js (ojs_of_js facts) in
   Session_sync.require_agent_owner ctx;
-  let agent_id = get_string facts "agent_id" in
-  let run_id = get_string facts "run_id" in
+  let agent_id = Tool_contracts.RollbackFailedAgentInterruptionFacts.get_agent_id facts in
+  let run_id = Tool_contracts.RollbackFailedAgentInterruptionFacts.get_run_id facts in
   match
     Taumel.Agents.rollback_failed_interruption !agent_state
       ~owner_session_id:(owner_id ctx) ~agent_id ~run_id
@@ -103,45 +104,26 @@ let rollback_failed_interruption facts ctx =
       core_ack ()
 
 let record_dispatch_completion facts ctx =
+  let facts = decode_ojs_contract Tool_contracts.AgentDispatchCompletionFacts.t_of_js (ojs_of_js facts) in
   Session_sync.require_agent_owner ctx;
-  let run_id = get_string facts "run_id" in
-  let submission_id =
-    Option.bind (optional_string_field facts "submission_id")
-      Taumel.Shared.trim_non_empty
-  in
-  let completion = Unsafe.get facts "completion" in
-  let status_raw = get_string completion "status" in
+  let run_id = Tool_contracts.AgentDispatchCompletionFacts.get_run_id facts in
+  let submission_id = Tool_contracts.AgentDispatchCompletionFacts.get_submission_id facts in
+  let completion = Tool_contracts.AgentDispatchCompletionFacts.get_completion facts in
   let status =
-    match status_raw with
-    | "completed" -> Taumel.Agents.Completed
-    | "failed" -> Taumel.Agents.Failed
-    | "timed_out" -> Taumel.Agents.Failed
-    | "cancelled" | "aborted" -> Taumel.Agents.Cancelled
-    | "lost" -> Taumel.Agents.Lost
-    | _ -> Taumel.Agents.Failed
+    match Boundary_contracts.AgentDispatchCompletion.get_status completion with
+    | `V_completed -> Taumel.Agents.Completed
+    | `V_failed | `V_timed_out -> Taumel.Agents.Failed
+    | `V_cancelled -> Taumel.Agents.Cancelled
   in
   let reason_code =
     match status with
-    | Taumel.Agents.Failed ->
-        Some
-          (if status_raw = "failed" || status_raw = "timed_out" then
-             Taumel.Agents.Agent_failed
-           else Taumel.Agents.Internal_error)
+    | Taumel.Agents.Failed -> Some Taumel.Agents.Agent_failed
     | Taumel.Agents.Cancelled -> Some Taumel.Agents.Host_cancelled
-    | Taumel.Agents.Lost -> Some Taumel.Agents.Child_session_lost
     | _ -> None
   in
-  let final_output =
-    optional_string_field completion "finalOutput"
-  in
-  let result_entry_id =
-    Option.bind (optional_string_field completion "resultEntryId")
-      Taumel.Shared.trim_non_empty
-  in
-  let error =
-    Option.bind (optional_string_field completion "reason")
-      Taumel.Shared.trim_non_empty
-  in
+  let final_output = Tool_contracts.AgentDispatchCompletion.get_finalOutput completion in
+  let result_entry_id = Tool_contracts.AgentDispatchCompletion.get_resultEntryId completion in
+  let error = Tool_contracts.AgentDispatchCompletion.get_reason completion in
   let now = now_seconds () in
   match
     match status with
@@ -222,10 +204,16 @@ let schedule_activity_flush ctx =
     | None -> ())
 
 let record_activity facts ctx =
+  let facts = decode_ojs_contract Boundary_contracts.AgentActivityFacts.t_of_js (ojs_of_js facts) in
   Session_sync.require_agent_owner ctx;
-  let run_id = get_string facts "run_id" in
-  let submission_id = get_string facts "submission_id" in
-  let event = get_string facts "event" in
+  let run_id = Tool_contracts.AgentActivityFacts.get_run_id facts in
+  let submission_id = Tool_contracts.AgentActivityFacts.get_submission_id facts in
+  let event = match Boundary_contracts.AgentActivityFacts.get_event facts with
+    | `V_agent_start -> Taumel.Agents.Agent_start | `V_turn_start -> Turn_start
+    | `V_turn_end -> Turn_end | `V_tool_execution_start -> Tool_execution_start
+    | `V_tool_execution_update -> Tool_execution_update
+    | `V_tool_execution_end -> Tool_execution_end
+  in
   let now = now_seconds () in
   let previous = !agent_state in
   let next =
@@ -251,13 +239,11 @@ let record_activity facts ctx =
   core_ack ()
 
 let record_dispatch_boundary facts ctx =
+  let facts = decode_ojs_contract Tool_contracts.AgentDispatchBoundaryFacts.t_of_js (ojs_of_js facts) in
   Session_sync.require_agent_owner ctx;
-  let run_id = get_string facts "run_id" in
-  let submission_id = get_string facts "submission_id" in
-  let previous_assistant_entry_id =
-    Option.bind (optional_string_field facts "previous_assistant_entry_id")
-      Taumel.Shared.trim_non_empty
-  in
+  let run_id = Tool_contracts.AgentDispatchBoundaryFacts.get_run_id facts in
+  let submission_id = Tool_contracts.AgentDispatchBoundaryFacts.get_submission_id facts in
+  let previous_assistant_entry_id = Tool_contracts.AgentDispatchBoundaryFacts.get_previous_assistant_entry_id facts in
   match
     Taumel.Agents.record_dispatch_boundary !agent_state ~run_id ~submission_id
       ~previous_assistant_entry_id
@@ -269,8 +255,9 @@ let record_dispatch_boundary facts ctx =
       | Error message -> error_obj message)
 
 let reconcile_live_dispatches facts ctx =
+  let facts = decode_ojs_contract Tool_contracts.LiveAgentDispatchesFacts.t_of_js (ojs_of_js facts) in
   Session_sync.require_agent_owner ctx;
-  let live_agent_ids = Option.value (optional_string_array facts "live_agent_ids") ~default:[] in
+  let live_agent_ids = Tool_contracts.LiveAgentDispatchesFacts.get_live_agent_ids facts in
   let next =
     Taumel.Agent_registry.reconcile_live_dispatches !agent_state
       ~owner_session_id:(owner_id ctx) ~live_agent_ids
@@ -314,8 +301,9 @@ let pending_agent_notifications ctx =
   |> Tool_contracts.PendingAgentNotificationsResult.t_to_js |> inject
 
 let record_background_notification facts ctx =
+  let facts = decode_ojs_contract Tool_contracts.AgentRunIdFacts.t_of_js (ojs_of_js facts) in
   Session_sync.require_agent_owner ctx;
-  let run_id = get_string facts "run_id" in
+  let run_id = Tool_contracts.AgentRunIdFacts.get_run_id facts in
   let owned =
     match Taumel.Agents.find_run !agent_state run_id with
     | Some run -> (
@@ -337,14 +325,16 @@ let record_background_notification facts ctx =
       core_ack ()
 
 let release_background_notification facts =
-  let run_id = get_string facts "run_id" in
+  let facts = decode_ojs_contract Tool_contracts.AgentRunIdFacts.t_of_js (ojs_of_js facts) in
+  let run_id = Tool_contracts.AgentRunIdFacts.get_run_id facts in
   agent_notification_claims :=
     List.filter (fun value -> value <> run_id) !agent_notification_claims;
   core_ack ()
 
 let validate_background_notification_claim facts ctx =
+  let facts = decode_ojs_contract Tool_contracts.AgentRunIdFacts.t_of_js (ojs_of_js facts) in
   Session_sync.require_agent_owner ctx;
-  let run_id = get_string facts "run_id" in
+  let run_id = Tool_contracts.AgentRunIdFacts.get_run_id facts in
   let valid =
     List.mem run_id !agent_notification_claims
     &&
@@ -699,13 +689,10 @@ let suspend_owner_on_shutdown ctx =
       save_agent_state ctx;
       core_ack ()
 
-let finish_wait facts ctx =
+let finish_wait raw_facts ctx =
+  let facts = decode_ojs_contract Tool_contracts.FinishAgentWaitFacts.t_of_js (ojs_of_js raw_facts) in
   Session_sync.require_agent_owner ctx;
-  let run_ids =
-    match optional_string_array facts "run_ids" with
-    | None -> []
-    | Some values -> values
-  in
+  let run_ids = Tool_contracts.FinishAgentWaitFacts.get_run_ids facts in
   match
     Taumel.Agent_wait.wait_for_run_ids !agent_state ~owner_session_id:(owner_id ctx)
       run_ids
@@ -714,12 +701,7 @@ let finish_wait facts ctx =
   | Ok wait ->
       agent_state := wait.wait_state;
       save_agent_state ctx;
-      prepare_wait
-        (Unsafe.obj
-           [|
-             ("run_ids", js_array (List.map js_string run_ids));
-           |])
-        ctx
+      prepare_wait raw_facts ctx
 
 let command_result ?(details = Unsafe.obj [||]) message =
   Boundary_contracts.GatewayCommandResult.create ~ok:true ~message

@@ -94,13 +94,7 @@ let permission_ceiling_for ~kind (parent : Taumel.Capability_profile.t) =
             Taumel.Capability_profile.Workspace_write
         | other -> other)
   in
-  {
-    parent with
-    sandbox_preset;
-    no_sandbox_allowed = false;
-    model_id = parent.model_id;
-    thinking_level = parent.thinking_level;
-  }
+  Taumel.Capability_profile.resolve ~sandbox_preset ~no_sandbox_allowed:false parent
 let kind_of_tool = function
   | "agent_spawn" -> Ok Taumel.Agents.Generic
   | "finder" -> Ok Taumel.Agents.Finder
@@ -337,9 +331,10 @@ let prepare_start name params ctx =
                            (json_to_js (identity_metadata ~identity ~planned:true ())))
                     in
                     let capability_id =
-                      Agent_action_capability.issue ~commit ~action:"agent_start"
-                        ~agent_id:identity.identity_agent_id ~run_id:run.run_id
-                        ~submission_id:run.run_submission_id ctx
+                      Agent_action_capability.issue ~commit
+                        (Agent_action_capability.Start
+                           { run_id = run.run_id; submission_id = run.run_submission_id })
+                        ~agent_id:identity.identity_agent_id ctx
                     in
                     Boundary_contracts.PreparedAgentStart.create ~text
                       ~details
@@ -462,9 +457,16 @@ let prepare_send params ctx =
                 in
                 let text = json_success result_fields in
                 let capability_id =
-                  Agent_action_capability.issue ~commit ~action:"agent_send"
-                    ~agent_id ?run_id:delivery.delivery_run_id
-                    ?submission_id:delivery.delivery_submission_id ctx
+                  let issuance =
+                    match (delivery.delivery_run_id, delivery.delivery_submission_id) with
+                    | Some run_id, Some submission_id ->
+                        Agent_action_capability.Send
+                          (New_run { run_id; submission_id })
+                    | Some run_id, None -> Send (Existing_run run_id)
+                    | None, None -> Send No_run
+                    | None, Some _ -> invalid_arg "agent send submission requires a run"
+                  in
+                  Agent_action_capability.issue ~commit issuance ~agent_id ctx
                 in
                 let previous_submission_id =
                   Option.map
@@ -560,17 +562,9 @@ let prepare_wait params ctx =
   if is_agent_child ctx then reject_nested "agent_wait"
   else
     with_gateway_authorized "agent_wait" (fun _ ->
-        let run_ids =
-          match optional_string_array params "run_ids" with
-          | None -> []
-          | Some values -> values
-        in
-        let timeout_seconds =
-          match float_field params "timeout_seconds" with
-          | None -> None
-          | Some value when value < 0. -> None
-          | Some value -> Some value
-        in
+        let params = decode_ojs_contract Tool_contracts.AgentWaitParams.t_of_js (ojs_of_js params) in
+        let run_ids = Tool_contracts.AgentWaitParams.get_run_ids params in
+        let timeout_seconds = Tool_contracts.AgentWaitParams.get_timeout_seconds params in
         let reconciled = Session_sync.reconcile_settled_runs !agent_state in
         if reconciled != !agent_state then (
           match commit_agent_state ctx reconciled with

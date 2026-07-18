@@ -1,9 +1,13 @@
 open Jsoo_bridge
 open App_state
 
+let agent_id_from_facts facts =
+  decode_ojs_contract Tool_contracts.AgentIdFacts.t_of_js (ojs_of_js facts)
+  |> Tool_contracts.AgentIdFacts.get_agent_id
+
 let accept_worktree_start facts ctx =
+  let agent_id = agent_id_from_facts facts in
   Session_sync.require_agent_owner ctx;
-  let agent_id = get_string facts "agentId" in
   match
     Taumel.Agents.owned_identity !agent_state
       ~owner_session_id:(Session_store.session_id_from_ctx ctx) agent_id
@@ -16,15 +20,19 @@ let accept_worktree_start facts ctx =
           match
             Agent_worktree_host.accept_provisional
               ~owner_session_id:identity.identity_owner_session_id ~agent_id
+              ~binding:identity.identity_workspace_binding
           with
           | Ok () -> core_ack ()
           | Error message -> error_obj message))
 let rollback_worktree_start facts ctx =
+  let agent_id = agent_id_from_facts facts in
   Session_sync.require_agent_owner ctx;
-  let agent_id = get_string facts "agentId" in
-  match Taumel.Agents.find_identity !agent_state agent_id with
-  | None -> error_obj ("unknown agent: " ^ agent_id)
-  | Some identity -> (
+  match
+    Taumel.Agents.owned_identity !agent_state
+      ~owner_session_id:(Session_store.session_id_from_ctx ctx) agent_id
+  with
+  | Error message -> error_obj message
+  | Ok identity -> (
       match identity.identity_workspace_binding with
       | Taumel.Agent_workspace.Shared _ -> core_ack ()
       | Taumel.Agent_workspace.Worktree _ as binding -> (
@@ -45,8 +53,8 @@ let rollback_worktree_start facts ctx =
               | Ok () -> core_ack ()
               | Error (_code, message) -> error_obj message)))
 let delete_worktree facts ctx =
+  let agent_id = agent_id_from_facts facts in
   Session_sync.require_agent_owner ctx;
-  let agent_id = get_string facts "agent_id" in
   match
     Taumel.Agents.owned_identity !agent_state
       ~owner_session_id:(Session_store.session_id_from_ctx ctx) agent_id
@@ -83,7 +91,7 @@ let delete_worktree facts ctx =
     | true, true -> (
         match
           Agent_worktree_host.verify_broker_registration ~worktree_path
-            ~main_repository_root ~branch
+            ~main_repository_root ~main_repository_id ~branch
         with
         | Error message -> error_obj ("cleanup_failed: " ^ message)
         | Ok _ -> (

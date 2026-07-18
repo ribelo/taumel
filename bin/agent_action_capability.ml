@@ -3,6 +3,22 @@ open App_state
 
 let ttl_ms = 10 * 60 * 1000
 
+let action_of_string = function
+  | "agent_start" -> Authority_plans.Agent_start
+  | "agent_send" -> Authority_plans.Agent_send
+  | "agent_close" -> Authority_plans.Agent_close
+  | action -> invalid_arg ("unknown agent action: " ^ action)
+
+type send_binding =
+  | New_run of { run_id : string; submission_id : string }
+  | Existing_run of string
+  | No_run
+
+type issuance =
+  | Start of { run_id : string; submission_id : string }
+  | Send of send_binding
+  | Close
+
 type pending_action = {
   owner_id : string;
   run_id : string option;
@@ -38,8 +54,19 @@ let sweep_expired () =
            Authority_plans.revoke_agent_action capability_id;
            remove_pending capability_id))
 
-let issue ?run_id ?submission_id ?(commit = fun () -> Ok ())
-    ?(release = fun () -> ()) ~action ~agent_id ctx =
+let issue ?(commit = fun () -> Ok ()) ?(release = fun () -> ()) issuance
+    ~agent_id ctx =
+  let action, run_id, submission_id =
+    match issuance with
+    | Start { run_id; submission_id } ->
+        (Authority_plans.Agent_start, Some run_id, Some submission_id)
+    | Send (New_run { run_id; submission_id }) ->
+        (Authority_plans.Agent_send, Some run_id, Some submission_id)
+    | Send (Existing_run run_id) ->
+        (Authority_plans.Agent_send, Some run_id, None)
+    | Send No_run -> (Authority_plans.Agent_send, None, None)
+    | Close -> (Authority_plans.Agent_close, None, None)
+  in
   sweep_expired ();
   let key = agent_key ctx agent_id in
   (match Hashtbl.find_opt latest_by_agent key with
@@ -79,17 +106,30 @@ let decode raw_facts =
     decode_ojs_contract Tool_contracts.AgentActionCapabilityFacts.t_of_js
       (ojs_of_js raw_facts)
   in
-  let action = Tool_contracts.AgentActionCapabilityFacts.get_action facts in
+  let action =
+    Tool_contracts.AgentActionCapabilityFacts.get_action facts |> action_of_string
+  in
   let ctx =
     Tool_contracts.AgentActionCapabilityFacts.get_ctx facts
     |> Ts2ocaml.unknown_to_js |> js_of_ojs
   in
+  let run_id = Tool_contracts.AgentActionCapabilityFacts.get_runId facts in
+  let submission_id = Tool_contracts.AgentActionCapabilityFacts.get_submissionId facts in
+  (match (action, run_id, submission_id) with
+  | Authority_plans.Agent_start, Some _, Some _
+  | Agent_send, Some _, Some _
+  | Agent_send, Some _, None
+  | Agent_send, None, None
+  | Agent_close, None, None -> ()
+  | Agent_start, _, _ -> invalid_arg "agent_start capability requires runId and submissionId"
+  | Agent_close, _, _ -> invalid_arg "agent_close capability forbids runId and submissionId"
+  | Agent_send, None, Some _ -> invalid_arg "agent_send submissionId requires runId");
   ( facts,
     action,
     Tool_contracts.AgentActionCapabilityFacts.get_agentId facts,
     Tool_contracts.AgentActionCapabilityFacts.get_capabilityId facts,
-    Tool_contracts.AgentActionCapabilityFacts.get_runId facts,
-    Tool_contracts.AgentActionCapabilityFacts.get_submissionId facts,
+    run_id,
+    submission_id,
     ctx )
 
 let check operation raw_facts =

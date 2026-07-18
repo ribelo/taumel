@@ -12,14 +12,8 @@ let assert_error label = function
   | Error _ -> ()
 
 let ceiling =
-  {
-    Capability_profile.model_id = "inherit";
-    thinking_level = "medium";
-    sandbox_preset = Capability_profile.Workspace_write;
-    approval_policy = Capability_profile.On_request;
-    tools = Capability_profile.All;
-    no_sandbox_allowed = false;
-  }
+  Capability_profile.resolve ~approval_policy:Capability_profile.On_request
+    Capability_profile.default
 
 let spawn ?(kind = Agents.Generic) ?(effort = Agents.Medium) state =
   Agents.record_spawn state ~now:1 ~owner_session_id:"parent-1" ~kind ~effort
@@ -582,13 +576,13 @@ let test_agent_zwxp_codec_rejects_specialist_escalation_and_parallel_active_runs
       let identity =
         { identity with
           identity_permission_ceiling =
-            { identity.identity_permission_ceiling with
-              sandbox_preset = Capability_profile.Read_only } }
+            Capability_profile.resolve ~sandbox_preset:Capability_profile.Read_only
+              identity.identity_permission_ceiling }
       in
       let state = { state with identities = [ identity ] } in
       let escalated_ceiling =
-        { identity.identity_permission_ceiling with
-          sandbox_preset = Capability_profile.Workspace_write }
+        Capability_profile.resolve ~sandbox_preset:Capability_profile.Workspace_write
+          identity.identity_permission_ceiling
       in
       let escalated =
         { identity with
