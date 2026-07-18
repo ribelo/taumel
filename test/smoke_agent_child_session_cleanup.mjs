@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   statSync,
@@ -275,6 +276,87 @@ try {
   await closeAgent(valid.agentId);
   assert.equal(existsSync(validDirectory), false, "derived marked child directory was retained");
 
+  const nested = spawn("Contain recursive cleanup within the payload");
+  // agent-ps19: recursive deletion must never follow symbolic links outside the payload.
+  const nestedDirectory = privateDirectory(nested);
+  writeChildMarker(nestedDirectory, nested.agentId);
+  mkdirSync(join(nestedDirectory, "tree", "deep"), { recursive: true });
+  writeFileSync(join(nestedDirectory, "tree", "deep", "artifact.txt"), "nested artifact\n");
+  const outsideCanaryDirectory = join(root, "outside-canary");
+  mkdirSync(outsideCanaryDirectory, { recursive: true });
+  const outsideCanary = join(outsideCanaryDirectory, "canary.txt");
+  writeFileSync(outsideCanary, "outside canary\n");
+  symlinkSync(outsideCanaryDirectory, join(nestedDirectory, "tree", "escape-link"), "dir");
+  await closeAgent(nested.agentId);
+  assert.equal(existsSync(nestedDirectory), false, "nested payload tree was retained");
+  assert.equal(
+    readFileSync(outsideCanary, "utf8"),
+    "outside canary\n",
+    "recursive cleanup followed a symlink outside the payload",
+  );
+
+  // agent-ps19/ADR 0003: an ancestor swapped for a symlink after validation must
+  // fail the descriptor walk closed, not redirect deletion outside.
+  const raced = spawn("Reject swapped ancestor during recursive cleanup");
+  const racedDirectory = privateDirectory(raced);
+  writeChildMarker(racedDirectory, raced.agentId);
+  const racedEnvelope = join(dirname(racedDirectory), `.cleanup-${raced.agentId}`);
+  const ownersRoot = dirname(dirname(racedDirectory));
+  const parkedOwnersRoot = `${ownersRoot}-parked`;
+  const outsideAncestor = join(root, "outside-ancestor");
+  mkdirSync(outsideAncestor, { recursive: true });
+  const outsideAncestorCanary = join(outsideAncestor, "canary.txt");
+  writeFileSync(outsideAncestorCanary, "outside canary\n");
+  const racedFsModule = require("node:fs");
+  const walkOpenSync = racedFsModule.openSync;
+  let ownersRestored = true;
+  racedFsModule.openSync = (path, ...args) => {
+    const text = String(path);
+    if (/\/proc\/self\/fd\/\d+\/agents$/.test(text) && existsSync(ownersRoot)) {
+      renameSync(ownersRoot, parkedOwnersRoot);
+      symlinkSync(outsideAncestor, ownersRoot, "dir");
+      ownersRestored = false;
+    }
+    if (/\/proc\/self\/fd\/\d+\/owners$/.test(text) && !ownersRestored) {
+      try {
+        return walkOpenSync(path, ...args);
+      } finally {
+        unlinkSync(ownersRoot);
+        renameSync(parkedOwnersRoot, ownersRoot);
+        ownersRestored = true;
+      }
+    }
+    return walkOpenSync(path, ...args);
+  };
+  let racedClose;
+  try {
+    racedClose = await closeAgent(raced.agentId);
+  } finally {
+    racedFsModule.openSync = walkOpenSync;
+    if (!ownersRestored) {
+      try { unlinkSync(ownersRoot); } catch { /* already restored */ }
+      renameSync(parkedOwnersRoot, ownersRoot);
+    }
+  }
+  assert.match(
+    racedClose.content[0].text,
+    /cleanup_failed|finalization failed/,
+    "swapped ancestor must fail recursive cleanup closed",
+  );
+  assert.equal(
+    readFileSync(outsideAncestorCanary, "utf8"),
+    "outside canary\n",
+    "swapped ancestor redirected recursive cleanup outside",
+  );
+  assert.equal(
+    existsSync(racedEnvelope),
+    true,
+    "failed-closed cleanup must leave the envelope retryable",
+  );
+  await closeAgent(raced.agentId);
+  assert.equal(existsSync(racedEnvelope), false, "restored cleanup did not remove the envelope");
+  assert.equal(existsSync(racedDirectory), false, "restored cleanup did not delete the payload");
+
   const escaped = spawn("Reject canonical escape");
   const escapedDirectory = privateDirectory(escaped);
   const ownerDirectory = dirname(escapedDirectory);
@@ -349,7 +431,6 @@ try {
     dirname(deferredFailureDirectory),
     `.cleanup-${deferredFailure.agentId}`,
   );
-  const deferredFailurePayload = join(deferredFailureEnvelope, "session");
   assert.equal(core.call("reconcileProvisionalAgentWorktrees", []).ok, true);
   assert.equal(
     existsSync(journalFailureSentinel),
@@ -391,18 +472,18 @@ try {
   };
   const fsModule = require("node:fs");
   const originalAppendFileSync = fsModule.appendFileSync;
-  const originalRmSync = fsModule.rmSync;
+  const originalOpenSync = fsModule.openSync;
   fsModule.appendFileSync = (path, ...args) => {
     if (String(path).endsWith("cleanup-journal.jsonl")) {
       throw new Error("forced cleanup journal append failure");
     }
     return originalAppendFileSync(path, ...args);
   };
-  fsModule.rmSync = (path, ...args) => {
-    if (String(path) === deferredFailurePayload) {
+  fsModule.openSync = (path, ...args) => {
+    if (String(path).endsWith(`/.cleanup-${deferredFailure.agentId}`)) {
       throw new Error("forced deferred cleanup finalization failure");
     }
-    return originalRmSync(path, ...args);
+    return originalOpenSync(path, ...args);
   };
   try {
     for (const handler of lifecycleHandlers.get("session_shutdown") ?? []) {
@@ -410,7 +491,7 @@ try {
     }
   } finally {
     fsModule.appendFileSync = originalAppendFileSync;
-    fsModule.rmSync = originalRmSync;
+    fsModule.openSync = originalOpenSync;
   }
   assert.equal(
     existsSync(shutdownVictimSentinel),

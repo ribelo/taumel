@@ -73,7 +73,8 @@ patch parsing stay separate from each other and from execution.
 - The system shall retain the requested path for approval evidence, result rendering, and diagnostics while using only the authorization path for workspace containment and protected-metadata decisions. ^sandbox-pa11
 - A planner shall not deny a path as outside a workspace root from lexical containment alone when canonical filesystem facts can establish its authorization path; authorization shall fail closed if the required canonical filesystem facts cannot be obtained. ^sandbox-pa12
 - While approval policy is `never`, the system shall apply the same authorization-path rules as every other approval policy, allowing operations already inside the permission envelope without prompting and denying canonical boundary crossings that would otherwise require approval. ^sandbox-pa13
-- When a filesystem mutation path has been authorized, the system shall mutate only the authorized canonical destination while its ancestor and target identities remain unchanged and shall otherwise fail before mutation. ^sandbox-w54h
+- When a filesystem mutation path has been authorized, the system shall confine the mutation to the authorized canonical destination's pinned ancestor directories and shall fail before mutation whenever an ancestor or target identity change is detected. ^sandbox-w54h
+- If the system cannot anchor a guarded workspace mutation to its authorized ancestor directories, then the system shall reject the mutation rather than mutate through pathname-based syscalls. ^sandbox-fx9n
 
 ### Exec authorization and escalation
 

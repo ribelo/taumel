@@ -168,29 +168,14 @@ let link_file source destination =
     Ok ()
   with error -> Error (Printexc.to_string error)
 
-let unlink_tree target =
-  try
-    ignore
-      (Unsafe.meth_call (Lazy.force fs) "rmSync"
-         [|
-           js_string target;
-           Unsafe.obj
-             [| ("recursive", js_bool true); ("force", js_bool true) |];
-         |]);
-    Ok ()
-  with error -> Error (Printexc.to_string error)
+(* Recursive and single-entry cleanup deletion is descriptor-anchored in
+   Agent_anchored_fs (ADR 0003): ancestor and component swaps cannot redirect
+   deletion outside the pinned tree, and symlinks are never traversed. *)
+let unlink_tree target = Agent_anchored_fs.unlink_tree target
 
-let unlink_file target =
-  try
-    ignore (Unsafe.meth_call (Lazy.force fs) "unlinkSync" [| js_string target |]);
-    Ok ()
-  with error -> Error (Printexc.to_string error)
+let unlink_file target = Agent_anchored_fs.unlink_file target
 
-let rmdir target =
-  try
-    ignore (Unsafe.meth_call (Lazy.force fs) "rmdirSync" [| js_string target |]);
-    Ok ()
-  with error -> Error (Printexc.to_string error)
+let rmdir target = Agent_anchored_fs.rmdir target
 
 let child_marker_counts ~owner_session_id ~agent_id raw =
   raw |> String.split_on_char '\n'

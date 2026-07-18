@@ -82,7 +82,7 @@ async function readProjectCompactionModel(cwd: string): Promise<string | undefin
 
 async function writeProjectCompactionModel(cwd: string, model: string | undefined): Promise<void> {
   const path = projectSettingsPath(cwd);
-  const { settings, authorization } = await readJsonObjectForAtomicUpdate(path);
+  const { settings, authorization } = await readJsonObjectForAtomicUpdate(path, true);
   const existingTaumel = settings["taumel"];
   const taumel = existingTaumel === undefined ? {} : settingsObject(existingTaumel);
   if (taumel === undefined) throw new Error(`${path}: taumel must be a JSON object`);
@@ -104,7 +104,7 @@ async function writeProjectCompactionModel(cwd: string, model: string | undefine
   } else {
     settings["taumel"] = taumel;
   }
-  await writeFileAtomically(authorization, `${JSON.stringify(settings, null, 2)}\n`);
+  await writeFileAtomically(authorization, `${JSON.stringify(settings, null, 2)}\n`, true);
 }
 
 function notifyWarning(ctx: unknown, message: string): void {

@@ -92,18 +92,9 @@ let read_file path =
             [| js_string path; js_string "utf8" |]))
   with error -> Error (Printexc.to_string error)
 let repository_identity = Agent_worktree_verification.repository_identity
-let remove_path path =
-  let fs = Lazy.force fs_mod in
-  try
-    ignore
-      (Unsafe.meth_call fs "rmSync"
-         [|
-           js_string path;
-           Unsafe.obj
-             [| ("recursive", js_bool true); ("force", js_bool true) |];
-         |]);
-    Ok ()
-  with error -> Error (Printexc.to_string error)
+(* Worktree removal is descriptor-anchored like private-session cleanup
+   (ADR 0003): ancestor or component swaps cannot redirect deletion. *)
+let remove_path path = Agent_anchored_fs.unlink_tree path
 let resolve_repository source_workspace =
   match run_git ~cwd:source_workspace [ "rev-parse"; "--is-inside-work-tree" ] with
   | Error _ ->

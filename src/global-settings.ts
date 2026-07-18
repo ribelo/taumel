@@ -99,7 +99,7 @@ export async function initializeTaumelGlobalConfig(path = taumelGlobalSettingsPa
       initialized.push(`taumel.${name}.disabled`);
     }
   }
-  await writeFileAtomically(path, `${JSON.stringify(root, null, 2)}\n`);
+  await writeFileAtomically(path, `${JSON.stringify(root, null, 2)}\n`, true);
   return result(true, initialized.length ? `Initialized Taumel global config: ${path}` : `Taumel global config already initialized: ${path}`, path, initialized, [], []);
 }
 export async function writeTaumelComposerEnabled(path: string, enabled: boolean): Promise<void> {
@@ -111,7 +111,7 @@ export async function writeTaumelComposerEnabled(path: string, enabled: boolean)
   const taumel = settingsObject(root["taumel"]) ? root["taumel"] : (root["taumel"] = {} as SettingsObject);
   const composer = settingsObject(taumel["composer"]) ? taumel["composer"] : (taumel["composer"] = {} as SettingsObject);
   composer["enabled"] = enabled;
-  await writeFileAtomically(path, `${JSON.stringify(root, null, 2)}\n`);
+  await writeFileAtomically(path, `${JSON.stringify(root, null, 2)}\n`, true);
 }
 export async function taumelStatus(path = taumelGlobalSettingsPath()): Promise<TaumelInitResult> {
   const read = await readRoot(path);

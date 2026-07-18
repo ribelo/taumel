@@ -125,7 +125,7 @@ function approvalOutcomeMessage(action: string, outcome: ApprovalOutcome): strin
 
 async function appendExecPolicyAllowRule(core: CoreBridge, tokens: readonly string[]): Promise<void> {
   const settingsPath = join(getAgentDir(), "settings.json");
-  const { settings: root, authorization } = await readJsonObjectForAtomicUpdate(settingsPath);
+  const { settings: root, authorization } = await readJsonObjectForAtomicUpdate(settingsPath, true);
   const existingTaumel = root["taumel"], taumel = existingTaumel === undefined ? {} : settingsObject(existingTaumel);
   if (taumel === undefined) throw new Error(`${settingsPath}: taumel must be a JSON object`);
   const existingExecPolicy = taumel["execPolicy"], execPolicy = existingExecPolicy === undefined ? {} : settingsObject(existingExecPolicy);
@@ -138,7 +138,7 @@ async function appendExecPolicyAllowRule(core: CoreBridge, tokens: readonly stri
   execPolicy["rules"] = rules;
   taumel["execPolicy"] = execPolicy;
   root["taumel"] = taumel;
-  await writeFileAtomically(authorization, `${JSON.stringify(root, null, 2)}\n`);
+  await writeFileAtomically(authorization, `${JSON.stringify(root, null, 2)}\n`, true);
   decodeExecPolicyAllowRuleResult(core.call("appendExecPolicyAllowRule", [{ tokens: pattern }]));
 }
 

@@ -293,7 +293,7 @@ export async function saveProjectVisibility(
   const path = projectSettingsPath(cwdFromContext(ctx));
   let root: VisibilitySettings, authorization: MutationPathAuthorization;
   try {
-    ({ settings: root, authorization } = await readJsonObjectForAtomicUpdate(path));
+    ({ settings: root, authorization } = await readJsonObjectForAtomicUpdate(path, true));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return commandResult(false, `Cannot save ${category} visibility: ${message}`, { ...state, category, path });
@@ -311,7 +311,7 @@ export async function saveProjectVisibility(
   block["disabled"] = disabled;
   taumel[category] = block;
   root["taumel"] = taumel;
-  await writeFileAtomically(authorization, `${JSON.stringify(root, null, 2)}\n`);
+  await writeFileAtomically(authorization, `${JSON.stringify(root, null, 2)}\n`, true);
   const stale = state.unavailable.length === 0 ? "" : ` Unavailable names remain: ${state.unavailable.join(", ")}.`;
   return commandResult(true, `Saved ${category} visibility to ${path}.${stale}`, { ...state, category, path });
 }
