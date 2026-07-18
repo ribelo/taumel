@@ -230,6 +230,7 @@ export function refreshOwnedChildPermissions(
   childSessions: Map<string, ChildSessionBridge>,
   parentCtx: unknown,
   core: CoreBridge,
+  revalidateAuthority?: () => void,
 ): void {
   const parentManager = hostObject<ChildContext>(parentCtx)?.sessionManager;
   const parentLookup = latestTaumelCustomEntry(parentManager, "taumel.permissions");
@@ -258,6 +259,7 @@ export function refreshOwnedChildPermissions(
         parentCtx,
       ]),
     );
+    revalidateAuthority?.();
     appendTaumelCustomEntry(manager, "taumel.permissions", plan.permissions);
   }
 }
@@ -387,16 +389,21 @@ async function sendToSdkAgentSession(session: unknown, prompt: string, options: 
   }
 }
 
-async function stopChildSession(child: ChildSessionBridge | undefined, reason: string): Promise<void> {
+async function stopChildSession(
+  child: ChildSessionBridge | undefined, reason: string, authorize?: () => void,
+): Promise<void> {
   if (child?.stop !== undefined) {
+    authorize?.();
     await child.stop(reason);
     return;
   }
   const ctx = child?.ctx;
   const manager = hostObject<ChildContext>(ctx)?.sessionManager;
   try {
+    authorize?.();
     const stopped = await callOptionalAsync(ctx, ["abort", "cancel", "stop"], [reason]);
     if (stopped !== undefined) return;
+    authorize?.();
     await callOptionalAsync(manager, ["abort", "cancel", "stop"], [reason]);
   } catch {
     // Closing/stopping an already-settled child is best effort; persisted state
@@ -404,17 +411,22 @@ async function stopChildSession(child: ChildSessionBridge | undefined, reason: s
   }
 }
 
-async function closeChildSession(child: ChildSessionBridge | undefined, reason: string): Promise<void> {
+async function closeChildSession(
+  child: ChildSessionBridge | undefined, reason: string, authorize?: () => void,
+): Promise<void> {
   if (child?.close !== undefined) {
-    await child.close(reason);
+    authorize?.();
+    await child.close(reason, authorize);
     return;
   }
   const ctx = child?.ctx;
   const manager = hostObject<ChildContext>(ctx)?.sessionManager;
-  await stopChildSession(child, reason);
+  await stopChildSession(child, reason, authorize);
   try {
+    authorize?.();
     const closed = await callOptionalAsync(ctx, ["close", "dispose", "shutdown"], [reason]);
     if (closed !== undefined) return;
+    authorize?.();
     await callOptionalAsync(manager, ["close", "dispose", "shutdown"], [reason]);
   } catch {
     // See stopChildSession: host cleanup is intentionally non-fatal.
@@ -439,6 +451,8 @@ export async function createChildSession(
   ctx: unknown,
   metadata: ChildSessionMetadata,
   childExtensionFactory?: (pi: PiLike) => void,
+  authorizeCleanup?: () => void,
+  revalidateAuthority?: () => void,
 ): Promise<ChildSessionBridge | undefined> {
   const parent = sessionInfoFromContext(ctx);
   const plan = childSessionStartPlan(core, metadata, parent, ctx);
@@ -494,6 +508,10 @@ export async function createChildSession(
   const usePrivatePersistentSession =
     (childKind === "agent" || childKind === "generic" || childKind === "finder" || childKind === "oracle")
     && (agentId !== "" || existingSessionFile !== "");
+  if (usePrivatePersistentSession
+    && (authorizeCleanup === undefined || revalidateAuthority === undefined)) {
+    return { error: "agent_cleanup_authority_missing" };
+  }
   const privateSessionDirectory = plan.privateSessionDirectory;
   if (usePrivatePersistentSession && existingSessionFile === "" && privateSessionDirectory === undefined) {
     return { error: "private_child_session_directory_missing" };
@@ -538,8 +556,37 @@ export async function createChildSession(
       return { error: `tool_surface_unavailable: ${missingResources.join(", ")}` };
     }
   }
-  let createdSessionManager: unknown;
+  const removeCreatedPrivateSession = async () => {
+    authorizeCleanup?.();
+    await removeNewPrivateSessionArtifacts(core, ctx, agentId);
+  };
+  let createdSession: SdkSession | undefined;
+  let createdSessionCleaned = false;
+  const cleanupCreatedSession = async (reason: string) => {
+    if (createdSession === undefined || createdSessionCleaned) return;
+    createdSessionCleaned = true;
+    let closed;
+    try {
+      authorizeCleanup?.();
+      closed = await callOptionalAsync(createdSession, ["close", "shutdown"], [reason]);
+    } catch {
+      closed = undefined;
+    }
+    if (closed !== undefined) return;
+    try {
+      if (typeof createdSession.abort === "function") {
+        authorizeCleanup?.();
+        await createdSession.abort.call(createdSession, reason);
+      }
+    } finally {
+      if (typeof createdSession.dispose === "function") {
+        authorizeCleanup?.();
+        createdSession.dispose.call(createdSession);
+      }
+    }
+  };
   try {
+    revalidateAuthority?.();
     const sessionManager = usePrivatePersistentSession
       ? (existingSessionFile !== ""
         ? SessionManager.open(existingSessionFile)
@@ -548,7 +595,6 @@ export async function createChildSession(
           privateSessionDirectory as string,
         ))
       : SessionManager.inMemory(cwd);
-    createdSessionManager = sessionManager;
     if (usePrivatePersistentSession && existingSessionFile !== "") {
       const markerError = validateAgentSessionMarker(sessionManager, agentId, parent);
       if (markerError !== undefined) return { error: markerError };
@@ -563,23 +609,26 @@ export async function createChildSession(
       ...(activeTools !== undefined ? { tools: [...activeTools] } : {}),
       resourceLoader,
     };
+    revalidateAuthority?.();
     const result =
       typeof pi.createAgentSession === "function"
         ? await pi.createAgentSession(options)
         : await createPiAgentSession(options as Parameters<typeof createPiAgentSession>[0]);
     const session = hostObject<SdkSession>(hostObject<CreatedSession>(result)?.session);
+    createdSession = session;
+    revalidateAuthority?.();
     if (session === undefined) {
       if (usePrivatePersistentSession && existingSessionFile === "") {
-        await removeNewPrivateSessionArtifacts(core, ctx, agentId);
+        await removeCreatedPrivateSession();
       }
       return { error: "createAgentSession did not return a session" };
     }
     if (thinkingLevel !== undefined && typeof session.getAvailableThinkingLevels === "function") {
       const available = session.getAvailableThinkingLevels.call(session);
       if (!Array.isArray(available) || !available.includes(thinkingLevel)) {
-        if (typeof session.dispose === "function") session.dispose.call(session);
+        await cleanupCreatedSession("thinking_level_unavailable");
         if (usePrivatePersistentSession && existingSessionFile === "") {
-          await removeNewPrivateSessionArtifacts(core, ctx, agentId);
+          await removeCreatedPrivateSession();
         }
         return { error: `thinking_level_unavailable: ${thinkingLevel}` };
       }
@@ -601,8 +650,9 @@ export async function createChildSession(
         ? session.sessionFile
         : setupInfo.sessionFile;
     if (!sessionId && !sessionFile) {
+      await cleanupCreatedSession("missing_session_identifier");
       if (usePrivatePersistentSession && existingSessionFile === "") {
-        await removeNewPrivateSessionArtifacts(core, ctx, agentId);
+        await removeCreatedPrivateSession();
       }
       return { missingSessionIdentifier: true };
     }
@@ -613,10 +663,10 @@ export async function createChildSession(
     const effectiveNames = new Set(effectiveActiveTools);
     const missingActiveTools = activeTools.filter((name) => !effectiveNames.has(name));
     if (missingActiveTools.length > 0) {
+      await cleanupCreatedSession("tool_surface_unavailable");
       if (usePrivatePersistentSession && existingSessionFile === "") {
-        await removeNewPrivateSessionArtifacts(core, ctx, agentId);
+        await removeCreatedPrivateSession();
       }
-      if (typeof session.dispose === "function") session.dispose.call(session);
       return { error: `tool_surface_unavailable: ${missingActiveTools.join(", ")}` };
     }
     return {
@@ -634,17 +684,29 @@ export async function createChildSession(
       stop: async (reason) => {
         if (typeof session.abort === "function") await session.abort.call(session, reason);
       },
-      close: async (reason) => {
+      close: async (reason, authorize) => {
+        authorize?.();
         const closed = await callOptionalAsync(session, ["close", "shutdown"], [reason]);
         if (closed !== undefined) return;
-        if (typeof session.abort === "function") await session.abort.call(session, reason);
-        if (typeof session.dispose === "function") session.dispose.call(session);
+        if (typeof session.abort === "function") {
+          authorize?.();
+          await session.abort.call(session, reason);
+        }
+        if (typeof session.dispose === "function") {
+          authorize?.();
+          session.dispose.call(session);
+        }
       },
     };
   } catch (error) {
-    if (usePrivatePersistentSession && existingSessionFile === "" && createdSessionManager !== undefined) {
+    try {
+      await cleanupCreatedSession("child_session_creation_failed");
+    } catch {
+      // Preserve the creation error; artifact cleanup remains independently authorized.
+    }
+    if (usePrivatePersistentSession && existingSessionFile === "") {
       try {
-        await removeNewPrivateSessionArtifacts(core, ctx, agentId);
+        await removeCreatedPrivateSession();
       } catch {
         // Preserve the original creation error; the identity rollback remains authoritative.
       }
@@ -664,6 +726,7 @@ export async function sendToChildSession(
     readonly deliverAs?: string;
     readonly onEvent?: (event: unknown) => void;
     readonly onCompletion?: (dispatch: ChildDispatchResult) => void | Promise<void>;
+    readonly completionGate?: Promise<void>;
   } = {},
 ): Promise<ChildDispatchResult> {
   const childCtx = child?.ctx;
@@ -696,16 +759,22 @@ export async function sendToChildSession(
         status: "failed",
         finalOutput: error instanceof Error ? error.message : String(error),
       });
-      void options.onCompletion?.(completed);
+      void Promise.resolve(options.completionGate)
+        .then(() => options.onCompletion?.(completed))
+        .catch((failure) => {
+          console.error("Taumel child completion callback failed", failure);
+        });
       return completed;
     }
     void Promise.resolve(hostResult)
       .then(async (value) => {
+        await options.completionGate;
         const completed = dispatchResultWithHostCompletion(result, value);
         if (completed["completion"] !== undefined) {
           await options.onCompletion?.(completed);
         }
       }, async (error) => {
+        await options.completionGate;
         await options.onCompletion?.({
           ...result,
           completion: {
@@ -839,6 +908,7 @@ export async function applyChildSessionUpdate(
   update: unknown,
   bridge: ChildSessionBridge | undefined,
   keyScope?: string,
+  authorizeEffect?: () => void,
 ): Promise<void> {
   const childUpdate = hostObject<ChildSessionUpdate>(update);
   if (childUpdate === undefined) throw new Error("Invalid Taumel child session update");
@@ -855,7 +925,7 @@ export async function applyChildSessionUpdate(
       const rawKey = typeof childUpdate.key === "string" ? childUpdate.key : "";
       if (rawKey === "") throw new Error("Invalid Taumel child session update");
       const key = childSessionCacheKey(rawKey, keyScope);
-      await stopChildSession(childSessions.get(key) ?? bridge, typeof childUpdate.reason === "string" ? childUpdate.reason : "stopped_by_parent");
+      await stopChildSession(childSessions.get(key) ?? bridge, typeof childUpdate.reason === "string" ? childUpdate.reason : "stopped_by_parent", authorizeEffect);
       return;
     }
     case "drop_child_session": {
@@ -868,7 +938,8 @@ export async function applyChildSessionUpdate(
       const rawKey = typeof childUpdate.key === "string" ? childUpdate.key : "";
       if (rawKey === "") throw new Error("Invalid Taumel child session update");
       const key = childSessionCacheKey(rawKey, keyScope);
-      await closeChildSession(childSessions.get(key) ?? bridge, typeof childUpdate.reason === "string" ? childUpdate.reason : "agent_closed");
+      await closeChildSession(childSessions.get(key) ?? bridge, typeof childUpdate.reason === "string" ? childUpdate.reason : "agent_closed", authorizeEffect);
+      authorizeEffect?.();
       childSessions.delete(key);
       return;
     }

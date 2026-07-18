@@ -154,7 +154,7 @@ export type ChildSessionBridge = SessionInfo & {
   readonly thinkingApplied?: boolean;
   readonly sendUserMessage?: (content: string, options?: MessageDeliveryOptions) => Promise<unknown>;
   readonly stop?: (reason: string) => Promise<void>;
-  readonly close?: (reason: string) => Promise<void>;
+  readonly close?: (reason: string, authorizeCleanup?: () => void) => Promise<void>;
 };
 
 export type ComposerController = {

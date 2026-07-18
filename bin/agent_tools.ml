@@ -13,13 +13,10 @@ let reject_nested name =
   error_obj (name ^ " is unavailable inside a child agent")
 let save_agent_state = Session_sync.save_agent_state
 let commit_agent_state ctx next =
-  let previous = !agent_state in
-  agent_state := next;
   try
-    save_agent_state ctx;
+    Session_sync.commit_agent_state ctx next;
     Ok ()
   with error ->
-    agent_state := previous;
     Error ("agent state persistence failed: " ^ Printexc.to_string error)
 let js_string_array values = js_array (List.map js_string values)
 let option_string = function
@@ -570,7 +567,7 @@ let prepare_wait params ctx =
           match commit_agent_state ctx reconciled with
           | Ok () -> ()
           | Error message -> failwith message);
-        agent_state := recover_selected_outputs !agent_state run_ids;
+        set_agent_state (recover_selected_outputs !agent_state run_ids);
         match
           Taumel.Agent_wait.wait_for_run_ids !agent_state ~owner_session_id:(owner_id ctx)
             run_ids

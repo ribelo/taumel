@@ -45,7 +45,10 @@ type agent_action = Agent_start | Agent_send | Agent_close
 val issue_agent_action : owner_id:string -> owner_context:Js_of_ocaml.Js.Unsafe.any -> action:agent_action -> agent_id:string -> owner_epoch:int -> permission_epoch:int -> expires_at_ms:float -> string
 val claim_agent_action : owner_id:string -> action:agent_action -> agent_id:string -> owner_epoch:int -> permission_epoch:int -> now_ms:float -> string -> (unit, string) result
 val revalidate_agent_action : owner_id:string -> action:agent_action -> agent_id:string -> owner_epoch:int -> permission_epoch:int -> now_ms:float -> string -> (unit, string) result
-val authorize_agent_cleanup : owner_id:string -> action:agent_action -> agent_id:string -> string -> (unit, string) result
+val authorize_agent_cleanup : owner_id:string -> action:agent_action -> agent_id:string -> owner_epoch:int -> permission_epoch:int -> now_ms:float -> string -> (unit, string) result
+val ratchet_agent_action_state : owner_id:string -> action:agent_action -> agent_id:string -> owner_epoch:int -> permission_epoch:int -> now_ms:float -> string -> (unit, string) result
+val adopt_agent_action_transition : owner_id:string -> action:agent_action -> agent_id:string -> owner_epoch:int -> permission_epoch:int -> now_ms:float -> string -> (unit, string) result
+val complete_agent_action_transition : owner_id:string -> action:agent_action -> agent_id:string -> owner_epoch:int -> permission_epoch:int -> now_ms:float -> string -> (unit, string) result
 val release_agent_action : owner_id:string -> string -> (unit, string) result
 val revoke_agent_action : string -> unit
 val agent_action_in_progress : owner_id:string -> agent_id:string -> bool

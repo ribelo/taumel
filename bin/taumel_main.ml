@@ -137,7 +137,9 @@ let core_call name_js args_js =
   | "planCommandChildDispatch" -> Command_bridge.plan_child_dispatch (arg 0)
   | "finishCommandChildDispatch" -> Command_bridge.finish_child_dispatch (arg 0)
   | "persistRalphControllerState" -> Ralph_tools.persist_controller_state (arg 0)
-  | "recordAgentChildSessionStart" -> Agent_lifecycle.record_child_session_start (arg 0) (arg 1)
+  | "recordAgentChildSessionStartAuthorized" ->
+      Agent_lifecycle.record_child_session_start_authorized (arg 0) (arg 1)
+        (arg 2)
   | "agentRoutingDiagnostics" -> Agent_tools.routing_diagnostics ()
   | "rollbackUnacceptedAgentStart" ->
       Agent_lifecycle.rollback_unaccepted_start (arg 0) (arg 1)
@@ -149,7 +151,9 @@ let core_call name_js args_js =
       Agent_lifecycle.rollback_failed_interruption (arg 0) (arg 1)
   | "recordAgentDispatchCompletion" -> Agent_lifecycle.record_dispatch_completion (arg 0) (arg 1)
   | "recordAgentActivity" -> Agent_lifecycle.record_activity (arg 0) (arg 1)
-  | "recordAgentDispatchBoundary" -> Agent_lifecycle.record_dispatch_boundary (arg 0) (arg 1)
+  | "recordAgentDispatchBoundaryAuthorized" ->
+      Agent_lifecycle.record_dispatch_boundary_authorized (arg 0) (arg 1)
+        (arg 2)
   | "reconcileLiveAgentDispatches" -> Agent_lifecycle.reconcile_live_dispatches (arg 0) (arg 1)
   | "pendingAgentNotifications" -> Agent_lifecycle.pending_agent_notifications (arg 0)
   | "recordAgentBackgroundNotification" -> Agent_lifecycle.record_background_notification (arg 0) (arg 1)
@@ -168,8 +172,11 @@ let core_call name_js args_js =
   | "finishAgentClose" -> Agent_tools.finish_close (arg 0) (arg 1)
   | "claimAgentAction" -> Agent_action_capability.claim (arg 0)
   | "revalidateAgentAction" -> Agent_action_capability.revalidate (arg 0)
+  | "ratchetAgentAction" -> Agent_action_capability.ratchet (arg 0)
   | "authorizeAgentActionCleanup" ->
       Agent_action_capability.authorize_cleanup (arg 0)
+  | "prepareAgentCloseStop" -> Agent_action_capability.prepare_close_stop (arg 0)
+  | "completeAgentCloseStop" -> Agent_action_capability.complete_close_stop (arg 0)
   | "releaseAgentAction" -> Agent_action_capability.release (arg 0)
   | "acceptAgentWorktreeStart" -> Agent_tools.accept_worktree_start (arg 0) (arg 1)
   | "rollbackAgentWorktreeStart" -> Agent_tools.rollback_worktree_start (arg 0) (arg 1)

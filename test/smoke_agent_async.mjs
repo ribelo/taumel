@@ -60,6 +60,19 @@ let allocatedSessionFile;
 let allocatedAppendPrompt;
 let allocatedResourceLoader;
 let createSessionError;
+let immediateCompletion = false;
+let omitSessionIdentifiers = false;
+let missingIdentifierDisposals = 0;
+let settleOnAbort = false;
+let staleCleanupFallback = false;
+let staleCleanupAborts = 0;
+let staleCleanupDisposals = 0;
+let staleDuringCreation = false;
+let staleCreationManagerEntries = [];
+let promptInvocations = 0;
+let staleDuringRefresh = false;
+let staleRefreshAborts = 0;
+let staleRefreshDisposals = 0;
 const sessionMessages = [];
 const model = { provider: "test", id: "model", reasoning: true };
 const pi = {
@@ -78,9 +91,24 @@ const pi = {
     );
     allocatedResourceLoader = options.resourceLoader;
     allocatedAppendPrompt = options.resourceLoader.getAppendSystemPrompt();
+    const anonymousManagerEntries = [];
+    const returnedManager = omitSessionIdentifiers || staleDuringCreation ? {
+      ...(staleDuringCreation ? {
+        getSessionId: () => "stale-creation-child",
+        getSessionFile: () => join(root, "stale-creation-child.jsonl"),
+      } : {}),
+      getEntries: () => anonymousManagerEntries,
+      getBranch: () => anonymousManagerEntries,
+      appendCustomEntry: (customType, data) => anonymousManagerEntries.push({ type: "custom", customType, data }),
+    } : childManager;
+    if (staleDuringCreation) {
+      staleCreationManagerEntries = anonymousManagerEntries;
+      core.call("suspendOwnerAgentsOnShutdown", [ctx]);
+    }
     return ({
     session: {
-      sessionId: "async-child", sessionFile: childFile, sessionManager: childManager,
+      ...(omitSessionIdentifiers ? {} : { sessionId: "async-child", sessionFile: childFile }),
+      sessionManager: returnedManager,
       messages: sessionMessages,
       get isStreaming() { return streaming; },
       getAvailableThinkingLevels: () => ["off", "low", "medium", "high"],
@@ -89,7 +117,11 @@ const pi = {
         subscribers.add(handler);
         return () => { subscribers.delete(handler); };
       },
-      prompt: () => new Promise((resolve) => {
+      prompt: () => {
+        promptInvocations += 1;
+        return immediateCompletion
+        ? Promise.resolve({ status: "completed", finalOutput: "immediate answer" })
+        : new Promise((resolve) => {
         streaming = true;
         settle = (message = { role: "assistant", content: [{ type: "text", text: "async answer" }], stopReason: "stop" }) => {
           sessionMessages.push(message);
@@ -99,10 +131,40 @@ const pi = {
           streaming = false;
           resolve(undefined);
         };
-      }),
+        });
+      },
       followUp: async () => undefined,
-      abort: async () => undefined,
-      dispose: () => undefined,
+      ...(staleCleanupFallback ? {
+        close: async () => {
+          parentEntries.push({
+            type: "custom",
+            customType: "taumel.permissions",
+            data: {
+              version: 1,
+              profile: {
+                modelId: "inherit", thinkingLevel: "medium",
+                sandboxPreset: "workspace-write", approvalPolicy: "never",
+                tools: { kind: "all" }, noSandboxAllowed: false,
+              },
+              networkMode: "disabled", noSandbox: false, isolated_child: false,
+            },
+          });
+          core.call("reloadSessionState", [ctx]);
+          throw new Error("close fallback required");
+        },
+      } : {}),
+      abort: async () => {
+        if (staleDuringRefresh) staleRefreshAborts += 1;
+        if (staleCleanupFallback) staleCleanupAborts += 1;
+        if (settleOnAbort && typeof settle === "function") {
+          settle({ role: "assistant", content: [], stopReason: "aborted", errorMessage: "closed" });
+        }
+      },
+      dispose: () => {
+        if (staleDuringRefresh) staleRefreshDisposals += 1;
+        else if (staleCleanupFallback) staleCleanupDisposals += 1;
+        else if (omitSessionIdentifiers) missingIdentifierDisposals += 1;
+      },
     },
   });
   },
@@ -172,6 +234,36 @@ assert.equal("thinking" in waitedJson.results[0], false);
 assert.equal("model" in JSON.parse(prepared.text), false);
 assert.equal("thinking" in JSON.parse(prepared.text), false);
 
+omitSessionIdentifiers = true;
+const missingIdentifierStart = core.call("prepareTool", [{
+  name: "agent_spawn",
+  params: { message: "missing identifier", description: "Reject missing child identifier" },
+  ctx,
+}]);
+const missingIdentifierResult = await executeAgentPrepared(
+  pi, core, childSessions, pendingWaits, missingIdentifierStart, ctx,
+);
+assert.equal(missingIdentifierResult.details.ok, false);
+assert.equal(missingIdentifierDisposals, 1,
+  "created SDK session without an identifier was not disposed exactly once");
+omitSessionIdentifiers = false;
+
+immediateCompletion = true;
+const immediateSend = core.call("prepareTool", [{
+  name: "agent_send",
+  params: { agent_id: prepared.agentId, message: "finish immediately", description: "Complete immediately" },
+  ctx,
+}]);
+const immediateResult = await executeAgentPrepared(
+  pi, core, childSessions, pendingWaits, immediateSend, ctx,
+);
+assert.equal(immediateResult.details.status, "running",
+  "already-resolved completion invalidated accepted dispatch authority");
+await new Promise((resolve) => setTimeout(resolve, 0));
+assert.equal(core.call("agentManagerSnapshot", [ctx]).runs
+  .find((run) => run.runId === immediateSend.runId)?.status, "completed");
+immediateCompletion = false;
+
 const retainedChildSessions = [...childSessions];
 childSessions.clear();
 createSessionError = "failed to reopen child session";
@@ -186,7 +278,7 @@ const failedPreflightResult = await executeTool(
 assert.equal(JSON.parse(failedPreflightResult.content[0].text).error.code, "child_session_unavailable");
 createSessionError = undefined;
 for (const [key, bridge] of retainedChildSessions) childSessions.set(key, bridge);
-const failedPreflightRunId = `${prepared.agentId}-run-2`;
+const failedPreflightRunId = `${prepared.agentId}-run-3`;
 const afterFailedPreflight = core.call("agentManagerSnapshot", [ctx]);
 assert.equal(
   afterFailedPreflight.runs.some((run) => run.runId === failedPreflightRunId),
@@ -285,6 +377,24 @@ const unknownHostCompletion = await sendToChildSession({}, {
 assert.equal(unknownHostCompletion.completion.status, "failed");
 assert.match(unknownHostCompletion.completion.reason, /unknown SDK completion status.*future_terminal/i);
 
+let releaseSynchronousFailure;
+const synchronousFailureGate = new Promise((resolve) => { releaseSynchronousFailure = resolve; });
+let synchronousFailureSettled = false;
+await sendToChildSession({}, {
+  call: () => ({ send: true, prompt: "probe", deliverAs: "followUp", result: { dispatched: true } }),
+}, {
+  sendUserMessage: () => { throw new Error("synchronous send failure"); },
+}, "probe", "empty prompt", {
+  awaitCompletion: false,
+  completionGate: synchronousFailureGate,
+  onCompletion: () => { synchronousFailureSettled = true; },
+});
+assert.equal(synchronousFailureSettled, false,
+  "synchronous send failure bypassed dispatch-acceptance completion gate");
+releaseSynchronousFailure();
+await new Promise((resolve) => setTimeout(resolve, 0));
+assert.equal(synchronousFailureSettled, true);
+
 for (const malformedCompletion of [
   { status: 42, output: "ambiguous" },
   { stopReason: "", output: "ambiguous" },
@@ -340,12 +450,73 @@ assert.equal([...pendingWaits.values()][0].size, 2);
 const close = core.call("prepareTool", [{
   name: "agent_close", params: { agent_id: prepared.agentId }, ctx,
 }]);
-await executeAgentPrepared(pi, core, childSessions, pendingWaits, close, ctx);
+settleOnAbort = true;
+const closeResult = await executeAgentPrepared(pi, core, childSessions, pendingWaits, close, ctx);
+settleOnAbort = false;
+assert.equal(closeResult.details.status, "closed",
+  "close was invalidated by settlement caused by its own stop");
 const waitOutcome = await Promise.race([
   Promise.all([waitPromise, secondWaitPromise]).then(() => "settled"),
   new Promise((resolve) => setTimeout(() => resolve("timed_out"), 250)),
 ]);
 assert.equal(waitOutcome, "settled", "agent_close must cancel a concurrent indefinite agent_wait");
+
+staleDuringCreation = true;
+const promptsBeforeStaleCreation = promptInvocations;
+const staleCreationStart = core.call("prepareTool", [{
+  name: "agent_spawn",
+  params: { message: "stale creation", description: "Reject stale child creation" },
+  ctx,
+}]);
+await executeAgentPrepared(pi, core, childSessions, pendingWaits, staleCreationStart, ctx);
+assert.equal(staleCreationManagerEntries.length, 0,
+  "stale post-await child creation appended setup entries");
+assert.equal(promptInvocations, promptsBeforeStaleCreation,
+  "stale post-await child creation dispatched a prompt");
+assert.equal([...childSessions.keys()].some((key) => key.includes(staleCreationStart.agentId)), false,
+  "stale post-await child creation entered the live bridge cache");
+staleDuringCreation = false;
+
+staleDuringRefresh = true;
+let invalidatedDuringRefresh = false;
+const refreshInvalidatingCore = {
+  call(method, args) {
+    const result = core.call(method, args);
+    if (method === "planChildPermissionRefresh" && !invalidatedDuringRefresh) {
+      invalidatedDuringRefresh = true;
+      core.call("suspendOwnerAgentsOnShutdown", [ctx]);
+    }
+    return result;
+  },
+};
+const staleRefreshStart = core.call("prepareTool", [{
+  name: "agent_spawn",
+  params: { message: "stale refresh", description: "Reject stale refresh cleanup" },
+  ctx,
+}]);
+await executeAgentPrepared(
+  pi, refreshInvalidatingCore, childSessions, pendingWaits, staleRefreshStart, ctx,
+);
+assert.equal([...childSessions.keys()].some((key) => key.includes(staleRefreshStart.agentId)), true,
+  "state-stale registration catch removed its cached bridge");
+assert.equal(staleRefreshAborts, 0,
+  "state-stale registration catch aborted the SDK session");
+assert.equal(staleRefreshDisposals, 0,
+  "state-stale registration catch disposed the SDK session");
+staleDuringRefresh = false;
+
+omitSessionIdentifiers = true;
+staleCleanupFallback = true;
+const staleCleanupStart = core.call("prepareTool", [{
+  name: "agent_spawn",
+  params: { message: "stale cleanup", description: "Reject stale cleanup fallbacks" },
+  ctx,
+}]);
+await executeAgentPrepared(pi, core, childSessions, pendingWaits, staleCleanupStart, ctx);
+assert.equal(staleCleanupAborts, 0,
+  "permission-stale cleanup continued with abort after awaited close");
+assert.equal(staleCleanupDisposals, 0,
+  "permission-stale cleanup continued with dispose after awaited close");
 
 rmSync(root, { recursive: true, force: true });
 console.log("agent async orchestration smoke: all assertions passed");

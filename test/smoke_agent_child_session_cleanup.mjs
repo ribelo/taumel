@@ -43,7 +43,7 @@ try {
   const entries = [];
   const ctx = {
     cwd: process.cwd(),
-    activeTools: ["read", "agent_spawn", "agent_close"],
+    activeTools: ["read", "agent_spawn", "agent_send", "agent_close"],
     model: { provider: "test", id: "model" },
     sessionManager: {
       getSessionId: () => "cleanup-parent",
@@ -84,6 +84,24 @@ try {
     return plan.privateSessionDirectory;
   }
 
+  function recordChildSession(agentId, sessionId, sessionFile) {
+    const send = core.call("prepareTool", [{
+      name: "agent_send",
+      params: { agent_id: agentId, message: "bind cleanup child", description: "Bind cleanup child" },
+      ctx,
+    }]);
+    const capabilityFacts = {
+      capabilityId: send.capabilityId, agentId, action: send.action,
+      runId: send.runId, submissionId: send.submissionId, ctx,
+    };
+    assert.equal(core.call("claimAgentAction", [capabilityFacts]).ok, true);
+    const result = core.call("recordAgentChildSessionStartAuthorized", [{
+      agent_id: agentId, sessionId, sessionFile,
+    }, capabilityFacts, ctx]);
+    assert.equal(core.call("releaseAgentAction", [capabilityFacts]).ok, true);
+    return result;
+  }
+
   function writeChildMarker(directory, agentId, markerAgentId = agentId) {
     mkdirSync(directory, { recursive: true });
     writeFileSync(join(directory, "session.jsonl"), `${JSON.stringify({
@@ -118,11 +136,9 @@ try {
   })}\n`);
   writeFileSync(victimSentinel, "persisted state must not authorize deletion\n");
 
-  assert.equal(core.call("recordAgentChildSessionStart", [{
-    agent_id: started.agentId,
-    sessionId: "forged-child",
-    sessionFile: victimSessionFile,
-  }, ctx]).ok, true);
+  assert.equal(recordChildSession(
+    started.agentId, "forged-child", victimSessionFile,
+  ).ok, true);
   core.call("reloadSessionState", [ctx]);
 
   await closeAgent(started.agentId);
@@ -351,11 +367,9 @@ try {
     shutdownVictimDirectory,
     ephemeral.agentId,
   );
-  assert.equal(core.call("recordAgentChildSessionStart", [{
-    agent_id: ephemeral.agentId,
-    sessionId: "forged-shutdown-child",
-    sessionFile: shutdownVictimFile,
-  }, ctx]).ok, true);
+  assert.equal(recordChildSession(
+    ephemeral.agentId, "forged-shutdown-child", shutdownVictimFile,
+  ).ok, true);
   const lifecycleHandlers = new Map();
   installAgentLifecycle(
     {

@@ -54,7 +54,7 @@ type agent_action_entry = {
   agent_id : string;
   owner_epoch : int;
   permission_epoch : int;
-  state_epoch : int;
+  mutable state_epoch : int;
   expires_at_ms : float;
   mutable agent_action_state : agent_action_state;
 }
@@ -69,7 +69,6 @@ let crypto = lazy (node_require "crypto")
 let exec_entries : (string, exec_entry) Hashtbl.t = Hashtbl.create 32
 let exa_entries : (string, exa_entry) Hashtbl.t = Hashtbl.create 32
 let agent_action_entries : (string, agent_action_entry) Hashtbl.t = Hashtbl.create 32
-let agent_action_epochs : (string, int) Hashtbl.t = Hashtbl.create 32
 
 let rec fresh_id () =
   let id =
@@ -90,13 +89,9 @@ let same_context left right =
   let object_ = Unsafe.get Unsafe.global "Object" in
   Js.to_bool (Unsafe.coerce (Unsafe.fun_call (Unsafe.get object_ "is") [| left; right |]))
 
-let agent_epoch_key owner_id agent_id = owner_id ^ "\000" ^ agent_id
-
 let issue_agent_action ~owner_id ~owner_context ~action ~agent_id ~owner_epoch
     ~permission_epoch ~expires_at_ms =
-  let epoch_key = agent_epoch_key owner_id agent_id in
-  let state_epoch = Option.value (Hashtbl.find_opt agent_action_epochs epoch_key) ~default:0 + 1 in
-  Hashtbl.replace agent_action_epochs epoch_key state_epoch;
+  let state_epoch = Agent_state_epochs.advance ~owner_id ~agent_id in
   let id = fresh_id () in
   Hashtbl.add agent_action_entries id
     {
@@ -121,16 +116,17 @@ let validate_agent_action ~owner_id ~action ~agent_id ~owner_epoch
   | Some entry when entry.action <> action || entry.agent_id <> agent_id ->
       Error "agent action capability does not match the prepared action"
   | Some entry when now_ms > entry.expires_at_ms ->
+      ignore
+        (Agent_state_epochs.advance ~owner_id:entry.owner_id
+           ~agent_id:entry.agent_id);
       Hashtbl.remove agent_action_entries id;
       Error "agent action capability expired"
   | Some entry
     when entry.owner_epoch <> owner_epoch
          || entry.permission_epoch <> permission_epoch
          || entry.state_epoch
-            <> Option.value
-                 (Hashtbl.find_opt agent_action_epochs
-                    (agent_epoch_key entry.owner_id entry.agent_id))
-                 ~default:0 ->
+            <> Agent_state_epochs.current ~owner_id:entry.owner_id
+                 ~agent_id:entry.agent_id ->
       Error "agent action capability is stale"
   | Some entry when entry.agent_action_state <> required_state -> Error invalid_plan
   | Some entry -> Ok entry
@@ -144,6 +140,7 @@ let claim_agent_action ~owner_id ~action ~agent_id ~owner_epoch
   | Error _ as error -> error
   | Ok entry ->
       entry.agent_action_state <- Agent_claimed;
+      entry.state_epoch <- Agent_state_epochs.advance ~owner_id ~agent_id;
       Ok ()
 
 let revalidate_agent_action ~owner_id ~action ~agent_id ~owner_epoch
@@ -152,27 +149,94 @@ let revalidate_agent_action ~owner_id ~action ~agent_id ~owner_epoch
     (validate_agent_action ~owner_id ~action ~agent_id ~owner_epoch
        ~permission_epoch ~now_ms id Agent_claimed)
 
-let authorize_agent_cleanup ~owner_id ~action ~agent_id id =
+let authorize_agent_cleanup ~owner_id ~action ~agent_id ~owner_epoch
+    ~permission_epoch ~now_ms id =
+  Result.map (fun _ -> ())
+    (validate_agent_action ~owner_id ~action ~agent_id ~owner_epoch
+       ~permission_epoch ~now_ms id Agent_claimed)
+
+let ratchet_agent_action_state ~owner_id ~action ~agent_id ~owner_epoch
+    ~permission_epoch ~now_ms id =
   match Hashtbl.find_opt agent_action_entries id with
   | None -> Error invalid_plan
-  | Some entry when entry.owner_id <> owner_id ->
-      Error wrong_owner
+  | Some entry when entry.owner_id <> owner_id -> Error wrong_owner
+  | Some entry when entry.action <> action || entry.agent_id <> agent_id ->
+      Error "agent action capability does not match the prepared action"
+  | Some entry when now_ms > entry.expires_at_ms ->
+      ignore
+        (Agent_state_epochs.advance ~owner_id:entry.owner_id
+           ~agent_id:entry.agent_id);
+      Hashtbl.remove agent_action_entries id;
+      Error "agent action capability expired"
   | Some entry
-    when entry.action <> action || entry.agent_id <> agent_id
-         || entry.agent_action_state <> Agent_claimed ->
-      Error invalid_plan
-  | Some _ -> Ok ()
+    when entry.owner_epoch <> owner_epoch
+         || entry.permission_epoch <> permission_epoch ->
+      Error "agent action capability is stale"
+  | Some entry when entry.agent_action_state <> Agent_claimed -> Error invalid_plan
+  | Some entry ->
+      let current = Agent_state_epochs.current ~owner_id ~agent_id in
+      if entry.state_epoch = current then (
+        entry.state_epoch <- Agent_state_epochs.advance ~owner_id ~agent_id;
+        Ok ())
+      else Error "agent action capability is stale"
+
+let adopt_agent_action_transition ~owner_id ~action ~agent_id ~owner_epoch
+    ~permission_epoch ~now_ms id =
+  match Hashtbl.find_opt agent_action_entries id with
+  | None -> Error invalid_plan
+  | Some entry when entry.owner_id <> owner_id -> Error wrong_owner
+  | Some entry when entry.action <> action || entry.agent_id <> agent_id ->
+      Error "agent action capability does not match the prepared action"
+  | Some entry when now_ms > entry.expires_at_ms ->
+      ignore
+        (Agent_state_epochs.advance ~owner_id:entry.owner_id
+           ~agent_id:entry.agent_id);
+      Hashtbl.remove agent_action_entries id;
+      Error "agent action capability expired"
+  | Some entry
+    when entry.owner_epoch <> owner_epoch
+         || entry.permission_epoch <> permission_epoch ->
+      Error "agent action capability is stale"
+  | Some entry when entry.agent_action_state <> Agent_claimed -> Error invalid_plan
+  | Some entry ->
+      let current = Agent_state_epochs.current ~owner_id ~agent_id in
+      if entry.state_epoch + 1 = current then (
+        entry.state_epoch <- current;
+        Ok ())
+      else Error "agent action capability transition is not contiguous"
+
+let complete_agent_action_transition ~owner_id ~action ~agent_id ~owner_epoch
+    ~permission_epoch ~now_ms id =
+  match Hashtbl.find_opt agent_action_entries id with
+  | Some entry
+    when entry.state_epoch
+         = Agent_state_epochs.current ~owner_id:entry.owner_id
+             ~agent_id:entry.agent_id ->
+      ratchet_agent_action_state ~owner_id ~action ~agent_id ~owner_epoch
+        ~permission_epoch ~now_ms id
+  | _ ->
+      adopt_agent_action_transition ~owner_id ~action ~agent_id ~owner_epoch
+        ~permission_epoch ~now_ms id
 
 let release_agent_action ~owner_id id =
   match Hashtbl.find_opt agent_action_entries id with
   | None -> Ok ()
   | Some entry when entry.owner_id <> owner_id ->
       Error wrong_owner
-  | Some _ ->
+  | Some entry ->
+      ignore
+        (Agent_state_epochs.advance ~owner_id ~agent_id:entry.agent_id);
       Hashtbl.remove agent_action_entries id;
       Ok ()
 
-let revoke_agent_action id = Hashtbl.remove agent_action_entries id
+let revoke_agent_action id =
+  (match Hashtbl.find_opt agent_action_entries id with
+  | Some entry ->
+      ignore
+        (Agent_state_epochs.advance ~owner_id:entry.owner_id
+           ~agent_id:entry.agent_id)
+  | None -> ());
+  Hashtbl.remove agent_action_entries id
 
 let agent_action_in_progress ~owner_id ~agent_id =
   Hashtbl.fold
@@ -306,8 +370,4 @@ let discard_owner owner_id =
     (fun _ (entry : agent_action_entry) ->
       if entry.owner_id = owner_id then None else Some entry)
     agent_action_entries;
-  Hashtbl.filter_map_inplace
-    (fun key epoch ->
-      if String.starts_with ~prefix:(owner_id ^ "\000") key then None
-      else Some epoch)
-    agent_action_epochs
+  Agent_state_epochs.discard_owner owner_id

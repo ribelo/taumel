@@ -79,6 +79,72 @@ let visibility_warning_flags : Taumel.Visibility.warning_flags ref =
   ref Taumel.Visibility.empty_warning_flags
 let agent_state : Taumel.Agents.session_state ref =
   ref Taumel.Agents.empty_session_state
+
+let authority_agent_ids (state : Taumel.Agents.session_state) =
+  let from_identities =
+    List.map (fun (identity : Taumel.Agents.identity) -> identity.identity_agent_id) state.identities
+  in
+  let from_runs =
+    List.map (fun (run : Taumel.Agents.agent_run) -> run.run_agent_id) state.runs
+  in
+  let from_cleanup =
+    List.map
+      (fun (pending : Taumel.Agents.cleanup_pending) -> pending.cleanup_agent_id)
+      state.cleanup_pending
+  in
+  List.sort_uniq String.compare (from_identities @ from_runs @ from_cleanup)
+
+let authority_projection (state : Taumel.Agents.session_state) agent_id =
+  let identity = Taumel.Agents.find_identity state agent_id in
+  let runs =
+    Taumel.Agents.runs_for_agent state agent_id
+    |> List.map (fun (run : Taumel.Agents.agent_run) ->
+           ( run.run_id,
+             run.run_status,
+             run.run_reason_code,
+             run.run_submission_id,
+             run.run_result_entry_id,
+             run.run_previous_assistant_entry_id ))
+    |> List.sort compare
+  in
+  let cleanup =
+    state.cleanup_pending
+    |> List.filter (fun (pending : Taumel.Agents.cleanup_pending) ->
+           pending.cleanup_agent_id = agent_id)
+  in
+  (identity, runs, cleanup)
+
+let authority_owner state agent_id =
+  match Taumel.Agents.find_identity state agent_id with
+  | Some identity -> Some identity.identity_owner_session_id
+  | None ->
+      List.find_opt
+        (fun (pending : Taumel.Agents.cleanup_pending) ->
+          pending.cleanup_agent_id = agent_id)
+        state.cleanup_pending
+      |> Option.map (fun (pending : Taumel.Agents.cleanup_pending) ->
+             pending.cleanup_owner_session_id)
+
+let set_agent_state next =
+  let previous = !agent_state in
+  let agent_ids =
+    List.sort_uniq String.compare
+      (authority_agent_ids previous @ authority_agent_ids next)
+  in
+  List.iter
+    (fun agent_id ->
+      if authority_projection previous agent_id <> authority_projection next agent_id
+      then
+        match authority_owner next agent_id with
+        | Some owner_id ->
+            ignore (Agent_state_epochs.advance ~owner_id ~agent_id)
+        | None -> (
+            match authority_owner previous agent_id with
+            | Some owner_id ->
+                ignore (Agent_state_epochs.advance ~owner_id ~agent_id)
+            | None -> ()))
+    agent_ids;
+  agent_state := next
 (* Activity events whose persistence is still pending. Activity bookkeeping
    is applied to the in-memory registry immediately but persisted coalesced;
    when a parent/child projection swap reloads the owner's persisted

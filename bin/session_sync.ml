@@ -501,7 +501,7 @@ let load_agent_state_data ~session_id ~recover_running agents =
       agent_notification_claims := [];
       agent_closing_ids := [];
       agent_state_load_error := None;
-      agent_state := Taumel.Agents.empty_session_state
+      set_agent_state Taumel.Agents.empty_session_state
   | Some data -> (
       agent_notification_claims := [];
       agent_closing_ids := [];
@@ -517,8 +517,8 @@ let load_agent_state_data ~session_id ~recover_running agents =
                 (Agent_child_session_host.recover_uncommitted_envelope_for_identity
                    ~identity))
             state.identities;
-          agent_state :=
-            if recover_running then
+          set_agent_state
+            (if recover_running then
               Taumel.Agents.mark_running_after_process_loss state
                 ~now:(now_seconds ())
                 ~child_session_available:(fun run ->
@@ -526,13 +526,13 @@ let load_agent_state_data ~session_id ~recover_running agents =
                   | Some identity ->
                       child_session_file_available identity
                   | None -> false)
-            else state
+            else state)
       | Error message ->
           agent_state_load_error := Some message;
           report_session_sync_error "agents load"
             (Failure ("Ignoring incompatible saved Taumel agents entry: " ^ message));
-          agent_state := Taumel.Agents.empty_session_state));
-  agent_state := replay_agent_activity_journal ~session_id !agent_state
+          set_agent_state Taumel.Agents.empty_session_state));
+  set_agent_state (replay_agent_activity_journal ~session_id !agent_state)
 let load_session_state ctx =
   let snapshot = persisted_session_snapshot ctx in
   let forked = load_goal_state_data ~session_id:snapshot.session_id snapshot.goal in
@@ -648,17 +648,23 @@ let require_agent_owner ctx =
    the loaded projection is this owner's replayed registry, so persisting a
    foreign projection is unrepresentable. A persisted snapshot includes
    every journaled effect for the owner, so the journal clears on save. *)
-let save_agent_state ctx =
+let persist_agent_state ctx state =
   let owner = Session_store.session_id_from_ctx ctx in
   if !loaded_session_id <> Some owner then
     failwith
       ("agent registry projection mismatch: refusing to persist for " ^ owner);
   Session_store.append_custom_entry ctx "taumel.agents.v4"
-    (Taumel.Agents_codec.encode !agent_state);
+    (Taumel.Agents_codec.encode state);
   agent_activity_journal :=
     List.filter
       (fun entry -> entry.journal_owner <> owner)
       !agent_activity_journal
+
+let save_agent_state ctx = persist_agent_state ctx !agent_state
+
+let commit_agent_state ctx next =
+  persist_agent_state ctx next;
+  set_agent_state next
 
 let try_sync_session_from_host_with ?(scope = "session sync")
     ?(reset_missing = true) ?(clear_retained_outputs = false) host ctx =

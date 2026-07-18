@@ -22,13 +22,10 @@ let reject_nested name =
 let save_agent_state = Session_sync.save_agent_state
 
 let commit_agent_state ctx next =
-  let previous = !agent_state in
-  agent_state := next;
   try
-    save_agent_state ctx;
+    Session_sync.commit_agent_state ctx next;
     Ok ()
   with error ->
-    agent_state := previous;
     Error ("agent state persistence failed: " ^ Printexc.to_string error)
 
 let json_text value = Taumel.Shared.encode_json value
@@ -178,9 +175,9 @@ let finish_close facts ctx =
           | None -> false)
         !agent_notification_claims
   in
-  let persist_or_error () =
+  let persist_or_error next =
     try
-      save_agent_state ctx;
+      Session_sync.commit_agent_state ctx next;
       core_ack ()
     with error ->
       error_obj ("agent state persistence failed: " ^ Printexc.to_string error)
@@ -207,9 +204,9 @@ let finish_close facts ctx =
               with
               | Error message -> error_obj message
               | Ok completed ->
-                  agent_state := completed;
+                  let result = persist_or_error completed in
                   clear_agent_tracking ();
-                  persist_or_error ()))
+                  result))
   | Ok identity -> (
       match
         Agent_child_session_host.recover_uncommitted_envelope_for_identity
@@ -234,9 +231,9 @@ let finish_close facts ctx =
                   with
                   | Error message -> error_obj message
                   | Ok (next, _) ->
-                      agent_state := next;
+                      let result = persist_or_error next in
                       clear_agent_tracking ();
-                      persist_or_error ())
+                      result)
               | Some cleanup_nonce -> (
                   match
                     Taumel.Agent_registry.record_close_with_cleanup !agent_state
@@ -251,10 +248,9 @@ let finish_close facts ctx =
                       let previous = !agent_state in
                       let previous_claims = !agent_notification_claims in
                       let previous_closing = !agent_closing_ids in
-                      agent_state := next;
-                      clear_agent_tracking ();
                       try
-                        save_agent_state ctx;
+                        Session_sync.commit_agent_state ctx next;
+                        clear_agent_tracking ();
                         (* Journal only after durable tombstone commit. *)
                         (match
                            Agent_child_session_host.append_cleanup_journal_record
@@ -283,10 +279,8 @@ let finish_close facts ctx =
                                 with
                                 | Error message -> error_obj message
                                 | Ok completed ->
-                                    agent_state := completed;
-                                    persist_or_error ())))
+                                    persist_or_error completed)))
                       with error ->
-                        agent_state := previous;
                         agent_notification_claims := previous_claims;
                         agent_closing_ids := previous_closing;
                         let unstage_error =
@@ -299,7 +293,7 @@ let finish_close facts ctx =
                         in
                         let restore_error =
                           try
-                            save_agent_state ctx;
+                            Session_sync.commit_agent_state ctx previous;
                             None
                           with restore_exn ->
                             Some (Printexc.to_string restore_exn)

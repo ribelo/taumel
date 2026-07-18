@@ -3,7 +3,7 @@ open App_state
 open Runtime_access
 open Agent_tools
 
-let record_child_session_start facts ctx =
+let record_child_session_start_result facts ctx =
   let facts = decode_ojs_contract Tool_contracts.RecordAgentChildSessionStartFacts.t_of_js (ojs_of_js facts) in
   Session_sync.require_agent_owner ctx;
   let agent_id = Tool_contracts.RecordAgentChildSessionStartFacts.get_agent_id facts in
@@ -13,11 +13,32 @@ let record_child_session_start facts ctx =
     Taumel.Agents.record_child_session !agent_state ~agent_id ?child_session_id
       ?child_session_file ()
   with
+  | Error message -> Error message
+  | Ok next -> (
+      try
+        Session_sync.commit_agent_state ctx next;
+        Ok ()
+      with error -> Error ("agent state persistence failed: " ^ Printexc.to_string error))
+
+let ack_result = function Ok () -> core_ack () | Error message -> error_obj message
+
+let record_child_session_start_authorized facts capability ctx =
+  let decoded =
+    decode_ojs_contract Tool_contracts.RecordAgentChildSessionStartFacts.t_of_js
+      (ojs_of_js facts)
+  in
+  let agent_id = Tool_contracts.RecordAgentChildSessionStartFacts.get_agent_id decoded in
+  match
+    Agent_action_capability.revalidate_transition_result ~agent_id capability ctx
+  with
   | Error message -> error_obj message
-  | Ok next ->
-      agent_state := next;
-      save_agent_state ctx;
-      core_ack ()
+  | Ok () -> (
+      match record_child_session_start_result facts ctx with
+      | Error message -> error_obj message
+      | Ok () ->
+          Agent_action_capability.complete_transition_result ~agent_id capability
+            ctx
+          |> ack_result)
 
 let rollback_unaccepted_start facts ctx =
   let facts = decode_ojs_contract Tool_contracts.RollbackUnacceptedAgentStartFacts.t_of_js (ojs_of_js facts) in
@@ -31,8 +52,7 @@ let rollback_unaccepted_start facts ctx =
   with
   | Error message -> error_obj message
   | Ok next ->
-      agent_state := next;
-      save_agent_state ctx;
+      Session_sync.commit_agent_state ctx next;
       core_ack ()
 
 let rollback_send_preflight facts ctx =
@@ -68,8 +88,7 @@ let rollback_send_preflight facts ctx =
   with
   | Error message -> error_obj message
   | Ok next ->
-      agent_state := next;
-      save_agent_state ctx;
+      Session_sync.commit_agent_state ctx next;
       core_ack ()
 
 let record_send_dispatch_failure facts ctx =
@@ -84,8 +103,7 @@ let record_send_dispatch_failure facts ctx =
   with
   | Error message -> error_obj message
   | Ok next ->
-      agent_state := next;
-      save_agent_state ctx;
+      Session_sync.commit_agent_state ctx next;
       core_ack ()
 
 let rollback_failed_interruption facts ctx =
@@ -99,8 +117,7 @@ let rollback_failed_interruption facts ctx =
   with
   | Error message -> error_obj message
   | Ok next ->
-      agent_state := next;
-      save_agent_state ctx;
+      Session_sync.commit_agent_state ctx next;
       core_ack ()
 
 let record_dispatch_completion facts ctx =
@@ -125,6 +142,7 @@ let record_dispatch_completion facts ctx =
   let result_entry_id = Tool_contracts.AgentDispatchCompletion.get_resultEntryId completion in
   let error = Tool_contracts.AgentDispatchCompletion.get_reason completion in
   let now = now_seconds () in
+  let previous_run = Taumel.Agents.find_run !agent_state run_id in
   match
     match status with
     | Taumel.Agents.Completed ->
@@ -145,8 +163,25 @@ let record_dispatch_completion facts ctx =
   with
   | Error message -> error_obj message
   | Ok next ->
-      agent_state := next;
-      save_agent_state ctx;
+      let compatible_close_settlement =
+        match
+          (previous_run, Taumel.Agents.find_run next run_id, submission_id)
+        with
+        | Some before, Some after, Some submission_id
+          when before.run_status = Taumel.Agents.Running
+               && before.run_submission_id = submission_id
+               && after.run_agent_id = before.run_agent_id
+               && after.run_submission_id = submission_id
+               && Taumel.Agents.terminal_run_status after.run_status ->
+            Some before.run_agent_id
+        | _ -> None
+      in
+      Session_sync.commit_agent_state ctx next;
+      (match (compatible_close_settlement, submission_id) with
+      | Some agent_id, Some submission_id ->
+          Agent_action_capability.adopt_close_completion ~agent_id ~run_id
+            ~submission_id ctx
+      | _ -> ());
       core_ack ()
 
 (* Activity events arrive per child turn/tool update; persisting every one
@@ -220,7 +255,7 @@ let record_activity facts ctx =
     Taumel.Agent_registry.record_activity_event previous ~run_id ~submission_id
       ~now ~event
   in
-  agent_state := next;
+  set_agent_state next;
   if next != previous then (
     agent_activity_journal :=
       {
@@ -238,7 +273,7 @@ let record_activity facts ctx =
     else schedule_activity_flush ctx);
   core_ack ()
 
-let record_dispatch_boundary facts ctx =
+let record_dispatch_boundary_result facts ctx =
   let facts = decode_ojs_contract Tool_contracts.AgentDispatchBoundaryFacts.t_of_js (ojs_of_js facts) in
   Session_sync.require_agent_owner ctx;
   let run_id = Tool_contracts.AgentDispatchBoundaryFacts.get_run_id facts in
@@ -248,11 +283,39 @@ let record_dispatch_boundary facts ctx =
     Taumel.Agents.record_dispatch_boundary !agent_state ~run_id ~submission_id
       ~previous_assistant_entry_id
   with
-  | Error message -> error_obj message
+  | Error message -> Error message
   | Ok next -> (
       match commit_agent_state ctx next with
-      | Ok () -> core_ack ()
-      | Error message -> error_obj message)
+      | Ok () -> Ok ()
+      | Error message -> Error message)
+
+let record_dispatch_boundary_authorized facts capability ctx =
+  let decoded =
+    decode_ojs_contract Tool_contracts.AgentDispatchBoundaryFacts.t_of_js
+      (ojs_of_js facts)
+  in
+  let run_id = Tool_contracts.AgentDispatchBoundaryFacts.get_run_id decoded in
+  let submission_id =
+    Tool_contracts.AgentDispatchBoundaryFacts.get_submission_id decoded
+  in
+  Session_sync.require_agent_owner ctx;
+  let agent_id =
+    match Taumel.Agents.find_run !agent_state run_id with
+    | Some run -> run.run_agent_id
+    | None -> ""
+  in
+  match
+    Agent_action_capability.revalidate_transition_result ~agent_id ~run_id
+      ~submission_id capability ctx
+  with
+  | Error message -> error_obj message
+  | Ok () -> (
+      match record_dispatch_boundary_result facts ctx with
+      | Error message -> error_obj message
+      | Ok () ->
+          Agent_action_capability.complete_transition_result ~agent_id ~run_id
+            ~submission_id capability ctx
+          |> ack_result)
 
 let reconcile_live_dispatches facts ctx =
   let facts = decode_ojs_contract Tool_contracts.LiveAgentDispatchesFacts.t_of_js (ojs_of_js facts) in
@@ -320,8 +383,7 @@ let record_background_notification facts ctx =
   | Ok next ->
       agent_notification_claims :=
         List.filter (fun value -> value <> run_id) !agent_notification_claims;
-      agent_state := next;
-      save_agent_state ctx;
+      Session_sync.commit_agent_state ctx next;
       core_ack ()
 
 let release_background_notification facts =
@@ -593,10 +655,9 @@ let finish_ephemeral_cleanup ctx =
                     ("cleanup_failed: " ^ message ^ "; unstage failed: "
                    ^ unstage_message))
           | Ok (tombstoned_state, new_pending) ->
-              agent_state := tombstoned_state;
-              agent_notification_claims := [];
               try
-                save_agent_state ctx;
+                Session_sync.commit_agent_state ctx tombstoned_state;
+                agent_notification_claims := [];
                 (* Journal only after tombstones are committed. Ephemeral state is
                    not restart-durable, so a journal failure must not strand the
                    already staged envelopes: finish them directly while their
@@ -620,16 +681,14 @@ let finish_ephemeral_cleanup ctx =
                          ^ journal_message
                          ^ "; cleanup finalization failed: " ^ message))
                 | Ok completed ->
-                    agent_state := completed;
                     try
-                      save_agent_state ctx;
+                      Session_sync.commit_agent_state ctx completed;
                       core_ack ()
                     with error ->
                       error_obj
                         ("agent state persistence failed: "
                        ^ Printexc.to_string error))
               with error ->
-                agent_state := previous;
                 agent_notification_claims := previous_claims;
                 let unstage_error =
                   match unstage_all staged_items with
@@ -638,7 +697,7 @@ let finish_ephemeral_cleanup ctx =
                 in
                 let restore_error =
                   try
-                    save_agent_state ctx;
+                    Session_sync.commit_agent_state ctx previous;
                     None
                   with restore_exn -> Some (Printexc.to_string restore_exn)
                 in
@@ -685,8 +744,7 @@ let suspend_owner_on_shutdown ctx =
           ~now:(now_seconds ()) ~owner_session_id:owner
           ~reason_code:Taumel.Agents.Parent_shutdown
       in
-      agent_state := next;
-      save_agent_state ctx;
+      Session_sync.commit_agent_state ctx next;
       core_ack ()
 
 let finish_wait raw_facts ctx =
@@ -699,8 +757,7 @@ let finish_wait raw_facts ctx =
   with
   | Error message -> error_obj message
   | Ok wait ->
-      agent_state := wait.wait_state;
-      save_agent_state ctx;
+      Session_sync.commit_agent_state ctx wait.wait_state;
       prepare_wait raw_facts ctx
 
 let command_result ?(details = Unsafe.obj [||]) message =
@@ -762,8 +819,7 @@ let handle_agent_runs_command args ctx =
         match stop_active_run !agent_state ~now:(now_seconds ()) ~owner_session_id:owner ~agent_id:target with
         | Error message -> error_obj message
         | Ok (next, changed, run_id) ->
-            agent_state := next;
-            save_agent_state ctx;
+            Session_sync.commit_agent_state ctx next;
             let details =
               Unsafe.obj
                 [|
@@ -812,8 +868,8 @@ let handle_agent_runs_command args ctx =
         match run with
         | Error message -> error_obj message
         | Ok selected_run ->
-            agent_state :=
-              recover_selected_outputs !agent_state [ selected_run.run_id ];
+            set_agent_state
+              (recover_selected_outputs !agent_state [ selected_run.run_id ]);
             let run =
               Option.value
                 (Taumel.Agents.find_run !agent_state selected_run.run_id)

@@ -32,23 +32,16 @@ import {
   type ChildDispatchResult,
   type PreparedToolAction,
 } from "./bridge-contracts.ts";
+import {
+  agentActionCapabilityFacts,
+  completionGate,
+  recordAuthorizedDispatchBoundary,
+} from "./agent-capability-runtime.ts";
 
 type UnknownFields = { readonly [key: string]: unknown };
 type PreparedAgentAction = Extract<PreparedToolAction, { action: "agent_start" | "agent_send" | "agent_wait" | "agent_close" }>;
 type PreparedDispatchAction = Extract<PreparedAgentAction, { action: "agent_start" | "agent_send" }>;
 type AgentActivityEvent = "agent_start" | "turn_start" | "turn_end" | "tool_execution_start" | "tool_execution_update" | "tool_execution_end";
-
-function agentActionCapabilityFacts(prepared: PreparedAgentAction, ctx: unknown): AgentActionCapabilityFacts | undefined {
-  if (prepared.action === "agent_wait") return undefined;
-  const common = { capabilityId: prepared.capabilityId, agentId: prepared.agentId, ctx };
-  if (prepared.action === "agent_start") {
-    return { ...common, action: "agent_start", runId: prepared.runId, submissionId: prepared.submissionId };
-  }
-  if (prepared.action === "agent_close") return { ...common, action: "agent_close" };
-  if (prepared.runId === undefined) return { ...common, action: "agent_send" };
-  if (prepared.submissionId === undefined) return { ...common, action: "agent_send", runId: prepared.runId };
-  return { ...common, action: "agent_send", runId: prepared.runId, submissionId: prepared.submissionId };
-}
 
 type PendingAgentWaits = Map<string, Set<AbortController>>;
 export const pendingAgentWaits: PendingAgentWaits = new Map();
@@ -216,22 +209,6 @@ function recordDispatchActivity(core: CoreBridge, prepared: PreparedDispatchActi
   };
 }
 
-function recordDispatchBoundary(
-  core: CoreBridge,
-  prepared: PreparedDispatchAction,
-  ctx: unknown,
-  bridge: ChildSessionBridge | undefined,
-): void {
-  const previousAssistantEntryId = latestAssistantEntryId(bridge?.sessionManager);
-  decodeCoreAck(core.call("recordAgentDispatchBoundary", [{
-    run_id: stringField(prepared, "runId"),
-    submission_id: stringField(prepared, "submissionId"),
-    ...(previousAssistantEntryId === undefined ? {} : {
-      previous_assistant_entry_id: previousAssistantEntryId,
-    }),
-  }, ctx]));
-}
-
 async function cleanupUnacceptedStartChild(
   core: CoreBridge,
   childSessions: Map<string, ChildSessionBridge>,
@@ -248,7 +225,7 @@ async function cleanupUnacceptedStartChild(
       action: "delete_child_session",
       key: agentId,
       reason: "unaccepted_start",
-    }, bridge, keyScope);
+    }, bridge, keyScope, authorizeCleanup);
   }
   authorizeCleanup();
   deleteAgentChildSession(core, agentId, ctx);
@@ -294,6 +271,7 @@ async function createAgentChildSession(
   prepared: PreparedDispatchAction,
   ctx: unknown,
   revalidateAuthority: () => void,
+  capabilityFacts: AgentActionCapabilityFacts,
   authorizeCleanup: () => void,
   childExtensionFactory?: (pi: PiLike) => void,
 ): Promise<ChildSessionBridge | undefined> {
@@ -305,7 +283,10 @@ async function createAgentChildSession(
   } catch {
     return { error: "invalid agent metadata" };
   }
-  const bridge = await createChildSession(pi, core, ctx, typedMetadata, childExtensionFactory);
+  const bridge = await createChildSession(
+    pi, core, ctx, typedMetadata, childExtensionFactory, authorizeCleanup,
+    revalidateAuthority,
+  );
   if (bridge === undefined || bridge.error !== undefined || bridge.missingSessionIdentifier) {
     return bridge;
   }
@@ -315,19 +296,24 @@ async function createAgentChildSession(
   try {
     revalidateAuthority();
     childSessions.set(cacheKey, bridge);
-    refreshOwnedChildPermissions(childSessions, ctx, core);
+    refreshOwnedChildPermissions(childSessions, ctx, core, revalidateAuthority);
     revalidateAuthority();
-    decodeCoreAck(core.call("recordAgentChildSessionStart", [{
+    const childSessionFacts = {
       agent_id: agentId,
       ...(bridge.sessionId === undefined ? {} : { sessionId: bridge.sessionId }),
       ...(bridge.sessionFile === undefined ? {} : { sessionFile: bridge.sessionFile }),
-    }, ctx]));
+    };
+    decodeCoreAck(core.call(
+      "recordAgentChildSessionStartAuthorized", [childSessionFacts, capabilityFacts, ctx],
+    ));
     return bridge;
   } catch (error) {
+    authorizeCleanup();
     childSessions.delete(cacheKey);
     let closeError: unknown;
     try {
-      await bridge.close?.("stale_agent_action");
+      authorizeCleanup();
+      await bridge.close?.("stale_agent_action", authorizeCleanup);
     } catch (failure) {
       closeError = failure;
     } finally {
@@ -451,6 +437,8 @@ export async function executeAgentPrepared(
       decodeCoreAck(core.call("revalidateAgentAction", [capabilityFacts!]));
     }
   };
+  const ratchetCapability = () => { if (capabilityGuarded) decodeCoreAck(core.call("ratchetAgentAction", [capabilityFacts!])); };
+  const performCapabilityEffect = (effect: () => void) => { revalidateCapability(); effect(); ratchetCapability(); };
   const authorizeCapabilityCleanup = () => {
     if (capabilityGuarded) {
       decodeCoreAck(core.call("authorizeAgentActionCleanup", [capabilityFacts!]));
@@ -486,7 +474,7 @@ export async function executeAgentPrepared(
       try {
         bridge = await createAgentChildSession(
           pi, core, childSessions, prepared, ctx, revalidateCapability,
-          authorizeCapabilityCleanup, childExtensionFactory,
+          capabilityFacts!, authorizeCapabilityCleanup, childExtensionFactory,
         );
         revalidateCapability();
       } catch (error) {
@@ -502,13 +490,14 @@ export async function executeAgentPrepared(
         return agentErrorToolResult(core, childFailureCode(message), message);
       }
       try {
-        recordDispatchBoundary(core, prepared, ctx, bridge);
+        recordAuthorizedDispatchBoundary(core, prepared, ctx, bridge, capabilityFacts!);
       } catch (error) {
         const cleanupError = await rollbackWorktreeThenState();
         const message = cleanupError
           ?? (error instanceof Error ? error.message : String(error));
         return agentErrorToolResult(core, cleanupError ? childFailureCode(cleanupError) : "persistence_failed", message);
       }
+      const startCompletion = completionGate();
       const dispatch = await sendToChildSession(
         pi,
         core,
@@ -517,11 +506,13 @@ export async function executeAgentPrepared(
         "no initial prompt",
         {
           awaitCompletion: false,
+          completionGate: startCompletion.wait,
           onEvent: recordDispatchActivity(core, prepared, ctx),
           onCompletion: recordDispatchCompletionInBackground(pi, core, prepared, ctx, pendingAgentWaits, bridge),
         },
       );
       if (dispatch.dispatched !== true) {
+        startCompletion.release();
         const cleanupError = await rollbackWorktreeThenState();
         const reason = cleanupError
           ?? (typeof dispatch.reason === "string"
@@ -530,10 +521,13 @@ export async function executeAgentPrepared(
         return agentErrorToolResult(core, cleanupError ? childFailureCode(cleanupError) : "dispatch_failed", reason);
       }
       try {
-        authorizeCapabilityCleanup();
-        decodeCoreAck(core.call("acceptAgentWorktreeStart", [{ agent_id: prepared.agentId }, ctx]));
+        performCapabilityEffect(() => decodeCoreAck(core.call(
+          "acceptAgentWorktreeStart", [{ agent_id: prepared.agentId }, ctx],
+        )));
+        startCompletion.release();
       } catch (error) {
         const cleanupError = await rollbackWorktreeThenState();
+        startCompletion.release();
         const message = cleanupError
           ?? (error instanceof Error ? error.message : String(error))
           ?? "failed to accept agent worktree";
@@ -554,6 +548,8 @@ export async function executeAgentPrepared(
           if (bridge?.stop !== undefined) {
             revalidateCapability();
             await bridge.stop("interrupted_by_parent");
+            revalidateCapability();
+            ratchetCapability();
           }
         } catch (error) {
           authorizeCapabilityCleanup();
@@ -564,7 +560,7 @@ export async function executeAgentPrepared(
           const message = error instanceof Error ? error.message : String(error);
           return agentErrorToolResult(core, "dispatch_failed", `agent interruption failed: ${message}`);
         }
-        authorizeCapabilityCleanup();
+        revalidateCapability();
         return preparedToolResult(core, {
           text: stringField(prepared, "text"),
           details: prepared.details,
@@ -588,7 +584,7 @@ export async function executeAgentPrepared(
         try {
           bridge = await createAgentChildSession(
             pi, core, childSessions, prepared, ctx, revalidateCapability,
-            authorizeCapabilityCleanup, childExtensionFactory,
+            capabilityFacts!, authorizeCapabilityCleanup, childExtensionFactory,
           );
           revalidateCapability();
         } catch (error) {
@@ -605,7 +601,7 @@ export async function executeAgentPrepared(
         return agentErrorToolResult(core, "child_session_unavailable", bridge?.error ?? "failed to reopen child session");
       }
       try {
-        recordDispatchBoundary(core, prepared, ctx, bridge);
+        recordAuthorizedDispatchBoundary(core, prepared, ctx, bridge, capabilityFacts!);
       } catch (error) {
         rollbackAgentSendPreflight(core, prepared, ctx, authorizeCapabilityCleanup);
         return agentErrorToolResult(core, "persistence_failed", error instanceof Error ? error.message : String(error));
@@ -639,6 +635,7 @@ export async function executeAgentPrepared(
       }
       if (prepared.dispatch === true) {
         revalidateCapability();
+        const sendCompletion = completionGate();
         const dispatch = await sendToChildSession(
           pi,
           core,
@@ -647,12 +644,14 @@ export async function executeAgentPrepared(
           "empty prompt",
           {
             awaitCompletion: false,
+            completionGate: sendCompletion.wait,
             deliverAs: dispatchDeliverAs!,
             onEvent: recordDispatchActivity(core, prepared, ctx),
             onCompletion: recordDispatchCompletionInBackground(pi, core, prepared, ctx, pendingAgentWaits, bridge),
           },
         );
         if (dispatch.dispatched !== true) {
+          sendCompletion.release();
           const reason = typeof dispatch.reason === "string"
             ? dispatch.reason
             : "agent message was not accepted";
@@ -668,7 +667,12 @@ export async function executeAgentPrepared(
           }
           return agentErrorToolResult(core, "dispatch_failed", reason);
         }
-        authorizeCapabilityCleanup();
+        try {
+          revalidateCapability();
+          ratchetCapability();
+        } finally {
+          sendCompletion.release();
+        }
       }
       return preparedToolResult(core, {
         text: stringField(prepared, "text"),
@@ -786,10 +790,10 @@ export async function executeAgentPrepared(
         // cleanup succeeds so close remains retryable on cleanup_failed.
         if (bridge?.stop !== undefined) {
           try {
-            revalidateCapability();
+            decodeCoreAck(core.call("prepareAgentCloseStop", [capabilityFacts!]));
             childExecutionInterrupted = true;
             await bridge.stop("agent_closed");
-            revalidateCapability();
+            decodeCoreAck(core.call("completeAgentCloseStop", [capabilityFacts!]));
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             return failClose("cleanup_failed", `agent stop failed: ${message}`);
@@ -813,7 +817,7 @@ export async function executeAgentPrepared(
           action: "delete_child_session",
           key: agentId,
           reason: "agent_closed",
-        }, bridge, keyScope);
+        }, bridge, keyScope, revalidateCapability);
         revalidateCapability();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

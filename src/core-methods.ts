@@ -71,7 +71,7 @@ export type CoreMethodArgs = {
   readonly planCommandChildDispatch: readonly [Static<typeof Core.CommandChildDispatchFactsSchema>];
   readonly finishCommandChildDispatch: readonly [Static<typeof Core.CommandChildDispatchFinishFactsSchema>];
   readonly persistRalphControllerState: readonly [HostContext];
-  readonly recordAgentChildSessionStart: readonly [Static<typeof Action.RecordAgentChildSessionStartFactsSchema>, HostContext];
+  readonly recordAgentChildSessionStartAuthorized: readonly [Static<typeof Action.RecordAgentChildSessionStartFactsSchema>, Core.AgentActionCapabilityFacts, HostContext];
   readonly agentRoutingDiagnostics: readonly [];
   readonly rollbackUnacceptedAgentStart: readonly [Static<typeof Action.RollbackUnacceptedAgentStartFactsSchema>, HostContext];
   readonly rollbackAgentSendPreflight: readonly [Static<typeof Action.RollbackAgentSendPreflightFactsSchema>, HostContext];
@@ -79,7 +79,7 @@ export type CoreMethodArgs = {
   readonly rollbackFailedAgentInterruption: readonly [Static<typeof Action.RollbackFailedAgentInterruptionFactsSchema>, HostContext];
   readonly recordAgentDispatchCompletion: readonly [Static<typeof Action.AgentDispatchCompletionFactsSchema>, HostContext];
   readonly recordAgentActivity: readonly [Static<typeof Action.AgentActivityFactsSchema>, HostContext];
-  readonly recordAgentDispatchBoundary: readonly [Static<typeof Action.AgentDispatchBoundaryFactsSchema>, HostContext];
+  readonly recordAgentDispatchBoundaryAuthorized: readonly [Static<typeof Action.AgentDispatchBoundaryFactsSchema>, Core.AgentActionCapabilityFacts, HostContext];
   readonly reconcileLiveAgentDispatches: readonly [Static<typeof Action.LiveAgentDispatchesFactsSchema>, HostContext];
   readonly pendingAgentNotifications: readonly [HostContext];
   readonly recordAgentBackgroundNotification: readonly [Static<typeof Action.AgentRunIdFactsSchema>, HostContext];
@@ -95,7 +95,10 @@ export type CoreMethodArgs = {
   readonly finishAgentClose: readonly [Static<typeof Action.AgentIdFactsSchema>, HostContext];
   readonly claimAgentAction: readonly [Core.AgentActionCapabilityFacts];
   readonly revalidateAgentAction: readonly [Core.AgentActionCapabilityFacts];
+  readonly ratchetAgentAction: readonly [Core.AgentActionCapabilityFacts];
   readonly authorizeAgentActionCleanup: readonly [Core.AgentActionCapabilityFacts];
+  readonly prepareAgentCloseStop: readonly [Core.AgentActionCapabilityFacts];
+  readonly completeAgentCloseStop: readonly [Core.AgentActionCapabilityFacts];
   readonly releaseAgentAction: readonly [Core.AgentActionCapabilityFacts];
   readonly acceptAgentWorktreeStart: readonly [Static<typeof Action.AgentIdFactsSchema>, HostContext];
   readonly rollbackAgentWorktreeStart: readonly [Static<typeof Action.AgentIdFactsSchema>, HostContext];

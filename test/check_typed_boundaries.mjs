@@ -133,14 +133,14 @@ for (let index = 0; index < runtimeBranches.length; index += 1) {
   if (typedArity !== runtimeArity) failures.push(`${branch[1]}: CoreBridge arity ${typedArity} does not match dispatcher arity ${runtimeArity}`);
 }
 const lifecycleMethodSchemas = {
-  recordAgentChildSessionStart: "RecordAgentChildSessionStartFactsSchema",
+  recordAgentChildSessionStartAuthorized: "RecordAgentChildSessionStartFactsSchema",
   rollbackUnacceptedAgentStart: "RollbackUnacceptedAgentStartFactsSchema",
   rollbackAgentSendPreflight: "RollbackAgentSendPreflightFactsSchema",
   recordAgentSendDispatchFailure: "RecordAgentSendDispatchFailureFactsSchema",
   rollbackFailedAgentInterruption: "RollbackFailedAgentInterruptionFactsSchema",
   recordAgentDispatchCompletion: "AgentDispatchCompletionFactsSchema",
   recordAgentActivity: "AgentActivityFactsSchema",
-  recordAgentDispatchBoundary: "AgentDispatchBoundaryFactsSchema",
+  recordAgentDispatchBoundaryAuthorized: "AgentDispatchBoundaryFactsSchema",
   reconcileLiveAgentDispatches: "LiveAgentDispatchesFactsSchema",
   recordAgentBackgroundNotification: "AgentRunIdFactsSchema",
   releaseAgentBackgroundNotification: "AgentRunIdFactsSchema",
@@ -163,6 +163,17 @@ const agentLifecycle = readFileSync(join(binRoot.pathname, "agent_lifecycle.ml")
 if (/\b(?:get_string|optional_string_field|optional_string_array) facts\b|Unsafe\.get facts/.test(agentLifecycle)) {
   failures.push("agent_lifecycle facts bypass generated runtime contracts");
 }
+for (const handler of [
+  "record_child_session_start_authorized", "record_dispatch_boundary_authorized",
+]) {
+  const body = agentLifecycle.slice(
+    agentLifecycle.indexOf(`let ${handler}`),
+    agentLifecycle.indexOf("\nlet ", agentLifecycle.indexOf(`let ${handler}`) + 1),
+  );
+  if (!body.includes("revalidate_transition_result") || !body.includes("complete_transition_result")) {
+    failures.push(`${handler}: expected state transition is not capability-bound and atomic`);
+  }
+}
 for (const name of ["agent_close.ml", "agent_worktree_ops.ml"]) {
   const source = readFileSync(join(binRoot.pathname, name), "utf8");
   if (/\bget_string facts\b|Unsafe\.get facts/.test(source)) failures.push(`${name}: lifecycle facts bypass generated runtime contracts`);
@@ -182,14 +193,14 @@ for (const name of ["agent_lifecycle.ml", "agent_close.ml", "agent_worktree_ops.
 }
 const lifecycleOcamlDecoders = {
   "agent_lifecycle.ml": {
-    record_child_session_start: "RecordAgentChildSessionStartFacts.t_of_js",
+    record_child_session_start_result: "RecordAgentChildSessionStartFacts.t_of_js",
     rollback_unaccepted_start: "RollbackUnacceptedAgentStartFacts.t_of_js",
     rollback_send_preflight: "RollbackAgentSendPreflightFacts.t_of_js",
     record_send_dispatch_failure: "RecordAgentSendDispatchFailureFacts.t_of_js",
     rollback_failed_interruption: "RollbackFailedAgentInterruptionFacts.t_of_js",
     record_dispatch_completion: "AgentDispatchCompletionFacts.t_of_js",
     record_activity: "AgentActivityFacts.t_of_js",
-    record_dispatch_boundary: "AgentDispatchBoundaryFacts.t_of_js",
+    record_dispatch_boundary_result: "AgentDispatchBoundaryFacts.t_of_js",
     reconcile_live_dispatches: "LiveAgentDispatchesFacts.t_of_js",
     record_background_notification: "AgentRunIdFacts.t_of_js",
     release_background_notification: "AgentRunIdFacts.t_of_js",
@@ -223,9 +234,33 @@ const agentActionCapability = readFileSync(join(binRoot.pathname, "agent_action_
 if (!/let decode raw_facts =[\s\S]*?AgentActionCapabilityFacts\.t_of_js/.test(agentActionCapability)) {
   failures.push("agent action capability checks do not use AgentActionCapabilityFacts.t_of_js");
 }
-for (const method of ["claimAgentAction", "revalidateAgentAction", "authorizeAgentActionCleanup", "releaseAgentAction"]) {
+for (const method of [
+  "claimAgentAction", "revalidateAgentAction", "ratchetAgentAction",
+  "authorizeAgentActionCleanup", "prepareAgentCloseStop",
+  "completeAgentCloseStop", "releaseAgentAction",
+]) {
   if (!new RegExp(`readonly ${method}: readonly \\[Core\\.AgentActionCapabilityFacts\\]`).test(coreMethods)) {
     failures.push(`${method}: CoreBridge argument is not AgentActionCapabilityFacts`);
+  }
+}
+const authorityPlans = readFileSync(join(binRoot.pathname, "authority_plans.ml"), "utf8");
+if (!/let authorize_agent_cleanup[\s\S]*?validate_agent_action[\s\S]*?Agent_claimed/.test(authorityPlans)) {
+  failures.push("agent cleanup authorization bypasses full claimed-capability validation");
+}
+if (!/let claim_agent_action[\s\S]*?Agent_state_epochs\.advance[\s\S]*?entry\.state_epoch/.test(authorityPlans)) {
+  failures.push("claim transition does not advance and ratchet the agent-state epoch");
+}
+const agentOrchestration = readFileSync(join(root.pathname, "agent-orchestration.ts"), "utf8");
+if (!/performCapabilityEffect\(\(\) =>[\s\S]{0,100}core\.call\(\s*"acceptAgentWorktreeStart"/.test(agentOrchestration)) {
+  failures.push("post-dispatch worktree acceptance does not fully revalidate its agent capability");
+}
+if (/authorizeCapabilityCleanup\(\);[\s\S]{0,160}return preparedToolResult/.test(agentOrchestration)) {
+  failures.push("cleanup-only capability authorization controls a successful forward result");
+}
+for (const name of readdirSync(binRoot.pathname).filter((entry) => entry.endsWith(".ml") && entry !== "app_state.ml")) {
+  const source = readFileSync(join(binRoot.pathname, name), "utf8");
+  if (/\bagent_state\s*:=/.test(source)) {
+    failures.push(`${name}: agent authority state transition bypasses App_state.set_agent_state`);
   }
 }
 const requiredAuthorityInterfaces = [

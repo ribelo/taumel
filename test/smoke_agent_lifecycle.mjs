@@ -10,6 +10,7 @@ let core;
 assert.ok(bootstrap && typeof bootstrap.init === "function");
 
 const entries = [];
+let failNextAgentPersistence = false;
 entries.push({
   type: "custom",
   customType: "taumel.agents",
@@ -30,6 +31,10 @@ const ctx = {
     getSessionFile: () => "/tmp/agent-lifecycle-smoke.jsonl",
     getEntries: () => entries,
     appendCustomEntry: (customType, data) => {
+      if (failNextAgentPersistence && customType === "taumel.agents.v4") {
+        failNextAgentPersistence = false;
+        throw new Error("forced agent persistence failure");
+      }
       entries.push({ type: "custom", customType, data });
     },
   },
@@ -59,10 +64,12 @@ const host = {
 core = bootstrap.init(host);
 
 for (const [method, args] of [
-  ["recordAgentChildSessionStart", [{}, ctx]], ["rollbackUnacceptedAgentStart", [{}, ctx]],
+  ["rollbackUnacceptedAgentStart", [{}, ctx]],
+  ["recordAgentChildSessionStartAuthorized", [{}, {}, ctx]],
   ["rollbackAgentSendPreflight", [{}, ctx]], ["recordAgentSendDispatchFailure", [{}, ctx]],
   ["rollbackFailedAgentInterruption", [{}, ctx]], ["recordAgentDispatchCompletion", [{}, ctx]],
-  ["recordAgentActivity", [{}, ctx]], ["recordAgentDispatchBoundary", [{}, ctx]],
+  ["recordAgentActivity", [{}, ctx]],
+  ["recordAgentDispatchBoundaryAuthorized", [{}, {}, ctx]],
   ["reconcileLiveAgentDispatches", [{}, ctx]], ["recordAgentBackgroundNotification", [{}, ctx]],
   ["validateAgentBackgroundNotificationClaim", [{}, ctx]], ["finishAgentWait", [{}, ctx]],
   ["finishAgentClose", [{}, ctx]], ["acceptAgentWorktreeStart", [{}, ctx]],
@@ -81,6 +88,13 @@ for (const facts of [
   { capabilityId: "missing", agentId: "agent-x", action: "agent_send", submissionId: "submission-x", ctx },
 ]) {
   assert.throws(() => core.call("claimAgentAction", [facts]), "invalid capability binding was representable at runtime");
+}
+for (const method of [
+  "claimAgentAction", "revalidateAgentAction", "ratchetAgentAction",
+  "authorizeAgentActionCleanup", "prepareAgentCloseStop",
+  "completeAgentCloseStop", "releaseAgentAction",
+]) {
+  assert.throws(() => core.call(method, [{}]), `${method} accepted malformed capability facts`);
 }
 
 const start = core.call("prepareTool", [{
@@ -118,7 +132,122 @@ assert.equal(core.call("claimAgentAction", [startCapabilityFacts]).ok, true);
 const replayedStartCapability = core.call("claimAgentAction", [startCapabilityFacts]);
 assert.equal(replayedStartCapability.ok, false, "agent action capability was replayable");
 assert.match(replayedStartCapability.error, /invalid|consumed/);
+assert.equal(core.call("revalidateAgentAction", [startCapabilityFacts]).ok, true,
+  "claimed capability was not ratcheted across its committed state transition");
+assert.equal(core.call("ratchetAgentAction", [startCapabilityFacts]).ok, true);
+assert.equal(core.call("revalidateAgentAction", [startCapabilityFacts]).ok, true,
+  "explicit capability progression did not preserve forward authority");
+const realDateNow = Date.now;
+try {
+  Date.now = () => realDateNow() + (11 * 60 * 1000);
+  const expiredCleanup = core.call("authorizeAgentActionCleanup", [startCapabilityFacts]);
+  assert.equal(expiredCleanup.ok, false, "expired agent capability authorized cleanup");
+  assert.match(expiredCleanup.error, /expired/);
+} finally {
+  Date.now = realDateNow;
+}
 assert.equal(core.call("releaseAgentAction", [startCapabilityFacts]).ok, true);
+
+const prepareCloseCapability = () => {
+  const prepared = core.call("prepareTool", [{
+    name: "agent_close", params: { agent_id: agentId }, ctx,
+  }]);
+  assert.equal(prepared.action, "agent_close");
+  return {
+    capabilityId: prepared.capabilityId,
+    agentId,
+    action: prepared.action,
+    ctx,
+  };
+};
+
+const ownerBoundFacts = prepareCloseCapability();
+assert.equal(core.call("claimAgentAction", [ownerBoundFacts]).ok, true);
+const foreignCapabilityCtx = {
+  ...ctx,
+  sessionManager: {
+    ...ctx.sessionManager,
+    sessionId: "foreign-agent-owner",
+    getSessionId() { return this.sessionId; },
+    getSessionFile: () => "/tmp/foreign-agent-owner.jsonl",
+    getEntries: () => [],
+  },
+};
+const wrongOwnerCleanup = core.call("authorizeAgentActionCleanup", [{
+  ...ownerBoundFacts, ctx: foreignCapabilityCtx,
+}]);
+assert.equal(wrongOwnerCleanup.ok, false, "foreign owner authorized agent cleanup");
+assert.match(wrongOwnerCleanup.error, /another session/);
+const ownerEpochStaleCleanup = core.call("authorizeAgentActionCleanup", [ownerBoundFacts]);
+assert.equal(ownerEpochStaleCleanup.ok, false, "owner-epoch-stale capability authorized cleanup");
+assert.match(ownerEpochStaleCleanup.error, /stale/);
+assert.equal(core.call("releaseAgentAction", [ownerBoundFacts]).ok, true);
+
+const permissionBoundFacts = prepareCloseCapability();
+assert.equal(core.call("claimAgentAction", [permissionBoundFacts]).ok, true);
+entries.push({
+  type: "custom",
+  customType: "taumel.permissions",
+  data: {
+    version: 1,
+    profile: {
+      modelId: "inherit",
+      thinkingLevel: "medium",
+      sandboxPreset: "workspace-write",
+      approvalPolicy: "never",
+      tools: { kind: "all" },
+      noSandboxAllowed: false,
+    },
+    networkMode: "disabled",
+    noSandbox: false,
+    isolated_child: false,
+  },
+});
+core.call("reloadSessionState", [ctx]);
+const wrongPermissionCleanup = core.call("authorizeAgentActionCleanup", [permissionBoundFacts]);
+assert.equal(wrongPermissionCleanup.ok, false, "permission-epoch-stale capability authorized cleanup");
+assert.match(wrongPermissionCleanup.error, /stale/);
+assert.equal(core.call("releaseAgentAction", [permissionBoundFacts]).ok, true);
+
+const rollbackPrepared = core.call("prepareTool", [{
+  name: "agent_spawn",
+  params: { message: "rollback", description: "Exercise transactional persistence" },
+  ctx,
+}]);
+const rollbackCapabilityFacts = {
+  capabilityId: rollbackPrepared.capabilityId,
+  agentId: rollbackPrepared.agentId,
+  action: rollbackPrepared.action,
+  runId: rollbackPrepared.runId,
+  submissionId: rollbackPrepared.submissionId,
+  ctx,
+};
+assert.equal(core.call("claimAgentAction", [rollbackCapabilityFacts]).ok, true);
+assert.equal(core.call("recordAgentChildSessionStartAuthorized", [{
+  agent_id: agentId,
+  sessionId: "forged-cross-agent-session",
+}, rollbackCapabilityFacts, ctx]).ok, false,
+"capability authorized another agent's lifecycle transition");
+failNextAgentPersistence = true;
+assert.equal(core.call("recordAgentChildSessionStartAuthorized", [{
+  agent_id: rollbackPrepared.agentId,
+  sessionId: "uncommitted-child-session",
+  sessionFile: "/tmp/uncommitted-child-session.jsonl",
+}, rollbackCapabilityFacts, ctx]).ok, false);
+failNextAgentPersistence = true;
+assert.equal(core.call("recordAgentDispatchBoundaryAuthorized", [{
+  run_id: rollbackPrepared.runId,
+  submission_id: rollbackPrepared.submissionId,
+  previous_assistant_entry_id: "uncommitted-boundary",
+}, rollbackCapabilityFacts, ctx]).ok, false);
+assert.equal(core.call("authorizeAgentActionCleanup", [rollbackCapabilityFacts]).ok, true,
+  "tentative persistence failure invalidated required compensation authority");
+assert.equal(core.call("rollbackUnacceptedAgentStart", [{
+  agent_id: rollbackPrepared.agentId,
+  run_id: rollbackPrepared.runId,
+  submission_id: rollbackPrepared.submissionId,
+}, ctx]).ok, true);
+assert.equal(core.call("releaseAgentAction", [rollbackCapabilityFacts]).ok, true);
 // agent-id19: reconciliation without a live authoritative dispatch is observable as orphaned.
 assert.equal(core.call("reconcileLiveAgentDispatches", [{ live_agent_ids: [] }, ctx]).ok, true);
 const orphanedList = core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]);
@@ -200,11 +329,26 @@ const olderAssistantEntry = JSON.stringify({
     stopReason: "stop",
   },
 });
-assert.equal(core.call("recordAgentChildSessionStart", [{
+const childBinding = core.call("prepareTool", [{
+  name: "agent_send",
+  params: { agent_id: agentId, message: "bind child", description: "Bind child session" },
+  ctx,
+}]);
+const childBindingCapability = {
+  capabilityId: childBinding.capabilityId,
+  agentId,
+  action: childBinding.action,
+  runId: childBinding.runId,
+  submissionId: childBinding.submissionId,
+  ctx,
+};
+assert.equal(core.call("claimAgentAction", [childBindingCapability]).ok, true);
+assert.equal(core.call("recordAgentChildSessionStartAuthorized", [{
   agent_id: agentId,
   sessionId: "private-child-session",
   sessionFile: childFile,
-}, ctx]).ok, true);
+}, childBindingCapability, ctx]).ok, true);
+assert.equal(core.call("releaseAgentAction", [childBindingCapability]).ok, true);
 
 const isolatedChildCtx = {
   ...ctx,
@@ -288,12 +432,12 @@ const followUpCapabilityFacts = {
   runId: followUp.runId, submissionId: followUp.submissionId, ctx,
 };
 assert.equal(core.call("claimAgentAction", [followUpCapabilityFacts]).ok, true);
-assert.equal(core.call("releaseAgentAction", [followUpCapabilityFacts]).ok, true);
-assert.equal(core.call("recordAgentDispatchBoundary", [{
+assert.equal(core.call("recordAgentDispatchBoundaryAuthorized", [{
   run_id: followUp.runId,
   submission_id: followUp.submissionId,
   previous_assistant_entry_id: "answer-entry",
-}, ctx]).ok, true);
+}, followUpCapabilityFacts, ctx]).ok, true);
+assert.equal(core.call("releaseAgentAction", [followUpCapabilityFacts]).ok, true);
 assert.equal(
   core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]).details.agents[0].status,
   "running",
@@ -385,6 +529,37 @@ assert.equal(core.call("recordAgentActivity", [{
   submission_id: shutdownAgent.submissionId,
   event: "turn_end",
 }, ctx]).ok, true);
+const stateBoundClose = core.call("prepareTool", [{
+  name: "agent_close", params: { agent_id: shutdownAgent.agentId }, ctx,
+}]);
+const stateBoundFacts = {
+  capabilityId: stateBoundClose.capabilityId,
+  agentId: shutdownAgent.agentId,
+  action: stateBoundClose.action,
+  ctx,
+};
+assert.equal(core.call("claimAgentAction", [stateBoundFacts]).ok, true);
+assert.equal(core.call("prepareAgentCloseStop", [stateBoundFacts]).ok, true);
+assert.equal(core.call("suspendOwnerAgentsOnShutdown", [ctx]).ok, true);
+assert.equal(core.call("recordAgentDispatchCompletion", [{
+  run_id: shutdownAgent.runId,
+  submission_id: shutdownAgent.submissionId,
+  completion: { status: "completed", finalOutput: "late completion" },
+}, ctx]).ok, true);
+const staleCloseStop = core.call("completeAgentCloseStop", [stateBoundFacts]);
+assert.equal(staleCloseStop.ok, false,
+  "no-op late completion revived close-stop authority after suspension");
+assert.match(staleCloseStop.error, /stale|does not match/);
+const stateStaleForward = core.call("revalidateAgentAction", [stateBoundFacts]);
+assert.equal(stateStaleForward.ok, false, "agent-state-stale capability retained forward authority");
+assert.match(stateStaleForward.error, /stale/);
+const revivedStateCapability = core.call("ratchetAgentAction", [stateBoundFacts]);
+assert.equal(revivedStateCapability.ok, false, "public ratchet revived a state-stale capability");
+assert.match(revivedStateCapability.error, /stale/);
+const stateStaleCleanup = core.call("authorizeAgentActionCleanup", [stateBoundFacts]);
+assert.equal(stateStaleCleanup.ok, false, "agent-state-stale capability authorized cleanup");
+assert.match(stateStaleCleanup.error, /stale/);
+assert.equal(core.call("releaseAgentAction", [stateBoundFacts]).ok, true);
 core.call("agentManagerSnapshot", [swapChildCtx]);
 assert.equal(core.call("suspendOwnerAgentsOnShutdown", [ctx]).ok, true);
 const afterShutdownList = core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]);
