@@ -252,7 +252,9 @@ type persisted_session_snapshot = {
   permissions : Unsafe.any option;
   ralph : Unsafe.any option;
   visibility : Unsafe.any option;
-  agents : Unsafe.any option;
+  agent_presence : Unsafe.any option;
+  agent_parent_snapshots : Unsafe.any list;
+  agent_parent_snapshot_bootstrap_allowed : bool;
 }
 
 let persisted_session_snapshot ctx =
@@ -265,7 +267,14 @@ let persisted_session_snapshot ctx =
     permissions = Session_store.custom_entry_data ctx "taumel.permissions";
     ralph = Session_store.custom_entry_data ctx "taumel.ralph";
     visibility = Session_store.custom_entry_data ctx "taumel.visibility";
-    agents = Session_store.custom_entry_data ctx "taumel.agents.v4";
+    agent_presence =
+      Session_store.custom_entry_data ctx
+        Taumel.Agent_state_store.presence_marker_custom_type;
+    agent_parent_snapshots =
+      Session_store.custom_entries_data ctx
+        Taumel.Agent_state_store.parent_snapshot_custom_type;
+    agent_parent_snapshot_bootstrap_allowed =
+      not (Session_store.session_has_parent ctx);
   }
 
 let load_goal_state_data ~session_id = function
@@ -477,62 +486,162 @@ let remember_agent_session session_id =
   if not (List.mem session_id !seen_agent_session_ids) then
     seen_agent_session_ids := session_id :: !seen_agent_session_ids
 
-(* Replay unpersisted activity on top of a freshly loaded registry. Parent/
-   child projection swaps can reload a persisted snapshot that predates the
-   last coalesced persist; the journal holds exactly the events applied
-   since that snapshot, so replaying restores the pre-swap state. *)
-let replay_agent_activity_journal ~session_id state =
-  match !agent_activity_journal with
-  | [] -> state
-  | entries ->
-      List.fold_left
-        (fun acc entry ->
-          if entry.journal_owner <> session_id then acc
-          else
-            Taumel.Agent_registry.record_activity_event acc
-              ~run_id:entry.journal_run_id
-              ~submission_id:entry.journal_submission_id
-              ~now:entry.journal_now ~event:entry.journal_event)
-        state (List.rev entries)
+let fail_agent_load message =
+  agent_state_load_error := Some message;
+  report_session_sync_error "agents load"
+    (Failure ("Failing closed on durable agent state: " ^ message));
+  set_agent_state Taumel.Agents.empty_session_state
 
-let load_agent_state_data ~session_id ~recover_running agents =
-  (match agents with
-  | None ->
-      agent_notification_claims := [];
-      agent_closing_ids := [];
-      agent_state_load_error := None;
-      set_agent_state Taumel.Agents.empty_session_state
+let js_to_json_list values =
+  List.filter_map
+    (fun value ->
+      match json_from_js value with Ok json -> Some json | Error _ -> None)
+    values
+
+let note_presence_marker ~owner_session_id =
+  if not (List.mem owner_session_id !agent_presence_marker_written) then
+    agent_presence_marker_written :=
+      owner_session_id :: !agent_presence_marker_written
+
+let write_registry_or_fail ~owner_session_id state =
+  match Agent_state_store_host.write_registry ~owner_session_id state with
+  | Ok () -> Ok ()
+  | Error message -> Error ("agent registry persistence failed: " ^ message)
+
+let ensure_presence_marker ?(force = false) ?(initialize_registry = false) ctx
+    ~owner =
+  if force || not (List.mem owner !agent_presence_marker_written) then
+    let existing_marker_matches =
+      match
+        Session_store.custom_entry_data ctx
+          Taumel.Agent_state_store.presence_marker_custom_type
+      with
+      | None -> false
+      | Some data -> (
+          match
+            Result.bind (json_from_js data)
+              Taumel.Agent_state_store.decode_presence_marker
+          with
+          | Ok marker ->
+              marker.owner_session_id = owner
+              && marker.storage_schema_version
+                 = Taumel.Agent_state_store.storage_schema_version
+          | Error _ -> false)
+    in
+    if existing_marker_matches then note_presence_marker ~owner_session_id:owner
+    else (
+      (* Before the first lifecycle transition, anchor the registry's current
+         value and marker. A marker-append failure therefore cannot leave an
+         unreported candidate transition in the sidecar. *)
+      if initialize_registry then (
+        match write_registry_or_fail ~owner_session_id:owner !agent_state with
+        | Error message -> failwith message
+        | Ok () -> ());
+      Session_store.require_append_custom_entry ctx
+        Taumel.Agent_state_store.presence_marker_custom_type
+        (Taumel.Agent_state_store.encode_presence_marker
+           (Taumel.Agent_state_store.presence_marker ~owner_session_id:owner));
+      note_presence_marker ~owner_session_id:owner)
+
+let apply_loaded_agent_state ~ctx ~owner_session_id ~recover_running loaded =
+  agent_notification_claims := [];
+  agent_closing_ids := [];
+  agent_state_load_error := None;
+  let original = loaded.Taumel.Agent_state_store.state in
+  let state =
+    if recover_running then reconcile_settled_runs original else original
+  in
+  (* Recover uncommitted cleanup envelopes before classifying process-loss
+     availability, so exact private sessions are restored to their live path. *)
+  List.iter
+    (fun identity ->
+      ignore
+        (Agent_child_session_host.recover_uncommitted_envelope_for_identity
+           ~identity))
+    state.identities;
+  let state =
+    if recover_running then
+      Taumel.Agents.mark_running_after_process_loss state ~now:(now_seconds ())
+        ~child_session_available:(fun run ->
+          match Taumel.Agents.find_identity state run.run_agent_id with
+          | Some identity -> child_session_file_available identity
+          | None -> false)
+    else state
+  in
+  let needs_registry_write =
+    loaded.materialize_current
+    || (recover_running && state <> original)
+  in
+  let write_result =
+    if needs_registry_write then write_registry_or_fail ~owner_session_id state
+    else Ok ()
+  in
+  match write_result with
+  | Error message -> fail_agent_load message
+  | Ok () -> (
+      match
+        if loaded.ensure_marker || needs_registry_write then
+          try
+            ensure_presence_marker ~force:loaded.ensure_marker ctx
+              ~owner:owner_session_id;
+            Ok ()
+          with error -> Error (Printexc.to_string error)
+        else Ok ()
+      with
+      | Error message -> fail_agent_load message
+      | Ok () -> set_agent_state state)
+
+let load_agent_state_data ~ctx ~session_id ~recover_running ~presence
+    ~parent_snapshots ~allow_parent_snapshot_bootstrap =
+  loaded_agent_owner_id := Some session_id;
+  agent_notification_claims := [];
+  agent_closing_ids := [];
+  if not (Session_store.owner_is_persistent ctx) then (
+    agent_state_load_error := None;
+    set_agent_state Taumel.Agents.empty_session_state)
+  else match presence with
   | Some data -> (
-      agent_notification_claims := [];
-      agent_closing_ids := [];
-      match Result.bind (json_from_js data) Taumel.Agents_codec.decode with
-      | Ok state ->
-          agent_state_load_error := None;
-          let state = if recover_running then reconcile_settled_runs state else state in
-          (* Recover uncommitted cleanup envelopes before classifying process-loss
-             availability, so exact private sessions are restored to their live path. *)
-          List.iter
-            (fun identity ->
-              ignore
-                (Agent_child_session_host.recover_uncommitted_envelope_for_identity
-                   ~identity))
-            state.identities;
-          set_agent_state
-            (if recover_running then
-              Taumel.Agents.mark_running_after_process_loss state
-                ~now:(now_seconds ())
-                ~child_session_available:(fun run ->
-                  match Taumel.Agents.find_identity state run.run_agent_id with
-                  | Some identity ->
-                      child_session_file_available identity
-                  | None -> false)
-            else state)
+      match json_from_js data with
       | Error message ->
-          agent_state_load_error := Some message;
-          report_session_sync_error "agents load"
-            (Failure ("Ignoring incompatible saved Taumel agents entry: " ^ message));
-          set_agent_state Taumel.Agents.empty_session_state));
-  set_agent_state (replay_agent_activity_journal ~session_id !agent_state)
+          fail_agent_load ("agent presence marker is malformed: " ^ message)
+      | Ok marker_json -> (
+          match Agent_state_store_host.read_registry ~owner_session_id:session_id with
+          | Error message ->
+              fail_agent_load ("agent registry read failed: " ^ message)
+          | Ok sidecar_raw -> (
+              match
+                Taumel.Agent_state_store.resolve_load ~owner_session_id:session_id
+                  ~marker:(Some marker_json) ~sidecar_raw
+                  ~allow_parent_snapshots:
+                    allow_parent_snapshot_bootstrap
+                  ~parent_snapshots:(js_to_json_list parent_snapshots)
+              with
+              | Taumel.Agent_state_store.Empty ->
+                  agent_state_load_error := None;
+                  set_agent_state Taumel.Agents.empty_session_state
+              | Taumel.Agent_state_store.Loaded loaded ->
+                  apply_loaded_agent_state ~ctx ~owner_session_id:session_id
+                    ~recover_running loaded
+              | Taumel.Agent_state_store.Fail_closed message ->
+                  fail_agent_load message)))
+  | None -> (
+      match Agent_state_store_host.read_registry ~owner_session_id:session_id with
+      | Error message ->
+          fail_agent_load ("agent registry read failed: " ^ message)
+      | Ok sidecar_raw -> (
+          match
+            Taumel.Agent_state_store.resolve_load ~owner_session_id:session_id
+              ~marker:None ~sidecar_raw
+              ~allow_parent_snapshots:allow_parent_snapshot_bootstrap
+              ~parent_snapshots:(js_to_json_list parent_snapshots)
+          with
+          | Taumel.Agent_state_store.Empty ->
+              agent_state_load_error := None;
+              set_agent_state Taumel.Agents.empty_session_state
+          | Taumel.Agent_state_store.Loaded loaded ->
+              apply_loaded_agent_state ~ctx ~owner_session_id:session_id
+                ~recover_running loaded
+          | Taumel.Agent_state_store.Fail_closed message -> fail_agent_load message))
 let load_session_state ctx =
   let snapshot = persisted_session_snapshot ctx in
   let forked = load_goal_state_data ~session_id:snapshot.session_id snapshot.goal in
@@ -542,11 +651,15 @@ let load_session_state ctx =
     snapshot.permissions;
   load_ralph_state_data snapshot.ralph;
   load_visibility_state_data snapshot.visibility;
-  load_agent_state_data
-    ~session_id:snapshot.session_id
-    ~recover_running:(first_agent_session_load snapshot.session_id)
-    snapshot.agents;
-  remember_agent_session snapshot.session_id;
+  if not (session_is_isolated_child_data snapshot.child_session) then (
+    if !loaded_agent_owner_id <> Some snapshot.session_id then
+      load_agent_state_data ~ctx ~session_id:snapshot.session_id
+        ~recover_running:(first_agent_session_load snapshot.session_id)
+        ~presence:snapshot.agent_presence
+        ~parent_snapshots:snapshot.agent_parent_snapshots
+        ~allow_parent_snapshot_bootstrap:
+          snapshot.agent_parent_snapshot_bootstrap_allowed;
+    remember_agent_session snapshot.session_id);
   last_goal_accounting_key := None;
   goal_turn_clock := Taumel.Goal.empty_clock;
   pending_goal_terminal_status := None;
@@ -560,10 +673,11 @@ let has_persisted_component_entry snapshot =
   || snapshot.permissions <> None
   || snapshot.ralph <> None
   || snapshot.visibility <> None
-  || snapshot.agents <> None
+  || snapshot.agent_presence <> None
+  || snapshot.agent_parent_snapshots <> []
 
 let sync_persisted_session_snapshot ?(reset_missing = true)
-    ?(clear_retained_outputs = false) snapshot =
+    ?(clear_retained_outputs = false) ?ctx snapshot =
   let session_id = snapshot.session_id in
   if
     !loaded_session_id <> Some session_id
@@ -586,11 +700,24 @@ let sync_persisted_session_snapshot ?(reset_missing = true)
       snapshot.permissions;
     load_if_present load_ralph_state_data snapshot.ralph;
     load_if_present load_visibility_state_data snapshot.visibility;
-    if reset_missing || Option.is_some snapshot.agents then (
-      load_agent_state_data
-        ~session_id:snapshot.session_id
-        ~recover_running:(first_agent_session_load snapshot.session_id)
-        snapshot.agents;
+    if
+      not (session_is_isolated_child_data snapshot.child_session)
+      && !loaded_agent_owner_id <> Some snapshot.session_id
+      &&
+      (reset_missing || Option.is_some snapshot.agent_presence
+      || snapshot.agent_parent_snapshots <> [])
+    then (
+      (match ctx with
+      | None ->
+          fail_agent_load
+            "agent registry projection requires a host session context"
+      | Some ctx ->
+          load_agent_state_data ~ctx ~session_id:snapshot.session_id
+            ~recover_running:(first_agent_session_load snapshot.session_id)
+            ~presence:snapshot.agent_presence
+            ~parent_snapshots:snapshot.agent_parent_snapshots
+            ~allow_parent_snapshot_bootstrap:
+              snapshot.agent_parent_snapshot_bootstrap_allowed);
       remember_agent_session snapshot.session_id);
     last_goal_accounting_key := None;
     goal_turn_clock := Taumel.Goal.empty_clock;
@@ -627,7 +754,8 @@ let sync_persisted_session ?(reset_missing = true)
     notify_pending_goal_warning ctx
   else
     let snapshot = persisted_session_snapshot ctx in
-    sync_persisted_session_snapshot ~reset_missing ~clear_retained_outputs snapshot;
+    sync_persisted_session_snapshot ~reset_missing ~clear_retained_outputs ~ctx
+      snapshot;
     finish_goal_load ctx snapshot
 
 let persisted_session_snapshot_is_isolated_child snapshot =
@@ -635,32 +763,35 @@ let persisted_session_snapshot_is_isolated_child snapshot =
 
 (* The single owner-bound boundary for agent registry access. Every entry
    point that reads the registry goes through this: after it returns, the
-   loaded projection is the context owner's registry with all pending
-   activity replayed. Fails closed otherwise, so a missed synchronization
-   can never become silent cross-session corruption. *)
+   loaded projection is the context owner's registry. Fails closed
+   otherwise, so a missed synchronization can never become silent
+   cross-session corruption. *)
 let require_agent_owner ctx =
   sync_persisted_session ctx;
   let owner = Session_store.session_id_from_ctx ctx in
-  if !loaded_session_id <> Some owner then
-    failwith ("agent registry projection unavailable for owner " ^ owner)
+  if !loaded_agent_owner_id <> Some owner then
+    failwith ("agent registry projection unavailable for owner " ^ owner);
+  match !agent_state_load_error with
+  | Some message -> failwith ("agent registry unavailable: " ^ message)
+  | None -> ()
 
-(* The single agent-registry persistence point. Refuses to append unless
-   the loaded projection is this owner's replayed registry, so persisting a
-   foreign projection is unrepresentable. A persisted snapshot includes
-   every journaled effect for the owner, so the journal clears on save. *)
+(* The single agent-registry persistence point. Persistent owners atomically
+   replace one current registry in Taumel-owned storage and keep exactly one
+   bounded presence marker in the parent session. Semantic no-ops write
+   nothing. Ephemeral owners remain process-scoped. *)
 let persist_agent_state ctx state =
   let owner = Session_store.session_id_from_ctx ctx in
-  if !loaded_session_id <> Some owner then
+  if !loaded_agent_owner_id <> Some owner then
     failwith
       ("agent registry projection mismatch: refusing to persist for " ^ owner);
-  Session_store.append_custom_entry ctx "taumel.agents.v4"
-    (Taumel.Agents_codec.encode state);
-  agent_activity_journal :=
-    List.filter
-      (fun entry -> entry.journal_owner <> owner)
-      !agent_activity_journal
-
-let save_agent_state ctx = persist_agent_state ctx !agent_state
+  if not (Session_store.owner_is_persistent ctx) then ()
+  else if not (Taumel.Agent_state_store.durable_change ~previous:!agent_state ~next:state)
+  then ()
+  else (
+    ensure_presence_marker ~initialize_registry:true ctx ~owner;
+    match write_registry_or_fail ~owner_session_id:owner state with
+    | Error message -> failwith message
+    | Ok () -> ())
 
 let commit_agent_state ctx next =
   persist_agent_state ctx next;
@@ -671,7 +802,7 @@ let try_sync_session_from_host_with ?(scope = "session sync")
   try
     let snapshot = persisted_session_snapshot ctx in
     update_session_state host ctx;
-    sync_persisted_session_snapshot ~reset_missing ~clear_retained_outputs
+    sync_persisted_session_snapshot ~reset_missing ~clear_retained_outputs ~ctx
       snapshot;
     finish_goal_load ctx snapshot;
     Ok snapshot

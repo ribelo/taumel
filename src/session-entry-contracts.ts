@@ -246,6 +246,12 @@ export const AgentsStateV6Schema = Type.Object({
 }, { $id: "AgentsStateV6", additionalProperties: false });
 export type AgentsStateV6 = Static<typeof AgentsStateV6Schema>;
 
+export const AgentsPresenceMarkerSchema = Type.Object({
+  storage_schema_version: Type.Literal(1),
+  owner_session_id: Type.String({ minLength: 1 }),
+}, { $id: "AgentsPresenceMarker", additionalProperties: false });
+export type AgentsPresenceMarker = Static<typeof AgentsPresenceMarkerSchema>;
+
 const CronTaskSchema = Type.Object({
   id: Type.String({ pattern: "^[0-9a-f]{8}$" }),
   cron: Type.String({ pattern: "^\\S+(?:\\s+\\S+){4}$" }),
@@ -282,6 +288,7 @@ export const TaumelPersistedCustomEntrySchema = Type.Union([
   persistedEntry("taumel.goal_automation", GoalAutomationStateSchema),
   persistedEntry("taumel.ralph", RalphStateV1Schema),
   persistedEntry("taumel.agents.v4", AgentsStateV6Schema),
+  persistedEntry("taumel.agents.presence", AgentsPresenceMarkerSchema),
   persistedEntry("taumel.cron", CronStateSchema),
 ], { $id: "TaumelPersistedCustomEntry" });
 export type AnyPersistedTaumelCustomEntry = Static<typeof TaumelPersistedCustomEntrySchema>;
@@ -294,6 +301,7 @@ export interface TaumelCustomEntryDataMap {
   readonly "taumel.goal_automation": GoalAutomationState;
   readonly "taumel.ralph": RalphStateV1;
   readonly "taumel.agents.v4": AgentsStateV6;
+  readonly "taumel.agents.presence": AgentsPresenceMarker;
   readonly "taumel.cron": CronState;
 }
 export type TaumelCustomType = keyof TaumelCustomEntryDataMap;

@@ -184,60 +184,10 @@ let record_dispatch_completion facts ctx =
       | _ -> ());
       core_ack ()
 
-(* Activity events arrive per child turn/tool update; persisting every one
-   rewrites the session several times per second and bloats it (measured:
-   ~90% of a 186MB session's recent growth). Events are applied to the
-   in-memory registry immediately and journaled; a parent/child projection
-   swap that reloads an older persisted snapshot replays the journal, so
-   observed activity is never lost. File persistence is coalesced to one
-   append per 2s; terminal transitions still persist immediately via the
-   completion path, so crash recovery loses only the last few seconds of
-   activity bookkeeping, which the reconcile path already tolerates. *)
-let last_activity_persist_at = ref 0
-
-(* Trailing flush: leading-edge persistence alone would leave the last
-   journal entries unpersisted until the next state transition. Schedule a
-   one-shot timer so pending activity is persisted within ~2s even when no
-   further events arrive. Contexts are tracked per owner (one global timer
-   would starve other owners) and released once their journal drains, so a
-   closed session is not retained. The timer is unref'd so it never keeps
-   the process alive, and the flush is best-effort: on any failure the
-   journal survives for the next persist or replay. *)
-let activity_flush_scheduled = ref false
-let activity_flush_contexts : (string * Unsafe.any) list ref = ref []
-
-let flush_pending_activity () =
-  activity_flush_scheduled := false;
-  List.iter
-    (fun (owner, ctx) ->
-      if List.exists (fun entry -> entry.journal_owner = owner) !agent_activity_journal then
-        try
-          Session_sync.require_agent_owner ctx;
-          save_agent_state ctx;
-          last_activity_persist_at := now_milliseconds ()
-        with _ -> ())
-    !activity_flush_contexts;
-  activity_flush_contexts :=
-    List.filter
-      (fun (owner, _) ->
-        List.exists (fun entry -> entry.journal_owner = owner) !agent_activity_journal)
-      !activity_flush_contexts
-
-let schedule_activity_flush ctx =
-  let owner = owner_id ctx in
-  activity_flush_contexts :=
-    (owner, ctx) :: List.remove_assoc owner !activity_flush_contexts;
-  if not !activity_flush_scheduled then (
-    activity_flush_scheduled := true;
-    let timer =
-      Unsafe.fun_call
-        (Unsafe.get Unsafe.global "setTimeout")
-        [| inject (Js.wrap_callback flush_pending_activity); js_number 2000.0 |]
-    in
-    match function_field timer "unref" with
-    | Some _ -> ignore (call0 timer "unref")
-    | None -> ())
-
+(* Activity and metrics-only events update the loaded registry in memory.
+   They never journal, schedule a timer, or write durable owner storage;
+   lifecycle transitions and terminal observations carry the latest metrics
+   when they write the current registry. *)
 let record_activity facts ctx =
   let facts = decode_ojs_contract Boundary_contracts.AgentActivityFacts.t_of_js (ojs_of_js facts) in
   Session_sync.require_agent_owner ctx;
@@ -255,22 +205,7 @@ let record_activity facts ctx =
     Taumel.Agent_registry.record_activity_event previous ~run_id ~submission_id
       ~now ~event
   in
-  set_agent_state next;
-  if next != previous then (
-    agent_activity_journal :=
-      {
-        journal_owner = owner_id ctx;
-        journal_run_id = run_id;
-        journal_submission_id = submission_id;
-        journal_event = event;
-        journal_now = now;
-      }
-      :: !agent_activity_journal;
-    let now_ms = now_milliseconds () in
-    if now_ms - !last_activity_persist_at >= 2000 then (
-      last_activity_persist_at := now_ms;
-      save_agent_state ctx)
-    else schedule_activity_flush ctx);
+  if next != previous then set_agent_state next;
   core_ack ()
 
 let record_dispatch_boundary_result facts ctx =
@@ -757,7 +692,8 @@ let finish_wait raw_facts ctx =
   with
   | Error message -> error_obj message
   | Ok wait ->
-      Session_sync.commit_agent_state ctx wait.wait_state;
+      if wait.wait_state <> !agent_state then
+        Session_sync.commit_agent_state ctx wait.wait_state;
       prepare_wait raw_facts ctx
 
 let command_result ?(details = Unsafe.obj [||]) message =

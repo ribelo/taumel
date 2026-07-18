@@ -46,11 +46,13 @@ type AgentActivityEvent = "agent_start" | "turn_start" | "turn_end" | "tool_exec
 type PendingAgentWaits = Map<string, Set<AbortController>>;
 export const pendingAgentWaits: PendingAgentWaits = new Map();
 const activeNoninteractiveDrains = new Set<string>();
-
 function isObject(value: unknown): value is UnknownFields {
   return typeof value === "object" && value !== null;
 }
-
+function isChildSessionContext(ctx: unknown): boolean {
+  const marker = latestTaumelCustomEntry(isObject(ctx) ? ctx.sessionManager : undefined, "taumel.childSession");
+  return marker.kind === "contract_valid" || marker.kind === "invalid";
+}
 function stringField(value: UnknownFields, key: string): string {
   const raw = value[key];
   return typeof raw === "string" ? raw : "";
@@ -903,6 +905,7 @@ export function installAgentLifecycle(
   pendingAgentWaits: PendingAgentWaits,
 ): void {
   const reconcileAfterLoad = (_event: unknown, ctx: unknown) => {
+    if (isChildSessionContext(ctx)) return;
     setTimeout(() => {
       try {
         decodeCoreAck(core.call("reconcileProvisionalAgentWorktrees", []));
@@ -925,6 +928,7 @@ export function installAgentLifecycle(
   pi.on("session_switch", reconcileAfterLoad);
   pi.on("session_fork", reconcileAfterLoad);
   pi.on("session_shutdown", async (_event, ctx) => {
+    if (isChildSessionContext(ctx)) return;
     const shutdown = async () => {
       const info = sessionInfoFromContext(ctx);
       const agents = decodeAgentCleanupPlan(
@@ -970,8 +974,8 @@ export function installAgentLifecycle(
       }
     }
   });
-
   pi.on("turn_end", async (_event, ctx) => {
+    if (isChildSessionContext(ctx)) return;
     try {
       await flushPendingAgentNotifications(pi, core, ctx, "steer", pendingAgentWaits);
       await noninteractiveTurnDrain(pi, core, ctx, pendingAgentWaits);
@@ -980,8 +984,8 @@ export function installAgentLifecycle(
       console.warn("Taumel agent turn_end notification flush failed:", error);
     }
   });
-
   pi.on("agent_end", (_event, ctx) => {
+    if (isChildSessionContext(ctx)) return;
     setTimeout(() => {
       void flushPendingAgentNotifications(pi, core, ctx, "trigger", pendingAgentWaits).catch((error) => {
         if (isStaleContextError(error)) return;

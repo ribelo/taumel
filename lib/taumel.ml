@@ -1,5 +1,6 @@
 module Agents = Agents
 module Agents_codec = Agents_codec
+module Agent_state_store = Agent_state_store
 module Agent_git_broker = Agent_git_broker
 module Agent_routing = Agent_routing
 module Agent_wait = Agent_wait

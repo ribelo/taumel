@@ -49,6 +49,10 @@ for (const persistedEntry of [
     issued_identity_counts: { agent: 0, finder: 0, oracle: 0, issued_ids: [] },
     identities: [], runs: [], cleanup_pending: [],
   }),
+  persisted("taumel.agents.presence", {
+    storage_schema_version: 1,
+    owner_session_id: "session-entry-smoke",
+  }),
   persisted("taumel.cron", { version: 1, enabled: true, tasks: [] }),
 ]) {
   const entry = {
@@ -79,6 +83,40 @@ const invalidLatest = latestTaumelCustomEntry(
 );
 assert.equal(invalidLatest.kind, "invalid", "shared-bu9p latest malformed entry must not resurrect older state");
 assert.equal(invalidLatest.kind === "invalid" && invalidLatest.rawEntry.data.networkMode, "enabled");
+
+const latestValid = latestTaumelCustomEntry(
+  manager([
+    persisted("taumel.permissions", { ...permissions, networkMode: "disabled" }),
+    persisted("taumel.permissions", permissions),
+  ]),
+  "taumel.permissions",
+);
+assert.equal(latestValid.kind, "contract_valid", "latest entry wins over older same-type entries");
+assert.equal(
+  latestValid.kind === "contract_valid" && latestValid.entry.data.networkMode,
+  "enabled",
+  "latest entry must not select the oldest same-type entry",
+);
+
+const presenceLatest = latestTaumelCustomEntry(
+  manager([
+    persisted("taumel.agents.presence", {
+      storage_schema_version: 1,
+      owner_session_id: "older-owner",
+    }),
+    persisted("taumel.agents.presence", {
+      storage_schema_version: 1,
+      owner_session_id: "session-entry-smoke",
+    }),
+  ]),
+  "taumel.agents.presence",
+);
+assert.equal(presenceLatest.kind, "contract_valid");
+assert.equal(
+  presenceLatest.kind === "contract_valid" && presenceLatest.entry.data.owner_session_id,
+  "session-entry-smoke",
+  "presence marker lookup must use the latest entry",
+);
 
 const legacy = latestTaumelCustomEntry(
   manager([{ type: "taumel.permissions", value: permissions }]),

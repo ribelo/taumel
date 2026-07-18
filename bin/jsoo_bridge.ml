@@ -167,6 +167,11 @@ let js_error_to_string error =
       | Some message -> Option.value (string_value message) ~default:"JavaScript promise rejected"
       | None -> "JavaScript promise rejected")
 
+let js_exception_string_field error name =
+  match Js.Js_error.of_exn error with
+  | None -> None
+  | Some js_error -> optional_string_field (Obj.magic js_error) name
+
 let await_js_result promise =
   let eta_promise, resolver = Eta_jsoo.Private.create_promise () in
   let resolve_ok =

@@ -1,8 +1,16 @@
 import assert from "node:assert/strict";
-import { appendFileSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync,
+  realpathSync, rmSync, statSync, writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createRequire } from "node:module";
 import { latestTaumelCustomEntry } from "../src/pi-session-entries.ts";
 
+const agentHome = mkdtempSync(join(tmpdir(), "taumel-agent-lifecycle-"));
+process.env.PI_CODING_AGENT_DIR = agentHome;
 const require = createRequire(import.meta.url);
 require("../dist/taumel.cjs");
 const bootstrap = globalThis.taumel;
@@ -10,13 +18,21 @@ let core;
 assert.ok(bootstrap && typeof bootstrap.init === "function");
 
 const entries = [];
-let failNextAgentPersistence = false;
 entries.push({
   type: "custom",
   customType: "taumel.agents",
   data: { version: 1, issued_identity_count: 99, identities: [], runs: [] },
 });
 const handlers = new Map();
+const ownerSessionId = "agent-lifecycle-smoke";
+const ownerHash = createHash("sha256").update(ownerSessionId).digest("hex");
+const registryPath = join(agentHome, "taumel", "agents", "owners", ownerHash, "registry.json");
+function presenceMarkers() {
+  return entries.filter((entry) => entry.customType === "taumel.agents.presence");
+}
+function forceNextRegistryWriteFailure() {
+  process.env.TAUMEL_FAIL_NEXT_AGENT_REGISTRY_WRITE = "1";
+}
 const ctx = {
   cwd: process.cwd(),
   activeTools: [
@@ -26,15 +42,11 @@ const ctx = {
   ],
   model: { provider: "openai-codex", id: "gpt-test" },
   sessionManager: {
-    sessionId: "agent-lifecycle-smoke",
+    sessionId: ownerSessionId,
     getSessionId() { return this.sessionId; },
-    getSessionFile: () => "/tmp/agent-lifecycle-smoke.jsonl",
+    getSessionFile: () => join(agentHome, "agent-lifecycle-smoke.jsonl"),
     getEntries: () => entries,
     appendCustomEntry: (customType, data) => {
-      if (failNextAgentPersistence && customType === "taumel.agents.v4") {
-        failNextAgentPersistence = false;
-        throw new Error("forced agent persistence failure");
-      }
       entries.push({ type: "custom", customType, data });
     },
   },
@@ -228,13 +240,13 @@ assert.equal(core.call("recordAgentChildSessionStartAuthorized", [{
   sessionId: "forged-cross-agent-session",
 }, rollbackCapabilityFacts, ctx]).ok, false,
 "capability authorized another agent's lifecycle transition");
-failNextAgentPersistence = true;
+forceNextRegistryWriteFailure();
 assert.equal(core.call("recordAgentChildSessionStartAuthorized", [{
   agent_id: rollbackPrepared.agentId,
   sessionId: "uncommitted-child-session",
   sessionFile: "/tmp/uncommitted-child-session.jsonl",
 }, rollbackCapabilityFacts, ctx]).ok, false);
-failNextAgentPersistence = true;
+forceNextRegistryWriteFailure();
 assert.equal(core.call("recordAgentDispatchBoundaryAuthorized", [{
   run_id: rollbackPrepared.runId,
   submission_id: rollbackPrepared.submissionId,
@@ -264,38 +276,61 @@ assert.equal(activeList.details.agents[0].turn_count, 1);
 assert.match(activeList.details.agents[0].activity.last_at, /[+-]\d\d:\d\d$/);
 assert.equal("model" in JSON.parse(activeList.text)[0], false);
 assert.equal("thinking" in JSON.parse(activeList.text)[0], false);
-// agent-id14/agent-id16/agent-id20/agent-id21: coalesced activity persistence must
-// not lose journaled events when a child/parent projection swap reloads an
-// older persisted registry. Only the first loop event above was persisted;
-// the rest are pending in the journal.
+// agent-ishi/agent-zr7q/agent-dh9z: activity and metrics stay memory-only; the
+// parent session receives only the bounded presence marker, not registry
+// snapshots or activity samples.
+const markersAfterLifecycle = presenceMarkers();
+assert.equal(markersAfterLifecycle.length, 1, "agent-cbh3: exactly one presence marker after first durable state");
+assert.deepEqual(markersAfterLifecycle[0].data, {
+  storage_schema_version: 1,
+  owner_session_id: ownerSessionId,
+});
+assert.equal(
+  entries.filter((entry) => entry.customType === "taumel.agents.v4").length,
+  0,
+  "agent-dh9z: parent session must not receive registry snapshots",
+);
+assert.ok(existsSync(registryPath), "agent-qeg2: current registry lives in owner storage");
+const registryEnvelope = JSON.parse(readFileSync(registryPath, "utf8"));
+assert.equal(registryEnvelope.storage_schema_version, 1);
+assert.equal(registryEnvelope.owner_session_id, ownerSessionId);
+assert.equal(registryEnvelope.registry.version, 6);
+const registryBeforeActivity = readFileSync(registryPath, "utf8");
+const registryInodeBeforeActivity = statSync(registryPath).ino;
+const markersBeforeActivity = presenceMarkers().length;
+assert.equal(core.call("recordAgentActivity", [{ run_id: runId, submission_id: submissionId, event: "turn_start" }, ctx]).ok, true);
+assert.equal(readFileSync(registryPath, "utf8"), registryBeforeActivity, "agent-ishi: activity must not write durable state");
+assert.equal(statSync(registryPath).ino, registryInodeBeforeActivity,
+  "agent-ishi: activity must not physically replace durable state");
+assert.equal(presenceMarkers().length, markersBeforeActivity, "activity must not append another parent marker");
 const swapChildCtx = {
   ...ctx,
   sessionManager: {
     sessionId: "journal-swap-child-session",
     getSessionId() { return this.sessionId; },
-    getSessionFile: () => "/tmp/journal-swap-child.jsonl",
+    getSessionFile: () => join(agentHome, "journal-swap-child.jsonl"),
     getEntries: () => [{
       type: "custom",
       customType: "taumel.childSession",
-      data: { kind: "agent", isolated_child: true, parentSessionId: "agent-lifecycle-smoke" },
+      data: { kind: "agent", isolated_child: true, parentSessionId: ownerSessionId },
     }],
     getBranch: () => [],
   },
 };
-core.call("agentManagerSnapshot", [swapChildCtx]);
+// Isolated children may load their own non-agent session state, but nesting is
+// unavailable and they must not replace the live parent's agent projection.
+assert.throws(
+  () => core.call("agentManagerSnapshot", [swapChildCtx]),
+  /projection unavailable/,
+);
 core.call("agentManagerSnapshot", [ctx]);
 const afterSwapList = core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]);
-assert.equal(afterSwapList.details.agents[0].turn_count, 1, "journaled activity must survive child/parent projection swaps");
-assert.equal(afterSwapList.details.agents[0].activity.state, "reasoning", "journaled activity phase must survive child/parent projection swaps");
-// agent-id23: pending activity is persisted within a bounded delay even when no
-// further events arrive (trailing flush), not just on later state transitions.
-const agentsEntriesBeforeFlush = entries.filter((e) => e.customType === "taumel.agents.v4").length;
-assert.equal(core.call("recordAgentActivity", [{ run_id: runId, submission_id: submissionId, event: "turn_start" }, ctx]).ok, true);
-await new Promise((resolve) => setTimeout(resolve, 2300));
-const agentsEntriesAfterFlush = entries.filter((e) => e.customType === "taumel.agents.v4").length;
-assert.ok(agentsEntriesAfterFlush > agentsEntriesBeforeFlush, "agent-id23: trailing flush must persist pending activity without further events");
-const persistedAgents = latestTaumelCustomEntry(ctx.sessionManager, "taumel.agents.v4");
-assert.ok(persistedAgents.kind === "contract_valid" && persistedAgents.entry.data.identities.length > 0, "non-empty agent state satisfies the persisted-entry contract");
+assert.equal(afterSwapList.details.agents.length, 1, "owner registry reloads from durable current registry");
+assert.equal(afterSwapList.details.agents[0].status, "running");
+assert.equal(afterSwapList.details.agents[0].turn_count, 1,
+  "child projection load must preserve the parent's memory-only activity");
+const presenceLookup = latestTaumelCustomEntry(ctx.sessionManager, "taumel.agents.presence");
+assert.equal(presenceLookup.kind, "contract_valid", "presence marker satisfies the persisted-entry contract");
 const offsetMinutes = -new Date().getTimezoneOffset();
 const expectedOffset = `${offsetMinutes < 0 ? "-" : "+"}${String(Math.floor(Math.abs(offsetMinutes) / 60)).padStart(2, "0")}:${String(Math.abs(offsetMinutes) % 60).padStart(2, "0")}`;
 assert.equal(activeList.details.agents[0].created_at.endsWith(expectedOffset), true, "agent-rs15 timestamps must include the DST-aware local offset");
@@ -507,10 +542,74 @@ assert.match(replacement.agentId, /^agent-[abcdefghjkmnpqrstuvwxyz23456789]{4}$/
 assert.notEqual(replacement.agentId, agentId, "closed agent handles must remain retired");
 assert.equal(core.call("finishAgentClose", [{ agent_id: replacement.agentId }, ctx]).ok, true);
 
+// agent-zr7q/agent-ishi: repeated active finishAgentWait polling and activity
+// produce zero physical registry writes; the first terminal observation writes once.
+const pollAgent = core.call("prepareTool", [{
+  name: "agent_spawn",
+  params: { message: "poll", description: "Agent for poll write test", tier: "low" },
+  ctx,
+}]);
+assert.equal(pollAgent.ok, true);
+const pollCapabilityFacts = {
+  capabilityId: pollAgent.capabilityId, agentId: pollAgent.agentId,
+  action: pollAgent.action, runId: pollAgent.runId,
+  submissionId: pollAgent.submissionId, ctx,
+};
+assert.equal(core.call("claimAgentAction", [pollCapabilityFacts]).ok, true);
+assert.equal(core.call("releaseAgentAction", [pollCapabilityFacts]).ok, true);
+const registryBeforePoll = readFileSync(registryPath, "utf8");
+const registryInodeBeforePoll = statSync(registryPath).ino;
+const markersBeforePoll = presenceMarkers().length;
+const startedAt = Date.now();
+while (Date.now() - startedAt < 50) {
+  assert.equal(core.call("finishAgentWait", [{
+    run_ids: [pollAgent.runId],
+  }, ctx]).ok, true);
+  assert.equal(core.call("recordAgentActivity", [{
+    run_id: pollAgent.runId,
+    submission_id: pollAgent.submissionId,
+    event: "tool_execution_update",
+  }, ctx]).ok, true);
+}
+assert.equal(readFileSync(registryPath, "utf8"), registryBeforePoll,
+  "agent-zr7q: repeated active wait/activity loop must not rewrite the registry");
+assert.equal(statSync(registryPath).ino, registryInodeBeforePoll,
+  "agent-zr7q: repeated active wait/activity loop must perform zero physical writes");
+assert.equal(presenceMarkers().length, markersBeforePoll,
+  "agent-cbh3: polling must not append another presence marker");
+assert.equal(core.call("recordAgentDispatchCompletion", [{
+  run_id: pollAgent.runId,
+  submission_id: pollAgent.submissionId,
+  completion: { status: "completed", finalOutput: "poll complete" },
+}, ctx]).ok, true);
+const registryAfterTerminal = readFileSync(registryPath, "utf8");
+assert.notEqual(registryAfterTerminal, registryBeforePoll,
+  "first terminal lifecycle mutation must write the current registry once");
+assert.equal(
+  JSON.parse(registryAfterTerminal).registry.runs.find((run) => run.run_id === pollAgent.runId)?.status,
+  "completed",
+);
+assert.equal(core.call("finishAgentWait", [{ run_ids: [pollAgent.runId] }, ctx]).ok, true);
+const registryAfterObservedWait = readFileSync(registryPath, "utf8");
+const registryInodeAfterObservedWait = statSync(registryPath).ino;
+assert.notEqual(registryAfterObservedWait, registryAfterTerminal,
+  "first terminal observation must write announcement state once");
+const registryAfterRepeatWait = (() => {
+  assert.equal(core.call("finishAgentWait", [{ run_ids: [pollAgent.runId] }, ctx]).ok, true);
+  return readFileSync(registryPath, "utf8");
+})();
+assert.equal(registryAfterRepeatWait, registryAfterObservedWait,
+  "idempotent terminal wait must perform no durable write");
+assert.equal(statSync(registryPath).ino, registryInodeAfterObservedWait,
+  "idempotent terminal wait must perform zero physical writes");
+assert.equal(presenceMarkers().length, markersBeforePoll,
+  "later durable writes reuse the existing presence marker");
+assert.equal(core.call("finishAgentClose", [{ agent_id: pollAgent.agentId }, ctx]).ok, true);
+
 // agent-ps12/shared-st03 regression: shutdown entry points must synchronize the
 // owner projection before touching the registry. With a child projection
 // loaded last, an unsynchronized shutdown would read the foreign (empty)
-// registry, persist it over the owner's, and drop pending journaled activity.
+// registry and persist it over the owner.
 const shutdownAgent = core.call("prepareTool", [{
   name: "agent_spawn",
   params: { message: "shutdown", description: "Agent for shutdown sync test", tier: "low" },
@@ -560,21 +659,105 @@ const stateStaleCleanup = core.call("authorizeAgentActionCleanup", [stateBoundFa
 assert.equal(stateStaleCleanup.ok, false, "agent-state-stale capability authorized cleanup");
 assert.match(stateStaleCleanup.error, /stale/);
 assert.equal(core.call("releaseAgentAction", [stateBoundFacts]).ok, true);
-core.call("agentManagerSnapshot", [swapChildCtx]);
+assert.throws(() => core.call("agentManagerSnapshot", [swapChildCtx]), /projection unavailable/);
 assert.equal(core.call("suspendOwnerAgentsOnShutdown", [ctx]).ok, true);
 const afterShutdownList = core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]);
 assert.equal(afterShutdownList.details.agents.length, 1,
   "shutdown with a child projection loaded must not clobber the owner registry");
 assert.equal(afterShutdownList.details.agents[0].status, "suspended",
   "owner runs must be suspended on shutdown");
-assert.equal(afterShutdownList.details.agents[0].turn_count, 1,
-  "journaled activity must survive shutdown with a child projection loaded");
+assert.equal(afterShutdownList.details.agents[0].agent_id, shutdownAgent.agentId,
+  "owner identity survives shutdown with a child projection loaded");
+
+// agent-7jhj: bootstrap from latest same-owner v4 parent snapshot when no
+// sidecar/marker exists. Keep the original owner so deterministic issued-handle
+// reconstruction matches the retained identity.
+const bootstrapOwner = "bootstrap-owner";
+const bootstrapHash = createHash("sha256").update(bootstrapOwner).digest("hex");
+const bootstrapRegistry = join(agentHome, "taumel", "agents", "owners", bootstrapHash, "registry.json");
+const bootstrapEntries = [];
+const bootstrapCtx = {
+  ...ctx,
+  sessionManager: {
+    sessionId: bootstrapOwner,
+    getSessionId() { return this.sessionId; },
+    getSessionFile: () => join(agentHome, "bootstrap-owner.jsonl"),
+    getEntries: () => bootstrapEntries,
+    appendCustomEntry: (customType, data) => {
+      bootstrapEntries.push({ type: "custom", customType, data });
+    },
+  },
+};
+const seed = core.call("prepareTool", [{
+  name: "agent_spawn",
+  params: { message: "seed", description: "Seed bootstrap registry", tier: "low" },
+  ctx: bootstrapCtx,
+}]);
+assert.equal(seed.ok, true);
+const seedCapability = {
+  capabilityId: seed.capabilityId, agentId: seed.agentId,
+  action: seed.action, runId: seed.runId, submissionId: seed.submissionId,
+  ctx: bootstrapCtx,
+};
+assert.equal(core.call("claimAgentAction", [seedCapability]).ok, true);
+assert.equal(core.call("releaseAgentAction", [seedCapability]).ok, true);
+const currentEnvelope = JSON.parse(readFileSync(bootstrapRegistry, "utf8"));
+const currentRegistry = currentEnvelope.registry;
+const { issued_ids: _issuedIds, ...issuedCounts } = currentRegistry.issued_identity_counts;
+const v4Snapshot = {
+  version: 4,
+  issued_identity_counts: issuedCounts,
+  identities: currentRegistry.identities,
+  runs: currentRegistry.runs,
+};
+// Drop durable current registry and presence marker; leave only the v4 snapshot.
+rmSync(bootstrapRegistry, { force: true });
+for (let index = bootstrapEntries.length - 1; index >= 0; index -= 1) {
+  if (bootstrapEntries[index].customType === "taumel.agents.presence") {
+    bootstrapEntries.splice(index, 1);
+  }
+}
+bootstrapEntries.push({ type: "custom", customType: "taumel.agents.v4", data: v4Snapshot });
+// Force a different main-owner projection before reloading bootstrapOwner.
+core.call("agentManagerSnapshot", [ctx]);
+const bootstrapped = core.call("prepareTool", [{ name: "agent_list", params: {}, ctx: bootstrapCtx }]);
+assert.equal(bootstrapped.details.agents.length, 1, "agent-7jhj: latest same-owner v4 snapshot bootstraps");
+assert.equal(bootstrapped.details.agents[0].agent_id, seed.agentId);
+assert.ok(existsSync(bootstrapRegistry), "bootstrap materializes the current registry sidecar");
+assert.ok(
+  bootstrapEntries.some((entry) => entry.customType === "taumel.agents.presence"),
+  "bootstrap appends the presence marker",
+);
+
+// agent-oqhi: marker without matching sidecar fails closed.
+const failClosedEntries = [{
+  type: "custom",
+  customType: "taumel.agents.presence",
+  data: { storage_schema_version: 1, owner_session_id: "fail-closed-owner" },
+}];
+const failClosedCtx = {
+  ...ctx,
+  sessionManager: {
+    sessionId: "fail-closed-owner",
+    getSessionId() { return this.sessionId; },
+    getSessionFile: () => join(agentHome, "fail-closed-owner.jsonl"),
+    getEntries: () => failClosedEntries,
+    appendCustomEntry: (customType, data) => {
+      failClosedEntries.push({ type: "custom", customType, data });
+    },
+  },
+};
+assert.throws(
+  () => core.call("prepareTool", [{ name: "agent_list", params: {}, ctx: failClosedCtx }]),
+  /registry|presence|unavailable|Failing closed|malformed|agent registry/i,
+  "agent-oqhi: marker without sidecar must fail closed",
+);
 
 // Round-5 regression: with a child projection loaded last, a parent agent tool
 // whose host session snapshot fails must fail closed. Proceeding would load
 // the owner registry while state.cwd still points at the child workspace and
 // durably bind a parent identity to the wrong repository.
-core.call("agentManagerSnapshot", [swapChildCtx]);
+assert.throws(() => core.call("agentManagerSnapshot", [swapChildCtx]), /projection unavailable/);
 const originalSnapshot = host.sessionSnapshot;
 host.sessionSnapshot = () => { throw new Error("host unavailable"); };
 const hostFailSpawn = core.call("prepareTool", [{
@@ -592,5 +775,6 @@ assert.equal(
 );
 
 rmSync(childDirectory, { recursive: true, force: true });
+rmSync(agentHome, { recursive: true, force: true });
 
 console.log("agent lifecycle smoke: all assertions passed");

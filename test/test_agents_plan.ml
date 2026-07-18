@@ -730,6 +730,201 @@ let test_routing_merge_and_validation () =
             ("thinking", Shared.String "low");
           ]))
 
+let current_to_v4_parent_snapshot state =
+  match Agents_codec.encode state with
+  | Shared.Object fields ->
+      let issued =
+        match List.assoc_opt "issued_identity_counts" fields with
+        | Some (Shared.Object count_fields) ->
+            Shared.Object (List.remove_assoc "issued_ids" count_fields)
+        | Some other -> other
+        | None -> Shared.Object []
+      in
+      Shared.Object
+        [
+          ("version", Shared.Number 4.);
+          ("issued_identity_counts", issued);
+          ( "identities",
+            match List.assoc_opt "identities" fields with
+            | Some value -> value
+            | None -> Shared.Array [] );
+          ( "runs",
+            match List.assoc_opt "runs" fields with
+            | Some value -> value
+            | None -> Shared.Array [] );
+        ]
+  | _ -> failwith "expected encoded agents state"
+
+let current_to_v5_parent_snapshot state =
+  match (current_to_v4_parent_snapshot state, Agents_codec.encode state) with
+  | Shared.Object v4_fields, Shared.Object current_fields ->
+      Shared.Object
+        (("version", Shared.Number 5.)
+        :: ("cleanup_pending",
+            Option.value (List.assoc_opt "cleanup_pending" current_fields)
+              ~default:(Shared.Array []))
+        :: List.remove_assoc "version" v4_fields)
+  | _ -> failwith "expected encoded agents state"
+
+let test_agent_state_store_memory_and_bootstrap () =
+  let memory, backend = Agent_state_store.memory_backend () in
+  match spawn Agents.empty_session_state with
+  | Error message -> failwith message
+  | Ok (state, identity, run) -> (
+      assert_equal "initial writes" "0" (string_of_int memory.write_count);
+      (match
+         Agent_state_store.write_current_registry backend
+           ~owner_session_id:"parent-1" state
+       with
+      | Error message -> failwith message
+      | Ok () -> ());
+      assert_equal "first durable write" "1" (string_of_int memory.write_count);
+      (match
+         Agent_state_store.write_current_registry backend
+           ~owner_session_id:"parent-1" state
+       with
+      | Error message -> failwith message
+      | Ok () -> ());
+      assert_equal "semantic rewrite still counts physical write when forced" "2"
+        (string_of_int memory.write_count);
+      assert_true "durable_change detects equality"
+        (not (Agent_state_store.durable_change ~previous:state ~next:state));
+      assert_true "durable_change detects mutation"
+        (Agent_state_store.durable_change ~previous:Agents.empty_session_state
+           ~next:state);
+      let activity =
+        Agent_registry.record_activity_event state ~run_id:run.run_id
+          ~submission_id:run.run_submission_id ~now:2
+          ~event:Agents.Tool_execution_update
+      in
+      assert_true "activity-only change is not durable"
+        (not (Agent_state_store.durable_change ~previous:state ~next:activity));
+      (match
+         Agents.record_run_completion activity ~now:3 ~run_id:run.run_id
+           ~status:Agents.Completed ~submission_id:run.run_submission_id ()
+       with
+      | Error message -> failwith message
+      | Ok completed ->
+          assert_true "terminal lifecycle change is durable"
+            (Agent_state_store.durable_change ~previous:activity
+               ~next:completed));
+      let marker =
+        Agent_state_store.encode_presence_marker
+          (Agent_state_store.presence_marker ~owner_session_id:"parent-1")
+      in
+      (match
+         Agent_state_store.resolve_load ~owner_session_id:"parent-1"
+           ~allow_parent_snapshots:true
+           ~marker:(Some marker) ~sidecar_raw:None ~parent_snapshots:[]
+       with
+      | Agent_state_store.Fail_closed _ -> ()
+      | _ -> failwith "marker without sidecar must fail closed");
+      let v4 = current_to_v4_parent_snapshot state in
+      (match
+         Agent_state_store.resolve_load ~owner_session_id:"parent-1" ~marker:None
+           ~allow_parent_snapshots:true
+           ~sidecar_raw:None ~parent_snapshots:[ v4 ]
+       with
+      | Agent_state_store.Loaded restored ->
+          assert_equal "v4 bootstrap identity" identity.identity_agent_id
+            (List.hd restored.state.identities).identity_agent_id;
+          assert_true "v4 bootstrap reconstructs issued_ids"
+            (List.mem identity.identity_agent_id
+               restored.state.issued_identity_counts.issued_ids);
+          assert_equal "v4 bootstrap cleanup empty" "0"
+            (string_of_int (List.length restored.state.cleanup_pending));
+          assert_true "v4 bootstrap materializes current registry"
+            restored.materialize_current;
+          assert_true "v4 bootstrap ensures marker" restored.ensure_marker
+      | _ -> failwith "compatible v4 parent snapshot must bootstrap");
+      let v5 = current_to_v5_parent_snapshot state in
+      (match
+         Agent_state_store.resolve_load ~owner_session_id:"parent-1" ~marker:None
+           ~allow_parent_snapshots:true
+           ~sidecar_raw:None ~parent_snapshots:[ v5 ]
+       with
+      | Agent_state_store.Loaded restored ->
+          assert_equal "v5 bootstrap identity" identity.identity_agent_id
+            (List.hd restored.state.identities).identity_agent_id;
+          assert_true "v5 bootstrap reconstructs issued_ids"
+            (List.mem identity.identity_agent_id
+               restored.state.issued_identity_counts.issued_ids)
+      | _ -> failwith "compatible v5 parent snapshot must bootstrap");
+      (* Closed handles remain in the reconstructed issued set. *)
+      (match
+         Agent_registry.record_close state ~owner_session_id:"parent-1"
+           ~agent_id:identity.identity_agent_id
+       with
+      | Error message -> failwith message
+      | Ok (closed, _) ->
+          let closed_v4 = current_to_v4_parent_snapshot closed in
+          (match
+             Agent_state_store.resolve_load ~owner_session_id:"parent-1"
+               ~allow_parent_snapshots:true
+               ~marker:None ~sidecar_raw:None ~parent_snapshots:[ closed_v4 ]
+           with
+          | Agent_state_store.Loaded restored ->
+              assert_true "closed handle remains issued after v4 bootstrap"
+                (List.mem identity.identity_agent_id
+                   restored.state.issued_identity_counts.issued_ids);
+              assert_equal "closed identities empty" "0"
+                (string_of_int (List.length restored.state.identities))
+          | _ -> failwith "closed v4 snapshot must bootstrap issued set");
+          match
+            Agent_state_store.resolve_load ~allow_parent_snapshots:false
+              ~owner_session_id:"fork-owner" ~marker:None ~sidecar_raw:None
+              ~parent_snapshots:[ closed_v4 ]
+          with
+          | Agent_state_store.Empty -> ()
+          | _ -> failwith "fork must not bootstrap copied empty registry");
+      (match
+         Agent_state_store.resolve_load ~owner_session_id:"other-owner"
+           ~allow_parent_snapshots:true
+           ~marker:None ~sidecar_raw:None ~parent_snapshots:[ v4 ]
+       with
+      | Agent_state_store.Empty -> ()
+      | _ -> failwith "foreign v4 snapshot must not bootstrap");
+      let sidecar =
+        Agent_state_store.registry_contents ~owner_session_id:"parent-1" state
+      in
+      let foreign_marker =
+        Agent_state_store.encode_presence_marker
+          (Agent_state_store.presence_marker ~owner_session_id:"other-owner")
+      in
+      (match
+         Agent_state_store.resolve_load ~owner_session_id:"parent-1"
+           ~allow_parent_snapshots:true
+           ~marker:(Some foreign_marker) ~sidecar_raw:(Some sidecar)
+           ~parent_snapshots:[]
+       with
+      | Agent_state_store.Loaded restored ->
+          assert_true "foreign marker is inert when same-owner sidecar exists"
+            (not restored.materialize_current);
+          assert_true "foreign marker still repairs presence for current owner"
+            restored.ensure_marker;
+          assert_equal "foreign marker leaves same-owner sidecar loaded"
+            identity.identity_agent_id
+            (List.hd restored.state.identities).identity_agent_id
+      | _ -> failwith "foreign presence marker must remain inert");
+      (match
+         Agent_state_store.resolve_load ~owner_session_id:"parent-1" ~marker:None
+           ~allow_parent_snapshots:true
+           ~sidecar_raw:(Some sidecar) ~parent_snapshots:[]
+       with
+      | Agent_state_store.Loaded restored ->
+          assert_true "sidecar without marker repairs marker" restored.ensure_marker
+      | _ -> failwith "sidecar without marker must load and repair");
+      match
+        Agent_state_store.resolve_load ~owner_session_id:"parent-1"
+          ~allow_parent_snapshots:true
+          ~marker:(Some marker) ~sidecar_raw:(Some sidecar) ~parent_snapshots:[]
+      with
+      | Agent_state_store.Loaded restored ->
+          assert_equal "sidecar load identity" identity.identity_agent_id
+            (List.hd restored.state.identities).identity_agent_id;
+          assert_true "matching marker needs no repair" (not restored.ensure_marker)
+      | _ -> failwith "matching marker and sidecar must load")
+
 let () =
   test_spawn_strips_agent_tools_and_returns_running ();
   test_unaccepted_spawn_rolls_back_identity_and_run ();
@@ -752,4 +947,5 @@ let () =
   test_agent_zwxp_codec_rejects_specialist_escalation_and_parallel_active_runs ();
   test_agent_zwxp_codec_rejects_generic_agent_tools_and_missing_effort ();
   test_routing_merge_and_validation ();
+  test_agent_state_store_memory_and_bootstrap ();
   print_endline "test_agents_plan: ok"

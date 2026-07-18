@@ -19,8 +19,6 @@ let is_agent_child ctx =
 let reject_nested name =
   error_obj (name ^ " is unavailable inside a child agent")
 
-let save_agent_state = Session_sync.save_agent_state
-
 let commit_agent_state ctx next =
   try
     Session_sync.commit_agent_state ctx next;

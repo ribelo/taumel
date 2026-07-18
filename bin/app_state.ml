@@ -145,23 +145,11 @@ let set_agent_state next =
             | None -> ()))
     agent_ids;
   agent_state := next
-(* Activity events whose persistence is still pending. Activity bookkeeping
-   is applied to the in-memory registry immediately but persisted coalesced;
-   when a parent/child projection swap reloads the owner's persisted
-   registry, these events are replayed on top so no observed activity is
-   lost. Entries are prepended and cleared when the owner's registry is
-   persisted (a persisted snapshot includes every journaled effect). *)
-type agent_activity_journal_entry = {
-  journal_owner : string;
-  journal_run_id : string;
-  journal_submission_id : string;
-  journal_event : Taumel.Agents.activity_event;
-  journal_now : int;
-}
-let agent_activity_journal : agent_activity_journal_entry list ref = ref []
 let agent_notification_claims : string list ref = ref []
 let agent_state_load_error : string option ref = ref None
 let agent_closing_ids : string list ref = ref []
+let agent_presence_marker_written : string list ref = ref []
+let loaded_agent_owner_id : string option ref = ref None
 let loaded_session_id : string option ref = ref None
 let owner_session_epoch = ref 0
 let permission_state_epoch = ref 0
