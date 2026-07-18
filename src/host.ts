@@ -21,6 +21,14 @@ function hostObject<T extends object>(value: unknown): Partial<T> | undefined {
 
 export function makeHost(pi: PiLike): ExtensionHost {
   return {
+    isExtensionActive: () => {
+      try {
+        pi.getThinkingLevel?.();
+        return true;
+      } catch {
+        return false;
+      }
+    },
     resolveAuthorizationPath,
     on: (event, handler) => {
       pi.on(event, handler);

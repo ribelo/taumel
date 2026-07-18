@@ -248,14 +248,20 @@ let core_call name_js args_js =
   | "approveExaPlan" -> Exa_bridge.approve_plan (arg 0)
   | other -> failwith ("unknown Taumel core method: " ^ other)
 
-let initialized = ref false
+let initialized_core : Unsafe.any option ref = ref None
 
 let initialize host =
-  if !initialized then failwith "Taumel core is already initialized"
-  else (
-    initialized := true;
-    Footer_runtime.init host;
-    Unsafe.obj [| ("call", inject (Js.wrap_callback core_call)) |])
+  match !initialized_core with
+  | Some _ when Footer_runtime.active_extension_is_live () ->
+      failwith "Taumel core is already initialized"
+  | Some core ->
+      Footer_runtime.init host;
+      core
+  | None ->
+      Footer_runtime.init host;
+      let core = Unsafe.obj [| ("call", inject (Js.wrap_callback core_call)) |] in
+      initialized_core := Some core;
+      core
 
 let () =
   let exported =

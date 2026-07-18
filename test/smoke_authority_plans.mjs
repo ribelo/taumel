@@ -13,13 +13,15 @@ const forgedOutput = join(root, "forged");
 const ownerId = "authority-owner";
 const previousExaKey = process.env.EXA_API_KEY;
 
-// sandbox-a69j: the global artifact exposes one-time initialization, not dispatch.
+// sandbox-a69j: the global artifact exposes binding to one core, not dispatch.
 assert.equal(typeof bootstrap.call, "undefined", "global bootstrap exposed the authority dispatcher");
 
 let snapshotSandboxMode = "workspace-write";
 let snapshotNetworkMode = "enabled";
+let extensionActive = true;
 
 core = bootstrap.init({
+  isExtensionActive: () => extensionActive,
   resolveAuthorizationPath: (path) => path,
   on: () => undefined,
   eventsOn: () => () => undefined,
@@ -38,7 +40,27 @@ core = bootstrap.init({
   requestRender: () => undefined,
   themeFg: (_theme, _color, value) => value,
 });
-assert.throws(() => bootstrap.init({}), /already initialized/);
+extensionActive = false;
+assert.equal(bootstrap.init({
+  isExtensionActive: () => true,
+  resolveAuthorizationPath: (path) => path,
+  on: () => undefined,
+  eventsOn: () => () => undefined,
+  emit: () => undefined,
+  exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+  setFooter: () => undefined,
+  sessionSnapshot: () => ({
+    cwd: root,
+    provider: "openai-codex",
+    model: "gpt-test",
+    sandboxMode: snapshotSandboxMode,
+    networkMode: snapshotNetworkMode,
+  }),
+  getGitBranch: () => "main",
+  onBranchChange: () => () => undefined,
+  requestRender: () => undefined,
+  themeFg: (_theme, _color, value) => value,
+}), core, "rebinding initialized a second core dispatcher");
 
 try {
   // exec-z6yp/exec-cnzd: prepared execution authority remains core-owned,

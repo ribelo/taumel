@@ -20,6 +20,7 @@ export type HostExecOptions = {
 };
 
 export type ExtensionHost = {
+  readonly isExtensionActive: () => boolean;
   readonly resolveAuthorizationPath: (path: string) => string;
   readonly on: (event: string, handler: EventHandler) => void;
   readonly eventsOn: (event: string, handler: InternalHandler) => Unsubscribe;
