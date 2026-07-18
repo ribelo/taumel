@@ -2,53 +2,70 @@ open Jsoo_bridge
 open App_state
 open Runtime_access
 
-let optional_int_field obj name =
-  Option.map int_of_float (float_field obj name)
-
-let optional_bool_field obj name =
-  match optional_field obj name with
-  | Some value when is_js_boolean value -> Some (Js_of_ocaml.Js.to_bool (Unsafe.coerce value))
-  | _ -> None
-
-let bool_field_default obj name default =
-  Option.value (optional_bool_field obj name) ~default
-
 let prepare_query params =
   with_gateway_authorized "query_threads" (fun _ ->
+      let params =
+        decode_ojs_contract Tool_contracts.QueryThreadsParams.t_of_js
+          (ojs_of_js params)
+      in
+      let scope =
+        match Boundary_contracts.QueryThreadsParams.get_scope params with
+        | None -> None
+        | Some `V_current_workspace -> Some "current_workspace"
+        | Some `V_all -> Some "all"
+      in
       match
         Taumel.Thread_tools.prepare_query_request
-          ?limit:(optional_int_field params "limit")
-          ?scope:(optional_string_field params "scope")
-          ~include_tools:(bool_field_default params "includeTools" true)
-          (get_string params "query")
+          ?limit:(Option.map int_of_float (Tool_contracts.QueryThreadsParams.get_limit params))
+          ?scope
+          ~include_tools:(Option.value (Tool_contracts.QueryThreadsParams.get_includeTools params) ~default:true)
+          (Tool_contracts.QueryThreadsParams.get_query params)
       with
       | Error message -> error_obj message
       | Ok request ->
           Boundary_contracts.PreparedThreadQuery.create ~query:request.query
-            ~limit:(float_of_int request.limit) ~scope:request.scope
+            ~limit:(float_of_int request.limit)
+      ~scope:(Boundary_contracts.PreparedThreadQuery.scope_to_contract
+                (match request.scope with
+                | "all" -> `V_all
+                | "current_workspace" -> `V_current_workspace
+                | value -> invalid_arg ("invalid query_threads scope: " ^ value)))
             ~includeTools:request.include_tools ()
           |> Tool_contracts.PreparedThreadQuery.t_to_js |> inject)
 
-let locator_object params =
-  match optional_field params "locator" with
-  | Some locator when is_js_object locator -> Some locator
-  | _ -> None
-
 let read_input_from_params params : Taumel.Thread_tools.read_request_input =
-  let locator = locator_object params in
+  let raw_params = params in
+  let params =
+    decode_ojs_contract Tool_contracts.ReadThreadParams.t_of_js (ojs_of_js params)
+  in
+  let locator =
+    match optional_field raw_params "locator" with
+    | None -> None
+    | Some value ->
+        Some
+          (decode_ojs_contract Tool_contracts.ThreadLocator.t_of_js
+             (ojs_of_js value))
+  in
+  let mode =
+    match Boundary_contracts.ReadThreadParams.get_mode params with
+    | None -> None
+    | Some `V_overview -> Some "overview"
+    | Some `V_window -> Some "window"
+    | Some `V_full -> Some "full"
+  in
   {
-    thread_id = optional_string_field params "threadID";
-    locator_thread_id = Option.bind locator (fun locator -> optional_string_field locator "threadID");
+    thread_id = Tool_contracts.ReadThreadParams.get_threadID params;
+    locator_thread_id = Option.map Tool_contracts.ThreadLocator.get_threadID locator;
     locator_source_path =
-      Option.bind locator (fun locator -> optional_string_field locator "sourcePath");
+      Option.bind locator Tool_contracts.ThreadLocator.get_sourcePath;
     locator_entry_id =
-      Option.bind locator (fun locator -> optional_string_field locator "entryID");
-    locator_line = Option.bind locator (fun locator -> optional_int_field locator "line");
-    entry_id = optional_string_field params "entryID";
-    line = optional_int_field params "line";
-    mode = optional_string_field params "mode";
-    around = optional_int_field params "around";
-    cursor = optional_string_field params "cursor";
+      Option.bind locator Tool_contracts.ThreadLocator.get_entryID;
+    locator_line = Option.bind locator (fun value -> Option.map int_of_float (Tool_contracts.ThreadLocator.get_line value));
+    entry_id = Tool_contracts.ReadThreadParams.get_entryID params;
+    line = Option.map int_of_float (Tool_contracts.ReadThreadParams.get_line params);
+    mode;
+    around = Option.map int_of_float (Tool_contracts.ReadThreadParams.get_around params);
+    cursor = Tool_contracts.ReadThreadParams.get_cursor params;
   }
 
 let prepare_read params =
@@ -61,28 +78,19 @@ let prepare_read params =
             | None -> None
             | Some locator ->
                 Some
-                  (Ts2ocaml.unknown_of_js
-                     (ojs_of_js
-                        (Unsafe.obj
-                           [|
-                             ("threadID", js_string locator.locator_thread_id);
-                             ( "sourcePath",
-                               match locator.locator_source_path with
-                               | None -> inject Js_of_ocaml.Js.null
-                               | Some path -> js_string path );
-                             ( "entryID",
-                               match locator.locator_entry_id with
-                               | None -> inject Js_of_ocaml.Js.null
-                               | Some id -> js_string id );
-                             ( "line",
-                               match locator.locator_line with
-                               | None -> inject Js_of_ocaml.Js.null
-                               | Some line -> js_number (float_of_int line) );
-                           |])))
+                  (Tool_contracts.PreparedThreadLocator.create
+                     ~threadID:locator.locator_thread_id
+                     ?sourcePath:locator.locator_source_path
+                     ?entryID:locator.locator_entry_id
+                     ?line:(Option.map float_of_int locator.locator_line) ())
           in
           Boundary_contracts.PreparedThreadRead.create
             ~threadID:request.thread_id
-            ~mode:(Taumel.Thread_tools.read_mode_to_string request.mode)
+            ~mode:(Boundary_contracts.PreparedThreadRead.mode_to_contract
+                     (match request.mode with
+                     | Taumel.Thread_tools.Overview -> `V_overview
+                     | Taumel.Thread_tools.Window -> `V_window
+                     | Taumel.Thread_tools.Full -> `V_full))
             ~around:(float_of_int request.around)
             ?entryID:request.entry_id ?line:(Option.map float_of_int request.line)
             ?cursor:request.cursor ?locator ()
@@ -191,12 +199,19 @@ let js_truncation fields =
     |> Array.of_list)
 
 let run_query params catalog =
+  let params =
+    decode_ojs_contract Tool_contracts.PreparedThreadQuery.t_of_js (ojs_of_js params)
+  in
+  let scope =
+    match Boundary_contracts.PreparedThreadQuery.get_scope params with
+    | `V_current_workspace -> "current_workspace"
+    | `V_all -> "all"
+  in
   match
     Taumel.Thread_tools.prepare_query_request
-      ?limit:(optional_int_field params "limit")
-      ?scope:(optional_string_field params "scope")
-      ~include_tools:(bool_field_default params "includeTools" true)
-      (get_string params "query")
+      ~limit:(int_of_float (Tool_contracts.PreparedThreadQuery.get_limit params))
+      ~scope ~include_tools:(Tool_contracts.PreparedThreadQuery.get_includeTools params)
+      (Tool_contracts.PreparedThreadQuery.get_query params)
   with
   | Error message -> error_obj message
   | Ok request ->
@@ -219,7 +234,34 @@ let run_query params catalog =
       |> Tool_contracts.BridgeToolResult.t_to_js |> inject
 
 let run_read params catalog =
-  match Taumel.Thread_tools.prepare_read_request (read_input_from_params params) with
+  let params =
+    decode_ojs_contract Tool_contracts.PreparedThreadRead.t_of_js (ojs_of_js params)
+  in
+  let locator = Tool_contracts.PreparedThreadRead.get_locator params in
+  let input : Taumel.Thread_tools.read_request_input =
+    {
+      thread_id = Some (Tool_contracts.PreparedThreadRead.get_threadID params);
+      locator_thread_id =
+        Option.map Tool_contracts.PreparedThreadLocator.get_threadID locator;
+      locator_source_path =
+        Option.bind locator Tool_contracts.PreparedThreadLocator.get_sourcePath;
+      locator_entry_id =
+        Option.bind locator Tool_contracts.PreparedThreadLocator.get_entryID;
+      locator_line =
+        Option.bind locator (fun value ->
+            Option.map int_of_float
+              (Tool_contracts.PreparedThreadLocator.get_line value));
+      entry_id = Tool_contracts.PreparedThreadRead.get_entryID params;
+      line = Option.map int_of_float (Tool_contracts.PreparedThreadRead.get_line params);
+      mode =
+        Some
+          (match Boundary_contracts.PreparedThreadRead.get_mode params with
+          | `V_overview -> "overview" | `V_window -> "window" | `V_full -> "full");
+      around = Some (int_of_float (Tool_contracts.PreparedThreadRead.get_around params));
+      cursor = Tool_contracts.PreparedThreadRead.get_cursor params;
+    }
+  in
+  match Taumel.Thread_tools.prepare_read_request input with
   | Error message -> error_obj message
   | Ok request ->
       let plan =

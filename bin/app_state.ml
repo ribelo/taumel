@@ -97,6 +97,8 @@ let agent_notification_claims : string list ref = ref []
 let agent_state_load_error : string option ref = ref None
 let agent_closing_ids : string list ref = ref []
 let loaded_session_id : string option ref = ref None
+let owner_session_epoch = ref 0
+let permission_state_epoch = ref 0
 let last_goal_accounting_key : string option ref = ref None
 let pending_goal_load_warning : string option ref = ref None
 let footer_event = "taumel:footer:changed"
@@ -127,14 +129,16 @@ let now_seconds () =
     | None -> 0)
   | _ -> 0
 
-let now_milliseconds () =
+let now_milliseconds_float () =
   let date = Unsafe.get Unsafe.global "Date" in
   match function_field date "now" with
   | Some now -> (
     match float_value (Unsafe.fun_call now [||]) with
-    | Some milliseconds -> int_of_float milliseconds
-    | None -> 0)
-  | _ -> 0
+    | Some milliseconds -> milliseconds
+    | None -> 0.0)
+  | _ -> 0.0
+
+let now_milliseconds () = int_of_float (now_milliseconds_float ())
 
 let env_string name =
   let process = Unsafe.get Unsafe.global "process" in

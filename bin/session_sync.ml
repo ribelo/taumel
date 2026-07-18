@@ -303,6 +303,12 @@ let load_goal_automation_state_data = function
           goal_automation := Taumel.Goal.Automation_enabled)
 
 let apply_active_permissions (resolved : Taumel.Permissions.active) =
+  if
+    !active_profile_state <> resolved.profile
+    || !active_network_mode <> resolved.network_mode
+    || !active_no_sandbox <> resolved.no_sandbox
+    || !active_isolated_child <> resolved.isolated_child
+  then incr permission_state_epoch;
   active_profile_state := resolved.profile;
   active_network_mode := resolved.network_mode;
   active_no_sandbox := resolved.no_sandbox;
@@ -591,6 +597,7 @@ let sync_persisted_session_snapshot ?(reset_missing = true)
     pending_goal_terminal_status := None;
     goal_retrying := false;
     goal_compacting := false;
+    if !loaded_session_id <> Some session_id then incr owner_session_epoch;
     loaded_session_id := Some session_id)
 
 let finish_goal_load ctx snapshot =

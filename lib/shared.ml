@@ -20,6 +20,15 @@ type json =
   | Array of json list
   | Object of (string * json) list
 
+let min_persisted_int = -2_147_483_648.
+let max_persisted_int = 2_147_483_647.
+
+let persisted_int_float value =
+  Float.is_finite value
+  && value >= min_persisted_int
+  && value <= max_persisted_int
+  && Float.equal value (Float.trunc value)
+
 let trim_non_empty value =
   let value = String.trim value in
   if value = "" then None else Some value
@@ -41,7 +50,10 @@ let rec to_yojson = function
 let rec of_yojson = function
   | `Null -> Ok Null
   | `Bool value -> Ok (Bool value)
-  | `Int value -> Ok (Number (float_of_int value))
+  | `Int value ->
+      let number = float_of_int value in
+      if Int64.of_float number = Int64.of_int value then Ok (Number number)
+      else Error "JSON integer literal loses precision"
   | `Float value when Float.is_finite value -> Ok (Number value)
   | `Float _ -> Error "JSON number must be finite"
   | `String value -> Ok (String value)
@@ -64,9 +76,11 @@ let rec of_yojson = function
       in
       loop [] fields
   | `Intlit value -> (
-      match float_of_string_opt value with
-      | Some value when Float.is_finite value -> Ok (Number value)
-      | _ -> Error "JSON integer literal must be finite")
+      match (Int64.of_string_opt value, float_of_string_opt value) with
+      | Some exact, Some number
+        when Float.is_finite number && Int64.of_float number = exact ->
+          Ok (Number number)
+      | _ -> Error "JSON integer literal loses precision")
   | `Tuple _ | `Variant _ ->
       Error "unsupported non-standard JSON value"
 
@@ -86,7 +100,9 @@ let json_string_field name = function
 let json_int_field name = function
   | Object fields -> (
       match List.assoc_opt name fields with
-      | Some (Number value) when Float.is_finite value -> Some (int_of_float value)
+      | Some (Number value) when persisted_int_float value ->
+          let converted = int_of_float value in
+          if Float.equal value (float_of_int converted) then Some converted else None
       | _ -> None)
   | _ -> None
 
@@ -109,6 +125,25 @@ let json_required_field path fields name =
   match List.assoc_opt name fields with
   | Some value -> Ok value
   | None -> Error (json_path path name ^ " is required")
+
+let json_exact_fields path expected fields =
+  let expected =
+    List.fold_left (fun names name -> String_set.add name names) String_set.empty
+      expected
+  in
+  let rec validate seen = function
+    | [] -> (
+        match String_set.choose_opt (String_set.diff expected seen) with
+        | None -> Ok ()
+        | Some name -> Error (json_path path name ^ " is required"))
+    | (name, _) :: rest ->
+        if not (String_set.mem name expected) then
+          Error (json_path path name ^ " is not allowed")
+        else if String_set.mem name seen then
+          Error (json_path path name ^ " must not be repeated")
+        else validate (String_set.add name seen) rest
+  in
+  validate String_set.empty fields
 
 let json_optional_field fields name =
   match List.assoc_opt name fields with
@@ -156,11 +191,25 @@ let json_optional_number path fields name =
 let json_number_default path fields name default =
   Result.map (Option.value ~default) (json_optional_number path fields name)
 
+let json_int path value =
+  Result.bind (json_number path value) (fun number ->
+      if persisted_int_float number then
+        let converted = int_of_float number in
+        if Float.equal number (float_of_int converted) then Ok converted
+        else Error (path ^ " must be a representable integer")
+      else Error (path ^ " must be a representable integer"))
+
 let json_required_int path fields name =
-  Result.map int_of_float (json_required_number path fields name)
+  Result.bind (json_required_field path fields name)
+    (json_int (json_path path name))
+
+let json_optional_int path fields name =
+  Result.bind (json_optional_field fields name) (function
+    | None -> Ok None
+    | Some value -> Result.map Option.some (json_int (json_path path name) value))
 
 let json_int_default path fields name default =
-  Result.map int_of_float (json_number_default path fields name (float_of_int default))
+  Result.map (Option.value ~default) (json_optional_int path fields name)
 
 let json_required_bool path fields name =
   Result.bind (json_required_field path fields name)

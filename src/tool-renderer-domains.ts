@@ -327,10 +327,10 @@ function buildAgent(name: string, result: unknown, options: unknown, theme: unkn
   const details = detailsRecord(result);
   const agents = recordArrayFieldOrEmpty<ToolRenderFields>(details, "agents");
   const results = recordArrayFieldOrEmpty<ToolRenderFields>(details, "results");
-  const agentId = stringFieldOrUndefined(details, "agent_id")
+  const agentId = stringFieldOrUndefined(details, "agentId")
     ?? stringFieldOrUndefined(args, "agent_id")
     ?? "";
-  const runId = stringFieldOrUndefined(details, "run_id") ?? "";
+  const runId = stringFieldOrUndefined(details, "runId") ?? "";
   const kind = stringFieldOrUndefined(details, "kind")
     ?? (name === "finder" || name === "oracle" ? name : "generic");
   const status = stringFieldOrUndefined(details, "status")

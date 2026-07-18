@@ -30,3 +30,5 @@ have, while its permission envelope remains no broader than the parent's.
 - When the user later relaxes the parent's permission envelope, the child's effective envelope may regain authority only up to its immutable spawn-time ceiling and shall never become broader than that ceiling. ^profile-ch10
 - Parent permission changes shall not add, remove, or otherwise mutate an existing child's tool surface. ^profile-ch11
 - The system shall authorize or deny a tool call from profile data alone, so wrong Pi active-tool state cannot grant capability beyond the resolved profile. ^profile-sr01
+- When decoding a persisted capability profile, the system shall require exactly the fields `modelId`, `thinkingLevel`, `sandboxPreset`, `approvalPolicy`, `tools`, and `noSandboxAllowed`, reject repeated or unknown fields, and accept only the canonical sandbox preset values. ^profile-ikfk
+- When decoding a persisted tool allowlist, the system shall require exactly `kind` for `none` and `all`, require exactly `kind` and `names` for `only`, and reject missing, repeated, unknown, or variant-incompatible fields. ^profile-kbtx

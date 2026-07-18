@@ -55,7 +55,7 @@ let recommendation_for status activity =
   | "running", "orphaned" -> "interrupt_or_close"
   | ("completed" | "failed" | "cancelled" | "lost"), "inactive" -> "call_agent_wait"
   | "suspended", "inactive" -> "resume_or_close"
-  | _ -> "wait"
+  | _ -> invalid_arg "invalid agent status/activity combination"
 let current_active_tools ctx =
   match optional_string_array ctx "activeTools" with
   | Some tools -> tools
@@ -126,38 +126,59 @@ let json_text value = Taumel.Shared.encode_json value
 let json_success fields = json_text (Taumel.Shared.Object fields)
 let start_details ~(identity : Taumel.Agents.identity) ~(run : Taumel.Agents.agent_run)
     ~prompt =
-  let fields =
-    [
-      ("ok", js_bool true);
-      ("agent_id", js_string identity.identity_agent_id);
-      ("run_id", js_string run.run_id);
-      ("kind", js_kind identity.identity_kind);
-      ("model", js_string identity.identity_model);
-      ("thinking", js_string identity.identity_thinking);
-      ("status", js_run_status run.run_status);
-      ("prompt", js_string prompt);
-      ("agentId", js_string identity.identity_agent_id);
-      ("activeTools", js_string_array identity.identity_active_tools);
-      ("workspace", js_string (Taumel.Agents.identity_source_workspace identity));
-      ( "isolation",
-        js_string
-          (Taumel.Agent_workspace.isolation_to_string
-             (Taumel.Agents.identity_isolation identity)) );
-    ]
-  in
-  let fields =
-    match identity.identity_effort with
-    | None -> fields
-    | Some effort ->
-        fields @ [ ("tier", js_string (Taumel.Agents.effort_to_string effort)) ]
-  in
-  Unsafe.obj (Array.of_list fields)
+  Boundary_contracts.AgentStartDetails.create
+    ~runId:run.run_id
+    ~kind:(Boundary_contracts.AgentStartDetails.kind_to_contract
+      (match identity.identity_kind with Taumel.Agents.Generic -> `V_generic | Taumel.Agents.Finder -> `V_finder | Taumel.Agents.Oracle -> `V_oracle))
+    ~model:identity.identity_model ~thinking:identity.identity_thinking
+    ~prompt ~agentId:identity.identity_agent_id
+    ~activeTools:identity.identity_active_tools
+    ~workspace:(Taumel.Agents.identity_source_workspace identity)
+    ~isolation:(Boundary_contracts.AgentStartDetails.isolation_to_contract
+      (match Taumel.Agents.identity_isolation identity with Taumel.Agent_workspace.None -> `V_none | Taumel.Agent_workspace.Worktree -> `V_worktree))
+    ?tier:(Option.map (function Taumel.Agents.Low -> `V_low | Taumel.Agents.Medium -> `V_medium | Taumel.Agents.High -> `V_high) identity.identity_effort
+      |> Option.map Boundary_contracts.AgentStartDetails.tier_to_contract) ()
 let recover_owned_private_sessions ~owner_session_id =
   Taumel.Agents.owned_identities !agent_state ~owner_session_id
   |> List.iter (fun identity ->
          ignore
            (Agent_child_session_host.recover_uncommitted_envelope_for_identity
               ~identity))
+
+let contract_run_status = function
+  | Taumel.Agents.Running -> `V_running
+  | Suspended -> `V_suspended
+  | Completed -> `V_completed
+  | Failed -> `V_failed
+  | Cancelled -> `V_cancelled
+  | Lost -> `V_lost
+
+let contract_send_outcome = function
+  | Taumel.Agents.Message_sent -> `V_message_sent
+  | Interrupted_and_sent -> `V_interrupted_and_sent
+  | Suspended_outcome -> `V_suspended
+  | Already_suspended -> `V_already_suspended
+  | Resumed -> `V_resumed
+  | Started -> `V_started
+  | No_active_run -> `V_no_active_run
+
+let contract_reason_code = function
+  | Taumel.Agents.Interrupted_by_parent -> `V_interrupted_by_parent
+  | Parent_shutdown -> `V_parent_shutdown
+  | Process_interrupted -> `V_process_interrupted
+  | Close_cleanup_failed -> `V_close_cleanup_failed
+  | Host_cancelled -> `V_host_cancelled
+  | Dispatch_failed -> `V_dispatch_failed
+  | Agent_failed -> `V_agent_failed
+  | Internal_error -> `V_internal_error
+  | Child_session_lost -> `V_child_session_lost
+
+let contract_suspension_reason = function
+  | Taumel.Agents.Interrupted_by_parent -> `V_interrupted_by_parent
+  | Parent_shutdown -> `V_parent_shutdown
+  | Process_interrupted -> `V_process_interrupted
+  | Close_cleanup_failed -> `V_close_cleanup_failed
+  | _ -> invalid_arg "invalid prior suspension reason"
 
 let prepare_start name params ctx =
   if is_agent_child ctx then reject_nested name
@@ -216,25 +237,27 @@ let prepare_start name params ctx =
                   | Taumel.Sandbox.Network_disabled -> false
                 in
                 let owner = owner_id ctx in
+                let source_workspace = state.cwd in
                 let workspace_binding =
                   match isolation with
                   | Taumel.Agent_workspace.None ->
-                      Ok (Taumel.Agent_workspace.shared ~source_root:state.cwd)
+                      Ok (Taumel.Agent_workspace.shared ~source_root:source_workspace)
                   | Taumel.Agent_workspace.Worktree -> (
-                      match Agent_worktree_host.resolve_repository state.cwd with
+                      match Agent_worktree_host.resolve_repository source_workspace with
                       | Error (_code, message) -> Error message
                       | Ok (_toplevel, main_repository_root, main_repository_id, _head)
                         ->
                           Ok
                             (Taumel.Agent_workspace.worktree
-                               ~source_origin:state.cwd ~main_repository_root
+                               ~source_origin:source_workspace ~main_repository_root
                                ~main_repository_id))
                 in
+                let base_agent_state = !agent_state in
                 match workspace_binding with
                 | Error message -> error_obj message
                 | Ok workspace_binding -> (
                 match
-                  Taumel.Agents.record_spawn !agent_state ~now
+                  Taumel.Agents.record_spawn base_agent_state ~now
                     ~owner_session_id:owner ~kind ?effort ~model ~thinking
                     ~description ~active_tools ~permission_ceiling:ceiling
                     ~network_allowed ~workspace_binding ()
@@ -244,53 +267,49 @@ let prepare_start name params ctx =
                     ( next,
                       (identity : Taumel.Agents.identity),
                       (run : Taumel.Agents.agent_run) ) ->
-                    let rollback () =
-                      match
-                        Taumel.Agents.rollback_unaccepted_spawn next
-                          ~owner_session_id:owner
-                          ~agent_id:identity.identity_agent_id ~run_id:run.run_id
-                          ~submission_id:run.run_submission_id
-                      with
-                      | Ok rolled -> agent_state := rolled
-                      | Error _ -> ()
-                    in
-                    let identity_result =
-                      match isolation with
-                      | Taumel.Agent_workspace.None -> Ok (next, identity)
+                    let commit () =
+                      if !agent_state <> base_agent_state then
+                        Error "agent action capability is stale"
+                      else match isolation with
+                      | Taumel.Agent_workspace.None -> commit_agent_state ctx next
                       | Taumel.Agent_workspace.Worktree -> (
                           match
                             Agent_worktree_host.provision
+                              ~expected_binding:workspace_binding
                               ~owner_session_id:owner
                               ~agent_id:identity.identity_agent_id
-                              ~source_workspace:state.cwd
+                              ~source_workspace
                           with
                           | Error (_code, message) ->
                               Error ("workspace_unavailable: " ^ message)
-                          | Ok (binding, _derived, _marker) ->
-                              let identity =
-                                {
-                                  identity with
-                                  identity_workspace_binding = binding;
-                                }
+                          | Ok (binding, derived, _marker) ->
+                              let committed_identity =
+                                { identity with identity_workspace_binding = binding }
                               in
-                              let next =
+                              let committed_state =
                                 {
                                   next with
                                   identities =
-                                    Taumel.Agents.replace_identity identity
+                                    Taumel.Agents.replace_identity committed_identity
                                       next.identities;
                                 }
                               in
-                              Ok (next, identity))
+                              match commit_agent_state ctx committed_state with
+                              | Ok () -> Ok ()
+                              | Error message ->
+                                  (match
+                                     Agent_worktree_host.rollback_failed_start
+                                       ~owner_session_id:owner
+                                       ~agent_id:identity.identity_agent_id
+                                       ~main_repository_root:derived.main_repository_root
+                                       ~main_repository_id:derived.main_repository_id
+                                       ~worktree_path:derived.worktree_path
+                                       ~branch:derived.branch
+                                   with
+                                  | Ok () -> Error message
+                                  | Error (_code, cleanup_message) ->
+                                      Error (message ^ "; " ^ cleanup_message)))
                     in
-                    match identity_result with
-                    | Error message ->
-                        rollback ();
-                        error_obj message
-                    | Ok (next, identity) -> (
-                    match commit_agent_state ctx next with
-                    | Error message -> error_obj message
-                    | Ok () ->
                     let result_fields =
                       [
                         ("agent_id", Taumel.Shared.String identity.identity_agent_id);
@@ -313,14 +332,21 @@ let prepare_start name params ctx =
                       start_details ~identity ~run ~prompt:message
                     in
                     let metadata =
-                      json_to_js (identity_metadata ~identity ())
+                      decode_ojs_contract Tool_contracts.AgentSessionMetadata.t_of_js
+                        (ojs_of_js
+                           (json_to_js (identity_metadata ~identity ~planned:true ())))
+                    in
+                    let capability_id =
+                      Agent_action_capability.issue ~commit ~action:"agent_start"
+                        ~agent_id:identity.identity_agent_id ~run_id:run.run_id
+                        ~submission_id:run.run_submission_id ctx
                     in
                     Boundary_contracts.PreparedAgentStart.create ~text
-                      ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details))
+                      ~details
                       ~prompt:message ~agentId:identity.identity_agent_id
                       ~runId:run.run_id ~submissionId:run.run_submission_id
-                      ~metadata:(Ts2ocaml.unknown_of_js (ojs_of_js metadata)) ()
-                    |> Tool_contracts.PreparedAgentStart.t_to_js |> inject)))))
+                      ~capabilityId:capability_id ~metadata ()
+                    |> Tool_contracts.PreparedAgentStart.t_to_js |> inject))))
 let prepare_send params ctx =
   if is_agent_child ctx then reject_nested "agent_send"
   else
@@ -330,6 +356,9 @@ let prepare_send params ctx =
             Taumel.Shared.trim_non_empty
         with
         | None -> error_obj "agent_send.agent_id is required"
+        | Some agent_id
+          when Agent_action_capability.in_progress ~agent_id ctx ->
+            error_obj ("agent action is already executing: " ^ agent_id)
         | Some agent_id when List.mem agent_id !agent_closing_ids ->
             error_obj ("agent is closing: " ^ agent_id)
         | Some agent_id ->
@@ -351,49 +380,40 @@ let prepare_send params ctx =
               Taumel.Agents.active_or_suspended_run !agent_state agent_id
             in
             let now = now_seconds () in
+            let base_agent_state = !agent_state in
             match
-              Taumel.Agents.record_send !agent_state ~now
+              Taumel.Agents.record_send base_agent_state ~now
                 ~owner_session_id:(owner_id ctx) ~agent_id ~interrupt
                 ~description message
             with
             | Error message -> error_obj message
             | Ok delivery ->
-                (match commit_agent_state ctx delivery.delivery_state with
-                | Error message -> error_obj message
-                | Ok () ->
-                (match Taumel.Agents.find_identity !agent_state agent_id with
-                | Some identity ->
-                    ignore
-                      (Agent_child_session_host
-                       .recover_uncommitted_envelope_for_identity ~identity)
-                | None -> ());
+                let commit () =
+                  if !agent_state <> base_agent_state then
+                    Error "agent action capability is stale"
+                  else match commit_agent_state ctx delivery.delivery_state with
+                  | Error _ as error -> error
+                  | Ok () ->
+                      (match Taumel.Agents.find_identity !agent_state agent_id with
+                      | Some identity ->
+                          ignore
+                            (Agent_child_session_host
+                             .recover_uncommitted_envelope_for_identity ~identity)
+                      | None -> ());
+                      Ok ()
+                in
                 let outcome =
                   Taumel.Agents.send_outcome_to_string delivery.delivery_outcome
                 in
                 let details =
-                  let fields =
-                    [
-                      ("agent_id", js_string agent_id);
-                      ("outcome", js_string outcome);
-                    ]
-                  in
-                  let fields =
-                    match delivery.delivery_run_id with
-                    | None -> fields
-                    | Some run_id -> fields @ [ ("run_id", js_string run_id) ]
-                  in
-                  let fields =
-                    match delivery.delivery_status with
-                    | None -> fields
-                    | Some status -> fields @ [ ("status", js_run_status status) ]
-                  in
-                  let fields =
-                    match delivery.delivery_submission_id with
-                    | None -> fields
-                    | Some submission_id ->
-                        fields @ [ ("submission_id", js_string submission_id) ]
-                  in
-                  Unsafe.obj (Array.of_list fields)
+                  Tool_contracts.AgentSendDetails.create
+                    ~agentId:agent_id
+                    ~outcome:(Boundary_contracts.AgentSendDetails.outcome_to_contract
+                      (contract_send_outcome delivery.delivery_outcome))
+                    ?runId:delivery.delivery_run_id
+                    ?status:(Option.map contract_run_status delivery.delivery_status
+                      |> Option.map Boundary_contracts.AgentSendDetails.status_to_contract)
+                    ?submissionId:delivery.delivery_submission_id ()
                 in
                 let dispatch =
                   match delivery.delivery_outcome with
@@ -405,22 +425,24 @@ let prepare_send params ctx =
                 in
                 let deliver_as =
                   match delivery.delivery_outcome with
-                  | Taumel.Agents.Message_sent -> "steer"
-                  | _ -> "followUp"
+                  | Taumel.Agents.Message_sent -> `V_steer
+                  | _ -> `V_followUp
                 in
                 let identity : Taumel.Agents.identity option =
                   Taumel.Agents.find_identity !agent_state agent_id
                 in
                 let metadata =
                   match identity with
-                  | None -> Unsafe.inject Js.null
+                  | None -> failwith "agent identity disappeared while preparing send"
                   | Some identity ->
-                      json_to_js
-                        (match identity.identity_child_session_file with
-                        | Some file ->
-                            identity_metadata ~identity ~child_session_file:file
-                              ()
-                        | None -> identity_metadata ~identity ())
+                      decode_ojs_contract Tool_contracts.AgentSessionMetadata.t_of_js
+                           (ojs_of_js
+                              (json_to_js
+                                 (match identity.identity_child_session_file with
+                                 | Some file ->
+                                     identity_metadata ~identity
+                                       ~child_session_file:file ()
+                                 | None -> identity_metadata ~identity ())))
                 in
                 let result_fields =
                   [
@@ -439,26 +461,31 @@ let prepare_send params ctx =
                   | _ -> result_fields
                 in
                 let text = json_success result_fields in
+                let capability_id =
+                  Agent_action_capability.issue ~commit ~action:"agent_send"
+                    ~agent_id ?run_id:delivery.delivery_run_id
+                    ?submission_id:delivery.delivery_submission_id ctx
+                in
                 let previous_submission_id =
                   Option.map
                     (fun (run : Taumel.Agents.agent_run) -> run.run_submission_id)
                     previous_run
                 in
-                let previous_reason_code =
-                  Option.bind previous_run
-                    (fun (run : Taumel.Agents.agent_run) ->
-                      Option.map Taumel.Agents.reason_code_to_string
-                        run.run_reason_code)
-                in
                 Boundary_contracts.PreparedAgentSend.create ~text
-                  ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details))
+                  ~details
                   ~prompt:message ~agentId:agent_id ~dispatch ~interrupt
-                  ~dispatchDeliverAs:deliver_as ?runId:delivery.delivery_run_id
+                  ~dispatchDeliverAs:(Boundary_contracts.PreparedAgentSend.dispatch_deliver_as_to_contract
+                                        deliver_as)
+                  ?runId:delivery.delivery_run_id
                   ?submissionId:delivery.delivery_submission_id
                   ?previousSubmissionId:previous_submission_id
-                  ?previousReasonCode:previous_reason_code ~outcome
-                  ~metadata:(Ts2ocaml.unknown_of_js (ojs_of_js metadata)) ()
-                |> Tool_contracts.PreparedAgentSend.t_to_js |> inject))
+                  ?previousReasonCode:(Option.map contract_suspension_reason
+                    (Option.bind previous_run (fun (run : Taumel.Agents.agent_run) -> run.run_reason_code))
+                    |> Option.map Boundary_contracts.PreparedAgentSend.previous_reason_code_to_contract)
+                  ~outcome:(Boundary_contracts.PreparedAgentSend.outcome_to_contract
+                    (contract_send_outcome delivery.delivery_outcome))
+                  ~capabilityId:capability_id ~metadata ()
+                |> Tool_contracts.PreparedAgentSend.t_to_js |> inject)
 let assistant_text_from_entry_json = function
   | Taumel.Shared.Object fields -> (
       match
@@ -653,22 +680,12 @@ let prepare_wait params ctx =
             tool_result text details)
         | Ok wait ->
             let details =
-              Unsafe.obj
-                [|
-                  ("ok", js_bool true);
-                  ("timed_out", js_bool false);
-                  ("results", js_array []);
-                  ( "pending_run_ids",
-                    js_array (List.map js_string wait.wait_pending_run_ids) );
-                  ( "timeout_seconds",
-                    match timeout_seconds with
-                    | None -> Unsafe.inject Js.null
-                    | Some value -> js_number value );
-                |]
+              Boundary_contracts.AgentWaitDetails.create ~results:[]
+                ~pendingRunIds:wait.wait_pending_run_ids ?timeoutSeconds:timeout_seconds ()
             in
             Boundary_contracts.PreparedAgentWait.create
               ~text:"Waiting for agent runs."
-              ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details))
+              ~details
               ~runIds:wait.wait_pending_run_ids ?timeoutSeconds:timeout_seconds ()
             |> Tool_contracts.PreparedAgentWait.t_to_js |> inject)
 let prepare_list ctx =
@@ -802,7 +819,6 @@ let prepare_list ctx =
              |]))
 let prepare_close = Agent_close.prepare_close
 let finish_close = Agent_close.finish_close
-let release_close = Agent_close.release_close
 let delete_child_session = Agent_close.delete_child_session
 let record_close_cleanup_failure = Agent_close.record_close_cleanup_failure
 

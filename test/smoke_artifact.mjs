@@ -132,6 +132,35 @@ if (!/session synchronization failed.*forced session synchronization failure/i.t
     `generic preparation continued after failed session synchronization: ${JSON.stringify({ failedSyncRejection })}`,
   );
 }
+const staleRefreshPlan = core.call("planChildPermissionRefresh", [
+  null,
+  {
+    kind: "agent",
+    capabilityProfile: {
+      modelId: "inherit",
+      thinkingLevel: "medium",
+      sandboxPreset: "workspace-write",
+      approvalPolicy: "never",
+      tools: { kind: "all" },
+      noSandboxAllowed: false,
+    },
+    networkMode: "enabled",
+  },
+  failedSyncCtx,
+]);
+const staleRefreshPermissions = staleRefreshPlan?.permissions;
+if (
+  staleRefreshPermissions?.profile?.sandboxPreset !== "read-only"
+  || staleRefreshPermissions?.profile?.approvalPolicy !== "untrusted"
+  || staleRefreshPermissions?.profile?.tools?.kind !== "none"
+  || staleRefreshPermissions?.networkMode !== "disabled"
+  || staleRefreshPermissions?.noSandbox !== false
+  || staleRefreshPermissions?.isolated_child !== true
+) {
+  throw new Error(
+    `sandbox-afnn child refresh did not fail closed after owner sync failure: ${JSON.stringify(staleRefreshPlan)}`,
+  );
+}
 // shared-0gc2: malformed reverse-boundary values reject before application logic.
 for (const [name, params, expectedError] of [
   [

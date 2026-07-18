@@ -4,18 +4,18 @@ let trim_option = function
   | Some value -> Shared.trim_non_empty value
   | None -> None
 
-let normalize_limit = function
-  | Some value -> max 1 (min 50 value)
-  | None -> 10
-
 let prepare_query_request ?limit ?scope ?(include_tools = true) query =
   match Shared.trim_non_empty query with
   | None -> Error "query_threads requires query"
   | Some query ->
       let scope = Option.value scope ~default:"current_workspace" in
-      if scope <> "current_workspace" && scope <> "all" then
+      if String.length query > 500 then
+        Error "query_threads query must be at most 500 characters"
+      else if Option.fold ~none:false ~some:(fun value -> value < 1 || value > 50) limit then
+        Error "query_threads limit must be between 1 and 50"
+      else if scope <> "current_workspace" && scope <> "all" then
         Error "query_threads scope must be current_workspace or all"
-      else Ok { query; limit = normalize_limit limit; scope; include_tools }
+      else Ok { query; limit = Option.value limit ~default:10; scope; include_tools }
 
 let read_mode_of_string = function
   | None | Some "overview" -> Ok Overview
@@ -29,16 +29,32 @@ let read_mode_to_string = function
   | Full -> "full"
 
 let prepare_read_request (input : read_request_input) =
+  let conflicting_thread_ids =
+    match (trim_option input.thread_id, trim_option input.locator_thread_id) with
+    | Some thread_id, Some locator_thread_id -> thread_id <> locator_thread_id
+    | _ -> false
+  in
   let thread_id =
     match trim_option input.thread_id with
     | Some _ as value -> value
     | None -> trim_option input.locator_thread_id
   in
-  match (thread_id, read_mode_of_string input.mode) with
+  if conflicting_thread_ids then
+    Error "read_thread threadID must match locator.threadID"
+  else match (thread_id, read_mode_of_string input.mode) with
   | None, _ -> Error "read_thread requires threadID"
   | _, Error message -> Error message
+  | Some _, Ok _
+    when Option.fold ~none:false ~some:(fun value -> value < 0 || value > 10)
+           input.around ->
+      Error "read_thread around must be between 0 and 10"
+  | Some _, Ok _
+    when Option.fold ~none:false ~some:(fun value -> value < 1) input.line
+         || Option.fold ~none:false ~some:(fun value -> value < 1)
+              input.locator_line ->
+      Error "read_thread line must be positive"
   | Some thread_id, Ok mode ->
-      let around = Option.value input.around ~default:3 |> max 0 |> min 10 in
+      let around = Option.value input.around ~default:3 in
       let locator =
         match trim_option input.locator_thread_id with
         | None -> None

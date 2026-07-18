@@ -49,6 +49,20 @@ let mode_of_string = function "goal" -> Some Goal | "message" -> Some Message | 
 
 let validate_prompt prompt = Shared.require_non_empty "cron prompt" prompt
 
+let valid_task_id value =
+  String.length value = 8
+  && String.for_all
+       (fun character ->
+         (character >= '0' && character <= '9')
+         || (character >= 'a' && character <= 'f'))
+       value
+
+let scheduled_at expr timestamp =
+  let parts = Unix.localtime (float_of_int timestamp) in
+  parts.tm_sec = 0
+  && Cron_expr.matches expr ~minute:parts.tm_min ~hour:parts.tm_hour
+       ~day:parts.tm_mday ~month:(parts.tm_mon + 1) ~weekday:parts.tm_wday
+
 let next_due cron ~now =
   Result.bind (Cron_expr.parse cron) (fun expr ->
       match Cron_expr.next_due_after expr ~after:now with
@@ -219,6 +233,12 @@ let task_json task =
 let task_of_json json =
   let open Shared in
   Result.bind (json_object_fields "taumel.cron.task" json) (fun fields ->
+      let expected =
+        [ "id"; "cron"; "prompt"; "recurring"; "mode"; "enabled";
+          "createdAt"; "nextDue" ]
+        @ if List.mem_assoc "pendingSince" fields then [ "pendingSince" ] else []
+      in
+      Result.bind (json_exact_fields "taumel.cron.task" expected fields) (fun () ->
       Result.bind (json_required_string "taumel.cron.task" fields "id") (fun id ->
           Result.bind (json_required_string "taumel.cron.task" fields "cron") (fun cron ->
               Result.bind (json_required_string "taumel.cron.task" fields "prompt") (fun prompt ->
@@ -227,12 +247,32 @@ let task_of_json json =
                           match mode_of_string mode_s with
                           | None -> Error "taumel.cron.task.mode is invalid"
                           | Some mode ->
-                              Result.bind (json_bool_default "taumel.cron.task" fields "enabled" true) (fun enabled ->
+                              Result.bind (json_required_bool "taumel.cron.task" fields "enabled") (fun enabled ->
                               Result.bind (json_required_int "taumel.cron.task" fields "createdAt") (fun created_at ->
 	                                  Result.bind (json_required_int "taumel.cron.task" fields "nextDue") (fun next_due ->
-                                      Result.bind (json_optional_number "taumel.cron.task" fields "pendingSince")
+                                      Result.bind
+                                        (match List.assoc_opt "pendingSince" fields with
+                                        | None -> Ok None
+                                        | Some Null -> Error "taumel.cron.task.pendingSince must be an integer"
+                                        | Some value ->
+                                            Result.map Option.some
+                                              (json_int "taumel.cron.task.pendingSince" value))
                                         (fun pending_since ->
-                                          Ok
+                                          Result.bind (validate_prompt prompt) (fun prompt ->
+                                          Result.bind (Cron_expr.parse cron) (fun expr ->
+                                          if not (valid_task_id id) then
+                                            Error "taumel.cron.task.id must be eight lowercase hexadecimal characters"
+                                          else if created_at < 0 || next_due <= created_at then
+                                            Error "taumel.cron.task timestamps are invalid"
+                                          else if not (scheduled_at expr next_due) then
+                                            Error "taumel.cron.task.nextDue is not a scheduled occurrence"
+                                          else if
+                                            match pending_since with
+                                            | Some value -> value <> next_due
+                                            | None -> false
+                                          then
+                                            Error "taumel.cron.task.pendingSince must equal nextDue"
+                                          else Ok
                                             {
                                               id;
                                               cron;
@@ -242,12 +282,13 @@ let task_of_json json =
 	                                              enabled;
 	                                              created_at;
 	                                              next_due;
-	                                              pending_since = Option.map int_of_float pending_since;
-	                                            }))))))))))
+	                                              pending_since;
+	                                            })))))))))))))
 
 let encode state =
   Shared.Object
     [
+      ("version", Number 1.);
       ("enabled", Bool state.enabled);
       ("tasks", Array (List.map task_json state.tasks));
     ]
@@ -255,14 +296,22 @@ let encode state =
 let decode json =
   let open Shared in
   Result.bind (json_object_fields "taumel.cron" json) (fun fields ->
-      Result.bind (json_bool_default "taumel.cron" fields "enabled" true) (fun enabled ->
+      Result.bind
+        (json_exact_fields "taumel.cron" [ "version"; "enabled"; "tasks" ] fields)
+        (fun () ->
+      Result.bind (json_required_int "taumel.cron" fields "version") (fun version ->
+          if version <> 1 then Error "unsupported cron state version"
+          else
+      Result.bind (json_required_bool "taumel.cron" fields "enabled") (fun enabled ->
           Result.bind (json_required_field "taumel.cron" fields "tasks") (fun tasks_json ->
               Result.bind (json_array "taumel.cron.tasks" tasks_json) (fun values ->
-                  let rec loop acc = function
+                  let rec loop seen acc = function
                     | [] -> Ok { enabled; tasks = List.rev acc }
                     | value :: rest -> (
                         match task_of_json value with
-                        | Ok task -> loop (task :: acc) rest
+                        | Ok task when List.mem task.id seen ->
+                            Error "taumel.cron.tasks must not contain duplicate ids"
+                        | Ok task -> loop (task.id :: seen) (task :: acc) rest
                         | Error _ as error -> error)
                   in
-                  loop [] values))))
+                  loop [] [] values))))))

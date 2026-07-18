@@ -206,6 +206,13 @@ let test_request_preparation () =
   | Error "query_threads requires query" -> ()
   | Error message -> fail "query request empty" ("unexpected error: " ^ message)
   | Ok _ -> fail "query request empty" "expected error");
+  (match Threads.prepare_query_request ~limit:0 "needle" with
+  | Error _ -> ()
+  | Ok _ -> fail "query limit" "expected error");
+  (match Threads.prepare_query_request (String.make 501 'q') with
+  | Error "query_threads query must be at most 500 characters" -> ()
+  | Error message -> fail "query length" message
+  | Ok _ -> fail "query length" "expected error");
   (match
      Threads.prepare_read_request
        {
@@ -241,7 +248,30 @@ let test_request_preparation () =
    with
   | Error "read_thread requires threadID" -> ()
   | Error message -> fail "read request empty" ("unexpected error: " ^ message)
-  | Ok _ -> fail "read request empty" "expected error")
+  | Ok _ -> fail "read request empty" "expected error");
+  (match
+     Threads.prepare_read_request
+       {
+         thread_id = Some "thread-1"; locator_thread_id = None;
+         locator_source_path = None; locator_entry_id = None; locator_line = None;
+         entry_id = None; line = Some 0; mode = Some "overview";
+         around = Some 11; cursor = None;
+       }
+   with
+  | Error _ -> ()
+  | Ok _ -> fail "read bounds" "expected error");
+  (match
+     Threads.prepare_read_request
+       {
+         thread_id = Some "thread-1"; locator_thread_id = Some "thread-2";
+         locator_source_path = None; locator_entry_id = Some "entry";
+         locator_line = None; entry_id = None; line = None;
+         mode = Some "window"; around = None; cursor = None;
+       }
+   with
+  | Error "read_thread threadID must match locator.threadID" -> ()
+  | Error message -> fail "read identity" message
+  | Ok _ -> fail "read identity" "expected error")
 
 let test_cursor_validation () =
   let invalid_request = read_request ~mode:"full" ~cursor:"not-a-cursor" "thread-1" in

@@ -210,7 +210,12 @@ let ralph_child_capability_profile (parent : Capability_profile.t) active_tools 
     Capability_profile.allowlist_intersection parent.Capability_profile.tools
       (Capability_profile.of_list active_tools)
   in
-  { parent with tools; no_sandbox_allowed = false }
+  let sandbox_preset =
+    match parent.sandbox_preset with
+    | Capability_profile.Danger_full_access -> Capability_profile.Workspace_write
+    | sandbox_preset -> sandbox_preset
+  in
+  { parent with sandbox_preset; tools; no_sandbox_allowed = false }
 
 let enrich_command_child_metadata ~parent_profile ~current_active_tools_available
     ~current_active_tools ~active_tools_mode metadata =
@@ -255,11 +260,99 @@ let permissions_entry metadata =
                   match List.assoc_opt "networkMode" fields with
                   | Some (Shared.String value) -> Shared.String value
                   | _ -> Shared.String "disabled" );
-                ("noSandbox", Shared.Bool (bool_field "noSandbox" fields));
-                ("isolated_child", Shared.Bool (bool_field "isolated_child" fields));
+                ("noSandbox", Shared.Bool false);
+                ("isolated_child", Shared.Bool true);
               ];
         }
   | _ -> None
+
+let fail_closed_child_permissions_entry () =
+  let profile =
+    {
+      Capability_profile.default with
+      sandbox_preset = Capability_profile.Read_only;
+      approval_policy = Capability_profile.Untrusted;
+      tools = Capability_profile.None_allowed;
+    }
+  in
+  match
+    Permissions.create ~network_mode:Sandbox.Network_disabled ~no_sandbox:false
+      ~isolated_child:true profile
+  with
+  | Ok permissions -> Permissions.codec.encode permissions
+  | Error message -> failwith message
+
+let refresh_permissions_entry ~host_sandbox_preset ~host_network_mode
+    ~host_no_sandbox ~parent_permissions metadata =
+  let ( let* ) = Result.bind in
+  let fields = object_fields metadata in
+  let decoded_ceiling =
+    let* ceiling =
+      match List.assoc_opt "capabilityProfile" fields with
+      | Some profile -> Capability_profile.of_json profile
+      | None -> Error "child metadata requires capabilityProfile"
+    in
+    let* ceiling_network =
+      match List.assoc_opt "networkMode" fields with
+      | None when string_field "kind" fields = Some "ralph" ->
+          Ok Sandbox.Network_disabled
+      | None -> Error "child metadata requires networkMode"
+      | Some (Shared.String value) -> (
+          match Permissions.persisted_network_of_string value with
+          | Some network_mode -> Ok network_mode
+          | None -> Error ("unknown child network mode: " ^ value))
+      | Some _ -> Error "child networkMode must be a string"
+    in
+    Ok (ceiling, ceiling_network)
+  in
+  match decoded_ceiling with
+  | Error _ -> fail_closed_child_permissions_entry ()
+  | Ok (ceiling, ceiling_network) ->
+      let persisted_parent =
+        match parent_permissions with
+        | None | Some Shared.Null -> Permissions.Missing
+        | Some permissions -> (
+            match Permissions.codec.decode permissions with
+            | Ok permissions -> Permissions.Persisted permissions
+            | Error _ -> Permissions.Invalid)
+      in
+      let parent =
+        Permissions.resolve_active ~host_sandbox_preset ~host_network_mode
+          ~host_no_sandbox ~session_isolated_child:false persisted_parent
+      in
+      let sandbox_preset =
+        match
+          Capability_profile.stricter_sandbox ceiling.sandbox_preset
+            parent.profile.sandbox_preset
+        with
+        | Capability_profile.Danger_full_access ->
+            Capability_profile.Workspace_write
+        | sandbox_preset -> sandbox_preset
+      in
+      let approval_policy =
+        Capability_profile.stricter_approval ceiling.approval_policy
+          parent.profile.approval_policy
+      in
+      let network_mode =
+        match (ceiling_network, parent.network_mode) with
+        | Sandbox.Network_enabled, Sandbox.Network_enabled ->
+            Sandbox.Network_enabled
+        | _ -> Sandbox.Network_disabled
+      in
+      let profile =
+        {
+          ceiling with
+          sandbox_preset;
+          approval_policy;
+          no_sandbox_allowed = false;
+        }
+      in
+      (match
+         Permissions.create ~network_mode ~no_sandbox:false ~isolated_child:true
+           profile
+       with
+      | Ok permissions -> Permissions.codec.encode permissions
+      | Error _ -> fail_closed_child_permissions_entry ())
 
 let initial_goal_entries fields =
   match string_field "initialGoalObjective" fields with

@@ -64,6 +64,21 @@ let patch_authorization (sandbox : Taumel.Sandbox.config) patch =
       | Ok auth_paths, Ok auth_roots -> Ok (auth_paths, auth_roots)
       | Error _ as error, _ | _, (Error _ as error) -> error)
 
+let validate_frozen_patch_authorizations patch authorized_paths =
+  match Taumel.Sandbox.Patch.parse patch with
+  | Error _ as error -> error
+  | Ok parsed ->
+      let expected =
+        Taumel.Sandbox.Patch.affected_paths parsed |> List.sort_uniq String.compare
+      in
+      let supplied = List.map fst authorized_paths in
+      let unique_supplied = List.sort_uniq String.compare supplied in
+      if List.length supplied <> List.length unique_supplied then
+        Error "duplicate original path in frozen patch authorization"
+      else if unique_supplied <> expected then
+        Error "frozen patch authorization does not match patch paths"
+      else Ok ()
+
 let exec_request_from_params params =
   let params = decode_ojs_contract Tool_contracts.ExecCommandParams.t_of_js (ojs_of_js params) in
   let sandbox_permissions =
@@ -455,15 +470,14 @@ let prepare_write_stdin params =
             ~outputMode ()
           |> Tool_contracts.PreparedWriteStdin.t_to_js |> inject)
 
-let js_edit_replacement (edit : Taumel.Sandbox.edit_replacement) =
-  Unsafe.obj
-    [|
-      ("oldText", js_string edit.old_text);
-      ("newText", js_string edit.new_text);
-    |]
+let prepared_edit_replacement (edit : Taumel.Sandbox.edit_replacement) =
+  Tool_contracts.EditReplacement.create ~oldText:edit.old_text
+    ~newText:edit.new_text ()
 
-let unknown_edit edit =
-  Ts2ocaml.unknown_of_js (ojs_of_js (js_edit_replacement edit))
+let prepared_write_mode = function
+  | "overwrite" -> Boundary_contracts.PreparedWrite.mode_to_contract `V_overwrite
+  | "append" -> Boundary_contracts.PreparedWrite.mode_to_contract `V_append
+  | _ -> failwith "invalid planned write mode"
 
 let prepare_write params ctx =
   with_child_session_metadata ctx (fun child_metadata ->
@@ -488,14 +502,14 @@ let prepare_write params ctx =
                     ~workspaceRoots:plan.workspace_roots
                     ~validateWorkspacePaths:plan.validate_workspace_paths
                     ~path:plan.path ~displayPath:plan.display_path ~contents
-                    ~mode:request.mode ()
+                    ~mode:(prepared_write_mode request.mode) ()
                   |> Tool_contracts.PreparedWrite.t_to_js |> inject
               | Some approval ->
                   Boundary_contracts.PreparedWriteApproval.create
                     ~workspaceRoots:plan.workspace_roots
                     ~validateWorkspacePaths:plan.validate_workspace_paths
                     ~path:plan.path ~displayPath:plan.display_path ~contents
-                    ~mode:request.mode ~approvalAction:"write"
+                    ~mode:(prepared_write_mode request.mode)
                     ~approvalTitle:approval.title ~approvalPrompt:approval.prompt
                     ~approvalTimeoutMs:(float_of_int approval.timeout_ms) ()
                   |> Tool_contracts.PreparedWriteApproval.t_to_js |> inject))))
@@ -526,7 +540,7 @@ let prepare_edit params ctx =
             when child_rejects_filesystem_approval child_metadata plan.approval ->
               error_obj "worktree-isolated child filesystem approval is forbidden"
           | Ok plan ->
-              let edits = List.map unknown_edit plan.edits in
+              let edits = List.map prepared_edit_replacement plan.edits in
               (match plan.approval with
               | None ->
                   Boundary_contracts.PreparedEdit.create
@@ -539,29 +553,27 @@ let prepare_edit params ctx =
                     ~workspaceRoots:plan.workspace_roots
                     ~validateWorkspacePaths:plan.validate_workspace_paths
                     ~path:plan.path ~displayPath:plan.display_path ~edits
-                    ~approvalAction:"edit" ~approvalTitle:approval.title
+                    ~approvalTitle:approval.title
                     ~approvalPrompt:approval.prompt
                     ~approvalTimeoutMs:(float_of_int approval.timeout_ms) ()
                   |> Tool_contracts.PreparedEditApproval.t_to_js |> inject))))
 
 let apply_edit_to_file raw_facts =
   let facts = decode_ojs_contract Tool_contracts.EditApplicationFacts.t_of_js (ojs_of_js raw_facts) in
-  let prepared = Tool_contracts.EditApplicationFacts.get_prepared facts |> Ts2ocaml.unknown_to_js |> js_of_ojs in
   let contents = Tool_contracts.EditApplicationFacts.get_contents facts in
-  let request = edit_request_from_params prepared in
-  let path = request.path in
-  let display_path =
-    match optional_string_field prepared "displayPath" with
-    | Some value when String.trim value <> "" -> value
-    | _ -> path
+  let path = Tool_contracts.EditApplicationFacts.get_path facts in
+  let display_path = Tool_contracts.EditApplicationFacts.get_displayPath facts in
+  let edits =
+    Tool_contracts.EditApplicationFacts.get_edits facts
+    |> List.map edit_replacement_from_params
   in
-  match Taumel.Sandbox.apply_edits ~display_path contents request.edits with
+  match Taumel.Sandbox.apply_edits ~display_path contents edits with
   | Error message ->
       Boundary_contracts.MutationError.create ~message ()
       |> Tool_contracts.MutationError.t_to_js |> inject
   | Ok contents ->
       Boundary_contracts.EditApplied.create ~path ~displayPath:display_path
-        ~contents ~editCount:(float_of_int (List.length request.edits)) ()
+        ~contents ~editCount:(float_of_int (List.length edits)) ()
       |> Tool_contracts.EditApplied.t_to_js |> inject
 
 let prepare_apply_patch params ctx =
@@ -573,6 +585,13 @@ let prepare_apply_patch params ctx =
           match patch_authorization_for_child child_metadata sandbox request.patch with
           | Error message -> error_obj message
           | Ok (auth_paths, auth_roots) -> (
+              let authorized_paths =
+                List.map
+                  (fun (original_path, resolved_path) ->
+                    Tool_contracts.AuthorizedMutationPath.create
+                      ~originalPath:original_path ~resolvedPath:resolved_path ())
+                  auth_paths
+              in
               match
                 Taumel.Mutation_plan.plan_apply_patch ~auth_paths ~auth_roots
                   sandbox request
@@ -587,14 +606,15 @@ let prepare_apply_patch params ctx =
                       Boundary_contracts.PreparedPatch.create
                         ~workspaceRoots:plan.workspace_roots
                         ~validateWorkspacePaths:plan.validate_workspace_paths
-                        ~affectedPaths:plan.affected_paths ~patch:request.patch ()
+                        ~affectedPaths:plan.affected_paths
+                        ~authorizedPaths:authorized_paths ~patch:request.patch ()
                       |> Tool_contracts.PreparedPatch.t_to_js |> inject
                   | Some approval ->
                       Boundary_contracts.PreparedPatchApproval.create
                         ~workspaceRoots:plan.workspace_roots
                         ~validateWorkspacePaths:plan.validate_workspace_paths
-                        ~affectedPaths:plan.affected_paths ~patch:request.patch
-                        ~approvalAction:"apply_patch"
+                        ~affectedPaths:plan.affected_paths
+                        ~authorizedPaths:authorized_paths ~patch:request.patch
                         ~approvalTitle:approval.title ~approvalPrompt:approval.prompt
                         ~approvalTimeoutMs:(float_of_int approval.timeout_ms) ()
                       |> Tool_contracts.PreparedPatchApproval.t_to_js |> inject)))))
@@ -603,19 +623,23 @@ let files_map_from_js obj =
   object_keys obj
   |> List.fold_left
        (fun map path ->
-         let contents =
-           Option.value (string_value (Unsafe.get obj path)) ~default:""
-         in
+         let contents = Option.get (string_value (Unsafe.get obj path)) in
          Taumel.Shared.String_map.add path contents map)
        Taumel.Shared.String_map.empty
 
 let apply_patch_to_files raw_facts =
   let facts = decode_ojs_contract Tool_contracts.PatchApplicationFacts.t_of_js (ojs_of_js raw_facts) in
-  let params = Tool_contracts.PatchApplicationFacts.get_params facts |> Ts2ocaml.unknown_to_js |> js_of_ojs in
+  let params = Tool_contracts.PatchApplicationFacts.get_params facts in
   let files = Tool_contracts.PatchApplicationFacts.get_files facts |> Ts2ocaml.unknown_to_js |> js_of_ojs in
   let ctx = Tool_contracts.PatchApplicationFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> js_of_ojs in
   Session_sync.require_session_from_host ~scope:"apply_patch files" ctx;
   let approved = Tool_contracts.PatchApplicationFacts.get_filesystemApproval facts in
+  let authorized_paths =
+    Tool_contracts.PatchApplicationFacts.get_authorizedPaths facts
+    |> List.map (fun path ->
+           ( Tool_contracts.AuthorizedMutationPath.get_originalPath path,
+             Tool_contracts.AuthorizedMutationPath.get_resolvedPath path ))
+  in
   let mutation_error message =
     Boundary_contracts.MutationError.create ~message ()
     |> Tool_contracts.MutationError.t_to_js |> inject
@@ -624,15 +648,26 @@ let apply_patch_to_files raw_facts =
   | Error message -> mutation_error message
   | Ok child_metadata ->
   with_gateway_profile_authorized "apply_patch" (fun sandbox ->
-      match patch_request_from_params params with
+      match Taumel.Mutation_plan.patch_request_of_values
+              (Tool_contracts.ApplyPatchParams.get_input params) with
       | Error message -> mutation_error message
       | Ok request -> (
+          match
+            validate_frozen_patch_authorizations request.patch authorized_paths
+          with
+          | Error message -> mutation_error message
+          | Ok () ->
           match patch_authorization_for_child child_metadata sandbox request.patch with
           | Error message -> mutation_error message
-          | Ok (auth_paths, auth_roots) -> (
+          | Ok (current_auth_paths, auth_roots)
+            when List.sort compare current_auth_paths
+                 <> List.sort compare authorized_paths ->
+              mutation_error "patch authorization paths changed before application"
+          | Ok (_current_auth_paths, auth_roots) -> (
               match
-                Taumel.Mutation_plan.apply_patch_to_files ~approved ~auth_paths
-                  ~auth_roots sandbox request (files_map_from_js files)
+                Taumel.Mutation_plan.apply_patch_to_files ~approved
+                  ~auth_paths:authorized_paths ~auth_roots sandbox request
+                  (files_map_from_js files)
               with
               | Error message -> mutation_error message
               | Ok output ->

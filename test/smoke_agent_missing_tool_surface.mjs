@@ -62,11 +62,11 @@ try {
   }
   if (started?.details?.agent_id) {
     await tool("agent_wait").execute("missing-tool-wait", {
-      run_ids: [started.details.run_id],
+      run_ids: [started.details.runId],
       timeout_seconds: 5,
     });
     await tool("agent_close").execute("missing-tool-close", {
-      agent_id: started.details.agent_id,
+      agent_id: started.details.agentId,
     });
   }
 } finally {

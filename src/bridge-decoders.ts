@@ -2,6 +2,8 @@ import { Compile } from "typebox/compile";
 import { ActiveToolsPlanSchema, AuthorityPlanIssuedSchema, BridgeCommandResultSchema, BridgeErrorResultSchema, BridgeToolExecutionResultSchema, BridgeToolResultSchema, ChildDispatchPlanSchema, ChildSessionStartPlanSchema, CommandChildDispatchPlanSchema, CommandChildSessionPlanSchema, CommandExecutionPlanSchema, CommandNotificationPlanSchema, CommandSpecsResultSchema, CompactionCommandPlanSchema, CompactionSessionPlanSchema, CoreAckSchema, CronCommandResultSchema, CronDeliveredResultSchema, CronGoalFactsSchema, CronListResultSchema, CronPollPlanSchema, CronPromptPlanSchema, CronPromptSchema, CronStartupPlanSchema, EditApplicationResultSchema, EnvironmentContextPlanSchema, ExecApprovalPromptPlanSchema, ExecApprovalResultSchema, ExecNotificationClaimSchema, ExecPolicyAllowRuleResultSchema, ExecToolResultSchema, GoalContinuationPlanSchema, GoalRollbackResultSchema, OpenAiUsageHostAuthSchema, OpenAiUsageHostParamsSchema, PatchApplicationResultSchema, PendingExecNotificationsResultSchema, PermissionsCommandResultSchema, PermissionsPromptPlanSchema, PermissionsPromptSchema, RefreshExecPolicyResultSchema, SandboxHostPathPlanSchema, SkillListResultSchema, SkillResolveResultSchema, ThreadCatalogScansResultSchema, ToolNamesResultSchema, ToolResultEnvelopeSchema, ViewMediaResultEnvelopeSchema, VisibilityListResultSchema, VisibilityRowsResultSchema, VisibilitySavePlanSchema, VisibilityToggleResultSchema, VisibilityWarningsResultSchema, WorkspaceMutationValidationSchema, type ActiveToolsPlan, type AuthorityPlanIssued, type BridgeCommandResult, type BridgeToolExecutionResult, type BridgeToolResult, type ChildDispatchPlan, type ChildSessionStartPlan, type CommandChildDispatchPlan, type CommandChildSessionPlan, type CommandExecutionPlan, type CommandNotificationPlan, type CommandSpecsResult, type CompactionCommandPlan, type CompactionSessionPlan, type CoreAck, type CronCommandResult, type CronDeliveredResult, type CronGoalFacts, type CronListResult, type CronPollPlan, type CronPrompt, type CronPromptPlan, type CronStartupPlan, type EditApplicationResult, type EnvironmentContextPlan, type ExecApprovalPromptPlan, type ExecApprovalResult, type ExecNotificationClaim, type ExecPolicyAllowRuleResult, type ExecToolResult, type GoalContinuationPlan, type GoalRollbackResult, type OpenAiUsageHostAuth, type OpenAiUsageHostParams, type PatchApplicationResult, type PendingExecNotificationsResult, type PermissionsCommandResult, type PermissionsPrompt, type PermissionsPromptPlan, type RefreshExecPolicyResult, type SandboxHostPathPlan, type SkillListResult, type SkillResolveResult, type ThreadCatalogScansResult, type ToolNamesResult, type ToolResultEnvelope, type ViewMediaResultEnvelope, type VisibilityListResult, type VisibilityRowsResult, type VisibilitySavePlan, type VisibilityToggleResult, type VisibilityWarningsResult, type WorkspaceMutationValidation } from "./bridge-core-contracts.ts";
 import { AgentActiveCountResultSchema, AgentCleanupPlanSchema, AgentManagerSnapshotSchema, AgentNotificationClaimValidationSchema, AgentRoutingDiagnosticsResultSchema, ComposerCommandResultSchema, CronGoalCreationResultSchema, GatewayCommandOutputSchema, PendingAgentNotificationsResultSchema, PreparedToolActionSchema, type AgentActiveCountResult, type AgentCleanupPlan, type AgentManagerSnapshot, type AgentNotificationClaimValidation, type AgentRoutingDiagnosticsResult, type ComposerCommandResult, type CronGoalCreationResult, type GatewayCommandOutput, type PendingAgentNotificationsResult, type PreparedToolAction } from "./bridge-action-contracts.ts";
 import { ChildSessionMetadataSchema, type ChildSessionMetadata } from "./bridge-child-session-contracts.ts";
+import { ChildPermissionRefreshPlanSchema, type ChildPermissionRefreshPlan } from "./bridge-core-contracts.ts";
+import { TaumelPersistedCustomEntrySchema, type AnyPersistedTaumelCustomEntry } from "./session-entry-contracts.ts";
 
 const activeToolsPlanDecoder = Compile(ActiveToolsPlanSchema);
 const commandSpecsResultDecoder = Compile(CommandSpecsResultSchema);
@@ -18,6 +20,8 @@ const environmentContextPlanDecoder = Compile(EnvironmentContextPlanSchema);
 const commandNotificationPlanDecoder = Compile(CommandNotificationPlanSchema);
 const goalContinuationPlanDecoder = Compile(GoalContinuationPlanSchema);
 const childSessionStartPlanDecoder = Compile(ChildSessionStartPlanSchema);
+const childPermissionRefreshPlanDecoder = Compile(ChildPermissionRefreshPlanSchema);
+const sessionCustomEntryDecoder = Compile(TaumelPersistedCustomEntrySchema);
 const childSessionMetadataDecoder = Compile(ChildSessionMetadataSchema);
 const childDispatchPlanDecoder = Compile(ChildDispatchPlanSchema);
 const sandboxHostPathPlanDecoder = Compile(SandboxHostPathPlanSchema);
@@ -169,6 +173,30 @@ export function decodeGoalContinuationPlan(value: unknown): GoalContinuationPlan
 export function decodeChildSessionStartPlan(value: unknown): ChildSessionStartPlan {
   try { return childSessionStartPlanDecoder.Decode(value); }
   catch { throw new Error("Invalid OCaml child-session start plan response"); }
+}
+
+export function decodeChildPermissionRefreshPlan(value: unknown): ChildPermissionRefreshPlan {
+  try { return childPermissionRefreshPlanDecoder.Decode(value); }
+  catch { throw new Error("Invalid OCaml child-permission refresh plan response"); }
+}
+
+export function decodeSessionCustomEntry(value: unknown): AnyPersistedTaumelCustomEntry {
+  try {
+    const entry = sessionCustomEntryDecoder.Decode(value);
+    if (entry.customType === "taumel.cron") {
+      const ids = new Set<string>();
+      for (const task of entry.data.tasks) {
+        if (ids.has(task.id)) throw new Error("duplicate cron task id");
+        ids.add(task.id);
+        if (task.nextDue <= task.createdAt) throw new Error("invalid cron timestamps");
+        if (task.pendingSince !== undefined && task.pendingSince !== task.nextDue) {
+          throw new Error("invalid pending cron timestamp");
+        }
+      }
+    }
+    return entry;
+  }
+  catch { throw new Error("Invalid Taumel custom session entry"); }
 }
 
 export function decodeChildSessionMetadata(value: unknown): ChildSessionMetadata {

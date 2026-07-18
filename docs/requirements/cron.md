@@ -37,6 +37,7 @@ holds.
 
 - The system shall run cron entirely within an open Pi session, firing tasks only while that session is running. ^cron-sc01
 - The system shall scope tasks to the session, persist them in the session entry `taumel.cron`, and reload them on resume. ^cron-sc02
+- When decoding persisted cron state, the system shall accept only schema version `1` and tasks with unique eight-character lowercase hexadecimal ids, valid cron expressions, non-empty prompts, representable non-negative integral creation times, next-due times that are later than creation and match the task's schedule at a minute boundary, and pending timestamps equal to their task's next due time. ^cron-60bw
 - The system shall execute every fire on the main session agent so the work stays visible, interactive, and context-accumulating. ^cron-sc03
 
 ### Schedule

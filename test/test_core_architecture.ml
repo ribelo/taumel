@@ -280,6 +280,7 @@ let test_child_session_setup_entries () =
   let parent_profile =
     {
       Capability.default with
+      sandbox_preset = Capability.Danger_full_access;
       tools = Capability.of_list [ "exec_command"; "ralph_continue" ];
       no_sandbox_allowed = true;
     }
@@ -314,6 +315,8 @@ let test_child_session_setup_entries () =
           in
           assert_bool "ralph child profile clamps no-sandbox"
             (not profile.no_sandbox_allowed);
+          assert_bool "profile-ch02 ralph child profile clamps full access"
+            (profile.sandbox_preset = Capability.Workspace_write);
           assert_bool "ralph child profile intersects active tools"
             (Capability.allow_tool profile "exec_command"
             && Capability.allow_tool profile "ralph_continue"
@@ -321,6 +324,19 @@ let test_child_session_setup_entries () =
             )
       | _ -> fail "ralph metadata" "expected active tools and profile")
   | _ -> fail "ralph metadata" "expected object metadata");
+  let ralph_permissions =
+    Child_session.setup_entries ~metadata:ralph_metadata
+      ~parent_session_id:(Some "parent") ~parent_session_file:None
+    |> List.tl |> List.hd
+  in
+  (match ralph_permissions.data with
+  | Shared.Object fields ->
+      assert_bool "sandbox-qb00 ralph permissions persist child isolation"
+        (List.assoc_opt "isolated_child" fields = Some (Shared.Bool true));
+      ignore
+        (expect_ok "ralph generated permissions decode"
+           (Permissions.codec.decode ralph_permissions.data))
+  | _ -> fail "ralph permissions" "expected object data");
   assert_int "child start setup entry count" 2 (List.length plan.setup_entries);
   assert_int "child session entry count" 2 (List.length entries);
   let child = List.hd entries in
@@ -339,10 +355,13 @@ let test_child_session_setup_entries () =
         (match List.assoc_opt "profile" fields with
         | Some (Shared.Object _) -> true
         | _ -> false);
-      assert_bool "permissions carries no-sandbox flag"
-        (List.assoc_opt "noSandbox" fields = Some (Shared.Bool true));
+      assert_bool "sandbox-5pf1 permissions disable child no-sandbox"
+        (List.assoc_opt "noSandbox" fields = Some (Shared.Bool false));
       assert_bool "permissions carries isolated_child flag"
-        (List.assoc_opt "isolated_child" fields = Some (Shared.Bool true))
+        (List.assoc_opt "isolated_child" fields = Some (Shared.Bool true));
+      ignore
+        (expect_ok "agent generated permissions decode"
+           (Permissions.codec.decode permissions.data))
   | _ -> fail "permissions entry" "expected object data")
   ;
   let bridge =

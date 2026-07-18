@@ -140,14 +140,23 @@ let register_handlers host =
        (inject
           (Js.wrap_callback (fun payload ->
                let mode = get_string payload "filesystemMode" in
+               let next_network_mode =
+                 match Taumel.Permissions.network_of_string (get_string payload "networkMode") with
+                 | Some mode -> mode
+                 | None -> !active_network_mode
+               in
+               let next_no_sandbox =
+                 if has_property payload "noSandbox" then get_bool payload "noSandbox"
+                 else !active_no_sandbox
+               in
+               if
+                 next_network_mode <> !active_network_mode
+                 || next_no_sandbox <> !active_no_sandbox
+               then incr permission_state_epoch;
                state.filesystem_mode <-
                  (if mode = "" then "workspace-write" else mode);
-               active_network_mode :=
-                 (match Taumel.Permissions.network_of_string (get_string payload "networkMode") with
-                 | Some mode -> mode
-                 | None -> !active_network_mode);
-               if has_property payload "noSandbox" then
-                 active_no_sandbox := get_bool payload "noSandbox";
+               active_network_mode := next_network_mode;
+               active_no_sandbox := next_no_sandbox;
                if not !active_isolated_child then capture_loaded_footer_permissions ();
                emit_changed host))))
 

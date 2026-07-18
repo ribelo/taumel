@@ -398,7 +398,7 @@ export async function executeGatewayCommand(
   ctx: unknown,
   childExtensionFactory?: (pi: PiLike) => void,
 ): Promise<unknown> {
-  refreshOwnedChildPermissions(childSessions, ctx);
+  refreshOwnedChildPermissions(childSessions, ctx, core);
   if (name === "taumel") {
     const trimmed = args.trim();
     if (trimmed === "") return taumelStatus();
@@ -438,7 +438,7 @@ export async function executeGatewayCommand(
     );
     await executeGoalCommandSideEffects(pi, core, name, result, ctx);
     if (name === "permissions" || name === "sandbox" || name === "approval" || name === "network") {
-      refreshOwnedChildPermissions(childSessions, ctx);
+      refreshOwnedChildPermissions(childSessions, ctx, core);
     }
     return result;
   }

@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { executeCronManager } from "../src/cron-manager.ts";
+import { latestTaumelCustomEntry } from "../src/pi-session-entries.ts";
 
 initTheme();
 
@@ -41,12 +42,23 @@ const sessionManager = {
 };
 const ctx = { cwd: process.cwd(), sessionManager };
 
+const goal = core.call("prepareTool", [{
+  name: "create_goal", params: { objective: "verify persisted contracts" }, ctx,
+}]);
+assert.equal(goal?.ok, true, `create_goal failed: ${JSON.stringify(goal)}`);
+for (const customType of ["taumel.goal", "taumel.goal_automation"]) {
+  const entry = entries.findLast((candidate) => candidate.customType === customType);
+  assert.ok(entry);
+  assert.equal(latestTaumelCustomEntry(sessionManager, customType).kind, "contract_valid");
+}
+
 const create = core.call("prepareTool", [{
   name: "cron_create", params: { cron: "* * * * *", prompt: "persist me", recurring: true }, ctx,
 }]);
 assert.equal(create?.ok, true, `cron_create failed: ${JSON.stringify(create)}`);
 assert.equal(entries.at(-1)?.customType, "taumel.cron", "cron_create should persist a cron entry");
 assert.equal(entries.at(-1)?.data?.tasks?.length, 1, "cron_create should persist one task");
+assert.equal(latestTaumelCustomEntry(sessionManager, "taumel.cron").entry.data.tasks.length, 1);
 
 const startup = core.call("cronStartup", [{ reason: "resume", ctx }]);
 assert.equal(startup?.kind, "notify", "resume with stored cron tasks should notify");

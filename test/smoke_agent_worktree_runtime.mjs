@@ -284,6 +284,12 @@ let core;
     ctx: parentCtx,
   }]);
   assert.equal(firstStart.ok, true);
+  const firstStartCapability = {
+    capabilityId: firstStart.capabilityId, agentId: firstStart.agentId,
+    action: firstStart.action, runId: firstStart.runId,
+    submissionId: firstStart.submissionId, ctx: parentCtx,
+  };
+  assert.deepEqual(core.call("claimAgentAction", [firstStartCapability]), { ok: true });
   assert.equal(git(main, "show-ref", "--verify", "--quiet", `refs/heads/${firstStart.metadata.worktreeBranch}`), "");
   const secondStart = core.call("prepareTool", [{
     name: "agent_spawn",
@@ -292,6 +298,7 @@ let core;
   }]);
   assert.equal(secondStart.ok, true);
   assert.deepEqual(core.call("acceptAgentWorktreeStart", [firstStart, parentCtx]), { ok: true });
+  assert.deepEqual(core.call("releaseAgentAction", [firstStartCapability]), { ok: true });
   assert.deepEqual(core.call("reconcileProvisionalAgentWorktrees", []), { ok: true });
   assert.equal(
     execFileSync(trustedGit, ["worktree", "list", "--porcelain"], { cwd: main, encoding: "utf8" })

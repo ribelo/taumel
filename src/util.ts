@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readdirSync, realpathSync } from "node:fs";
-import { appendFile, lstat, mkdir, open, readFile, readdir, readlink, realpath, rename, rm, rmdir, symlink } from "node:fs/promises";
+import { constants, existsSync, readdirSync, realpathSync } from "node:fs";
+import { lstat, mkdir, open, readFile, readdir, realpath, rename, unlink } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 
 import type {
   ChildSessionBridge,
@@ -462,121 +462,385 @@ async function syncDirectory(path: string): Promise<void> {
   }
 }
 
-async function writeTargetPath(path: string): Promise<string> {
+type FileIdentity = Readonly<{ dev: bigint; ino: bigint }>;
+type FileState = Readonly<{
+  identity: FileIdentity;
+  size: bigint;
+  mtimeNs: bigint;
+  ctimeNs: bigint;
+}>;
+export type MutationPathAuthorization = Readonly<{
+  path: string;
+  resolvedPath: string;
+  anchorPath: string;
+  anchorIdentity: FileIdentity;
+  targetState?: FileState;
+}>;
+
+function identityMatches(left: FileIdentity, right: FileIdentity): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+async function pathIdentity(path: string): Promise<FileIdentity> {
+  const stats = await lstat(path, { bigint: true });
+  return { dev: stats.dev, ino: stats.ino };
+}
+
+function fileStateFromStats(stats: Awaited<ReturnType<FileHandle["stat"]>> & {
+  readonly dev: bigint; readonly ino: bigint; readonly size: bigint;
+  readonly mtimeNs: bigint; readonly ctimeNs: bigint;
+}): FileState {
+  return {
+    identity: { dev: stats.dev, ino: stats.ino }, size: stats.size,
+    mtimeNs: stats.mtimeNs, ctimeNs: stats.ctimeNs,
+  };
+}
+
+function stateMatches(left: FileState, right: FileState): boolean {
+  return identityMatches(left.identity, right.identity)
+    && left.size === right.size && left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs;
+}
+
+async function optionalFileState(path: string): Promise<FileState | undefined> {
   try {
-    const stats = await lstat(path);
-    if (stats.isSymbolicLink()) return await realpath(path);
+    const stats = await lstat(path, { bigint: true });
+    if (!stats.isFile()) throw new Error(`Mutation target is not a regular file: ${path}`);
+    return fileStateFromStats(stats);
   } catch (error) {
     const code = typeof error === "object" && error !== null ? (error as NodeError).code : undefined;
-    if (code !== "ENOENT") throw error;
-  }
-  return path;
-}
-
-export async function appendToFile(path: string, contents: string): Promise<void> {
-  const target = await writeTargetPath(path);
-  const parent = dirname(target);
-  await mkdir(parent, { recursive: true });
-  await appendFile(target, contents, "utf8");
-}
-
-async function writeDataAtomically(path: string, contents: string | Uint8Array): Promise<void> {
-  const target = await writeTargetPath(path);
-  const parent = dirname(target);
-  await mkdir(parent, { recursive: true });
-  const tempPath = join(parent, `.${basename(target)}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`);
-  let handle: FileHandle | undefined;
-  try {
-    handle = await open(tempPath, "w");
-    await handle.writeFile(contents);
-    await handle.sync();
-    await handle.close();
-    handle = undefined;
-    await rename(tempPath, target);
-    await syncDirectory(parent);
-  } catch (error) {
-    await handle?.close();
-    await rm(tempPath, { force: true });
+    if (code === "ENOENT") return undefined;
     throw error;
   }
 }
 
-export async function writeFileAtomically(path: string, contents: string): Promise<void> {
-  await writeDataAtomically(path, contents);
+async function optionalPathIdentity(path: string): Promise<FileIdentity | undefined> {
+  try {
+    return await pathIdentity(path);
+  } catch (error) {
+    const code = typeof error === "object" && error !== null ? (error as NodeError).code : undefined;
+    if (code !== "ENOENT") throw error;
+  }
+  return undefined;
+}
+
+async function existingPathAnchor(path: string): Promise<Readonly<{ path: string; identity: FileIdentity }>> {
+  let candidate = dirname(path);
+  while (true) {
+    const identity = await optionalPathIdentity(candidate);
+    if (identity !== undefined) {
+      const stats = await lstat(candidate, { bigint: true });
+      if (!stats.isDirectory()) throw new Error(`Mutation path ancestor is not a directory: ${candidate}`);
+      return { path: candidate, identity };
+    }
+    const parent = dirname(candidate);
+    if (parent === candidate) throw new Error(`No existing ancestor for mutation path: ${path}`);
+    candidate = parent;
+  }
+}
+
+async function captureMutationPathAuthorization(path: string): Promise<MutationPathAuthorization> {
+  const resolvedPath = await resolveRealPath(path);
+  const anchor = await existingPathAnchor(resolvedPath);
+  return {
+    path,
+    resolvedPath,
+    anchorPath: anchor.path,
+    anchorIdentity: anchor.identity,
+    targetState: await optionalFileState(resolvedPath),
+  };
+}
+
+export async function authorizeMutationPaths(
+  paths: readonly string[],
+): Promise<MutationPathAuthorization[]> {
+  return await Promise.all(paths.map(captureMutationPathAuthorization));
+}
+
+export async function authorizeCanonicalMutationPaths(
+  paths: readonly string[],
+): Promise<MutationPathAuthorization[]> {
+  const authorizations = await authorizeMutationPaths(paths);
+  for (const authorization of authorizations) {
+    if (authorization.resolvedPath !== authorization.path) {
+      throw new Error(`Mutation path changed after authorization: ${authorization.path}`);
+    }
+  }
+  return authorizations;
+}
+
+async function assertMutationPathAuthorization(
+  authorization: MutationPathAuthorization,
+): Promise<void> {
+  const currentResolvedPath = await resolveRealPath(authorization.path);
+  const currentAnchorIdentity = await optionalPathIdentity(authorization.anchorPath);
+  const currentTargetState = await optionalFileState(authorization.resolvedPath);
+  const targetMatches = authorization.targetState === undefined
+    ? currentTargetState === undefined
+    : currentTargetState !== undefined && stateMatches(authorization.targetState, currentTargetState);
+  if (
+    currentResolvedPath !== authorization.resolvedPath
+    || currentAnchorIdentity === undefined
+    || !identityMatches(authorization.anchorIdentity, currentAnchorIdentity)
+    || !targetMatches
+  ) {
+    throw new Error(`Mutation path changed after authorization: ${authorization.path}`);
+  }
+}
+
+async function ensureAuthorizedParent(
+  authorization: MutationPathAuthorization,
+): Promise<Readonly<{ path: string; identity: FileIdentity }>> {
+  await assertMutationPathAuthorization(authorization);
+  const parent = dirname(authorization.resolvedPath);
+  const suffix = relative(authorization.anchorPath, parent);
+  if (isAbsolute(suffix) || suffix === ".." || suffix.startsWith(`..${sep}`)) {
+    throw new Error(`Mutation path changed after authorization: ${authorization.path}`);
+  }
+  let currentPath = authorization.anchorPath;
+  let currentIdentity = authorization.anchorIdentity;
+  for (const component of suffix.split(/[\\/]/u).filter(Boolean)) {
+    if (!identityMatches(currentIdentity, await pathIdentity(currentPath))) {
+      throw new Error(`Mutation path changed after authorization: ${authorization.path}`);
+    }
+    const nextPath = join(currentPath, component);
+    try {
+      await mkdir(nextPath);
+    } catch (error) {
+      const code = typeof error === "object" && error !== null ? (error as NodeError).code : undefined;
+      if (code !== "EEXIST") throw error;
+    }
+    const stats = await lstat(nextPath, { bigint: true });
+    if (!stats.isDirectory()) {
+      throw new Error(`Mutation path ancestor is not a directory: ${nextPath}`);
+    }
+    currentPath = nextPath;
+    currentIdentity = { dev: stats.dev, ino: stats.ino };
+  }
+  return { path: currentPath, identity: currentIdentity };
+}
+
+export async function appendToFile(
+  authorization: MutationPathAuthorization,
+  contents: string,
+): Promise<void> {
+  const parent = await ensureAuthorizedParent(authorization);
+  await assertMutationPathAuthorization(authorization);
+  if (!identityMatches(parent.identity, await pathIdentity(parent.path))) {
+    throw new Error(`Mutation path changed after authorization: ${authorization.path}`);
+  }
+  const handle = await open(
+    authorization.resolvedPath,
+    constants.O_APPEND | constants.O_WRONLY | constants.O_NOFOLLOW
+      | (authorization.targetState === undefined ? constants.O_CREAT | constants.O_EXCL : 0),
+    0o666,
+  );
+  try {
+    const openedStats = await handle.stat({ bigint: true });
+    if (
+      !identityMatches(parent.identity, await pathIdentity(parent.path))
+      || (
+        authorization.targetState !== undefined
+        && (!openedStats.isFile() || !stateMatches(authorization.targetState, fileStateFromStats(openedStats)))
+      )
+    ) throw new Error(`Mutation path changed after authorization: ${authorization.path}`);
+    await handle.writeFile(contents, "utf8");
+  } finally {
+    await handle.close();
+  }
+}
+
+export async function readAuthorizedFile(
+  authorization: MutationPathAuthorization,
+): Promise<Readonly<{ contents: Uint8Array; authorization: MutationPathAuthorization }>> {
+  await assertMutationPathAuthorization(authorization);
+  if (authorization.targetState === undefined) {
+    throw new Error(`Mutation target does not exist: ${authorization.path}`);
+  }
+  const handle = await open(authorization.resolvedPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const beforeStats = await handle.stat({ bigint: true });
+    const before = fileStateFromStats(beforeStats);
+    if (!beforeStats.isFile() || !stateMatches(authorization.targetState, before)) {
+      throw new Error(`Mutation path changed after authorization: ${authorization.path}`);
+    }
+    const contents = await handle.readFile();
+    const afterStats = await handle.stat({ bigint: true });
+    const after = fileStateFromStats(afterStats);
+    if (!afterStats.isFile() || !stateMatches(before, after)) {
+      throw new Error(`Mutation target changed while reading: ${authorization.path}`);
+    }
+    return { contents, authorization: { ...authorization, targetState: after } };
+  } finally {
+    await handle.close();
+  }
+}
+
+export async function readJsonObjectForAtomicUpdate(path: string): Promise<Readonly<{
+  settings: { [key: string]: unknown };
+  authorization: MutationPathAuthorization;
+}>> {
+  const authorization = await captureMutationPathAuthorization(path);
+  if (authorization.targetState === undefined) return { settings: {}, authorization };
+  const read = await readAuthorizedFile(authorization);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(read.contents)) as unknown;
+  } catch (error) {
+    throw new Error(`Invalid JSON in ${path}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`${path} must contain a JSON object`);
+  }
+  return { settings: parsed as { [key: string]: unknown }, authorization: read.authorization };
+}
+
+async function writeDataAtomically(
+  authorization: MutationPathAuthorization,
+  contents: string | Uint8Array,
+): Promise<MutationPathAuthorization> {
+  await assertMutationPathAuthorization(authorization);
+  const target = authorization.resolvedPath;
+  const parent = await ensureAuthorizedParent(authorization);
+  const tempPath = join(parent.path, `.${basename(target)}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`);
+  let handle: FileHandle | undefined;
+  let tempState: FileState | undefined;
+  try {
+    await assertMutationPathAuthorization(authorization);
+    if (!identityMatches(parent.identity, await pathIdentity(parent.path))) {
+      throw new Error(`Mutation path changed after authorization: ${authorization.path}`);
+    }
+    handle = await open(
+      tempPath,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+      0o666,
+    );
+    await handle.writeFile(contents);
+    await handle.sync();
+    tempState = fileStateFromStats(await handle.stat({ bigint: true }));
+    await handle.close();
+    handle = undefined;
+    await assertMutationPathAuthorization(authorization);
+    const currentTempState = await optionalFileState(tempPath);
+    if (
+      !identityMatches(parent.identity, await pathIdentity(parent.path))
+      || currentTempState === undefined
+      || !stateMatches(tempState, currentTempState)
+    ) {
+      throw new Error(`Mutation path changed after authorization: ${authorization.path}`);
+    }
+    await rename(tempPath, target);
+    let committedAuthorization: MutationPathAuthorization;
+    try {
+      const committedState = await optionalFileState(target);
+      if (committedState === undefined || !identityMatches(tempState.identity, committedState.identity)) {
+        throw new Error(`Mutation target identity changed during rename: ${authorization.path}`);
+      }
+      committedAuthorization = { ...authorization, targetState: committedState };
+    } catch (error) {
+      throw new MutationCommittedError({ ...authorization, targetState: tempState }, error);
+    }
+    await syncDirectory(parent.path);
+    return committedAuthorization;
+  } catch (error) {
+    const cleanupFailures: unknown[] = [];
+    try {
+      await handle?.close();
+    } catch (cleanupError) {
+      cleanupFailures.push(cleanupError);
+    }
+    try {
+      const currentParentIdentity = await optionalPathIdentity(parent.path);
+      const currentTempState = await optionalFileState(tempPath);
+      if (
+        currentParentIdentity !== undefined
+        && identityMatches(parent.identity, currentParentIdentity)
+        && tempState !== undefined
+        && currentTempState !== undefined
+        && stateMatches(tempState, currentTempState)
+      ) await unlink(tempPath);
+    } catch (cleanupError) {
+      cleanupFailures.push(cleanupError);
+    }
+    if (cleanupFailures.length > 0) {
+      const cause = new AggregateError([error, ...cleanupFailures], "Mutation cleanup incomplete", { cause: error });
+      if (error instanceof MutationCommittedError) {
+        throw new MutationCommittedError(error.authorization, cause);
+      }
+      throw cause;
+    }
+    throw error;
+  }
+}
+
+export async function writeFileAtomically(
+  pathOrAuthorization: string | MutationPathAuthorization,
+  contents: string,
+): Promise<void> {
+  const authorization = typeof pathOrAuthorization === "string"
+    ? await captureMutationPathAuthorization(pathOrAuthorization)
+    : pathOrAuthorization;
+  await writeDataAtomically(authorization, contents);
 }
 
 type PatchWrite = {
   path: string;
   contents: string;
 };
-type PatchApplication = { readonly deletes: readonly string[]; readonly writes: readonly PatchWrite[] };
+type PatchApplication = {
+  readonly deletes: readonly string[];
+  readonly writes: readonly PatchWrite[];
+  readonly authorizations: readonly MutationPathAuthorization[];
+};
+
+class MutationCommittedError extends Error {
+  readonly authorization: MutationPathAuthorization;
+
+  constructor(authorization: MutationPathAuthorization, cause: unknown) {
+    super(`Mutation committed but its resulting identity could not be verified: ${authorization.path}`, { cause });
+    this.authorization = authorization;
+  }
+}
 
 type PatchFileSnapshot =
   | { kind: "missing" }
-  | { kind: "file"; contents: Uint8Array }
-  | { kind: "symlink"; target: string }
-  | { kind: "other" };
+  | { kind: "file"; contents: Uint8Array };
 
-async function snapshotPatchFile(path: string): Promise<PatchFileSnapshot> {
-  try {
-    const stats = await lstat(path);
-    if (stats.isSymbolicLink()) return { kind: "symlink", target: await readlink(path) };
-    if (stats.isFile()) return { kind: "file", contents: await readFile(path) };
-    return { kind: "other" };
-  } catch (error) {
-    const code = typeof error === "object" && error !== null ? (error as NodeError).code : undefined;
-    if (code === "ENOENT") return { kind: "missing" };
-    throw error;
-  }
+type PatchJournalEntry = Readonly<{
+  authorization: MutationPathAuthorization;
+  snapshot: PatchFileSnapshot;
+}>;
+
+async function snapshotPatchFile(
+  authorization: MutationPathAuthorization,
+): Promise<Readonly<{ authorization: MutationPathAuthorization; snapshot: PatchFileSnapshot }>> {
+  if (authorization.targetState === undefined) return { authorization, snapshot: { kind: "missing" } };
+  const read = await readAuthorizedFile(authorization);
+  return { authorization: read.authorization, snapshot: { kind: "file", contents: read.contents } };
 }
 
-function missingParentDirs(path: string): string[] {
-  const dirs: string[] = [];
-  let parent = dirname(path);
-  while (parent !== "." && parent !== "/" && !existsSync(parent)) {
-    dirs.push(parent);
-    parent = dirname(parent);
-  }
-  return dirs.reverse();
-}
-
-async function restorePatchFile(path: string, snapshot: PatchFileSnapshot): Promise<void> {
+async function restorePatchFile(entry: PatchJournalEntry): Promise<void> {
+  const { authorization, snapshot } = entry;
   switch (snapshot.kind) {
     case "missing":
-      await rm(path, { force: true });
+      await assertMutationPathAuthorization(authorization);
+      if (authorization.targetState !== undefined) await unlink(authorization.resolvedPath);
       return;
     case "file":
-      await writeDataAtomically(path, snapshot.contents);
-      return;
-    case "symlink":
-      await rm(path, { force: true });
-      await mkdir(dirname(path), { recursive: true });
-      await symlink(snapshot.target, path);
-      await syncDirectory(dirname(path));
-      return;
-    case "other":
+      await writeDataAtomically(authorization, snapshot.contents);
       return;
   }
 }
 
-async function rollbackPatchFiles(
-  snapshots: Map<string, PatchFileSnapshot>,
-  createdParentDirs: string[],
-): Promise<void> {
-  for (const [path, snapshot] of snapshots) {
+async function rollbackPatchFiles(journal: readonly PatchJournalEntry[]): Promise<unknown[]> {
+  const failures: unknown[] = [];
+  for (const entry of [...journal].reverse()) {
     try {
-      await restorePatchFile(path, snapshot);
-    } catch {
-      // Keep rollback best-effort so the original filesystem error remains visible.
+      await restorePatchFile(entry);
+    } catch (error) {
+      failures.push(error);
     }
   }
-  for (const dir of createdParentDirs.sort((left, right) => right.length - left.length)) {
-    try {
-      await rmdir(dir);
-    } catch {
-      // Parent directories are removed only when they are still empty.
-    }
-  }
+  return failures;
 }
 
 export async function writePatchFiles(application: PatchApplication): Promise<void> {
@@ -586,34 +850,66 @@ export async function writePatchFiles(application: PatchApplication): Promise<vo
     typeof write !== "object" || write === null || typeof write.path !== "string" || write.path === "" || typeof write.contents !== "string"
   )) throw new Error("Invalid Taumel apply_patch result");
 
-  const snapshots = new Map<string, PatchFileSnapshot>();
-  for (const write of parsedWrites) {
-    const target = await writeTargetPath(write.path);
-    if (!snapshots.has(target)) snapshots.set(target, await snapshotPatchFile(target));
-  }
-  for (const path of deletes) {
-    if (!snapshots.has(path)) snapshots.set(path, await snapshotPatchFile(path));
-  }
-  const createdParentDirs: string[] = [];
-  const seenParentDirs = new Set<string>();
-  for (const write of parsedWrites) {
-    const target = await writeTargetPath(write.path);
-    for (const dir of missingParentDirs(target)) {
-      if (seenParentDirs.has(dir)) continue;
-      seenParentDirs.add(dir);
-      createdParentDirs.push(dir);
+  const authorizationByPath = new Map<string, MutationPathAuthorization>();
+  for (const authorization of application.authorizations) {
+    if (authorizationByPath.has(authorization.path)) {
+      throw new Error(`Duplicate mutation authorization for path: ${authorization.path}`);
     }
+    authorizationByPath.set(authorization.path, authorization);
+  }
+  const authorizationFor = (path: string): MutationPathAuthorization => {
+    const authorization = authorizationByPath.get(path);
+    if (authorization === undefined) throw new Error(`Missing mutation authorization for path: ${path}`);
+    return authorization;
+  };
+  const snapshots = new Map<string, PatchFileSnapshot>();
+  for (const path of [...parsedWrites.map((write) => write.path), ...deletes]) {
+    const authorization = authorizationFor(path);
+    if (snapshots.has(authorization.resolvedPath)) {
+      throw new Error(`Duplicate canonical mutation target: ${authorization.resolvedPath}`);
+    }
+    const captured = await snapshotPatchFile(authorization);
+    snapshots.set(authorization.resolvedPath, captured.snapshot);
+    authorizationByPath.set(path, captured.authorization);
   }
 
+  const journal: PatchJournalEntry[] = [];
   try {
     for (const write of parsedWrites) {
-      await writeFileAtomically(write.path, write.contents);
+      const authorization = authorizationFor(write.path);
+      let produced: MutationPathAuthorization;
+      try {
+        produced = await writeDataAtomically(authorization, write.contents);
+      } catch (error) {
+        if (error instanceof MutationCommittedError) {
+          journal.push({
+            authorization: error.authorization,
+            snapshot: snapshots.get(authorization.resolvedPath)!,
+          });
+        }
+        throw error;
+      }
+      journal.push({ authorization: produced, snapshot: snapshots.get(authorization.resolvedPath)! });
+      authorizationByPath.set(write.path, produced);
     }
     for (const path of deletes) {
-      await rm(path, { force: true });
+      const authorization = authorizationFor(path);
+      await assertMutationPathAuthorization(authorization);
+      if (authorization.targetState === undefined) continue;
+      await unlink(authorization.resolvedPath);
+      const produced = { ...authorization, targetState: undefined };
+      journal.push({ authorization: produced, snapshot: snapshots.get(authorization.resolvedPath)! });
+      authorizationByPath.set(path, produced);
     }
   } catch (error) {
-    await rollbackPatchFiles(snapshots, createdParentDirs);
+    const rollbackFailures = await rollbackPatchFiles(journal);
+    if (rollbackFailures.length > 0) {
+      throw new AggregateError(
+        [error, ...rollbackFailures],
+        "Patch partially applied; rollback incomplete",
+        { cause: error },
+      );
+    }
     throw error;
   }
 }
@@ -634,29 +930,32 @@ async function resolveRealPath(path: string): Promise<string> {
 async function resolvedWorkspaceMutationPathFacts(
   paths: readonly string[],
   workspaceRoots: readonly string[],
-): Promise<WorkspaceMutationFacts> {
+): Promise<Readonly<{
+  facts: WorkspaceMutationFacts;
+  authorizations: readonly MutationPathAuthorization[];
+}>> {
   const resolvedRoots = await Promise.all(
-    workspaceRoots.map(async (root) => {
-      try {
-        return await realpath(root);
-      } catch {
-        return root;
-      }
-    }),
+    workspaceRoots.map((root) => realpath(root)),
   );
-  const resolvedPaths = await Promise.all(
-    paths.map(async (path) => ({ path, resolvedPath: await resolveRealPath(path) })),
-  );
-  return { workspaceRoots: resolvedRoots, paths: resolvedPaths };
+  const authorizations = await Promise.all(paths.map(captureMutationPathAuthorization));
+  return {
+    facts: {
+      workspaceRoots: resolvedRoots,
+      paths: authorizations.map(({ path, resolvedPath }) => ({ path, resolvedPath })),
+    },
+    authorizations,
+  };
 }
 
 export async function validateWorkspaceMutationPaths(
   core: CoreBridge,
   paths: readonly string[],
   workspaceRoots: readonly string[],
-): Promise<void> {
+): Promise<readonly MutationPathAuthorization[]> {
+  const resolved = await resolvedWorkspaceMutationPathFacts(paths, workspaceRoots);
   const result = decodeWorkspaceMutationValidation(core.call("validateWorkspaceMutationPaths", [
-    await resolvedWorkspaceMutationPathFacts(paths, workspaceRoots),
+    resolved.facts,
   ]));
   if (result.kind === "invalid") throw new Error(result.message);
+  return resolved.authorizations;
 }

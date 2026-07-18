@@ -82,6 +82,69 @@ let test_closed_identity_id_is_never_reused () =
               assert_true "closed agent id is not reused"
                 (first.identity_agent_id <> second.identity_agent_id)))
 
+let test_agent_zwxp_pending_cleanup_handle_is_never_reused () =
+  match spawn Agents.empty_session_state with
+  | Error message -> failwith message
+  | Ok (state, first, _) -> (
+      match
+        Agent_registry.record_close_with_cleanup state
+          ~owner_session_id:first.identity_owner_session_id
+          ~agent_id:first.identity_agent_id ~cleanup_nonce:"cleanup-1"
+          ~remaining_artifacts:[ "child_session" ]
+      with
+      | Error message -> failwith message
+      | Ok (closed, _, _) -> (
+          let underflow =
+            { closed with
+              issued_identity_counts = Agents.empty_issued_identity_counts }
+          in
+          assert_error "agent-zwxp pending cleanup counter underflow rejected"
+            (Agents_codec.decode
+               (Agents_codec.encode underflow));
+          match spawn underflow with
+          | Error message -> failwith message
+          | Ok (_, second, _) ->
+              assert_true "agent-zwxp pending cleanup handle remains retired"
+                (first.identity_agent_id <> second.identity_agent_id)))
+
+let test_agent_zwxp_counter_must_cover_retained_handle_position () =
+  let spawn_one state =
+    match spawn state with
+    | Ok (state, identity, _) -> (state, identity)
+    | Error message -> failwith message
+  in
+  let close_one state identity =
+    match
+      Agent_registry.record_close state
+        ~owner_session_id:identity.Agents.identity_owner_session_id
+        ~agent_id:identity.identity_agent_id
+    with
+    | Ok (state, _) -> state
+    | Error message -> failwith message
+  in
+  let state, first = spawn_one Agents.empty_session_state in
+  let state = close_one state first in
+  let state, second = spawn_one state in
+  let state = close_one state second in
+  let state, third = spawn_one state in
+  let closed =
+    match
+      Agent_registry.record_close_with_cleanup state
+        ~owner_session_id:third.identity_owner_session_id
+        ~agent_id:third.identity_agent_id ~cleanup_nonce:"cleanup-3"
+        ~remaining_artifacts:[ "child_session" ]
+    with
+    | Ok (state, _, _) -> state
+    | Error message -> failwith message
+  in
+  let behind =
+    { closed with
+      issued_identity_counts =
+        { closed.issued_identity_counts with generic = 1 } }
+  in
+  assert_error "agent-zwxp counter behind third retained handle rejected"
+    (Agents_codec.decode (Agents_codec.encode behind))
+
 let test_specialist_tool_effect_clamps () =
   let active =
     [ "read"; "exec_command"; "edit"; "web_search_exa"; "agent_spawn" ]
@@ -361,6 +424,31 @@ let test_codec_roundtrip_and_legacy_rejection () =
       | Ok decoded ->
           assert_equal "roundtrip identities" "1"
             (string_of_int (List.length decoded.identities));
+          let open_ceiling =
+            match Agents_codec.encode state with
+            | Shared.Object root_fields -> (
+                match List.assoc_opt "identities" root_fields with
+                | Some (Shared.Array (Shared.Object identity_fields :: identities)) -> (
+                    match List.assoc_opt "permission_ceiling" identity_fields with
+                    | Some (Shared.Object ceiling_fields) ->
+                        Shared.Object
+                          (( "identities",
+                             Shared.Array
+                               (Shared.Object
+                                  (( "permission_ceiling",
+                                     Shared.Object
+                                       (("legacyAuthority", Shared.Bool true)
+                                       :: ceiling_fields) )
+                                  :: List.remove_assoc "permission_ceiling"
+                                       identity_fields)
+                               :: identities) )
+                          :: List.remove_assoc "identities" root_fields)
+                    | _ -> failwith "expected permission ceiling object")
+                | _ -> failwith "expected persisted identity")
+            | _ -> failwith "expected agents state object"
+          in
+          assert_error "profile-ikfk open permission ceiling rejected"
+            (Agents_codec.decode open_ceiling);
           assert_error "legacy rejected"
             (Agents_codec.decode
                (Shared.Object
@@ -382,7 +470,64 @@ let test_codec_roundtrip_and_legacy_rejection () =
                           ("oracle", Shared.Number 0.);
                         ] );
                     ("identities", Shared.Array []);
-                  ])))
+                  ]));
+          let identity = List.hd state.identities in
+          let run = List.hd state.runs in
+          assert_error "agent-zwxp duplicate agent handles rejected"
+            (Agents_codec.decode
+               (Agents_codec.encode
+                  { state with identities = identity :: state.identities }));
+          let without_cleanup_pending =
+            match Agents_codec.encode state with
+            | Shared.Object fields ->
+                Shared.Object (List.remove_assoc "cleanup_pending" fields)
+            | _ -> failwith "expected encoded agents state"
+          in
+          assert_error "current agents schema requires cleanup_pending"
+            (Agents_codec.decode without_cleanup_pending);
+          let with_unknown_root =
+            match Agents_codec.encode state with
+            | Shared.Object fields ->
+                Shared.Object (("unknown", Shared.Bool true) :: fields)
+            | _ -> failwith "expected encoded agents state"
+          in
+          assert_error "current agents schema rejects unknown fields"
+            (Agents_codec.decode with_unknown_root);
+          assert_error "duplicate run ids rejected"
+            (Agents_codec.decode
+               (Agents_codec.encode { state with runs = run :: state.runs }));
+          assert_error "incompatible run status and activity rejected"
+            (Agents_codec.decode
+               (Agents_codec.encode
+                  { state with runs = [ { run with run_status = Agents.Suspended } ] }));
+          let aliased_run =
+            { run with
+              run_id = identity.identity_agent_id ^ "-run-01";
+              run_submission_id = identity.identity_agent_id ^ "-run-01-submission-1" }
+          in
+          assert_error "agent-zwxp noncanonical run ordinal rejected"
+            (Agents_codec.decode
+               (Agents_codec.encode { state with runs = [ aliased_run ] }));
+          assert_error "orphan runs rejected"
+            (Agents_codec.decode
+               (Agents_codec.encode
+                  { state with
+                    runs = [ { run with run_agent_id = "agent-zzzz" } ] }));
+          assert_error "identity issuance counters reject active underflow"
+            (Agents_codec.decode
+               (Agents_codec.encode
+                  { state with
+                    issued_identity_counts = Agents.empty_issued_identity_counts }));
+          let second_run =
+            { run with
+              run_id = identity.identity_agent_id ^ "-run-2";
+              run_submission_id =
+                identity.identity_agent_id ^ "-run-2-submission-1" }
+          in
+          assert_error "run issuance counters reject persisted underflow"
+            (Agents_codec.decode
+               (Agents_codec.encode
+                  { state with runs = second_run :: state.runs })))
 
 let test_codec_persists_locator_not_assistant_output () =
   match spawn Agents.empty_session_state with
@@ -406,7 +551,96 @@ let test_codec_persists_locator_not_assistant_output () =
                   assert_true "assistant output not duplicated in parent state"
                     (decoded_run.run_final_output = None);
                   assert_equal "result locator persisted" "entry-1"
-                    (Option.value decoded_run.run_result_entry_id ~default:""))))
+                  (Option.value decoded_run.run_result_entry_id ~default:""))))
+
+let test_agent_zwxp_run_counter_exhaustion_is_rejected () =
+  match spawn Agents.empty_session_state with
+  | Error message -> failwith message
+  | Ok (state, identity, run) -> (
+      match
+        Agents.record_run_completion state ~now:2 ~run_id:run.run_id
+          ~status:Agents.Completed ~final_output:"done" ()
+      with
+      | Error message -> failwith message
+      | Ok completed ->
+          let exhausted_identity =
+            { identity with identity_issued_run_count = 2_147_483_647 }
+          in
+          let exhausted =
+            { completed with
+              identities =
+                Agents.replace_identity exhausted_identity completed.identities }
+          in
+          assert_error "agent-zwxp exhausted run counter rejected"
+            (Agents.record_send exhausted ~now:3 ~owner_session_id:"parent-1"
+               ~agent_id:identity.identity_agent_id "continue"))
+
+let test_agent_zwxp_codec_rejects_specialist_escalation_and_parallel_active_runs () =
+  match spawn ~kind:Agents.Finder Agents.empty_session_state with
+  | Error message -> failwith message
+  | Ok (state, identity, run) ->
+      let identity =
+        { identity with
+          identity_permission_ceiling =
+            { identity.identity_permission_ceiling with
+              sandbox_preset = Capability_profile.Read_only } }
+      in
+      let state = { state with identities = [ identity ] } in
+      let escalated_ceiling =
+        { identity.identity_permission_ceiling with
+          sandbox_preset = Capability_profile.Workspace_write }
+      in
+      let escalated =
+        { identity with
+          identity_active_tools = "apply_patch" :: identity.identity_active_tools;
+          identity_network_allowed = true;
+          identity_permission_ceiling = escalated_ceiling }
+      in
+      assert_error "agent-zwxp persisted Finder escalation rejected"
+        (Agents_codec.decode
+           (Agents_codec.encode { state with identities = [ escalated ] }));
+      let unavailable_tool =
+        { identity with identity_active_tools = "retired_tool" :: identity.identity_active_tools }
+      in
+      (match
+         Agents_codec.decode
+           (Agents_codec.encode { state with identities = [ unavailable_tool ] })
+       with
+      | Ok _ -> ()
+      | Error message -> failwith ("unavailable assigned tool must remain loadable: " ^ message));
+      assert_error "agent-zwxp specialist effort rejected"
+        (Agents_codec.decode
+           (Agents_codec.encode
+              { state with
+                identities = [ { identity with identity_effort = Some Agents.Low } ] }));
+      let second_run =
+        { run with
+          run_id = identity.identity_agent_id ^ "-run-2";
+          run_submission_id = identity.identity_agent_id ^ "-run-2-submission-1" }
+      in
+      let advanced =
+        { identity with identity_issued_run_count = 2 }
+      in
+      assert_error "agent-zwxp parallel active runs rejected"
+        (Agents_codec.decode
+           (Agents_codec.encode
+              { state with identities = [ advanced ]; runs = [ run; second_run ] }))
+
+let test_agent_zwxp_codec_rejects_generic_agent_tools_and_missing_effort () =
+  match spawn Agents.empty_session_state with
+  | Error message -> failwith message
+  | Ok (state, identity, _) ->
+      assert_error "agent-zwxp Generic agent tool rejected"
+        (Agents_codec.decode
+           (Agents_codec.encode
+              { state with
+                identities =
+                  [ { identity with
+                        identity_active_tools = "agent_spawn" :: identity.identity_active_tools } ] }));
+      assert_error "agent-zwxp Generic missing effort rejected"
+        (Agents_codec.decode
+           (Agents_codec.encode
+              { state with identities = [ { identity with identity_effort = None } ] }))
 
 let test_routing_merge_and_validation () =
   let base =
@@ -506,6 +740,8 @@ let () =
   test_spawn_strips_agent_tools_and_returns_running ();
   test_unaccepted_spawn_rolls_back_identity_and_run ();
   test_closed_identity_id_is_never_reused ();
+  test_agent_zwxp_pending_cleanup_handle_is_never_reused ();
+  test_agent_zwxp_counter_must_cover_retained_handle_position ();
   test_specialist_tool_effect_clamps ();
   test_send_preflight_rollback_restores_state ();
   test_send_matrix ();
@@ -518,5 +754,8 @@ let () =
   test_identity_limit ();
   test_codec_roundtrip_and_legacy_rejection ();
   test_codec_persists_locator_not_assistant_output ();
+  test_agent_zwxp_run_counter_exhaustion_is_rejected ();
+  test_agent_zwxp_codec_rejects_specialist_escalation_and_parallel_active_runs ();
+  test_agent_zwxp_codec_rejects_generic_agent_tools_and_missing_effort ();
   test_routing_merge_and_validation ();
   print_endline "test_agents_plan: ok"

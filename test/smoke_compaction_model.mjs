@@ -1,4 +1,7 @@
 import { strict as assert } from "node:assert";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { installCompactionModelHookWithCompact } from "../src/compaction-model.ts";
 
@@ -367,6 +370,26 @@ function makeCommandHarness(plans) {
   const result = await executeCompactionModelCommand(pi, core, "clear", ctx);
   assert.equal(result.ok, true, "clear should succeed");
   assert.match(result.message, /cleared/i, "clear should mention cleared");
+}
+
+// shared-r544: malformed project JSON aborts without replacing the document.
+{
+  const root = await mkdtemp(join(tmpdir(), "taumel-compaction-malformed-"));
+  try {
+    const settingsPath = join(root, ".pi", "settings.json");
+    await mkdir(join(root, ".pi"), { recursive: true });
+    const malformed = "{ malformed compaction settings";
+    await writeFile(settingsPath, malformed);
+    const { pi, core, ctx } = makeCommandHarness([
+      { kind: "set_project", model: "anthropic/claude-3-5-sonnet" },
+    ]);
+    ctx.cwd = root;
+    const result = await executeCompactionModelCommand(pi, core, "anthropic/claude-3-5-sonnet", ctx);
+    assert.equal(result.ok, false);
+    assert.equal(await readFile(settingsPath, "utf8"), malformed);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 }
 
 // Open picker falls back when no custom function available.

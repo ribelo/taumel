@@ -50,13 +50,21 @@ const closeCore = {
         ok: true,
         action: "agent_close",
         text: JSON.stringify({ agent_id: "agent-abcd", status: "closed" }),
-        details: { agent_id: "agent-abcd", status: "closed" },
+        details: { agentId: "agent-abcd", status: "closed" },
         agentId: "agent-abcd",
         runIds: ["agent-abcd-run-1"],
+        capabilityId: "manager-close-capability",
       };
     }
+    if (name === "agentManagerSnapshot") return snapshot;
+    if (name === "claimAgentAction" || name === "revalidateAgentAction" || name === "releaseAgentAction" || name === "authorizeAgentActionCleanup") return { ok: true };
+    if (name === "cancelAgentBrokerSessions") return { ok: true };
     if (name === "finishAgentClose") return { ok: true };
     if (name === "releaseAgentClose") return { ok: true };
+    if (name === "toolResultEnvelope") return {
+      content: [{ type: "text", text: args[0].prepared?.text ?? args[0].error }],
+      details: args[0].prepared?.details ?? args[0].details,
+    };
     throw new Error(`unexpected close core call: ${name}`);
   },
 };
@@ -86,22 +94,30 @@ assert.equal(
 
 const failedCloseCalls = [];
 const failedCloseCore = {
-  call(name) {
+  call(name, args) {
     failedCloseCalls.push(name);
     if (name === "prepareTool") {
       return {
         ok: true,
         action: "agent_close",
         text: "{}",
-        details: {},
+        details: { agentId: "agent-abcd", status: "closed" },
         agentId: "agent-abcd",
         runIds: ["agent-abcd-run-1"],
+        capabilityId: "manager-failed-close-capability",
       };
     }
+    if (name === "agentManagerSnapshot") return snapshot;
+    if (name === "claimAgentAction" || name === "revalidateAgentAction" || name === "releaseAgentAction" || name === "authorizeAgentActionCleanup") return { ok: true };
+    if (name === "cancelAgentBrokerSessions") return { ok: true };
     if (name === "finishAgentClose") throw new Error("cleanup_failed: marker mismatch");
     if (name === "recordAgentCloseCleanupFailure" || name === "releaseAgentClose") {
       return { ok: true };
     }
+    if (name === "toolResultEnvelope") return {
+      content: [{ type: "text", text: args[0].prepared?.text ?? args[0].error }],
+      details: args[0].prepared?.details ?? args[0].details,
+    };
     throw new Error(`unexpected failed-close core call: ${name}`);
   },
 };

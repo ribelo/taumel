@@ -35,6 +35,16 @@ patch parsing stay separate from each other and from execution.
 - While the sandbox preset is `danger-full-access`, the system shall force network `enabled`; while the preset is `read-only` or `workspace-write`, network shall default to `disabled` and stay user-controlled. ^sandbox-md06
 - When no persisted permissions exist, the system shall start a top-level session at `danger-full-access` with network enabled and approval `never`; when persisted permissions are invalid, it shall fall back to `workspace-write` with network disabled. ^sandbox-md07
 - The system shall treat approval policy and sandbox preset as orthogonal: the preset governs OS enforcement and the approval policy governs only the human-in-the-loop cadence, so `danger-full-access` composes with any approval policy — `never` runs unsandboxed with no prompts, and `on-request` runs unsandboxed while still asking before destructive commands. ^sandbox-md09
+- When decoding persisted permissions, the system shall accept only version `1` with exactly the fields `version`, `profile`, `networkMode`, `noSandbox`, and `isolated_child`, rejecting missing, unknown, or repeated fields. ^sandbox-o9ky
+- When decoding version `1` persisted permissions, the system shall accept only the canonical network values `disabled` and `enabled` and shall reject `danger-full-access` combined with disabled network. ^sandbox-2m4o
+- When persisted permissions are invalid, the system shall deny every tool in the fallback capability profile. ^sandbox-xg3g
+- When creating persisted permissions for a child session, the system shall write `isolated_child = true`. ^sandbox-qb00
+- When creating persisted permissions for a child session, the system shall write `noSandbox = false`. ^sandbox-5pf1
+- When refreshing a child's permissions from its parent, the system shall decode the parent entry through the exact persisted-permissions contract and apply the resolved missing, invalid, or persisted parent state before emitting a codec-valid child entry. ^sandbox-co3e
+- When refreshing a child's permissions, the system shall apply the current host sandbox, network, and no-sandbox overrides to the resolved parent envelope before clamping the child. ^sandbox-jrcw
+- If a child permission refresh encounters missing or invalid required child ceiling metadata, then the system shall emit a codec-valid isolated-child entry with read-only filesystem access, network disabled, approval untrusted, no-sandbox disabled, and no allowed tools. ^sandbox-zp0z
+- When refreshing child permissions after an asynchronous boundary, the system shall synchronize and verify the supplied parent context before reading host overrides; if that context is stale or cannot be synchronized, then it shall emit the fail-closed child entry. ^sandbox-afnn
+- When refreshing child permissions, the system shall require an agent ceiling to carry `networkMode` and shall treat an omitted Ralph ceiling `networkMode` as disabled. ^sandbox-tusv
 
 ### Effect authorization
 
@@ -62,6 +72,7 @@ patch parsing stay separate from each other and from execution.
 - The system shall retain the requested path for approval evidence, result rendering, and diagnostics while using only the authorization path for workspace containment and protected-metadata decisions. ^sandbox-pa11
 - A planner shall not deny a path as outside a workspace root from lexical containment alone when canonical filesystem facts can establish its authorization path; authorization shall fail closed if the required canonical filesystem facts cannot be obtained. ^sandbox-pa12
 - While approval policy is `never`, the system shall apply the same authorization-path rules as every other approval policy, allowing operations already inside the permission envelope without prompting and denying canonical boundary crossings that would otherwise require approval. ^sandbox-pa13
+- When a filesystem mutation path has been authorized, the system shall mutate only the authorized canonical destination while its ancestor and target identities remain unchanged and shall otherwise fail before mutation. ^sandbox-w54h
 
 ### Exec authorization and escalation
 

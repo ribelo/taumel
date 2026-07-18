@@ -8,7 +8,7 @@ import {
 
 import type { CoreBridge, PiLike } from "./types.ts";
 import { taumelGlobalSettingsPath } from "./global-settings.ts";
-import { cwdFromContext, isProjectTrusted, modelRegistryFrom, projectSettingsPath, sessionInfoFromContext, splitProviderModelId, writeFileAtomically } from "./util.ts";
+import { cwdFromContext, isProjectTrusted, modelRegistryFrom, projectSettingsPath, readJsonObjectForAtomicUpdate, sessionInfoFromContext, splitProviderModelId, writeFileAtomically } from "./util.ts";
 import { decodeCompactionCommandPlan, decodeCompactionSessionPlan } from "./bridge-contracts.ts";
 
 type SettingsObject = { [key: string]: unknown };
@@ -82,9 +82,13 @@ async function readProjectCompactionModel(cwd: string): Promise<string | undefin
 
 async function writeProjectCompactionModel(cwd: string, model: string | undefined): Promise<void> {
   const path = projectSettingsPath(cwd);
-  const settings = await readSettingsJson(path);
-  const taumel = settingsObject(settings["taumel"]) ?? {};
-  const compaction = settingsObject(taumel["compaction"]) ?? {};
+  const { settings, authorization } = await readJsonObjectForAtomicUpdate(path);
+  const existingTaumel = settings["taumel"];
+  const taumel = existingTaumel === undefined ? {} : settingsObject(existingTaumel);
+  if (taumel === undefined) throw new Error(`${path}: taumel must be a JSON object`);
+  const existingCompaction = taumel["compaction"];
+  const compaction = existingCompaction === undefined ? {} : settingsObject(existingCompaction);
+  if (compaction === undefined) throw new Error(`${path}: taumel.compaction must be a JSON object`);
   if (model === undefined) {
     delete compaction["model"];
   } else {
@@ -100,7 +104,7 @@ async function writeProjectCompactionModel(cwd: string, model: string | undefine
   } else {
     settings["taumel"] = taumel;
   }
-  await writeFileAtomically(path, `${JSON.stringify(settings, null, 2)}\n`);
+  await writeFileAtomically(authorization, `${JSON.stringify(settings, null, 2)}\n`);
 }
 
 function notifyWarning(ctx: unknown, message: string): void {
@@ -357,21 +361,33 @@ async function openCompactionModelPicker(
 }
 
 async function setSessionCompactionModel(ctx: unknown, modelId: string): Promise<CompactionCommandResult> {
-  sessionCompactionModels.set(sessionKey(ctx), modelId);
   if (isProjectTrusted(ctx)) {
-    await writeProjectCompactionModel(cwdFromContext(ctx), modelId);
+    try {
+      await writeProjectCompactionModel(cwdFromContext(ctx), modelId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { ok: false, action: "command_result", message: `Compaction model was not changed: ${message}`, error: message };
+    }
+    sessionCompactionModels.set(sessionKey(ctx), modelId);
     return { ok: true, action: "command_result", message: `Compaction model set to ${modelId} (session and project).` };
   }
+  sessionCompactionModels.set(sessionKey(ctx), modelId);
   notifyWarning(ctx, "Project is untrusted; compaction model was set for this session only and project persistence was skipped.");
   return { ok: true, action: "command_result", message: `Compaction model set to ${modelId} (session only; project persistence skipped because the project is untrusted).` };
 }
 
 async function clearSessionCompactionModel(ctx: unknown): Promise<CompactionCommandResult> {
-  sessionCompactionModels.delete(sessionKey(ctx));
   if (isProjectTrusted(ctx)) {
-    await writeProjectCompactionModel(cwdFromContext(ctx), undefined);
+    try {
+      await writeProjectCompactionModel(cwdFromContext(ctx), undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { ok: false, action: "command_result", message: `Compaction model was not changed: ${message}`, error: message };
+    }
+    sessionCompactionModels.delete(sessionKey(ctx));
     return { ok: true, action: "command_result", message: "Compaction model cleared for this session and project; inheriting." };
   }
+  sessionCompactionModels.delete(sessionKey(ctx));
   notifyWarning(ctx, "Project is untrusted; compaction model was cleared for this session only and project persistence was skipped.");
   return { ok: true, action: "command_result", message: "Compaction model cleared for this session; project persistence skipped because the project is untrusted." };
 }

@@ -303,15 +303,27 @@ for (const invalid of [
   if (!rejected) throw new Error(`goal-continuation bridge decoder accepted ${JSON.stringify(invalid)}`);
 }
 
+const capabilityProfile = {
+  modelId: "inherit", thinkingLevel: "medium", sandboxPreset: "workspace-write",
+  approvalPolicy: "never", tools: { kind: "all" }, noSandboxAllowed: false,
+};
 const childStart = decodeChildSessionStartPlan({
   parentSession: "parent", modelId: "openai/gpt", thinkingLevel: "high",
-  activeTools: ["read"], setupEntries: [{ customType: "taumel.childSession", data: { kind: "ralph" } }],
+  activeTools: ["read"],
+  setupEntries: [{
+    customType: "taumel.childSession",
+    data: {
+      kind: "ralph", objective: "work", controllerSessionId: "parent",
+      maxIterations: null, reflectionEvery: null,
+      parentSessionId: "parent", parentSessionFile: null,
+    },
+  }],
 });
 if (childStart.activeTools?.[0] !== "read") throw new Error("child-session start plan did not decode");
 const worktreeMetadata = {
   kind: "agent", agentKind: "generic", agentId: "agent-1",
   modelId: "test/model", thinkingLevel: "medium", activeTools: ["exec_command"],
-  capabilityProfile: {}, networkMode: "disabled", isolated_child: true,
+  capabilityProfile, networkMode: "disabled", isolated_child: true,
   workspaceDirectory: "/agents/agent-1", sourceWorkspace: "/repo",
   isolation: "worktree",
   workspaceBinding: {
@@ -337,11 +349,12 @@ for (const invalid of [
   { activeTools: [""], setupEntries: [] },
   { activeTools: [1], setupEntries: [] },
   { setupEntries: [{ customType: "", data: {} }] },
+  { setupEntries: [{ customType: "taumel.permissions", data: { kind: "ralph" } }] },
   { setupEntries: [], extra: true },
 ]) {
   let rejected = false;
   try { decodeChildSessionStartPlan(invalid); } catch { rejected = true; }
-  if (!rejected) throw new Error(`child-session start bridge decoder accepted ${JSON.stringify(invalid)}`);
+  if (!rejected) throw new Error(`shared-9m6o child-session start bridge decoder accepted ${JSON.stringify(invalid)}`);
 }
 
 const childDispatch = decodeChildDispatchPlan({
@@ -812,13 +825,14 @@ for (const invalid of [
   if (!rejected) throw new Error(`gateway-command decoder accepted ${JSON.stringify(invalid)}`);
 }
 const preparedRead = decodePreparedToolAction({ ok: true, action: "read", path: "README.md", limit: 10 });
+const preparedReadNegative = decodePreparedToolAction({ ok: true, action: "read", path: "README.md", offset: -1 });
 const preparedExec = decodePreparedToolAction({
   ok: true, action: "exec_command", planId: "plan-exec", cmd: "pwd", workdir: "", tty: false,
-  sandbox: { filesystemMode: "workspace-write", networkMode: "disabled", workspaceRoots: ["/workspace"], noSandbox: false, isolatedChild: false },
+  sandbox: { filesystemMode: "workspace-write", networkMode: "disabled", workspaceRoots: ["/workspace"], noSandbox: false, isolatedChild: false, approvalPolicy: "on-request" },
 });
 const preparedExecWithYield = decodePreparedToolAction({
   ok: true, action: "exec_command", planId: "plan-exec-yield", cmd: "pwd", workdir: "", yieldTimeMs: 250, tty: false,
-  sandbox: { filesystemMode: "workspace-write", networkMode: "disabled", workspaceRoots: ["/workspace"], noSandbox: false, isolatedChild: false },
+  sandbox: { filesystemMode: "workspace-write", networkMode: "disabled", workspaceRoots: ["/workspace"], noSandbox: false, isolatedChild: false, approvalPolicy: "on-request" },
 });
 const preparedExa = decodePreparedToolAction({
   ok: true, action: "exa_fetch", planId: "plan-exa", toolName: "web_search_exa",
@@ -827,16 +841,23 @@ const preparedExaApproval = decodePreparedToolAction({
   ok: true, action: "exa_agent_create_run_approval", planId: "plan-exa-approval", toolName: "exa_agent_create_run",
   approvalTitle: "Approve Exa Agent run", approvalPrompt: "Create run?", approvalTimeoutMs: 30000,
 });
-if (!("action" in preparedRead) || preparedRead.action !== "read" || !("action" in preparedExec) || !("action" in preparedExecWithYield) || preparedExa.action !== "exa_fetch" || preparedExaApproval.action !== "exa_agent_create_run_approval") {
+if (!("action" in preparedRead) || preparedRead.action !== "read" || preparedReadNegative.offset !== -1 || !("action" in preparedExec) || !("action" in preparedExecWithYield) || preparedExa.action !== "exa_fetch" || preparedExaApproval.action !== "exa_agent_create_run_approval") {
   throw new Error("prepared tool action did not decode");
 }
+// shared-p5v3: prepared actions reject malformed closed and nested values.
 for (const invalid of [
   { ok: true, action: "read", path: "", extra: true },
   { ok: true, action: "write_stdin", sessionId: 0, chars: "", outputMode: "delta" },
   { ok: true, action: "exec_command", planId: "plan", cmd: "pwd", workdir: "", tty: false, sandbox: { filesystemMode: "workspace-write" } },
   { ok: true, action: "exec_command", planId: "plan", cmd: "pwd", workdir: "", yieldTimeMs: null, tty: false, sandbox: { filesystemMode: "workspace-write", networkMode: "disabled", workspaceRoots: ["/workspace"], noSandbox: false, isolatedChild: false } },
+  { ok: true, action: "exec_command", planId: "plan", cmd: "pwd", workdir: "", tty: false, sandbox: { filesystemMode: "anything", networkMode: "sometimes", workspaceRoots: ["/workspace"], noSandbox: false, isolatedChild: false, approvalPolicy: "maybe" } },
   { ok: true, action: "exa_fetch", planId: "plan", toolName: "web_search_exa", method: "POST" },
   { ok: true, action: "exa_agent_create_run_approval", planId: "plan", toolName: "exa_agent_create_run", approvalTitle: "Approve", approvalPrompt: "Create?", approvalTimeoutMs: 30000, apiKeyPresent: true },
+  { ok: true, action: "write", workspaceRoots: ["/workspace"], validateWorkspacePaths: true, path: "/workspace/a", displayPath: "a", contents: "x", mode: "truncate" },
+  { ok: true, action: "edit", workspaceRoots: ["/workspace"], validateWorkspacePaths: true, path: "/workspace/a", displayPath: "a", edits: [{ oldText: 1, newText: "x" }] },
+  { ok: true, action: "query_threads", query: "needle", limit: 10, scope: "somewhere", includeTools: true },
+  { ok: true, action: "read_thread", threadID: "thread", mode: "nearby", around: 3, entryID: null, line: null, cursor: null, locator: "bad" },
+  { ok: true, action: "agent_send", text: "{}", details: "bad", prompt: "continue", agentId: "agent-ab12", dispatch: true, interrupt: false, dispatchDeliverAs: "later", outcome: "invented", capabilityId: "capability" },
   { ok: true, action: "unregistered" },
 ]) {
   let rejected = false;

@@ -84,6 +84,12 @@ let sandbox_of_string = function
   | "danger-full-access" | "full-access" -> Some Danger_full_access
   | _ -> None
 
+let persisted_sandbox_of_string = function
+  | "read-only" -> Some Read_only
+  | "workspace-write" -> Some Workspace_write
+  | "danger-full-access" -> Some Danger_full_access
+  | _ -> None
+
 let approval_to_string = function
   | Never -> "never"
   | On_request -> "on-request"
@@ -110,20 +116,36 @@ let allowlist_to_json = function
         ]
 
 let allowlist_of_json = function
-  | Shared.Object fields -> (
-      match List.assoc_opt "kind" fields with
-      | Some (Shared.String "none") -> Ok None_allowed
-      | Some (Shared.String "all") -> Ok All
-      | Some (Shared.String "only") -> (
-          match List.assoc_opt "names" fields with
-          | Some (Shared.Array values) ->
-              let rec collect acc = function
-                | [] -> Ok (Only (List.fold_left (fun set value -> String_set.add value set) String_set.empty acc))
-                | Shared.String value :: rest -> collect (value :: acc) rest
-                | _ -> Error "allowlist names must be strings"
-              in
-              collect [] values
-          | _ -> Error "allowlist kind only requires names")
+  | Shared.Object fields ->
+      let ( let* ) = Result.bind in
+      let* kind = Shared.json_required_string "allowlist" fields "kind" in
+      (match kind with
+      | "none" ->
+          let* () = Shared.json_exact_fields "allowlist" [ "kind" ] fields in
+          Ok None_allowed
+      | "all" ->
+          let* () = Shared.json_exact_fields "allowlist" [ "kind" ] fields in
+          Ok All
+      | "only" ->
+          let* () =
+            Shared.json_exact_fields "allowlist" [ "kind"; "names" ] fields
+          in
+          let* values =
+            match List.assoc_opt "names" fields with
+            | Some (Shared.Array values) -> Ok values
+            | _ -> Error "allowlist kind only requires names"
+          in
+          let rec collect acc = function
+            | [] ->
+                Ok
+                  (Only
+                     (List.fold_left
+                        (fun set value -> String_set.add value set)
+                        String_set.empty acc))
+            | Shared.String value :: rest -> collect (value :: acc) rest
+            | _ -> Error "allowlist names must be strings"
+          in
+          collect [] values
       | _ -> Error "unknown allowlist kind")
   | _ -> Error "allowlist must be an object"
 
@@ -140,6 +162,19 @@ let to_json (profile : t) =
 
 let of_json = function
   | Shared.Object fields ->
+      let ( let* ) = Result.bind in
+      let* () =
+        Shared.json_exact_fields "capability profile"
+          [
+            "modelId";
+            "thinkingLevel";
+            "sandboxPreset";
+            "approvalPolicy";
+            "tools";
+            "noSandboxAllowed";
+          ]
+          fields
+      in
       let string_field name =
         match List.assoc_opt name fields with
         | Some (Shared.String value) -> Ok value
@@ -148,13 +183,11 @@ let of_json = function
       let bool_field name =
         match List.assoc_opt name fields with
         | Some (Shared.Bool value) -> Ok value
-        | Some Shared.Null | None -> Ok false
         | _ -> Error (name ^ " must be a boolean")
       in
-      let ( let* ) = Result.bind in
       let* sandbox = string_field "sandboxPreset" in
       let* sandbox_preset =
-        match sandbox_of_string sandbox with
+        match persisted_sandbox_of_string sandbox with
         | None -> Error ("unknown sandbox preset: " ^ sandbox)
         | Some value -> Ok value
       in
@@ -167,7 +200,7 @@ let of_json = function
       let* tools =
         match List.assoc_opt "tools" fields with
         | Some value -> allowlist_of_json value
-        | None -> Ok All
+        | None -> Error "tools is required"
       in
       let* model_id = string_field "modelId" in
       let* thinking_level = string_field "thinkingLevel" in
@@ -196,4 +229,3 @@ let resolve ?model_id ?thinking_level ?sandbox_preset ?approval_policy ?tools
     no_sandbox_allowed =
       Option.value no_sandbox_allowed ~default:base.no_sandbox_allowed;
   }
-

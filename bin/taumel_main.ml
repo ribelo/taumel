@@ -55,6 +55,8 @@ let core_call name_js args_js =
    | "planChildSessionStart" ->
        Child_session_bridge.plan_child_session_start (arg 0) (arg 1)
   | "planChildDispatch" -> Child_session_bridge.plan_child_dispatch (arg 0)
+  | "planChildPermissionRefresh" ->
+      Child_session_bridge.plan_permission_refresh (arg 0) (arg 1) (arg 2)
   | "prepareTool" -> Tool_dispatch.prepare (arg 0)
    | "applyPatchToFiles" ->
        Mutation_tools.apply_patch_to_files (arg 0)
@@ -159,7 +161,11 @@ let core_call name_js args_js =
   | "suspendOwnerAgentsOnShutdown" -> Agent_lifecycle.suspend_owner_on_shutdown (arg 0)
   | "finishAgentWait" -> Agent_lifecycle.finish_wait (arg 0) (arg 1)
   | "finishAgentClose" -> Agent_tools.finish_close (arg 0) (arg 1)
-  | "releaseAgentClose" -> Agent_tools.release_close (arg 0)
+  | "claimAgentAction" -> Agent_action_capability.claim (arg 0)
+  | "revalidateAgentAction" -> Agent_action_capability.revalidate (arg 0)
+  | "authorizeAgentActionCleanup" ->
+      Agent_action_capability.authorize_cleanup (arg 0)
+  | "releaseAgentAction" -> Agent_action_capability.release (arg 0)
   | "acceptAgentWorktreeStart" -> Agent_tools.accept_worktree_start (arg 0) (arg 1)
   | "rollbackAgentWorktreeStart" -> Agent_tools.rollback_worktree_start (arg 0) (arg 1)
   | "deleteAgentWorktree" -> Agent_tools.delete_worktree (arg 0) (arg 1)
@@ -181,9 +187,12 @@ let core_call name_js args_js =
    | "visibilityListCommand" -> Visibility_commands.list_command (arg 0)
    | "toggleVisibilityRow" -> Visibility_commands.toggle_row (arg 0)
   | "visibilityWarnings" -> Visibility_commands.warnings (arg 0)
-  | "reloadSessionState" ->
-      Session_sync.load_session_state (arg 0);
-      App_state.loaded_session_id := Some (Session_store.session_id_from_ctx (arg 0));
+	  | "reloadSessionState" ->
+	      Session_sync.load_session_state (arg 0);
+	      let owner = Session_store.session_id_from_ctx (arg 0) in
+	      if !(App_state.loaded_session_id) <> Some owner then
+	        incr App_state.owner_session_epoch;
+	      App_state.loaded_session_id := Some owner;
       core_ack ()
    | "planCronPrompt" -> Cron_tools.plan_prompt (arg 0)
   | "finishCronPrompt" -> Cron_tools.finish_prompt (arg 0) (arg 1) (arg 2)

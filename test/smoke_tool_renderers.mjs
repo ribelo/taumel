@@ -130,10 +130,10 @@ function resultFor(name) {
   if (name === "agent_spawn" || name === "finder" || name === "oracle") {
     const kind = name === "agent_spawn" ? "generic" : name;
     const agentId = name === "agent_spawn" ? "agent-7k2m" : `${kind}-2sk2`;
-    return { content: [{ type: "text", text: "agent started" }], details: { ok: true, kind, agent_id: agentId, run_id: `${agentId}-run-1`, tier: name === "agent_spawn" ? "medium" : undefined, model: "provider/model", thinking: kind === "oracle" ? "high" : "low", status: "running" } };
+    return { content: [{ type: "text", text: "agent started" }], details: { ok: true, kind, agentId, runId: `${agentId}-run-1`, tier: name === "agent_spawn" ? "medium" : undefined, model: "provider/model", thinking: kind === "oracle" ? "high" : "low", status: "running" } };
   }
   if (name === "agent_send") {
-    return { content: [{ type: "text", text: "agent message sent" }], details: { ok: true, agent_id: "worker-1", outcome: "message_sent", run_id: "worker-1-run-1", status: "running" } };
+    return { content: [{ type: "text", text: "agent message sent" }], details: { ok: true, agentId: "worker-1", outcome: "message_sent", runId: "worker-1-run-1", status: "running" } };
   }
   if (name === "agent_wait") {
     return { content: [{ type: "text", text: "done" }], details: { ok: true, results: [{ agent_id: "worker-1", run_id: "worker-1-run-1", kind: "generic", model: "provider/model", thinking: "medium", status: "completed", output: "done", output_available: true }], pending_run_ids: [], timed_out: false } };
@@ -142,7 +142,7 @@ function resultFor(name) {
     return { content: [{ type: "text", text: "worker-1" }], details: { ok: true, agents: [{ agent_id: "worker-1", kind: "generic", model: "provider/model", thinking: "medium", workspace: "/workspace", latest_run_id: "worker-1-run-1", latest_run_status: "running" }] } };
   }
   if (name === "agent_close") {
-    return { content: [{ type: "text", text: "closed" }], details: { ok: true, agent_id: "worker-1", status: "closed" } };
+    return { content: [{ type: "text", text: "closed" }], details: { ok: true, agentId: "worker-1", status: "closed" } };
   }
   if (name.startsWith("cron_")) {
     const task = { id: "cron-a", schedule: "every 5 minutes", cron: "*/5 * * * *", prompt: "check status", recurring: true, mode: "message", enabled: true, nextDueText: "soon" };

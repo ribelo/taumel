@@ -1,5 +1,6 @@
 module Cron = Taumel.Cron
 module Cron_expr = Taumel.Cron_expr
+module Shared = Taumel.Shared
 
 let expect_ok label = function
   | Ok value -> value
@@ -10,6 +11,76 @@ let assert_bool label value = if not value then failwith label
 let assert_equal_int label expected actual =
   if expected <> actual then
     failwith (Printf.sprintf "%s: expected %d, got %d" label expected actual)
+
+let assert_error label = function
+  | Ok _ -> failwith (label ^ ": expected error")
+  | Error _ -> ()
+
+let persisted ?(version = 1.) ?(id = "aaaaaaaa") ?(cron = "* * * * *")
+    ?(prompt = "check") ?(created_at = 0.) ?(next_due = 60.)
+    ?pending_since tasks_tail =
+  let task =
+    let fields =
+      [
+        ("id", Shared.String id);
+        ("cron", Shared.String cron);
+        ("prompt", Shared.String prompt);
+        ("recurring", Shared.Bool true);
+        ("mode", Shared.String "message");
+        ("enabled", Shared.Bool true);
+        ("createdAt", Shared.Number created_at);
+        ("nextDue", Shared.Number next_due);
+      ]
+    in
+    Shared.Object
+      (fields
+      @
+      match pending_since with
+      | None -> []
+      | Some value -> [ ("pendingSince", value) ])
+  in
+  Shared.Object
+    [
+      ("version", Shared.Number version);
+      ("enabled", Shared.Bool true);
+      ("tasks", Shared.Array (task :: tasks_tail));
+    ]
+
+let test_cron_60bw_persisted_codec_reconstructs_task_invariants () =
+  assert_error "unsupported cron version" (Cron.decode (persisted ~version:2. []));
+  assert_error "invalid cron expression" (Cron.decode (persisted ~cron:"bad" []));
+  assert_error "invalid cron task id" (Cron.decode (persisted ~id:"x" []));
+  assert_error "blank cron prompt" (Cron.decode (persisted ~prompt:"  " []));
+  assert_error "negative cron timestamp"
+    (Cron.decode (persisted ~created_at:(-1.) []));
+  assert_error "fractional cron timestamp"
+    (Cron.decode (persisted ~next_due:60.5 []));
+  assert_error "off-schedule cron due time"
+    (Cron.decode (persisted ~next_due:61. []));
+  assert_error "null pending timestamp"
+    (Cron.decode (persisted ~pending_since:Shared.Null []));
+  let without_enabled =
+    match persisted [] with
+    | Shared.Object fields ->
+        Shared.Object (List.remove_assoc "enabled" fields)
+    | _ -> failwith "expected persisted cron state"
+  in
+  assert_error "missing root enabled" (Cron.decode without_enabled);
+  let with_unknown_root =
+    match persisted [] with
+    | Shared.Object fields -> Shared.Object (("unknown", Shared.Bool true) :: fields)
+    | _ -> failwith "expected persisted cron state"
+  in
+  assert_error "unknown cron root field" (Cron.decode with_unknown_root);
+  let duplicate =
+    match persisted [] with
+    | Shared.Object fields -> (
+        match List.assoc "tasks" fields with
+        | Shared.Array [ task ] -> task
+        | _ -> failwith "expected persisted cron task")
+    | _ -> failwith "expected persisted cron state"
+  in
+  assert_error "duplicate cron ids" (Cron.decode (persisted [ duplicate ]))
 
 let local_epoch ~year ~month ~day ~hour ~minute =
   let tm =
@@ -197,6 +268,7 @@ let test_cron_expr_local_time_and_dom_dow_or () =
   assert_equal_int "Monday minute" 0 minute
 
 let () =
+  test_cron_60bw_persisted_codec_reconstructs_task_invariants ();
   test_deliverable_precedence ();
   test_disabled_state_holds_pending_fire ();
   test_disabled_task_holds_pending_fire ();

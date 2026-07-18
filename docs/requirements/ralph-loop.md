@@ -22,6 +22,7 @@ infrastructure with goal and reaches goal only through goal's public API.
 - The system shall describe the shared `ralph_continue.task_id` and `ralph_finish.task_id` parameter to the model as `Ralph task ID from the Ralph session prompt.` ^ralph-tl03
 - When a controller command runs, the system shall accept it only from the controller session. ^ralph-cm01
 - The system shall keep persisted state Ralph-only and keep prompt construction, state transitions, and child-session dispatch as separate concerns. ^ralph-st01
+- When decoding persisted Ralph state, the system shall accept only schema version `1`, non-negative integral iteration counts, and positive integral maximum-iteration and reflection values when present. ^ralph-zn6r
 - The system shall track iteration count, max-iteration controls, reflection checkpoints, and user-facing metrics. ^ralph-it01
 - The system shall resolve tools, agents, model, thinking, and sandbox through the capability profile and route all execution and mutation through the sandbox. ^ralph-cp01
 - The system shall share no domain engine with goal, share only generic infrastructure, and affect a goal only through goal's public API. ^ralph-gl01

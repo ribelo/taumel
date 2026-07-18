@@ -64,6 +64,7 @@ try {
       workspaceRoots: [root],
       noSandbox: false,
       isolatedChild: true,
+      approvalPolicy: "on-request",
     },
     brokeredGit: true,
     directCommand: "/bin/sh",

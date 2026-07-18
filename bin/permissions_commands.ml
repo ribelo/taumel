@@ -3,6 +3,12 @@ open App_state
 open Runtime_access
 
 let apply_state (next : Taumel.Permissions.state) =
+  if
+    !active_profile_state <> next.profile
+    || !active_network_mode <> next.sandbox.network_mode
+    || !active_no_sandbox <> next.sandbox.no_sandbox
+    || !active_isolated_child <> next.sandbox.isolated_child
+  then incr permission_state_epoch;
   active_profile_state := next.Taumel.Permissions.profile;
   active_network_mode := next.Taumel.Permissions.sandbox.network_mode;
   active_no_sandbox := next.Taumel.Permissions.sandbox.no_sandbox;

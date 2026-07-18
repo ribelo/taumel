@@ -14,11 +14,13 @@ import {
   refreshOwnedChildPermissions,
   sendToChildSession,
 } from "./child-sessions.ts";
+import { latestTaumelCustomEntry } from "./pi-session-entries.ts";
 import { agentErrorToolResult, preparedToolResult } from "./tool-results.ts";
 import { cancelAgentApprovals } from "./approval-coordinator.ts";
 import {
   decodeAgentActiveCountResult,
   decodeAgentCleanupPlan,
+  decodeAgentManagerSnapshot,
   decodeAgentNotificationClaimValidation,
   decodeAgentRoutingDiagnosticsResult,
   decodeCoreAck,
@@ -31,6 +33,7 @@ import {
 type UnknownFields = { readonly [key: string]: unknown };
 
 type PendingAgentWaits = Map<string, Set<AbortController>>;
+export const pendingAgentWaits: PendingAgentWaits = new Map();
 const activeNoninteractiveDrains = new Set<string>();
 
 function isObject(value: unknown): value is UnknownFields {
@@ -65,11 +68,8 @@ function reconcilePersistedAgentNotifications(core: CoreBridge, ctx: unknown): v
   if (typeof getEntries !== "function") return;
   const entries = getEntries.call(ctx.sessionManager);
   if (!Array.isArray(entries)) return;
-  const isAgentChild = entries.some((entry) => {
-    if (!isObject(entry)) return false;
-    return entry.type === "custom" && entry.customType === "taumel.childSession";
-  });
-  if (isAgentChild) return;
+  const childMarker = latestTaumelCustomEntry(ctx.sessionManager, "taumel.childSession");
+  if (childMarker.kind !== "absent") return;
   for (const entry of entries) {
     if (!isObject(entry) || entry.type !== "message" || !isObject(entry.message)) continue;
     const message = entry.message;
@@ -131,9 +131,9 @@ export async function flushPendingAgentNotifications(
       if (validation.valid !== true) continue;
       const sent = await deliverNotificationMessage(
         pi,
-        stringField(notification, "content"),
-        stringField(notification, "customType") || "notification",
-        notification.display === true,
+        notification.content,
+        notification.customType,
+        notification.display,
         mode,
         notification.details,
       );
@@ -211,25 +211,37 @@ function recordDispatchBoundary(
   }, ctx]));
 }
 
-async function rollbackUnacceptedStart(
+async function cleanupUnacceptedStartChild(
   core: CoreBridge,
   childSessions: Map<string, ChildSessionBridge>,
   prepared: UnknownFields,
   ctx: unknown,
+  authorizeCleanup: () => void,
   bridge?: ChildSessionBridge,
 ): Promise<void> {
   const agentId = stringField(prepared, "agentId");
   const keyScope = childSessionCacheKeyScopeFromContext(ctx);
   if (bridge !== undefined) {
+    authorizeCleanup();
     await applyChildSessionUpdate(childSessions, {
       action: "delete_child_session",
       key: agentId,
       reason: "unaccepted_start",
     }, bridge, keyScope);
   }
+  authorizeCleanup();
   deleteAgentChildSession(core, agentId, ctx);
+}
+
+function rollbackUnacceptedStartState(
+  core: CoreBridge,
+  prepared: UnknownFields,
+  ctx: unknown,
+  authorizeCleanup: () => void,
+): void {
+  authorizeCleanup();
   decodeCoreAck(core.call("rollbackUnacceptedAgentStart", [{
-    agent_id: agentId,
+    agent_id: stringField(prepared, "agentId"),
     run_id: stringField(prepared, "runId"),
     submission_id: stringField(prepared, "submissionId"),
   }, ctx]));
@@ -239,7 +251,9 @@ function rollbackAgentSendPreflight(
   core: CoreBridge,
   prepared: UnknownFields,
   ctx: unknown,
+  revalidateAuthority: () => void,
 ): void {
+  revalidateAuthority();
   decodeCoreAck(core.call("rollbackAgentSendPreflight", [{
     agent_id: stringField(prepared, "agentId"),
     run_id: stringField(prepared, "runId"),
@@ -256,6 +270,8 @@ async function createAgentChildSession(
   childSessions: Map<string, ChildSessionBridge>,
   prepared: UnknownFields,
   ctx: unknown,
+  revalidateAuthority: () => void,
+  authorizeCleanup: () => void,
   childExtensionFactory?: (pi: PiLike) => void,
 ): Promise<ChildSessionBridge | undefined> {
   const metadata = prepared.metadata;
@@ -272,14 +288,31 @@ async function createAgentChildSession(
   }
   const agentId = stringField(prepared, "agentId");
   const keyScope = childSessionCacheKeyScopeFromContext(ctx);
-  childSessions.set(childSessionCacheKey(agentId, keyScope), bridge);
-  refreshOwnedChildPermissions(childSessions, ctx);
-  decodeCoreAck(core.call("recordAgentChildSessionStart", [{
-    agent_id: agentId,
-    sessionId: bridge.sessionId,
-    sessionFile: bridge.sessionFile,
-  }, ctx]));
-  return bridge;
+  const cacheKey = childSessionCacheKey(agentId, keyScope);
+  try {
+    revalidateAuthority();
+    childSessions.set(cacheKey, bridge);
+    refreshOwnedChildPermissions(childSessions, ctx, core);
+    revalidateAuthority();
+    decodeCoreAck(core.call("recordAgentChildSessionStart", [{
+      agent_id: agentId,
+      sessionId: bridge.sessionId,
+      sessionFile: bridge.sessionFile,
+    }, ctx]));
+    return bridge;
+  } catch (error) {
+    childSessions.delete(cacheKey);
+    let closeError: unknown;
+    try {
+      await bridge.close?.("stale_agent_action");
+    } catch (failure) {
+      closeError = failure;
+    } finally {
+      authorizeCleanup();
+      deleteAgentChildSession(core, agentId, ctx);
+    }
+    throw closeError ?? error;
+  }
 }
 
 export async function executeAgentPrepared(
@@ -293,24 +326,158 @@ export async function executeAgentPrepared(
   childExtensionFactory?: (pi: PiLike) => void,
 ) {
   const action = stringField(prepared, "action");
-  switch (action) {
+  let dispatchDeliverAs: "steer" | "followUp" | undefined;
+  if (action === "agent_start") {
+    const details = isObject(prepared.details) ? prepared.details : {};
+    const metadata = isObject(prepared.metadata) ? prepared.metadata : {};
+    const activeTools = Array.isArray(details.activeTools) ? details.activeTools : [];
+    const metadataTools = Array.isArray(metadata.activeTools) ? metadata.activeTools : [];
+    if (stringField(prepared, "agentId") !== stringField(details, "agentId")
+      || stringField(prepared, "agentId") !== stringField(metadata as UnknownFields, "agentId")
+      || stringField(prepared, "runId") !== stringField(details, "runId")
+      || stringField(prepared, "prompt") !== stringField(details, "prompt")
+      || stringField(prepared, "prompt").trim() === ""
+      || stringField(details, "kind") !== stringField(metadata, "agentKind")
+      || stringField(details, "model") !== stringField(metadata, "modelId")
+      || stringField(details, "thinking") !== stringField(metadata, "thinkingLevel")
+      || stringField(details, "workspace") !== stringField(metadata, "sourceWorkspace")
+      || stringField(details, "isolation") !== stringField(metadata, "isolation")
+      || JSON.stringify(activeTools) !== JSON.stringify(metadataTools)) {
+      return agentErrorToolResult(core, "internal_error", "invalid prepared agent start state");
+    }
+  }
+  if (action === "agent_send") {
+    const rawDeliverAs = prepared.dispatchDeliverAs;
+    if (rawDeliverAs !== "steer" && rawDeliverAs !== "followUp") {
+      return agentErrorToolResult(core, "internal_error", "invalid prepared agent delivery mode");
+    }
+    dispatchDeliverAs = rawDeliverAs;
+    const dispatch = prepared.dispatch === true;
+    const outcome = stringField(prepared, "outcome");
+    const prompt = stringField(prepared, "prompt");
+    const runId = stringField(prepared, "runId");
+    const submissionId = stringField(prepared, "submissionId");
+    const details = isObject(prepared.details) ? prepared.details : {};
+    const allowedOutcomes = dispatch
+      ? ["message_sent", "interrupted_and_sent", "resumed", "started"]
+      : ["suspended", "already_suspended", "no_active_run"];
+    const metadata = prepared.metadata;
+    if (!allowedOutcomes.includes(outcome)
+      || typeof metadata !== "object" || metadata === null
+      || stringField(prepared, "agentId") !== stringField(details, "agentId")
+      || stringField(prepared, "agentId") !== stringField(metadata as UnknownFields, "agentId")
+      || outcome !== stringField(details, "outcome")
+      || runId !== stringField(details, "runId")
+      || submissionId !== stringField(details, "submissionId")
+      || (dispatch && (runId === "" || submissionId === "" || prompt.trim() === ""
+        || stringField(details, "status") !== "running"))
+      || ((outcome === "suspended" || outcome === "already_suspended")
+        && (runId === "" || submissionId !== "" || prompt !== ""
+          || prepared.interrupt !== true || stringField(details, "status") !== "suspended"))
+      || (outcome === "no_active_run" && (runId !== "" || submissionId !== ""
+        || prompt !== "" || prepared.interrupt !== true || stringField(details, "status") !== ""))
+      || (outcome === "message_sent" && (prepared.interrupt !== false || rawDeliverAs !== "steer"))
+      || (outcome === "interrupted_and_sent" && prepared.interrupt !== true)
+      || ((outcome === "message_sent" || outcome === "interrupted_and_sent" || outcome === "resumed")
+        && stringField(prepared, "previousSubmissionId") === "")
+      || (outcome === "resumed" && !["interrupted_by_parent", "parent_shutdown", "process_interrupted", "close_cleanup_failed"]
+        .includes(stringField(prepared, "previousReasonCode")))
+      || (outcome === "started" && stringField(prepared, "previousSubmissionId") !== "")
+      || (outcome !== "message_sent" && dispatch && rawDeliverAs !== "followUp")) {
+      return agentErrorToolResult(core, "internal_error", "invalid prepared agent send state");
+    }
+  }
+  if (action === "agent_close") {
+    const details = isObject(prepared.details) ? prepared.details : {};
+    const agentId = stringField(prepared, "agentId");
+    const runIds = Array.isArray(prepared.runIds) ? prepared.runIds : [];
+    const snapshot = decodeAgentManagerSnapshot(core.call("agentManagerSnapshot", [ctx]));
+    const authoritativeRunIds = snapshot.runs
+      .filter((run) => run.agentId === agentId)
+      .map((run) => run.runId)
+      .sort();
+    const suppliedRunIds = runIds
+      .filter((runId): runId is string => typeof runId === "string")
+      .sort();
+    if (agentId !== stringField(details, "agentId")
+      || JSON.stringify(suppliedRunIds) !== JSON.stringify(authoritativeRunIds)) {
+      return agentErrorToolResult(core, "internal_error", "invalid prepared agent close state");
+    }
+  }
+  if (action === "agent_close" && prepared.deleteWorktree === true
+    && (stringField(prepared, "worktreePath") === ""
+      || stringField(prepared, "worktreeBranch") === ""
+      || stringField(prepared, "mainRepositoryRoot") === ""
+      || prepared.isolation !== "worktree")) {
+    return agentErrorToolResult(core, "internal_error", "invalid prepared agent worktree cleanup");
+  }
+  const capabilityId = stringField(prepared, "capabilityId");
+  const capabilityGuarded = action === "agent_start" || action === "agent_send" || action === "agent_close";
+  const runId = stringField(prepared, "runId");
+  const submissionId = stringField(prepared, "submissionId");
+  const capabilityFacts = {
+    capabilityId, agentId: stringField(prepared, "agentId"), action,
+    ...(runId === "" ? {} : { runId }),
+    ...(submissionId === "" ? {} : { submissionId }), ctx,
+  };
+  if (capabilityGuarded) {
+    try {
+      decodeCoreAck(core.call("claimAgentAction", [capabilityFacts]));
+    } catch (error) {
+      return agentErrorToolResult(
+        core, "persistence_failed",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+  const revalidateCapability = () => {
+    if (capabilityGuarded) {
+      decodeCoreAck(core.call("revalidateAgentAction", [capabilityFacts]));
+    }
+  };
+  const authorizeCapabilityCleanup = () => {
+    if (capabilityGuarded) {
+      decodeCoreAck(core.call("authorizeAgentActionCleanup", [capabilityFacts]));
+    }
+  };
+  try {
+    switch (action) {
     case "agent_start": {
-      const bridge = await createAgentChildSession(pi, core, childSessions, prepared, ctx, childExtensionFactory);
+      let bridge: ChildSessionBridge | undefined;
       const rollbackWorktreeThenState = async () => {
-        // Physical worktree rollback must run while identity/binding still exists.
-        let cleanupError: string | undefined;
         try {
+          await cleanupUnacceptedStartChild(
+            core, childSessions, prepared, ctx, authorizeCapabilityCleanup, bridge,
+          );
+        } catch (error) {
+          return error instanceof Error ? error.message : String(error);
+        }
+        try {
+          authorizeCapabilityCleanup();
           decodeCoreAck(core.call("rollbackAgentWorktreeStart", [prepared, ctx]));
         } catch (error) {
-          cleanupError = error instanceof Error ? error.message : String(error);
+          return error instanceof Error ? error.message : String(error);
         }
         try {
-          await rollbackUnacceptedStart(core, childSessions, prepared, ctx, bridge);
+          rollbackUnacceptedStartState(
+            core, prepared, ctx, authorizeCapabilityCleanup,
+          );
         } catch (error) {
-          cleanupError ??= error instanceof Error ? error.message : String(error);
+          return error instanceof Error ? error.message : String(error);
         }
-        return cleanupError;
+        return undefined;
       };
+      try {
+        bridge = await createAgentChildSession(
+          pi, core, childSessions, prepared, ctx, revalidateCapability,
+          authorizeCapabilityCleanup, childExtensionFactory,
+        );
+        revalidateCapability();
+      } catch (error) {
+        const cleanupError = await rollbackWorktreeThenState();
+        const message = cleanupError ?? (error instanceof Error ? error.message : String(error));
+        return agentErrorToolResult(core, childFailureCode(message), message);
+      }
       if (bridge?.error !== undefined || bridge?.missingSessionIdentifier) {
         const cleanupError = await rollbackWorktreeThenState();
         const message = cleanupError
@@ -347,6 +514,7 @@ export async function executeAgentPrepared(
         return agentErrorToolResult(core, cleanupError ? childFailureCode(cleanupError) : "dispatch_failed", reason);
       }
       try {
+        authorizeCapabilityCleanup();
         decodeCoreAck(core.call("acceptAgentWorktreeStart", [prepared, ctx]));
       } catch (error) {
         const cleanupError = await rollbackWorktreeThenState();
@@ -368,9 +536,11 @@ export async function executeAgentPrepared(
       if (interrupt && stringField(prepared, "prompt") === "") {
         try {
           if (bridge?.stop !== undefined) {
+            revalidateCapability();
             await bridge.stop("interrupted_by_parent");
           }
         } catch (error) {
+          authorizeCapabilityCleanup();
           decodeCoreAck(core.call("rollbackFailedAgentInterruption", [{
             agent_id: agentId,
             run_id: stringField(prepared, "runId"),
@@ -378,6 +548,7 @@ export async function executeAgentPrepared(
           const message = error instanceof Error ? error.message : String(error);
           return agentErrorToolResult(core, "dispatch_failed", `agent interruption failed: ${message}`);
         }
+        authorizeCapabilityCleanup();
         return preparedToolResult(core, {
           text: stringField(prepared, "text"),
           details: prepared.details,
@@ -386,21 +557,26 @@ export async function executeAgentPrepared(
       const metadata = isObject(prepared.metadata) ? prepared.metadata : undefined;
       const workspace = metadata === undefined ? "" : stringField(metadata, "workspaceDirectory");
       if (workspace === "") {
-        rollbackAgentSendPreflight(core, prepared, ctx);
+        rollbackAgentSendPreflight(core, prepared, ctx, authorizeCapabilityCleanup);
         return agentErrorToolResult(core, "workspace_unavailable", "identity workspace is missing");
       }
       try {
         const fs = await import("node:fs/promises");
         if (!(await fs.stat(workspace)).isDirectory()) throw new Error("not a directory");
       } catch {
-        rollbackAgentSendPreflight(core, prepared, ctx);
+        rollbackAgentSendPreflight(core, prepared, ctx, authorizeCapabilityCleanup);
         return agentErrorToolResult(core, "workspace_unavailable", "identity workspace is unavailable");
       }
+      revalidateCapability();
       if (bridge === undefined) {
         try {
-          bridge = await createAgentChildSession(pi, core, childSessions, prepared, ctx, childExtensionFactory);
+          bridge = await createAgentChildSession(
+            pi, core, childSessions, prepared, ctx, revalidateCapability,
+            authorizeCapabilityCleanup, childExtensionFactory,
+          );
+          revalidateCapability();
         } catch (error) {
-          rollbackAgentSendPreflight(core, prepared, ctx);
+          rollbackAgentSendPreflight(core, prepared, ctx, authorizeCapabilityCleanup);
           return agentErrorToolResult(
             core,
             "child_session_unavailable",
@@ -409,28 +585,44 @@ export async function executeAgentPrepared(
         }
       }
       if (bridge === undefined || bridge.error !== undefined || bridge.missingSessionIdentifier) {
-        rollbackAgentSendPreflight(core, prepared, ctx);
+        rollbackAgentSendPreflight(core, prepared, ctx, authorizeCapabilityCleanup);
         return agentErrorToolResult(core, "child_session_unavailable", bridge?.error ?? "failed to reopen child session");
       }
       try {
         recordDispatchBoundary(core, prepared, ctx, bridge);
       } catch (error) {
-        rollbackAgentSendPreflight(core, prepared, ctx);
+        rollbackAgentSendPreflight(core, prepared, ctx, authorizeCapabilityCleanup);
         return agentErrorToolResult(core, "persistence_failed", error instanceof Error ? error.message : String(error));
       }
       if (interrupt && bridge.stop !== undefined) {
         try {
+          revalidateCapability();
           await bridge.stop("interrupted_by_parent");
         } catch (error) {
-          rollbackAgentSendPreflight(core, prepared, ctx);
+          rollbackAgentSendPreflight(core, prepared, ctx, authorizeCapabilityCleanup);
           return agentErrorToolResult(
             core,
             "dispatch_failed",
             `agent interruption failed: ${error instanceof Error ? error.message : String(error)}`,
           );
         }
+        try {
+          revalidateCapability();
+        } catch (error) {
+          authorizeCapabilityCleanup();
+          decodeCoreAck(core.call("recordAgentSendDispatchFailure", [{
+            run_id: stringField(prepared, "runId"),
+            submission_id: stringField(prepared, "submissionId"),
+            error: error instanceof Error ? error.message : String(error),
+          }, ctx]));
+          return agentErrorToolResult(
+            core, "persistence_failed",
+            error instanceof Error ? error.message : String(error),
+          );
+        }
       }
       if (prepared.dispatch === true) {
+        revalidateCapability();
         const dispatch = await sendToChildSession(
           pi,
           core,
@@ -439,7 +631,7 @@ export async function executeAgentPrepared(
           "empty prompt",
           {
             awaitCompletion: false,
-            deliverAs: stringField(prepared, "dispatchDeliverAs") || "followUp",
+            deliverAs: dispatchDeliverAs!,
             onEvent: recordDispatchActivity(core, prepared, ctx),
             onCompletion: recordDispatchCompletionInBackground(pi, core, prepared, ctx, pendingAgentWaits, bridge),
           },
@@ -449,16 +641,18 @@ export async function executeAgentPrepared(
             ? dispatch.reason
             : "agent message was not accepted";
           if (interrupt && stringField(prepared, "outcome") === "interrupted_and_sent") {
+            authorizeCapabilityCleanup();
             decodeCoreAck(core.call("recordAgentSendDispatchFailure", [{
               run_id: stringField(prepared, "runId"),
               submission_id: stringField(prepared, "submissionId"),
               error: reason,
             }, ctx]));
           } else {
-            rollbackAgentSendPreflight(core, prepared, ctx);
+            rollbackAgentSendPreflight(core, prepared, ctx, authorizeCapabilityCleanup);
           }
           return agentErrorToolResult(core, "dispatch_failed", reason);
         }
+        authorizeCapabilityCleanup();
       }
       return preparedToolResult(core, {
         text: stringField(prepared, "text"),
@@ -554,21 +748,21 @@ export async function executeAgentPrepared(
         // After durable permanent close, cleanup retries use the tombstone path.
         if (childExecutionInterrupted && !/unknown agent:/.test(message)) {
           try {
+            authorizeCapabilityCleanup();
             decodeCoreAck(core.call("recordAgentCloseCleanupFailure", [{ agent_id: agentId }, ctx]));
           } catch (error) {
             transitionError = error instanceof Error ? error.message : String(error);
           }
         }
-        decodeCoreAck(core.call("releaseAgentClose", [{ agent_id: agentId }]));
         const fullMessage = transitionError === "" ? message : `${message}; ${transitionError}`;
         return agentErrorToolResult(core, code, fullMessage);
       };
       try {
+        revalidateCapability();
         // Cancel identity-owned broker sessions before cleanliness/removal inspection.
         try {
           decodeCoreAck(core.call("cancelAgentBrokerSessions", [{ agent_id: agentId }]));
         } catch (error) {
-          decodeCoreAck(core.call("releaseAgentClose", [{ agent_id: agentId }]));
           const message = error instanceof Error ? error.message : String(error);
           return agentErrorToolResult(core, "cleanup_failed", message || "broker session cancellation failed");
         }
@@ -576,8 +770,10 @@ export async function executeAgentPrepared(
         // cleanup succeeds so close remains retryable on cleanup_failed.
         if (bridge?.stop !== undefined) {
           try {
+            revalidateCapability();
             childExecutionInterrupted = true;
             await bridge.stop("agent_closed");
+            revalidateCapability();
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             return failClose("cleanup_failed", `agent stop failed: ${message}`);
@@ -585,6 +781,7 @@ export async function executeAgentPrepared(
         }
         if (prepared.deleteWorktree === true) {
           try {
+            revalidateCapability();
             decodeCoreAck(core.call("deleteAgentWorktree", [{
               agent_id: agentId,
               worktree_path: prepared.worktreePath,
@@ -600,17 +797,20 @@ export async function executeAgentPrepared(
         // Drop only the live bridge. finishAgentClose stages and finalizes the
         // private session while the identity is still listed, then removes durable
         // state. Physical failure unstages and retains identity + exact session.
+        revalidateCapability();
         await applyChildSessionUpdate(childSessions, {
           action: "delete_child_session",
           key: agentId,
           reason: "agent_closed",
         }, bridge, keyScope);
+        revalidateCapability();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return failClose("cleanup_failed", `agent_close cleanup failed: ${message}`);
       }
       let finished;
       try {
+        revalidateCapability();
         finished = decodeCoreAck(core.call("finishAgentClose", [{ agent_id: agentId }, ctx]));
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -629,6 +829,20 @@ export async function executeAgentPrepared(
     }
     default:
       return agentErrorToolResult(core, "internal_error", `unknown agent action: ${action}`);
+    }
+  } catch (error) {
+    return agentErrorToolResult(
+      core, "persistence_failed",
+      error instanceof Error ? error.message : String(error),
+    );
+  } finally {
+    if (capabilityGuarded) {
+      try {
+        decodeCoreAck(core.call("releaseAgentAction", [capabilityFacts]));
+      } catch {
+        // The capability is already one-shot; release is best-effort after execution.
+      }
+    }
   }
 }
 

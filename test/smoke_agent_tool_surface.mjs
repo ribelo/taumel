@@ -48,9 +48,9 @@ try {
     tier: "high",
     isolation: "none",
   });
-  agentId = spawn.details.agent_id;
+  agentId = spawn.details.agentId;
   const wait = await tool("agent_wait").execute("tool-surface-wait", {
-    run_ids: [spawn.details.run_id],
+    run_ids: [spawn.details.runId],
     timeout_seconds: 5,
   });
   output = wait.details.results[0]?.output ?? "";

@@ -1,6 +1,12 @@
 import Type, { type Static } from "typebox";
-import { ChildSessionMetadataSchema, type ChildSessionMetadata } from "./bridge-child-session-contracts.ts";
-export { ChildSessionMetadataSchema, type ChildSessionMetadata };
+import { ChildSessionMetadataSchema, ChildSessionSetupEntrySchema, PermissionsStateV1Schema, type ChildSessionMetadata } from "./session-entry-contracts.ts";
+import { ApplyPatchParamsSchema, EditReplacementSchema } from "./tool-contracts.ts";
+export {
+  ChildSessionMetadataSchema,
+  ChildSessionSetupEntrySchema,
+  PermissionsStateV1Schema,
+  type ChildSessionMetadata,
+};
 /** Transport contracts for values returned by OCaml to the Pi adapter. */
 export const ActiveToolsSyncFactsSchema = Type.Object(
   { tools: Type.Array(Type.String()), ctx: Type.Optional(Type.Unknown()) },
@@ -15,6 +21,12 @@ export const ActiveToolsPlanSchema = Type.Object(
 );
 
 export type ActiveToolsPlan = Static<typeof ActiveToolsPlanSchema>;
+
+export const ChildPermissionRefreshPlanSchema = Type.Object(
+  { permissions: PermissionsStateV1Schema },
+  { $id: "ChildPermissionRefreshPlan", additionalProperties: false },
+);
+export type ChildPermissionRefreshPlan = Static<typeof ChildPermissionRefreshPlanSchema>;
 
 export const CommandSpecSchema = Type.Object(
   {
@@ -298,10 +310,6 @@ export const ChildSessionStartFactsSchema = Type.Object(
   },
   { $id: "ChildSessionStartFacts", additionalProperties: false },
 );
-export const ChildSessionCustomEntrySchema = Type.Object(
-  { customType: Type.String({ minLength: 1 }), data: Type.Unknown() },
-  { $id: "ChildSessionCustomEntry", additionalProperties: false },
-);
 export const ChildSessionStartPlanSchema = Type.Object(
   {
     parentSession: Type.Optional(Type.String({ minLength: 1 })),
@@ -309,12 +317,12 @@ export const ChildSessionStartPlanSchema = Type.Object(
     thinkingLevel: Type.Optional(Type.String({ minLength: 1 })),
     activeTools: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
     privateSessionDirectory: Type.Optional(Type.String({ minLength: 1 })),
-    setupEntries: Type.Array(ChildSessionCustomEntrySchema),
+    setupEntries: Type.Array(ChildSessionSetupEntrySchema),
   },
   { $id: "ChildSessionStartPlan", additionalProperties: false },
 );
 export type ChildSessionStartPlan = Static<typeof ChildSessionStartPlanSchema>;
-export type ChildSessionCustomEntry = Static<typeof ChildSessionCustomEntrySchema>;
+export type ChildSessionSetupEntry = Static<typeof ChildSessionSetupEntrySchema>;
 
 export const ChildDispatchFactsSchema = Type.Object(
   {
@@ -488,6 +496,7 @@ export const CoreAckSchema = Type.Object(
   { ok: Type.Literal(true) },
   { $id: "CoreAck", additionalProperties: false },
 );
+export const AgentActionCapabilityFactsSchema = Type.Object({ capabilityId: Type.String({ minLength: 1 }), agentId: Type.String({ minLength: 1 }), action: Type.String({ pattern: "^agent_(start|send|close)$" }), runId: Type.Optional(Type.String({ minLength: 1 })), submissionId: Type.Optional(Type.String({ minLength: 1 })), ctx: Type.Unknown() }, { $id: "AgentActionCapabilityFacts", additionalProperties: false });
 export type CoreAck = Static<typeof CoreAckSchema>;
 export const ExecCompletionWaitResultSchema = Type.Object(
   { ok: Type.Literal(true), exited: Type.Boolean() },
@@ -709,7 +718,7 @@ export const MutationErrorSchema = Type.Object(
   { $id: "MutationError", additionalProperties: false },
 );
 export const EditApplicationFactsSchema = Type.Object(
-  { prepared: Type.Unknown(), contents: Type.String() },
+  { path: Type.String({ minLength: 1 }), displayPath: Type.String({ minLength: 1 }), edits: Type.Array(EditReplacementSchema, { minItems: 1 }), contents: Type.String() },
   { $id: "EditApplicationFacts", additionalProperties: false },
 );
 export const EditAppliedSchema = Type.Object(
@@ -725,10 +734,11 @@ export const PatchWriteSchema = Type.Object(
   { path: Type.String({ minLength: 1 }), contents: Type.String() },
   { $id: "PatchWrite", additionalProperties: false },
 );
+export const AuthorizedMutationPathSchema = Type.Object({ originalPath: Type.String({ minLength: 1 }), resolvedPath: Type.String({ minLength: 1 }) }, { $id: "AuthorizedMutationPath", additionalProperties: false });
 export const PatchApplicationFactsSchema = Type.Object(
   {
-    params: Type.Unknown(), files: Type.Unknown(), ctx: Type.Unknown(),
-    filesystemApproval: Type.Boolean(),
+    params: ApplyPatchParamsSchema, files: Type.Record(Type.String(), Type.String()), ctx: Type.Unknown(),
+    filesystemApproval: Type.Boolean(), authorizedPaths: Type.Array(AuthorizedMutationPathSchema, { minItems: 1 }),
   },
   { $id: "PatchApplicationFacts", additionalProperties: false },
 );

@@ -30,6 +30,18 @@ let commit_agent_state ctx next =
 let json_text value = Taumel.Shared.encode_json value
 let json_success fields = json_text (Taumel.Shared.Object fields)
 
+let reserve_close expected_state agent_id () =
+  if !agent_state <> expected_state then Error "agent action capability is stale"
+  else (
+    agent_closing_ids :=
+      if List.mem agent_id !agent_closing_ids then !agent_closing_ids
+      else agent_id :: !agent_closing_ids;
+    Ok ())
+
+let release_close_reservation owner agent_id () =
+  if !loaded_session_id = Some owner then
+    agent_closing_ids := List.filter (fun value -> value <> agent_id) !agent_closing_ids
+
 let prepare_close params ctx =
   if is_agent_child ctx then reject_nested "agent_close"
   else
@@ -39,6 +51,9 @@ let prepare_close params ctx =
             Taumel.Shared.trim_non_empty
         with
         | None -> error_obj "agent_close.agent_id is required"
+        | Some agent_id
+          when Agent_action_capability.in_progress ~agent_id ctx ->
+            error_obj ("agent action is already executing: " ^ agent_id)
         | Some agent_id -> (
             let delete_worktree =
               if has_property params "delete_worktree" then
@@ -58,15 +73,8 @@ let prepare_close params ctx =
                 then
                   error_obj Taumel.Agent_worktree.delete_worktree_on_none_message
                 else (
-                  agent_closing_ids :=
-                    if List.mem agent_id !agent_closing_ids then !agent_closing_ids
-                    else agent_id :: !agent_closing_ids;
                   let details =
-                    Unsafe.obj
-                      [|
-                        ("agent_id", js_string agent_id);
-                        ("status", js_string "closed");
-                      |]
+                    Boundary_contracts.AgentCloseDetails.create ~agentId:agent_id ()
                   in
                   let run_ids =
                     Taumel.Agents.runs_for_agent !agent_state agent_id
@@ -85,6 +93,13 @@ let prepare_close params ctx =
                         | Ok derived -> Some derived
                         | Error _ -> None)
                   in
+                  let capability_id =
+                    let expected_state = !agent_state in
+                    Agent_action_capability.issue
+                      ~commit:(reserve_close expected_state agent_id)
+                      ~release:(release_close_reservation owner agent_id)
+                      ~action:"agent_close" ~agent_id ctx
+                  in
                   Boundary_contracts.PreparedAgentClose.create
                     ~text:
                       (json_success
@@ -92,7 +107,7 @@ let prepare_close params ctx =
                            ("agent_id", Taumel.Shared.String agent_id);
                            ("status", Taumel.Shared.String "closed");
                          ])
-                    ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details))
+                    ~details
                     ~agentId:agent_id ~runIds:run_ids
                     ~deleteWorktree:delete_worktree
                     ?worktreePath:
@@ -113,7 +128,7 @@ let prepare_close params ctx =
                             (match isolation with
                             | Taumel.Agent_workspace.None -> `V_none
                             | Taumel.Agent_workspace.Worktree -> `V_worktree)))
-                    ()
+                    ~capabilityId:capability_id ()
                   |> Tool_contracts.PreparedAgentClose.t_to_js |> inject)
             | Error _ -> (
                 match
@@ -122,16 +137,15 @@ let prepare_close params ctx =
                 with
                 | Error message -> error_obj message
                 | Ok _pending ->
-                    agent_closing_ids :=
-                      if List.mem agent_id !agent_closing_ids then
-                        !agent_closing_ids
-                      else agent_id :: !agent_closing_ids;
                     let details =
-                      Unsafe.obj
-                        [|
-                          ("agent_id", js_string agent_id);
-                          ("status", js_string "closed");
-                        |]
+                      Boundary_contracts.AgentCloseDetails.create ~agentId:agent_id ()
+                    in
+                    let capability_id =
+                      let expected_state = !agent_state in
+                      Agent_action_capability.issue
+                        ~commit:(reserve_close expected_state agent_id)
+                        ~release:(release_close_reservation owner agent_id)
+                        ~action:"agent_close" ~agent_id ctx
                     in
                     Boundary_contracts.PreparedAgentClose.create
                       ~text:
@@ -140,8 +154,9 @@ let prepare_close params ctx =
                              ("agent_id", Taumel.Shared.String agent_id);
                              ("status", Taumel.Shared.String "closed");
                            ])
-                      ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details))
-                      ~agentId:agent_id ~runIds:[] ~deleteWorktree:false ()
+                      ~details
+                      ~agentId:agent_id ~runIds:[] ~deleteWorktree:false
+                      ~capabilityId:capability_id ()
                     |> Tool_contracts.PreparedAgentClose.t_to_js |> inject)))
 
 let finish_close facts ctx =
@@ -291,12 +306,6 @@ let finish_close facts ctx =
                                ("agent state persistence failed: "
                               ^ Printexc.to_string error)
                              ~unstage_error ~restore_error))))))
-
-let release_close facts =
-  let agent_id = get_string facts "agent_id" in
-  agent_closing_ids :=
-    List.filter (fun value -> value <> agent_id) !agent_closing_ids;
-  core_ack ()
 
 let delete_child_session facts ctx =
   Session_sync.require_agent_owner ctx;

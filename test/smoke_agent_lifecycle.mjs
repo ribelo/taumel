@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { appendFileSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { latestTaumelCustomEntry } from "../src/pi-session-entries.ts";
 
 const require = createRequire(import.meta.url);
 require("../dist/taumel.cjs");
@@ -67,8 +68,8 @@ assert.equal(start.action, "agent_start");
 assert.equal(start.details.status, "running");
 assert.equal(start.details.tier, "high");
 assert.deepEqual(JSON.parse(start.text), {
-  agent_id: start.details.agent_id,
-  run_id: start.details.run_id,
+  agent_id: start.details.agentId,
+  run_id: start.details.runId,
   kind: "generic",
   status: "running",
   tier: "high",
@@ -77,8 +78,22 @@ assert.deepEqual(JSON.parse(start.text), {
 const { agentId: agentId, runId, submissionId } = start;
 assert.match(agentId, /^agent-[abcdefghjkmnpqrstuvwxyz23456789]{4}$/);
 assert.equal(runId, `${agentId}-run-1`);
-assert.equal(start.details.agent_id, agentId);
-assert.equal(start.details.run_id, runId);
+assert.equal(start.details.agentId, agentId);
+assert.equal(start.details.runId, runId);
+assert.equal(
+  core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]).details.agents.length,
+  0,
+  "agent-1inq: unclaimed start committed agent state",
+);
+const startCapabilityFacts = {
+  capabilityId: start.capabilityId, agentId, action: start.action,
+  runId: start.runId, submissionId: start.submissionId, ctx,
+};
+assert.equal(core.call("claimAgentAction", [startCapabilityFacts]).ok, true);
+const replayedStartCapability = core.call("claimAgentAction", [startCapabilityFacts]);
+assert.equal(replayedStartCapability.ok, false, "agent action capability was replayable");
+assert.match(replayedStartCapability.error, /invalid|consumed/);
+assert.equal(core.call("releaseAgentAction", [startCapabilityFacts]).ok, true);
 // agent-id19: reconciliation without a live authoritative dispatch is observable as orphaned.
 assert.equal(core.call("reconcileLiveAgentDispatches", [{ live_agent_ids: [] }, ctx]).ok, true);
 const orphanedList = core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]);
@@ -125,6 +140,8 @@ assert.equal(core.call("recordAgentActivity", [{ run_id: runId, submission_id: s
 await new Promise((resolve) => setTimeout(resolve, 2300));
 const agentsEntriesAfterFlush = entries.filter((e) => e.customType === "taumel.agents.v4").length;
 assert.ok(agentsEntriesAfterFlush > agentsEntriesBeforeFlush, "agent-id23: trailing flush must persist pending activity without further events");
+const persistedAgents = latestTaumelCustomEntry(ctx.sessionManager, "taumel.agents.v4");
+assert.ok(persistedAgents.kind === "contract_valid" && persistedAgents.entry.data.identities.length > 0, "non-empty agent state satisfies the persisted-entry contract");
 const offsetMinutes = -new Date().getTimezoneOffset();
 const expectedOffset = `${offsetMinutes < 0 ? "-" : "+"}${String(Math.floor(Math.abs(offsetMinutes) / 60)).padStart(2, "0")}:${String(Math.abs(offsetMinutes) % 60).padStart(2, "0")}`;
 assert.equal(activeList.details.agents[0].created_at.endsWith(expectedOffset), true, "agent-rs15 timestamps must include the DST-aware local offset");
@@ -241,6 +258,12 @@ const followUp = core.call("prepareTool", [{
   params: { agent_id: agentId, message: "continue", description: "Continue lifecycle work" },
   ctx,
 }]);
+const followUpCapabilityFacts = {
+  capabilityId: followUp.capabilityId, agentId, action: followUp.action,
+  runId: followUp.runId, submissionId: followUp.submissionId, ctx,
+};
+assert.equal(core.call("claimAgentAction", [followUpCapabilityFacts]).ok, true);
+assert.equal(core.call("releaseAgentAction", [followUpCapabilityFacts]).ok, true);
 assert.equal(core.call("recordAgentDispatchBoundary", [{
   run_id: followUp.runId,
   submission_id: followUp.submissionId,
@@ -277,12 +300,17 @@ const closePlan = core.call("prepareTool", [{
 }]);
 assert.equal(closePlan.ok, true);
 assert.equal(closePlan.action, "agent_close");
+const closeCapabilityFacts = {
+  capabilityId: closePlan.capabilityId, agentId, action: closePlan.action, ctx,
+};
+assert.equal(core.call("claimAgentAction", [closeCapabilityFacts]).ok, true);
 assert.equal(
   core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]).details.agents.length,
   1,
   "close planning must not remove state before physical cleanup",
 );
 assert.equal(core.call("finishAgentClose", [{ agent_id: agentId }, ctx]).ok, true);
+assert.equal(core.call("releaseAgentAction", [closeCapabilityFacts]).ok, true);
 assert.equal(
   core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]).details.agents.length,
   0,
@@ -299,6 +327,13 @@ const replacement = core.call("prepareTool", [{
   ctx,
 }]);
 assert.equal(replacement.ok, true);
+const replacementCapabilityFacts = {
+  capabilityId: replacement.capabilityId, agentId: replacement.agentId,
+  action: replacement.action, runId: replacement.runId,
+  submissionId: replacement.submissionId, ctx,
+};
+assert.equal(core.call("claimAgentAction", [replacementCapabilityFacts]).ok, true);
+assert.equal(core.call("releaseAgentAction", [replacementCapabilityFacts]).ok, true);
 assert.match(replacement.agentId, /^agent-[abcdefghjkmnpqrstuvwxyz23456789]{4}$/);
 assert.notEqual(replacement.agentId, agentId, "closed agent handles must remain retired");
 assert.equal(core.call("finishAgentClose", [{ agent_id: replacement.agentId }, ctx]).ok, true);
@@ -313,6 +348,13 @@ const shutdownAgent = core.call("prepareTool", [{
   ctx,
 }]);
 assert.equal(shutdownAgent.ok, true);
+const shutdownCapabilityFacts = {
+  capabilityId: shutdownAgent.capabilityId, agentId: shutdownAgent.agentId,
+  action: shutdownAgent.action, runId: shutdownAgent.runId,
+  submissionId: shutdownAgent.submissionId, ctx,
+};
+assert.equal(core.call("claimAgentAction", [shutdownCapabilityFacts]).ok, true);
+assert.equal(core.call("releaseAgentAction", [shutdownCapabilityFacts]).ok, true);
 assert.equal(core.call("recordAgentActivity", [{
   run_id: shutdownAgent.runId,
   submission_id: shutdownAgent.submissionId,

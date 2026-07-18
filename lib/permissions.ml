@@ -112,6 +112,13 @@ let default_active_state ~session_isolated_child =
     ~network_mode:Sandbox.Network_enabled ~no_sandbox:false
     ~isolated_child:session_isolated_child
 
+let invalid_active_state ~session_isolated_child =
+  active_state
+    ~profile:
+      { Capability_profile.default with tools = Capability_profile.None_allowed }
+    ~network_mode:Sandbox.Network_disabled ~no_sandbox:false
+    ~isolated_child:session_isolated_child
+
 let persisted_active_state ~session_isolated_child permissions =
   let isolated_child = session_isolated_child || permissions.sandbox.isolated_child in
   let profile =
@@ -153,10 +160,7 @@ let resolve_active ~host_sandbox_preset ~host_network_mode ~host_no_sandbox
   let active =
     match persisted with
     | Missing -> default_active_state ~session_isolated_child
-    | Invalid ->
-        active_state ~profile:Capability_profile.default
-          ~network_mode:Sandbox.Network_disabled ~no_sandbox:false
-          ~isolated_child:session_isolated_child
+    | Invalid -> invalid_active_state ~session_isolated_child
     | Persisted permissions ->
         persisted_active_state ~session_isolated_child permissions
   in
@@ -224,6 +228,11 @@ let network_to_string = function
 let network_of_string = function
   | "disabled" | "off" | "deny" -> Some Sandbox.Network_disabled
   | "enabled" | "on" | "allow" | "allow-all" -> Some Sandbox.Network_enabled
+  | _ -> None
+
+let persisted_network_of_string = function
+  | "disabled" -> Some Sandbox.Network_disabled
+  | "enabled" -> Some Sandbox.Network_enabled
   | _ -> None
 
 let bool_of_toggle = function
@@ -304,40 +313,94 @@ let network_menu_options (state : state) =
 let permissions_menu_options (state : state) =
   sandbox_menu_options state @ approval_menu_options state
 
-let persisted_to_json (state : state) =
-  Shared.Object
-    [
-      ("version", Shared.Number 1.);
-      ("profile", Capability_profile.to_json state.profile);
-      ("networkMode", Shared.String (network_to_string state.sandbox.network_mode));
-      ("noSandbox", Shared.Bool state.sandbox.no_sandbox);
-      ("isolated_child", Shared.Bool state.sandbox.isolated_child);
-    ]
+type persisted_payload =
+  | Permissions_v1 of {
+      profile : Capability_profile.t;
+      network_mode : Sandbox.network_mode;
+      no_sandbox : bool;
+      isolated_child : bool;
+    }
 
-let persisted_of_json = function
-  | Shared.Object fields -> (
-      match List.assoc_opt "profile" fields with
-      | Some profile_json ->
-          let ( let* ) = Result.bind in
-          let* profile = Capability_profile.of_json profile_json in
-          let network_mode =
-            match List.assoc_opt "networkMode" fields with
-            | Some (Shared.String value) -> Option.value (network_of_string value) ~default:Sandbox.Network_disabled
-            | _ -> Sandbox.Network_disabled
-          in
-          let no_sandbox =
-            match List.assoc_opt "noSandbox" fields with
-            | Some (Shared.Bool value) -> value
-            | _ -> false
-          in
-          let isolated_child =
-            match List.assoc_opt "isolated_child" fields with
-            | Some (Shared.Bool value) -> value
-            | _ -> false
-          in
-          create ~network_mode ~no_sandbox ~isolated_child profile
-      | None -> Error "permissions state requires profile")
+let persisted_payload_of_state (state : state) =
+  Permissions_v1
+    {
+      profile = state.profile;
+      network_mode = state.sandbox.network_mode;
+      no_sandbox = state.sandbox.no_sandbox;
+      isolated_child = state.sandbox.isolated_child;
+    }
+
+let persisted_payload_to_json = function
+  | Permissions_v1 { profile; network_mode; no_sandbox; isolated_child } ->
+      Shared.Object
+        [
+          ("version", Shared.Number 1.);
+          ("profile", Capability_profile.to_json profile);
+          ("networkMode", Shared.String (network_to_string network_mode));
+          ("noSandbox", Shared.Bool no_sandbox);
+          ("isolated_child", Shared.Bool isolated_child);
+        ]
+
+let persisted_payload_of_json = function
+  | Shared.Object fields ->
+      let ( let* ) = Result.bind in
+      let* () =
+        Shared.json_exact_fields "permissions state"
+          [ "version"; "profile"; "networkMode"; "noSandbox"; "isolated_child" ]
+          fields
+      in
+      (
+      match List.assoc_opt "version" fields with
+      | Some (Shared.Number 1.) -> (
+          match List.assoc_opt "profile" fields with
+          | Some profile_json ->
+              let ( let* ) = Result.bind in
+              let* profile = Capability_profile.of_json profile_json in
+              let* network_mode =
+                match List.assoc_opt "networkMode" fields with
+                | Some (Shared.String value) -> (
+                    match persisted_network_of_string value with
+                    | Some network_mode -> Ok network_mode
+                    | None -> Error ("unknown network mode: " ^ value))
+                | Some _ -> Error "permissions state networkMode must be a string"
+                | None -> Error "permissions state requires networkMode"
+              in
+              let* no_sandbox =
+                Shared.json_required_bool "permissions state" fields "noSandbox"
+              in
+              let* isolated_child =
+                Shared.json_required_bool "permissions state" fields
+                  "isolated_child"
+              in
+              let* () =
+                match (profile.sandbox_preset, network_mode) with
+                | Capability_profile.Danger_full_access,
+                  Sandbox.Network_disabled ->
+                    Error
+                      "permissions state cannot disable network for danger-full-access"
+                | _ -> Ok ()
+              in
+              Ok
+                (Permissions_v1
+                   { profile; network_mode; no_sandbox; isolated_child })
+          | None -> Error "permissions state requires profile")
+      | Some (Shared.Number version) ->
+          Error
+            ("unsupported permissions schema version: "
+            ^ string_of_float version ^ " (expected 1)")
+      | Some _ -> Error "permissions state version must be a number"
+      | None -> Error "permissions state requires version")
   | _ -> Error "permissions state must be an object"
+
+let persisted_to_json state =
+  state |> persisted_payload_of_state |> persisted_payload_to_json
+
+let persisted_of_json json =
+  let ( let* ) = Result.bind in
+  let* payload = persisted_payload_of_json json in
+  match payload with
+  | Permissions_v1 { profile; network_mode; no_sandbox; isolated_child } ->
+      create ~network_mode ~no_sandbox ~isolated_child profile
 
 let codec = { Shared.encode = persisted_to_json; decode = persisted_of_json }
 

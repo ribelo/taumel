@@ -9,6 +9,7 @@ module Shared = Taumel.Shared
 module Threads = Taumel.Thread_tools
 module Tool_catalog = Taumel.Tool_catalog
 module Usage = Taumel.Usage
+module Visibility = Taumel.Visibility
 
 let fail label message = failwith (Printf.sprintf "%s: %s" label message)
 
@@ -34,6 +35,86 @@ let expect_ok_any label = function
 let expect_error label = function
   | Ok _ -> fail label "expected an error"
   | Error _ -> ()
+
+let test_shared_pinq_json_integer_helpers_reject_fractional_values () =
+  expect_error "lossy JSON integer literal is rejected"
+    (Shared.decode_json_string "{\"count\":9007199254740993}");
+  expect_error "out-of-range OCaml integer literal is rejected"
+    (Result.bind (Shared.decode_json_string "{\"count\":2147483648}")
+       (function
+         | Shared.Object fields -> Shared.json_required_int "state" fields "count"
+         | _ -> Error "expected object"));
+  assert_bool "optional integer field rejects fractional number"
+    (Shared.json_int_field "count"
+       (Shared.Object [ ("count", Shared.Number 1.5) ])
+    = None);
+  expect_error "required integer rejects fractional number"
+    (Shared.json_required_int "state" [ ("count", Shared.Number 1.5) ] "count");
+  expect_error "defaulted integer rejects fractional number"
+    (Shared.json_int_default "state" [ ("count", Shared.Number (-0.5)) ]
+       "count" 0)
+
+let ralph_state ?(version = Shared.Number 1.) ?(iteration = Shared.Number 0.)
+    ?(max_iterations = Shared.Number 1.) () =
+  Shared.Object
+    [
+      ("version", version);
+      ( "tasks",
+        Shared.Array
+          [
+            Shared.Object
+              [
+                ("id", Shared.String "r-1");
+                ("objective", Shared.String "iterate");
+                ("controllerSession", Shared.String "controller");
+                ("childSession", Shared.Null);
+                ("iteration", iteration);
+                ("maxIterations", max_iterations);
+                ("reflectionEvery", Shared.Number 1.);
+                ("status", Shared.String "running");
+              ];
+          ] );
+    ]
+
+let test_ralph_zn6r_codec_reconstructs_version_and_iteration_invariants () =
+  expect_error "Ralph rejects unpersistable start maximum"
+    (Ralph.start ~max_iterations:2_147_483_648 ~id:"r-overflow"
+       ~controller_session:"controller" "iterate");
+  expect_error "Ralph rejects unpersistable command maximum"
+    (Ralph.parse_start_args "--max 2147483648 iterate");
+  expect_error "Ralph rejects unsupported version"
+    (Ralph.codec.decode (ralph_state ~version:(Shared.Number 2.) ()));
+  expect_error "Ralph rejects fractional iteration"
+    (Ralph.codec.decode (ralph_state ~iteration:(Shared.Number 0.5) ()));
+  expect_error "Ralph rejects negative iteration"
+    (Ralph.codec.decode (ralph_state ~iteration:(Shared.Number (-1.)) ()));
+  expect_error "Ralph rejects non-positive maximum"
+    (Ralph.codec.decode (ralph_state ~max_iterations:(Shared.Number 0.) ()));
+  let unknown =
+    match ralph_state () with
+    | Shared.Object fields -> Shared.Object (("unknown", Shared.Bool true) :: fields)
+    | _ -> failwith "expected Ralph state"
+  in
+  expect_error "Ralph rejects unknown persisted fields" (Ralph.codec.decode unknown)
+
+let test_vis_c2wn_codec_rejects_unsupported_version () =
+  expect_error "visibility rejects unsupported version"
+    (Visibility.codec.decode
+       (Shared.Object
+          [
+            ("version", Shared.Number 2.);
+            ("tools", Shared.Object [ ("disabled", Shared.Array []) ]);
+            ("skills", Shared.Object [ ("disabled", Shared.Array []) ]);
+          ]));
+  expect_error "visibility rejects unknown persisted fields"
+    (Visibility.codec.decode
+       (Shared.Object
+          [
+            ("version", Shared.Number 1.);
+            ("tools", Shared.Object [ ("disabled", Shared.Array []) ]);
+            ("skills", Shared.Object [ ("disabled", Shared.Array []) ]);
+            ("unknown", Shared.Bool true);
+          ]))
 
 let sandbox_config =
   {
@@ -124,6 +205,153 @@ let test_component_codecs () =
   assert_bool "permissions network round trip"
     (permissions_state.sandbox.network_mode = Sandbox.Network_enabled);
   assert_bool "permissions no-sandbox round trip" permissions_state.sandbox.no_sandbox;
+  let restrictive_permissions =
+    expect_ok "restrictive permissions create for codec"
+      (Permissions.create ~network_mode:Sandbox.Network_enabled
+         { profile with no_sandbox_allowed = false })
+  in
+  let permissions_json = Permissions.codec.encode restrictive_permissions in
+  let remove_permissions_field field =
+    match permissions_json with
+    | Shared.Object fields -> Shared.Object (List.remove_assoc field fields)
+    | _ -> fail "permissions codec" "expected object payload"
+  in
+  let replace_permissions_field field value =
+    match permissions_json with
+    | Shared.Object fields ->
+        Shared.Object ((field, value) :: List.remove_assoc field fields)
+    | _ -> fail "permissions codec" "expected object payload"
+  in
+  let remove_profile_field field =
+    match permissions_json with
+    | Shared.Object fields -> (
+        match List.assoc_opt "profile" fields with
+        | Some (Shared.Object profile_fields) ->
+            Shared.Object
+              (("profile", Shared.Object (List.remove_assoc field profile_fields))
+              :: List.remove_assoc "profile" fields)
+        | _ -> fail "permissions codec" "expected profile object")
+    | _ -> fail "permissions codec" "expected object payload"
+  in
+  let replace_profile_field field value =
+    match permissions_json with
+    | Shared.Object fields -> (
+        match List.assoc_opt "profile" fields with
+        | Some (Shared.Object profile_fields) ->
+            Shared.Object
+              (( "profile",
+                 Shared.Object
+                   ((field, value) :: List.remove_assoc field profile_fields) )
+              :: List.remove_assoc "profile" fields)
+        | _ -> fail "permissions codec" "expected profile object")
+    | _ -> fail "permissions codec" "expected object payload"
+  in
+  let prepend_profile_field field value =
+    match permissions_json with
+    | Shared.Object fields -> (
+        match List.assoc_opt "profile" fields with
+        | Some (Shared.Object profile_fields) ->
+            Shared.Object
+              (("profile", Shared.Object ((field, value) :: profile_fields))
+              :: List.remove_assoc "profile" fields)
+        | _ -> fail "permissions codec" "expected profile object")
+    | _ -> fail "permissions codec" "expected object payload"
+  in
+  let unsupported_permissions =
+    match permissions_json with
+    | Shared.Object fields ->
+        Shared.Object
+          (("version", Shared.Number 0.) :: List.remove_assoc "version" fields)
+    | _ -> fail "permissions codec version" "expected object payload"
+  in
+  expect_error "sandbox-o9ky permissions codec rejects unsupported version"
+    (Permissions.codec.decode unsupported_permissions);
+  List.iter
+    (fun version ->
+      expect_error "permissions codec rejects non-v1 version"
+        (Permissions.codec.decode
+           (replace_permissions_field "version" version)))
+    [ Shared.Number 1.5; Shared.Number 2.; Shared.String "1" ];
+  let contradictory_permissions =
+    match permissions_json with
+    | Shared.Object fields -> (
+        match List.assoc_opt "profile" fields with
+        | Some (Shared.Object profile_fields) ->
+            Shared.Object
+              (("networkMode", Shared.String "disabled")
+              :: ( "profile",
+                   Shared.Object
+                     (("sandboxPreset", Shared.String "danger-full-access")
+                     :: List.remove_assoc "sandboxPreset" profile_fields) )
+              :: (fields |> List.remove_assoc "networkMode"
+                 |> List.remove_assoc "profile"))
+        | _ -> fail "permissions codec" "expected profile object")
+    | _ -> fail "permissions codec" "expected object payload"
+  in
+  expect_error "sandbox-2m4o rejects contradictory full-access network"
+    (Permissions.codec.decode contradictory_permissions);
+  expect_error "permissions codec rejects legacy sandbox alias"
+    (Permissions.codec.decode
+       (replace_profile_field "sandboxPreset" (Shared.String "full-access")));
+  expect_error "permissions codec rejects legacy network alias"
+    (Permissions.codec.decode
+       (replace_permissions_field "networkMode" (Shared.String "off")));
+  let permissions_with_extra_field =
+    match permissions_json with
+    | Shared.Object fields ->
+        Shared.Object (("legacyAuthority", Shared.Bool true) :: fields)
+    | _ -> fail "permissions codec" "expected object payload"
+  in
+  expect_error "permissions codec rejects unknown outer field"
+    (Permissions.codec.decode permissions_with_extra_field);
+  let permissions_with_duplicate_field =
+    match permissions_json with
+    | Shared.Object fields ->
+        Shared.Object (("networkMode", Shared.String "enabled") :: fields)
+    | _ -> fail "permissions codec" "expected object payload"
+  in
+  expect_error "permissions codec rejects duplicate outer field"
+    (Permissions.codec.decode permissions_with_duplicate_field);
+  expect_error "profile-ikfk permissions codec rejects unknown profile field"
+    (Permissions.codec.decode
+       (replace_profile_field "legacyAuthority" (Shared.Bool true)));
+  expect_error "permissions codec rejects duplicate profile field"
+    (Permissions.codec.decode
+       (prepend_profile_field "tools"
+          (Shared.Object [ ("kind", Shared.String "none") ])));
+  expect_error "profile-kbtx permissions codec rejects extraneous allowlist field"
+    (Permissions.codec.decode
+       (replace_profile_field "tools"
+          (Shared.Object
+             [
+               ("kind", Shared.String "all");
+               ("names", Shared.Array [ Shared.String "exec_command" ]);
+             ])));
+  expect_error "permissions codec rejects duplicate allowlist kind"
+    (Permissions.codec.decode
+       (replace_profile_field "tools"
+          (Shared.Object
+             [
+               ("kind", Shared.String "none");
+               ("kind", Shared.String "all");
+             ])));
+  List.iter
+    (fun field ->
+      expect_error ("permissions codec rejects missing field " ^ field)
+        (Permissions.codec.decode (remove_permissions_field field)))
+    [ "version"; "profile"; "networkMode"; "noSandbox"; "isolated_child" ];
+  List.iter
+    (fun field ->
+      expect_error ("permissions codec rejects missing profile field " ^ field)
+        (Permissions.codec.decode (remove_profile_field field)))
+    [
+      "modelId";
+      "thinkingLevel";
+      "sandboxPreset";
+      "approvalPolicy";
+      "tools";
+      "noSandboxAllowed";
+    ];
   let child_permissions =
     expect_ok "child permissions create for codec"
       (Permissions.create ~isolated_child:true profile)
@@ -161,7 +389,10 @@ let test_component_codecs () =
   in
   assert_int "ralph task count round trip" 1 (List.length decoded_tasks);
   assert_equal "ralph child round trip" "child"
-    (Option.value (List.hd decoded_tasks).child_session ~default:"")
+    (Option.value (List.hd decoded_tasks).child_session ~default:"");
+  expect_error "ralph-zn6r iteration overflow is rejected"
+    (Ralph.ralph_continue (Ralph.Child "child")
+       { task with iteration = 2_147_483_647; max_iterations = None })
 
 let test_read_only_allows_execution () =
   let read_only_config =
@@ -705,6 +936,93 @@ let test_permissions_active_resolution () =
     (invalid.profile.approval_policy = Capability.Never);
   assert_bool "sandbox-md07 invalid fallback disables network"
     (invalid.network_mode = Sandbox.Network_disabled);
+  assert_bool "sandbox-xg3g invalid persisted permissions deny every tool"
+    (not (Capability.allow_tool invalid.profile "exec_command"));
+  let refresh_profile =
+    { Capability.default with tools = Capability.of_list [ "exec_command" ] }
+  in
+  let parent_permissions =
+    expect_ok "parent permissions for child refresh"
+      (Permissions.create ~network_mode:Sandbox.Network_enabled refresh_profile)
+  in
+  let invalid_parent_permissions =
+    match Permissions.codec.encode parent_permissions with
+    | Shared.Object fields ->
+        Shared.Object (("legacyAuthority", Shared.Bool true) :: fields)
+    | _ -> fail "child permission refresh" "expected permissions object"
+  in
+  let child_metadata =
+    Shared.Object
+      [
+        ("capabilityProfile", Capability.to_json refresh_profile);
+        ("networkMode", Shared.String "enabled");
+      ]
+  in
+  let refreshed_permissions =
+    Child_session.refresh_permissions_entry ~host_sandbox_preset:None
+      ~host_network_mode:None ~host_no_sandbox:None
+      ~parent_permissions:(Some invalid_parent_permissions) child_metadata
+  in
+  let refreshed_permissions =
+    expect_ok "refreshed child permissions decode"
+      (Permissions.codec.decode refreshed_permissions)
+  in
+  assert_bool "sandbox-co3e invalid parent keeps refreshed child network disabled"
+    (refreshed_permissions.sandbox.network_mode = Sandbox.Network_disabled);
+  let host_clamped_permissions =
+    Child_session.refresh_permissions_entry
+      ~host_sandbox_preset:(Some Capability.Read_only)
+      ~host_network_mode:(Some Sandbox.Network_disabled) ~host_no_sandbox:None
+      ~parent_permissions:(Some (Permissions.codec.encode parent_permissions))
+      child_metadata
+    |> fun permissions ->
+    expect_ok "host-clamped child permissions decode"
+      (Permissions.codec.decode permissions)
+  in
+  assert_bool "sandbox-jrcw child refresh applies host sandbox override"
+    (host_clamped_permissions.profile.sandbox_preset = Capability.Read_only);
+  assert_bool "child refresh applies host network override"
+    (host_clamped_permissions.sandbox.network_mode = Sandbox.Network_disabled);
+  let fail_closed_child_permissions =
+    Child_session.refresh_permissions_entry ~host_sandbox_preset:None
+      ~host_network_mode:None ~host_no_sandbox:None
+      ~parent_permissions:(Some (Permissions.codec.encode parent_permissions))
+      (Shared.Object [])
+    |> fun permissions ->
+    expect_ok "fail-closed child permissions decode"
+      (Permissions.codec.decode permissions)
+  in
+  assert_bool "sandbox-zp0z malformed child ceiling denies every tool"
+    (not
+       (Capability.allow_tool fail_closed_child_permissions.profile
+          "exec_command"));
+  assert_bool "malformed child ceiling disables network"
+    (fail_closed_child_permissions.sandbox.network_mode
+    = Sandbox.Network_disabled);
+  assert_bool "malformed child ceiling preserves isolation"
+    fail_closed_child_permissions.sandbox.isolated_child;
+  let metadata_without_network kind =
+    Shared.Object
+      [
+        ("kind", Shared.String kind);
+        ("capabilityProfile", Capability.to_json refresh_profile);
+      ]
+  in
+  let decode_refreshed metadata =
+    Child_session.refresh_permissions_entry ~host_sandbox_preset:None
+      ~host_network_mode:None ~host_no_sandbox:None
+      ~parent_permissions:(Some (Permissions.codec.encode parent_permissions))
+      metadata
+    |> Permissions.codec.decode
+    |> expect_ok "variant-aware refreshed child permissions decode"
+  in
+  let agent_without_network = decode_refreshed (metadata_without_network "agent") in
+  assert_bool "sandbox-tusv agent missing network ceiling denies every tool"
+    (not (Capability.allow_tool agent_without_network.profile "exec_command"));
+  let ralph_without_network = decode_refreshed (metadata_without_network "ralph") in
+  assert_bool "ralph may omit disabled network ceiling"
+    (Capability.allow_tool ralph_without_network.profile "exec_command"
+    && ralph_without_network.sandbox.network_mode = Sandbox.Network_disabled);
   let flagged =
     Permissions.resolve_active
       ~host_sandbox_preset:(Some Capability.Read_only)
@@ -971,6 +1289,9 @@ let test_authorization_path_symlink_equivalence () =
 
 let () =
   Random.self_init ();
+  test_shared_pinq_json_integer_helpers_reject_fractional_values ();
+  test_ralph_zn6r_codec_reconstructs_version_and_iteration_invariants ();
+  test_vis_c2wn_codec_rejects_unsupported_version ();
   test_component_codecs ();
   test_read_only_allows_execution ();
   test_bwrap_keeps_dev_mount_after_root_bind ();

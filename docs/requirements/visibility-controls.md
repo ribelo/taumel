@@ -23,6 +23,7 @@ config with `Ctrl+S` or a command-form `save` action.
 
 - The system shall maintain tool and skill visibility as session-effective state. Visibility changes shall not grant or revoke tool authorization. ^vis-sc01
 - The system shall persist session-effective visibility in session custom entries and restore it when the same thread resumes. ^vis-sc02
+- When decoding persisted session visibility, the system shall accept only schema version `1`. ^vis-c2wn
 - When a new session starts and no session visibility state exists, the system shall seed session-effective visibility from global Pi config and trusted project Pi config according to the shared Taumel config precedence. ^vis-sc03
 - The session-effective state shall take precedence over config defaults for the lifetime of that session. ^vis-sc04
 - One visibility state shall apply across every conversation-tree branch in a thread/session. ^vis-sc05

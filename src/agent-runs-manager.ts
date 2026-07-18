@@ -1,4 +1,5 @@
 import type { CoreBridge, PiLike } from "./types.ts";
+import { executeAgentPrepared, pendingAgentWaits } from "./agent-orchestration.ts";
 import {
   commandResult,
   notify,
@@ -6,7 +7,6 @@ import {
 } from "./manager-kit.ts";
 import {
   applyChildSessionUpdate,
-  childSessionCacheKey,
   childSessionCacheKeyScopeFromContext,
 } from "./child-sessions.ts";
 import type { ChildSessionBridge } from "./types.ts";
@@ -74,6 +74,7 @@ async function applyChildUpdates(
 }
 
 async function closeAgent(
+  pi: PiLike,
   core: CoreBridge,
   childSessions: Map<string, ChildSessionBridge>,
   agentId: string,
@@ -85,52 +86,22 @@ async function closeAgent(
     ctx,
   }]));
   if (prepared.ok !== true || prepared.action !== "agent_close") return prepared;
-  let childExecutionInterrupted = false;
-  const failClose = (message: string) => {
-    let transitionError = "";
-    if (childExecutionInterrupted) {
-      try {
-        decodeCoreAck(core.call("recordAgentCloseCleanupFailure", [{ agent_id: agentId }, ctx]));
-      } catch (error) {
-        transitionError = error instanceof Error ? error.message : String(error);
-      }
-    }
-    decodeCoreAck(core.call("releaseAgentClose", [{ agent_id: agentId }]));
-    const fullMessage = transitionError === "" ? message : `${message}; ${transitionError}`;
-    return commandResult(false, `Agent close failed: ${fullMessage}`, {
-      agent_id: agentId,
-      error: fullMessage,
-    });
-  };
-  try {
-    const keyScope = childSessionCacheKeyScopeFromContext(ctx);
-    childExecutionInterrupted = childSessions.has(childSessionCacheKey(agentId, keyScope));
-    await applyChildSessionUpdate(childSessions, {
-      action: "delete_child_session",
-      key: agentId,
-      reason: "agent_closed",
-    }, undefined, keyScope);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return failClose(message);
-  }
-  let finished;
-  try {
-    finished = decodeCoreAck(core.call("finishAgentClose", [{ agent_id: agentId }, ctx]));
-  } catch (error) {
-    return failClose(error instanceof Error ? error.message : String(error));
-  }
-  if (finished.ok !== true) {
-    return failClose("agent close state removal failed");
-  }
-  return commandResult(true, `Closed ${agentId}.`, {
-    agent_id: agentId,
-    status: "closed",
-  });
+  const result = await executeAgentPrepared(
+    pi, core, childSessions, pendingAgentWaits, prepared, ctx,
+  );
+  const details = isObject(result.details) ? result.details : {};
+  const error = typeof details.error === "string"
+    ? details.error
+    : isObject(details.error) && typeof details.error.message === "string"
+      ? details.error.message
+      : undefined;
+  return error === undefined
+    ? commandResult(true, `Closed ${agentId}.`, { agent_id: agentId, status: "closed" })
+    : commandResult(false, `Agent close failed: ${error}`, { agent_id: agentId, error });
 }
 
 export async function executeAgentRunsManager(
-  _pi: PiLike,
+  pi: PiLike,
   core: CoreBridge,
   childSessions: Map<string, ChildSessionBridge>,
   args: string,
@@ -152,7 +123,7 @@ export async function executeAgentRunsManager(
         if (confirmed !== "Confirm close") {
           return commandResult(true, "Agent close cancelled.", { cancelled: true, agent_id: agentId });
         }
-        return closeAgent(core, childSessions, agentId, ctx);
+        return closeAgent(pi, core, childSessions, agentId, ctx);
       }
     }
     const result = await runAgentRunsCommand(core, ctx, trimmed);
@@ -249,7 +220,7 @@ export async function executeAgentRunsManager(
     if (confirm !== "Confirm close") {
       return commandResult(true, "Agent close cancelled.", { cancelled: true, agent_id: agentId });
     }
-    const result = await closeAgent(core, childSessions, agentId, ctx);
+    const result = await closeAgent(pi, core, childSessions, agentId, ctx);
     notify(ui, `Closed ${agentId}`, "info");
     return result;
   }

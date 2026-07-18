@@ -618,7 +618,7 @@ let worktree_is_clean ~worktree_path =
             if dirty then
               Error "agent worktree has dirty or uninitialized submodules"
             else Ok ())
-let provision ~owner_session_id ~agent_id ~source_workspace =
+let provision ~expected_binding ~owner_session_id ~agent_id ~source_workspace =
   let agent_home = pi_agent_dir () in
   match resolve_repository source_workspace with
   | Error _ as error -> error
@@ -627,7 +627,12 @@ let provision ~owner_session_id ~agent_id ~source_workspace =
         Taumel.Agent_workspace.worktree ~source_origin:source_workspace
           ~main_repository_root ~main_repository_id
       in
-      match
+      if expected_binding <> binding then
+        Error
+          ( "workspace_unavailable",
+            "source repository changed after agent action preparation" )
+      else
+              match
         Taumel.Agent_workspace.derive ~agent_home ~owner_session_id ~agent_id
           binding
       with

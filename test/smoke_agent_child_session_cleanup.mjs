@@ -55,13 +55,22 @@ try {
     },
   };
 
-  function spawn(description) {
+  function spawn(description, claim = true) {
     const started = core.call("prepareTool", [{
       name: "agent_spawn",
       params: { message: "test cleanup", description },
       ctx,
     }]);
     assert.equal(started.action, "agent_start");
+    if (claim) {
+      const capabilityFacts = {
+        capabilityId: started.capabilityId, agentId: started.agentId,
+        action: started.action, runId: started.runId,
+        submissionId: started.submissionId, ctx,
+      };
+      assert.equal(core.call("claimAgentAction", [capabilityFacts]).ok, true);
+      assert.equal(core.call("releaseAgentAction", [capabilityFacts]).ok, true);
+    }
     return started;
   }
 
@@ -268,7 +277,7 @@ try {
   rmSync(outsideOwnerDirectory, { recursive: true, force: true });
   await closeAgent(escaped.agentId);
 
-  const failedStart = spawn("Retain failed-start cleanup authority");
+  const failedStart = spawn("Retain failed-start cleanup authority", false);
   const failedStartDirectory = privateDirectory(failedStart);
   const failedStartResult = await executeAgentPrepared(
     {

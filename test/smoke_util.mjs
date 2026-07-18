@@ -1,31 +1,62 @@
 import { strict as assert } from "node:assert";
+import { renameSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { resolveAuthorizationPath, writePatchFiles } from "../src/util.ts";
+import { authorizeMutationPaths, readJsonObjectForAtomicUpdate, resolveAuthorizationPath, writeFileAtomically, writePatchFiles } from "../src/util.ts";
+
+async function writeAuthorizedPatch(application) {
+  const paths = [...application.deletes, ...application.writes.map((write) => write.path)];
+  return writePatchFiles({ ...application, authorizations: await authorizeMutationPaths(paths) });
+}
 
 const root = await mkdtemp(join(tmpdir(), "taumel-util-"));
 
 try {
+  const settingsPath = join(root, "settings.json");
+  await writeFile(settingsPath, '{"preserved":true}\n', "utf8");
+  const settingsRead = await readJsonObjectForAtomicUpdate(settingsPath);
+  const racedMalformedSettings = "{ raced malformed settings";
+  await writeFile(settingsPath, racedMalformedSettings, "utf8");
+  await assert.rejects(
+    writeFileAtomically(settingsRead.authorization, '{"replacement":true}\n'),
+    /changed after authorization/,
+  );
+  assert.equal(await readFile(settingsPath, "utf8"), racedMalformedSettings);
+
   const firstPath = join(root, "first.txt");
-  const failingPath = join(root, "as-directory");
+  const failingPath = join(root, "raced.txt");
+  const parkedFailingPath = join(root, "raced-original.txt");
   await writeFile(firstPath, "original\n", "utf8");
-  await mkdir(failingPath);
+  await writeFile(failingPath, "raced original\n", "utf8");
+  let failingContentsReads = 0;
+  const racedWrite = {
+    path: failingPath,
+    get contents() {
+      failingContentsReads += 1;
+      if (failingContentsReads === 2) {
+        renameSync(failingPath, parkedFailingPath);
+        writeFileSync(failingPath, "replacement inode\n");
+      }
+      return "must not commit\n";
+    },
+  };
 
   await assert.rejects(
     () =>
-      writePatchFiles({
+      writeAuthorizedPatch({
         deletes: [],
         writes: [
           { path: firstPath, contents: "changed\n" },
-          { path: failingPath, contents: "cannot replace directory\n" },
+          racedWrite,
         ],
       }),
     "writePatchFiles should fail when a later write cannot be committed",
   );
 
   assert.equal(await readFile(firstPath, "utf8"), "original\n", "failed patches should roll back earlier writes");
+  assert.equal(await readFile(failingPath, "utf8"), "replacement inode\n", "failed patches should not overwrite a replacement inode");
 
   const deletePath = join(root, "delete.txt");
   const undeletablePath = join(root, "undeletable-directory");
@@ -34,7 +65,7 @@ try {
 
   await assert.rejects(
     () =>
-      writePatchFiles({
+      writeAuthorizedPatch({
         deletes: [deletePath, undeletablePath],
         writes: [],
       }),
@@ -47,7 +78,7 @@ try {
   const linkPath = join(root, "link.txt");
   await writeFile(targetPath, "via-target\n", "utf8");
   await symlink(targetPath, linkPath);
-  await writePatchFiles({
+  await writeAuthorizedPatch({
     deletes: [],
     writes: [{ path: linkPath, contents: "via-link\n" }],
   });
@@ -58,11 +89,13 @@ try {
   const rollbackLinkPath = join(root, "rollback-link.txt");
   await writeFile(rollbackTargetPath, "rollback-original\n", "utf8");
   await symlink(rollbackTargetPath, rollbackLinkPath);
-  await assert.rejects(() => writePatchFiles({
+  const rollbackFailurePath = join(root, "rollback-failure-directory");
+  await mkdir(rollbackFailurePath);
+  await assert.rejects(() => writeAuthorizedPatch({
     deletes: [],
     writes: [
       { path: rollbackLinkPath, contents: "rollback-changed\n" },
-      { path: failingPath, contents: "still cannot replace directory\n" },
+      { path: rollbackFailurePath, contents: "still cannot replace directory\n" },
     ],
   }));
   assert.equal(await readFile(rollbackTargetPath, "utf8"), "rollback-original\n", "rollback should restore a symlink write's target contents");

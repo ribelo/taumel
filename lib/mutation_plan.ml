@@ -148,7 +148,9 @@ let plan_write ?auth_path ?auth_roots (sandbox : Sandbox.config)
     (request : write_request) =
   let path = request.path in
   let contents = request.contents in
-  match Sandbox.authorize_mutation_path ?auth_path ?auth_roots sandbox Sandbox.Write path with
+  if request.mode <> "overwrite" && request.mode <> "append" then
+    Error "write mode must be overwrite or append"
+  else match Sandbox.authorize_mutation_path ?auth_path ?auth_roots sandbox Sandbox.Write path with
   | Allow -> Ok (resolved_mutation_plan ~contents ?auth_path path sandbox)
   | Requires_approval _ ->
       Ok
@@ -159,7 +161,10 @@ let plan_write ?auth_path ?auth_roots (sandbox : Sandbox.config)
 let plan_edit ?auth_path ?auth_roots (sandbox : Sandbox.config)
     (request : edit_request) =
   let path = request.path in
-  match Sandbox.authorize_mutation_path ?auth_path ?auth_roots sandbox Sandbox.Write path with
+  if request.edits = [] then Error "edit requires at least one replacement"
+  else if List.exists (fun edit -> edit.Sandbox.old_text = "") request.edits then
+    Error "edit oldText must not be empty"
+  else match Sandbox.authorize_mutation_path ?auth_path ?auth_roots sandbox Sandbox.Write path with
   | Allow ->
       Ok (resolved_mutation_plan ~edits:request.edits ?auth_path path sandbox)
   | Requires_approval _ ->

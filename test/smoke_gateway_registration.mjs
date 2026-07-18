@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { executeAgentPrepared } from "../src/agent-orchestration.ts";
@@ -70,7 +70,10 @@ const childCtx = {
       data: {
         kind: "agent", agentKind: "generic", agentId: "agent-test",
         modelId: "test/model", thinkingLevel: "medium", activeTools: ["write"],
-        capabilityProfile: {}, networkMode: "disabled", isolated_child: true,
+        capabilityProfile: {
+          modelId: "inherit", thinkingLevel: "medium", sandboxPreset: "workspace-write",
+          approvalPolicy: "on-request", tools: { kind: "all" }, noSandboxAllowed: false,
+        }, networkMode: "disabled", isolated_child: true,
         workspaceDirectory: "/tmp", sourceWorkspace: "/tmp", isolation: "none",
         workspaceBinding: { variant: "shared", source_root: "/tmp" },
         parentSessionId: "parent-a", parentSessionFile: "",
@@ -85,6 +88,12 @@ let promptPlans = 0;
 const ownershipCore = {
   finishOutcomes: [],
   call(method, args) {
+    if (method === "claimAgentAction" || method === "revalidateAgentAction" || method === "releaseAgentAction" || method === "authorizeAgentActionCleanup") {
+      return { ok: true };
+    }
+    if (method === "claimAgentAction" || method === "revalidateAgentAction" || method === "releaseAgentAction" || method === "authorizeAgentActionCleanup") {
+      return { ok: true };
+    }
     if (method === "prepareTool") return {
       ok: true,
       action: "exec_command_approval",
@@ -92,7 +101,7 @@ const ownershipCore = {
       cmd: "echo test",
       workdir: "/tmp",
       tty: false,
-      sandbox: { filesystemMode: "workspace-write", networkMode: "disabled", workspaceRoots: ["/tmp"], noSandbox: false, isolatedChild: true },
+      sandbox: { filesystemMode: "workspace-write", networkMode: "disabled", workspaceRoots: ["/tmp"], noSandbox: false, isolatedChild: true, approvalPolicy: "on-request" },
       approvalMessage: "approval required",
       approvalTitle: "Approve",
       approvalPrompt: "Run command?",
@@ -142,6 +151,62 @@ assert.equal(deniedChildResult.details.approvalOutcome, "denied_by_user");
 if (childConfirmations !== 0) {
   throw new Error("child approval consulted the child session UI");
 }
+const malformedChildCtx = {
+  ...childCtx,
+  sessionManager: {
+    ...childCtx.sessionManager,
+    getEntries: () => [{
+      type: "custom", customType: "taumel.childSession", data: { kind: "agent" },
+    }],
+  },
+};
+const confirmationsBeforeMalformedChild = parentConfirmations.length;
+await executeTool(
+  pi,
+  ownershipCore,
+  new Map(),
+  "exec_command",
+  { cmd: "echo malformed-child" },
+  malformedChildCtx,
+);
+assert.equal(
+  parentConfirmations.length,
+  confirmationsBeforeMalformedChild,
+  "shared-o11w malformed child marker borrowed parent approval UI",
+);
+let invalidChildPrepareCalls = 0;
+const invalidChildCore = {
+  call(method, args) {
+    if (method === "prepareTool") {
+      invalidChildPrepareCalls += 1;
+      throw new Error("invalid child authority reached preparation");
+    }
+    if (method === "toolResultEnvelope") return {
+      content: [{ type: "text", text: args[0].error }], details: args[0].details,
+    };
+    throw new Error(`unexpected invalid-child core call: ${method}`);
+  },
+};
+const unavailableChildContexts = [
+  malformedChildCtx,
+  { ...childCtx, sessionManager: { getSessionId: () => "missing-scanner" } },
+  {
+    ...childCtx,
+    sessionManager: { getSessionId: () => "invalid-scanner", getEntries: () => ({}) },
+  },
+];
+for (const invalidCtx of unavailableChildContexts) {
+  for (const [toolName, params] of [
+    ["exec_command", { cmd: "echo forbidden" }],
+    ["write", { path: "/tmp/forbidden", content: "x" }],
+  ]) {
+    const result = await executeTool(
+      pi, invalidChildCore, new Map(), toolName, params, invalidCtx,
+    );
+    assert.equal(result.details.error, "invalid child session authority metadata");
+  }
+}
+assert.equal(invalidChildPrepareCalls, 0, "invalid child authority reached preparation");
 
 // agentperm-hh1j/agentperm-e0k9/agentperm-t4mv: one active dialog, then
 // top-level priority and FIFO within the agent class.
@@ -166,7 +231,7 @@ const queueCore = {
       cmd: args[0].params.cmd,
       workdir: "/tmp",
       tty: false,
-      sandbox: { filesystemMode: "workspace-write", networkMode: "disabled", workspaceRoots: ["/tmp"], noSandbox: false, isolatedChild: false },
+      sandbox: { filesystemMode: "workspace-write", networkMode: "disabled", workspaceRoots: ["/tmp"], noSandbox: false, isolatedChild: false, approvalPolicy: "on-request" },
       approvalMessage: "approval required",
       approvalTitle: `Approve ${args[0].params.cmd}`,
       approvalPrompt: `Run ${args[0].params.cmd}?`,
@@ -195,7 +260,7 @@ const childCtxB = {
     getSessionId: () => "child-b",
     getEntries: () => [{
       type: "custom", customType: "taumel.childSession",
-      data: { kind: "agent", agentId: "agent-b", isolated_child: true, parentSessionId: "parent-a" },
+      data: { ...childCtx.sessionManager.getEntries()[0].data, agentId: "agent-b" },
     }],
   },
 };
@@ -318,7 +383,7 @@ const crossToolCore = {
   call(method, args) {
     if (method === "prepareTool" && args[0].name === "write") return {
       ok: true, action: "write_approval", workspaceRoots: ["/tmp"], validateWorkspacePaths: false,
-      path: "/tmp/probe", displayPath: "/tmp/probe", contents: args[0].params.content, mode: "create",
+      path: "/tmp/probe", displayPath: "/tmp/probe", contents: args[0].params.content, mode: "overwrite",
       approvalAction: "write", approvalTitle: "Approve write", approvalPrompt: "Write file?", approvalTimeoutMs: 0,
     };
     if (method === "prepareTool" && args[0].name === "exa_agent_create_run") return {
@@ -350,7 +415,10 @@ const oracleCtx = {
     ...childCtx.sessionManager,
     getEntries: () => [{
       type: "custom", customType: "taumel.childSession",
-      data: { kind: "agent", agentKind: "oracle", agentId: "oracle-test", isolated_child: true, parentSessionId: "parent-a" },
+      data: {
+        ...childCtx.sessionManager.getEntries()[0].data,
+        agentKind: "oracle", agentId: "oracle-test",
+      },
     }],
   },
 };
@@ -383,6 +451,7 @@ let allowRuleActive = false;
 let resolveAllowAlways;
 let allowAlwaysDialogCount = 0;
 let allowAlwaysTitle = "";
+let discardedAllowPlans = 0;
 parentCtx.ui.select = async (title) => {
   allowAlwaysDialogCount += 1;
   allowAlwaysTitle = title;
@@ -420,22 +489,38 @@ const allowAlwaysCore = {
       allowAlwaysCalls.push(args[0].outcome);
       return { kind: "denied", result: { content: [{ type: "text", text: "planned" }], details: {} } };
     }
-    if (method === "discardAuthorityPlan") return { ok: true };
+    if (method === "discardAuthorityPlan") {
+      discardedAllowPlans += 1;
+      return { ok: true };
+    }
     if (method === "goalClockPauseStart" || method === "goalClockPauseEnd") return null;
     throw new Error(`unexpected allow-always core call: ${method}`);
   },
 };
+const approvalSettingsPath = join(temporaryAgentDir, "settings.json");
+// shared-r544: Allow always cannot erase malformed global settings.
+const malformedApprovalSettings = "{ malformed approval settings";
+writeFileSync(approvalSettingsPath, malformedApprovalSettings);
+const malformedPersistent = executeTool(pi, allowAlwaysCore, new Map(), "exec_command", { cmd: "echo persistent" }, childCtx);
+await new Promise((resolve) => setTimeout(resolve, 10));
+resolveAllowAlways("Allow always");
+await assert.rejects(malformedPersistent, /invalid JSON|Unexpected token|JSON/i);
+assert.equal(readFileSync(approvalSettingsPath, "utf8"), malformedApprovalSettings);
+assert(discardedAllowPlans >= 1);
+allowRuleActive = false;
+writeFileSync(approvalSettingsPath, `${JSON.stringify({ preserved: true }, null, 2)}\n`);
 const firstPersistent = executeTool(pi, allowAlwaysCore, new Map(), "exec_command", { cmd: "echo persistent" }, childCtx);
 await new Promise((resolve) => setTimeout(resolve, 10));
 const queuedPersistent = executeTool(pi, allowAlwaysCore, new Map(), "exec_command", { cmd: "echo persistent" }, childCtxB);
 resolveAllowAlways("Allow always");
 const [, queuedPersistentResult] = await Promise.all([firstPersistent, queuedPersistent]);
 assert.deepEqual(allowAlwaysCalls, [["echo", "persistent"], "approved"]);
-assert.equal(allowAlwaysDialogCount, 1);
+assert.equal(allowAlwaysDialogCount, 2);
 assert.match(allowAlwaysTitle, /Command: echo persistent/);
 assert.match(allowAlwaysTitle, /Sandbox boundary: read-only/);
 assert.equal(queuedPersistentResult.content[0].text, "allowed by persisted rule");
-const persistedRule = JSON.parse(readFileSync(join(temporaryAgentDir, "settings.json"), "utf8"));
+const persistedRule = JSON.parse(readFileSync(approvalSettingsPath, "utf8"));
+assert.equal(persistedRule.preserved, true);
 assert.deepEqual(persistedRule.taumel.execPolicy.rules[0].pattern, ["echo", "persistent"]);
 if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
@@ -498,11 +583,15 @@ for (const handler of handlers.get("session_start") ?? []) handler({}, parentCtx
 const closeCore = {
   finishOutcomes: [],
   call(method, args) {
+    if (method === "claimAgentAction" || method === "revalidateAgentAction" || method === "releaseAgentAction" || method === "authorizeAgentActionCleanup") {
+      return { ok: true };
+    }
     if (method === "finishExecApproval") {
       this.finishOutcomes.push(args[0].outcome);
       return { kind: "denied", result: { content: [{ type: "text", text: "denied" }], details: {} } };
     }
     if (method === "finishAgentClose" || method === "releaseAgentClose") return { ok: true };
+    if (method === "agentManagerSnapshot") return { agents: [], runs: [] };
     if (method === "toolResultEnvelope") return {
       content: [{ type: "text", text: args[0].prepared?.text ?? args[0].error ?? "closed" }],
       details: args[0].prepared?.details ?? args[0].details ?? {},
@@ -513,7 +602,8 @@ const closeCore = {
 const approvalDuringClose = executeTool(pi, closeCore, new Map(), "exec_command", { cmd: "close-active" }, childCtx);
 await new Promise((resolve) => setTimeout(resolve, 10));
 await executeAgentPrepared(pi, closeCore, new Map(), new Map(), {
-  action: "agent_close", agentId: "agent-test", runIds: [], text: '{"agent_id":"agent-test","status":"closed"}', details: {},
+  action: "agent_close", agentId: "agent-test", runIds: [], capabilityId: "close-active-capability",
+  text: '{"agent_id":"agent-test","status":"closed"}', details: { agentId: "agent-test", status: "closed" },
 }, parentCtx);
 await approvalDuringClose;
 assert.deepEqual(closeTitles, ["Agent agent-test: Approve close-active"]);
@@ -537,3 +627,126 @@ const headlessOwnerResult = await executeTool(pi, ownershipCore, new Map(), "exe
 assert.equal(headlessOwnerResult.details.approvalOutcome, "unavailable");
 assert.equal(headlessOwnerResult.details.reason, "approval_unavailable");
 assert.equal(ownershipCore.finishOutcomes.at(-1), "unavailable");
+
+// sandbox-w54h: a validated ancestor must not be replaceable with an out-of-workspace symlink
+// between path authorization and the actual mutation.
+const raceRoot = mkdtempSync(join(tmpdir(), "taumel-mutation-race-"));
+const raceWorkspace = join(raceRoot, "workspace");
+const authorizedParent = join(raceWorkspace, "authorized");
+const parkedParent = join(raceWorkspace, "parked");
+const outsideParent = join(raceRoot, "outside");
+const mutationPath = join(authorizedParent, "target.txt");
+const outsidePath = join(outsideParent, "target.txt");
+mkdirSync(authorizedParent, { recursive: true });
+mkdirSync(outsideParent, { recursive: true });
+writeFileSync(mutationPath, "inside");
+writeFileSync(outsidePath, "outside");
+let swappedValidatedParent = false;
+const raceCore = {
+  call(method, args) {
+    if (method === "prepareTool") return {
+      ok: true, action: "write", workspaceRoots: [raceWorkspace],
+      validateWorkspacePaths: true, path: mutationPath, displayPath: mutationPath,
+      contents: "attacker-controlled", mode: "overwrite",
+    };
+    if (method === "validateWorkspaceMutationPaths") {
+      assert.equal(args[0].paths[0].resolvedPath, mutationPath);
+      renameSync(authorizedParent, parkedParent);
+      symlinkSync(outsideParent, authorizedParent, "dir");
+      swappedValidatedParent = true;
+      return { kind: "valid" };
+    }
+    if (method === "hostToolResult") return {
+      content: [{ type: "text", text: "write completed" }], details: args[0].details,
+    };
+    throw new Error(`unexpected mutation-race core call: ${method}`);
+  },
+};
+const raceCtx = {
+  sessionManager: { getSessionId: () => "mutation-race", getEntries: () => [] },
+};
+try {
+  await assert.rejects(
+    executeTool(pi, raceCore, new Map(), "write", { path: mutationPath, content: "attacker-controlled" }, raceCtx),
+    /changed after authorization/,
+  );
+  assert.equal(swappedValidatedParent, true);
+  assert.equal(readFileSync(outsidePath, "utf8"), "outside");
+} finally {
+  rmSync(raceRoot, { recursive: true, force: true });
+}
+
+// Replacing a validated target at the same canonical pathname must also fail;
+// canonical-string equality alone does not bind the authorized inode.
+const inodeRaceRoot = mkdtempSync(join(tmpdir(), "taumel-mutation-inode-race-"));
+const inodeRaceTarget = join(inodeRaceRoot, "target.txt");
+const originalInodeTarget = join(inodeRaceRoot, "original.txt");
+writeFileSync(inodeRaceTarget, "authorized inode");
+const inodeRaceCore = {
+  call(method, args) {
+    if (method === "prepareTool") return {
+      ok: true, action: "write", workspaceRoots: [inodeRaceRoot],
+      validateWorkspacePaths: true, path: inodeRaceTarget, displayPath: inodeRaceTarget,
+      contents: "mutation", mode: "overwrite",
+    };
+    if (method === "validateWorkspaceMutationPaths") {
+      assert.equal(args[0].paths[0].resolvedPath, inodeRaceTarget);
+      renameSync(inodeRaceTarget, originalInodeTarget);
+      writeFileSync(inodeRaceTarget, "replacement inode");
+      return { kind: "valid" };
+    }
+    if (method === "hostToolResult") return {
+      content: [{ type: "text", text: "write completed" }], details: args[0].details,
+    };
+    throw new Error(`unexpected inode-race core call: ${method}`);
+  },
+};
+try {
+  await assert.rejects(
+    executeTool(pi, inodeRaceCore, new Map(), "write", { path: inodeRaceTarget, content: "mutation" }, raceCtx),
+    /changed after authorization/,
+  );
+  assert.equal(readFileSync(inodeRaceTarget, "utf8"), "replacement inode");
+} finally {
+  rmSync(inodeRaceRoot, { recursive: true, force: true });
+}
+
+// agent-kbo4: a prepared destructive agent action must be consumable only once.
+let replayedCloseFinishes = 0;
+const consumedAgentCapabilities = new Set();
+const replayCloseCore = {
+  call(method, args) {
+    if (method === "claimAgentAction") {
+      const capabilityId = args[0].capabilityId;
+      if (consumedAgentCapabilities.has(capabilityId)) throw new Error("authority plan is invalid or already consumed");
+      consumedAgentCapabilities.add(capabilityId);
+      return { ok: true };
+    }
+    if (method === "revalidateAgentAction" || method === "releaseAgentAction" || method === "authorizeAgentActionCleanup") return { ok: true };
+    if (method === "cancelAgentBrokerSessions" || method === "releaseAgentClose") return { ok: true };
+    if (method === "agentManagerSnapshot") return { agents: [], runs: [] };
+    if (method === "finishAgentClose") {
+      replayedCloseFinishes += 1;
+      return { ok: true };
+    }
+    if (method === "toolResultEnvelope") return {
+      content: [{ type: "text", text: args[0].prepared?.text ?? args[0].error }],
+      details: args[0].prepared?.details ?? args[0].details,
+    };
+    throw new Error(`unexpected replay-close core call: ${method}`);
+  },
+};
+const replayCloseCtx = {
+  sessionManager: { getSessionId: () => "replay-close", getEntries: () => [] },
+};
+const replayClosePrepared = {
+  action: "agent_close", agentId: "agent-replay", runIds: [],
+  capabilityId: "agent-capability-replay", text: "closed", details: { agentId: "agent-replay", status: "closed" },
+};
+await executeAgentPrepared(
+  pi, replayCloseCore, new Map(), new Map(), replayClosePrepared, replayCloseCtx,
+);
+await executeAgentPrepared(
+  pi, replayCloseCore, new Map(), new Map(), replayClosePrepared, replayCloseCtx,
+);
+assert.equal(replayedCloseFinishes, 1, "prepared agent_close was replayed");

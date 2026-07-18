@@ -1,13 +1,43 @@
 open Jsoo_bridge
 
 let js_child_session_custom_entry (entry : Taumel.Child_session.custom_entry) =
-  Tool_contracts.ChildSessionCustomEntry.create ~customType:entry.custom_type
-    ~data:(Ts2ocaml.unknown_of_js (ojs_of_js (json_to_js entry.data))) ()
+  Unsafe.obj
+    [|
+      ("customType", js_string entry.custom_type);
+      ("data", json_to_js entry.data);
+    |]
+  |> ojs_of_js
+  |> decode_ojs_contract Tool_contracts.ChildSessionSetupEntry.t_of_js
 
 let child_session_metadata_from_js metadata =
   match json_from_js metadata with
   | Ok metadata -> metadata
   | Error _ -> Taumel.Shared.Object []
+
+let plan_permission_refresh parent_permissions_js metadata_js parent_ctx =
+  let parent_permissions =
+    match json_from_js parent_permissions_js with
+    | Ok Taumel.Shared.Null -> None
+    | Ok permissions -> Some permissions
+    | Error _ -> Some (Taumel.Shared.Object [])
+  in
+  let metadata = child_session_metadata_from_js metadata_js in
+  let permissions =
+    (match
+       Session_sync.try_sync_session_from_host
+         ~scope:"child permission refresh" parent_ctx
+     with
+    | Error _ -> Taumel.Child_session.fail_closed_child_permissions_entry ()
+    | Ok () ->
+        Taumel.Child_session.refresh_permissions_entry
+          ~host_sandbox_preset:!App_state.host_sandbox_preset
+          ~host_network_mode:!App_state.host_network_mode
+          ~host_no_sandbox:!App_state.host_no_sandbox ~parent_permissions metadata)
+    |> json_to_js |> ojs_of_js
+    |> decode_ojs_contract Tool_contracts.PermissionsStateV1.t_of_js
+  in
+  Tool_contracts.ChildPermissionRefreshPlan.create ~permissions ()
+  |> Tool_contracts.ChildPermissionRefreshPlan.t_to_js |> inject
 
 let child_session_bridge_from_js facts =
   if not (get_bool facts "available") then None

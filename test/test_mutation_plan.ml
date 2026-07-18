@@ -105,6 +105,11 @@ let test_exec_plan () =
     "approval policy is UnlessTrusted; reject command — you cannot ask for escalated permissions if the approval policy is UnlessTrusted"
 
 let test_write_edit_plan () =
+  expect_error "write mode" "write mode must be overwrite or append"
+    (Mutation.plan_write sandbox
+       { path = "/repo/file.txt"; contents = "x"; mode = "truncate" });
+  expect_error "empty edits" "edit requires at least one replacement"
+    (Mutation.plan_edit sandbox { path = "/repo/file.txt"; edits = [] });
   let write =
     match
       Mutation.plan_write sandbox

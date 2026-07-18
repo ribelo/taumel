@@ -1,6 +1,9 @@
 import { strict as assert } from "node:assert";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { initTheme } from "@earendil-works/pi-coding-agent";
-import { executeVisibilityManager } from "../src/visibility.ts";
+import { executeVisibilityManager, saveProjectVisibility } from "../src/visibility.ts";
 
 initTheme();
 
@@ -68,4 +71,21 @@ for (const category of ["tools", "skills"]) {
     assert(rendered.some((line) => line.includes("Example description")));
   }
   assert(rendered.some((line) => line.includes("Ctrl+S save to project")));
+}
+
+// shared-r544: malformed settings survive rejected read-modify-write operations.
+const malformedRoot = await mkdtemp(join(tmpdir(), "taumel-visibility-malformed-"));
+try {
+  const settingsPath = join(malformedRoot, ".pi", "settings.json");
+  await mkdir(join(malformedRoot, ".pi"), { recursive: true });
+  const malformed = "{ malformed visibility settings";
+  await writeFile(settingsPath, malformed);
+  const details = { category: "tools", title: "Tool visibility", rows: [], disabled: [], unavailable: [] };
+  const outcome = await saveProjectVisibility("tools", ["read"], details, {
+    cwd: malformedRoot, isProjectTrusted: () => true,
+  });
+  assert.equal(outcome.ok, false);
+  assert.equal(await readFile(settingsPath, "utf8"), malformed);
+} finally {
+  await rm(malformedRoot, { recursive: true, force: true });
 }

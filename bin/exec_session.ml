@@ -1063,6 +1063,7 @@ let write_stdin raw_facts =
                  (Tool_contracts.WriteStdinFacts.get_maxOutputTokens facts))
             signal extra)
 let shutdown_owner owner_id =
+  Agent_action_capability.discard_owner owner_id;
   Authority_plans.discard_owner owner_id;
   Hashtbl.filter_map_inplace
     (fun _ session ->

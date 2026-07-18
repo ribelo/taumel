@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { latestTaumelCustomEntry } from "../src/pi-session-entries.ts";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const agentDir = await mkdtemp(join(tmpdir(), "taumel-ralph-tool-surface-"));
@@ -48,10 +49,12 @@ const commandContext = session.extensionRunner.createCommandContext();
 
 let probe;
 let listResult;
+let persistedRalph;
 try {
   await ralph.handler("start Verify child tool surface", commandContext);
   probe = globalThis.taumelToolSurfaceProbe;
   listResult = await ralph.handler("list", commandContext);
+  persistedRalph = latestTaumelCustomEntry(session.sessionManager, "taumel.ralph");
 } finally {
   session.dispose();
   await rm(agentDir, { recursive: true, force: true });
@@ -63,4 +66,5 @@ assert.deepEqual(probe.issuedToolCalls, ["ralph_continue"], "Ralph child did not
 assert.deepEqual(probe.completedToolCalls, ["ralph_continue"], "ralph_continue did not complete");
 assert.match(probe.toolResults[0] ?? "", /ralph_continue accepted/, "ralph_continue was not accepted");
 assert.match(listResult?.message ?? "", /iteration=1/, "controller did not retain the child iteration");
+assert.ok(persistedRalph.kind === "contract_valid" && persistedRalph.entry.data.tasks.length > 0, "non-empty Ralph state satisfies the persisted-entry contract");
 console.log("Ralph tool surface smoke test passed");

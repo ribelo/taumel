@@ -103,7 +103,8 @@ let reconcile_provisional_worktrees () =
   ignore (Agent_child_session_host.reconcile_cleanup_journal ());
   core_ack ()
 
-let identity_metadata ~(identity : Taumel.Agents.identity) ?child_session_file () =
+let identity_metadata ~(identity : Taumel.Agents.identity) ?child_session_file
+    ?(planned = false) () =
   let source = Taumel.Agents.identity_source_workspace identity in
   let isolation =
     Taumel.Agent_workspace.isolation_to_string
@@ -115,6 +116,15 @@ let identity_metadata ~(identity : Taumel.Agents.identity) ?child_session_file (
     | Error _ ->
         match identity.identity_workspace_binding with
         | Taumel.Agent_workspace.Shared { source_root } -> (source_root, None)
+        | Taumel.Agent_workspace.Worktree _ as binding when planned -> (
+            match
+              Taumel.Agent_workspace.derive
+                ~agent_home:(Agent_worktree_host.pi_agent_dir ())
+                ~owner_session_id:identity.identity_owner_session_id
+                ~agent_id:identity.identity_agent_id binding
+            with
+            | Ok derived -> (derived.worktree_path, Some derived)
+            | Error _ -> ("", None))
         | Taumel.Agent_workspace.Worktree _ -> ("", None)
   in
   let fields =

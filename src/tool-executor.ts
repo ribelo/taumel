@@ -1,5 +1,3 @@
-import { readFile } from "node:fs/promises";
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -22,10 +20,15 @@ import {
   openAiUsageTokenRaw,
   sessionInfoFromContext,
   threadSources,
+  authorizeCanonicalMutationPaths,
+  readAuthorizedFile,
+  readJsonObjectForAtomicUpdate,
   validateWorkspaceMutationPaths,
   writePatchFiles,
   appendToFile,
+  writeFileAtomically,
   contextWithOverrides,
+  type MutationPathAuthorization,
 } from "./util.ts";
 import { goalContinuationMessageRenderer, notificationMessageRenderer, renderersForTool } from "./tool-renderer.ts";
 import { bindHarnessApprovalUi, clearHarnessApprovalUi, requestHarnessApproval, type ApprovalOutcome, type ApprovalResolution, type ApprovalUi } from "./approval-coordinator.ts";
@@ -37,8 +40,8 @@ import {
   sendToChildSession,
 } from "./child-sessions.ts";
 import { installExecNotificationLifecycle, startExecCompletionWaiter } from "./exec-notifications.ts";
-import { executeAgentPrepared, installAgentLifecycle } from "./agent-orchestration.ts";
-import { decodeAuthorityPlanIssued, decodeBridgeToolResult, decodeChildSessionMetadata, decodeEditApplicationResult, decodeExecApprovalPromptPlan, decodeExecApprovalResult, decodeExecPolicyAllowRuleResult, decodeExecToolResult, decodePatchApplicationResult, decodeToolNamesResult, decodeToolResultEnvelope, decodeViewMediaResultEnvelope, type PreparedToolAction, type ToolResultEnvelope } from "./bridge-contracts.ts";
+import { executeAgentPrepared, installAgentLifecycle, pendingAgentWaits } from "./agent-orchestration.ts";
+import { decodeAuthorityPlanIssued, decodeBridgeToolResult, decodeEditApplicationResult, decodeExecApprovalPromptPlan, decodeExecApprovalResult, decodeExecPolicyAllowRuleResult, decodeExecToolResult, decodePatchApplicationResult, decodeToolNamesResult, decodeToolResultEnvelope, decodeViewMediaResultEnvelope, type PreparedToolAction, type ToolResultEnvelope } from "./bridge-contracts.ts";
 import {
   decodeOpenAiUsageHostAuth,
   decodeOpenAiUsageHostParams,
@@ -53,20 +56,10 @@ import {
   preparedToolResult,
 } from "./tool-results.ts";
 import { authorityPlanId, discardPreparedAuthorityPlan, executeApprovedExaInCore, executeExaInCore } from "./authority-plans.ts";
+import { latestTaumelCustomEntry } from "./pi-session-entries.ts";
 type SettingsObject = { [key: string]: unknown };
 type ToolContext = { readonly cwd?: unknown; readonly model?: unknown; readonly ui?: unknown; readonly hasUI?: unknown; readonly sessionManager?: unknown };
-type SessionManagerHost = { readonly getEntries?: () => unknown };
-type SessionEntry = { readonly type?: unknown; readonly customType?: unknown; readonly data?: unknown };
-type ChildMetadata = {
-  readonly isolated_child?: unknown; readonly kind?: unknown;
-  readonly parentSessionId?: unknown; readonly parentSessionFile?: unknown;
-  readonly agentId?: unknown;
-};
-type ChildSessionMarker =
-  | { readonly present: false }
-  | { readonly present: true; readonly data: unknown };
 type ImageModel = { readonly input?: unknown };
-type EditReplacement = { readonly oldText?: unknown; readonly newText?: unknown };
 type NodeError = { readonly code?: unknown };
 type PreparedSuccess = Exclude<PreparedToolAction, { ok: false }>;
 type PreparedOpenAiAction = Extract<PreparedSuccess, { action: "openai_usage_fetch" }>;
@@ -74,6 +67,10 @@ type PreparedApprovalAction = Extract<PreparedSuccess, { action: "exec_command_a
 type PreparedMutationAction = Extract<PreparedSuccess, { action: "write" | "write_approval" | "edit" | "edit_approval" | "apply_patch" | "apply_patch_approval" }>;
 type GatewayToolResult = ToolResultEnvelope | ReturnType<typeof decodeViewMediaResultEnvelope>;
 const agentToolNames = new Set(["agent_spawn", "finder", "oracle", "agent_send", "agent_wait", "agent_list", "agent_close"]);
+const invalidChildSafeToolNames = new Set([
+  "read", "view_media", "get_goal", "query_threads", "read_thread",
+  "ralph_continue", "ralph_finish", "cron_list", "agent_wait", "agent_list",
+]);
 
 function settingsObject(value: unknown): SettingsObject | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value as SettingsObject : undefined;
@@ -126,31 +123,22 @@ function approvalOutcomeMessage(action: string, outcome: ApprovalOutcome): strin
   }
 }
 
-function appendExecPolicyAllowRule(core: CoreBridge, tokens: readonly string[]): void {
+async function appendExecPolicyAllowRule(core: CoreBridge, tokens: readonly string[]): Promise<void> {
   const settingsPath = join(getAgentDir(), "settings.json");
-  let settings: unknown = {};
-  try {
-    settings = JSON.parse(readFileSync(settingsPath, "utf8")) as unknown;
-  } catch {
-    settings = {};
-  }
-  const root = settingsObject(settings) ?? {};
-  const taumel = settingsObject(root["taumel"]) ?? {};
-  const execPolicy = settingsObject(taumel["execPolicy"]) ?? {};
-  const rules = Array.isArray(execPolicy["rules"]) ? execPolicy["rules"] : [];
+  const { settings: root, authorization } = await readJsonObjectForAtomicUpdate(settingsPath);
+  const existingTaumel = root["taumel"], taumel = existingTaumel === undefined ? {} : settingsObject(existingTaumel);
+  if (taumel === undefined) throw new Error(`${settingsPath}: taumel must be a JSON object`);
+  const existingExecPolicy = taumel["execPolicy"], execPolicy = existingExecPolicy === undefined ? {} : settingsObject(existingExecPolicy);
+  if (execPolicy === undefined) throw new Error(`${settingsPath}: taumel.execPolicy must be a JSON object`);
+  const existingRules = execPolicy["rules"];
+  if (existingRules !== undefined && !Array.isArray(existingRules)) throw new Error(`${settingsPath}: taumel.execPolicy.rules must be an array`);
+  const rules = existingRules ?? [];
   const pattern = [...tokens];
   rules.push({ pattern, decision: "allow", match: [pattern] });
   execPolicy["rules"] = rules;
   taumel["execPolicy"] = execPolicy;
   root["taumel"] = taumel;
-  mkdirSync(getAgentDir(), { recursive: true });
-  const temporaryPath = `${settingsPath}.${process.pid}.${Date.now()}.tmp`;
-  try {
-    writeFileSync(temporaryPath, `${JSON.stringify(root, null, 2)}\n`, "utf8");
-    renameSync(temporaryPath, settingsPath);
-  } finally {
-    rmSync(temporaryPath, { force: true });
-  }
+  await writeFileAtomically(authorization, `${JSON.stringify(root, null, 2)}\n`);
   decodeExecPolicyAllowRuleResult(core.call("appendExecPolicyAllowRule", [{ tokens: pattern }]));
 }
 
@@ -163,61 +151,35 @@ function mutationApprovalDenied(core: CoreBridge, action: string, outcome: Appro
   });
 }
 
-function childSessionMarkerFromContext(ctx: unknown): ChildSessionMarker {
-  const sessionManager = toolContext(ctx)?.sessionManager;
-  if (typeof sessionManager !== "object" || sessionManager === null) return { present: false };
-  const getEntries = (sessionManager as SessionManagerHost).getEntries;
-  if (typeof getEntries !== "function") return { present: false };
-  try {
-    const entries = getEntries.call(sessionManager);
-    if (!Array.isArray(entries)) return { present: false };
-    for (let index = entries.length - 1; index >= 0; index -= 1) {
-      const entry = entries[index];
-      if (typeof entry !== "object" || entry === null) continue;
-      const sessionEntry = entry as SessionEntry;
-      if (sessionEntry.type !== "custom" || sessionEntry.customType !== "taumel.childSession") {
-        continue;
-      }
-      return { present: true, data: sessionEntry.data };
-    }
-  } catch {
-    return { present: false };
-  }
-  return { present: false };
+function childSessionMarkerFromContext(ctx: unknown) {
+  return latestTaumelCustomEntry(
+    toolContext(ctx)?.sessionManager,
+    "taumel.childSession",
+  );
 }
 
-function childSessionMetadataFromContext(ctx: unknown): Partial<ChildMetadata> | undefined {
+function childSessionMetadataFromContext(ctx: unknown) {
   const marker = childSessionMarkerFromContext(ctx);
-  return marker.present && typeof marker.data === "object" && marker.data !== null
-    ? marker.data as Partial<ChildMetadata>
-    : undefined;
+  return marker.kind === "contract_valid" ? marker.entry.data : undefined;
 }
 
 function childMutationConfinement(ctx: unknown): "none" | "worktree" | "invalid" {
   const marker = childSessionMarkerFromContext(ctx);
-  if (!marker.present) return "none";
-  if (typeof marker.data !== "object" || marker.data === null) return "invalid";
-  const raw = marker.data as Partial<ChildMetadata>;
-  const candidate = { ...raw } as { [key: string]: unknown };
-  delete candidate.parentSessionId;
-  delete candidate.parentSessionFile;
-  try {
-    const metadata = decodeChildSessionMetadata(candidate);
-    return metadata.kind === "agent" && metadata.isolation === "worktree"
-      ? "worktree"
-      : "none";
-  } catch {
-    return "invalid";
-  }
+  if (marker.kind === "absent") return "none";
+  if (marker.kind !== "contract_valid") return "invalid";
+  const metadata = marker.entry.data;
+  return metadata.kind === "agent" && metadata.isolation === "worktree"
+    ? "worktree"
+    : "none";
 }
 
 let loadedMainSessionId: string | undefined;
 
 function childApprovalOwnerIsLoaded(ctx: unknown): boolean {
-  const metadata = childSessionMetadataFromContext(ctx);
-  if (metadata === undefined) return true;
-  const isolatedChild = metadata.isolated_child === true || metadata.kind === "ralph";
-  if (!isolatedChild) return true;
+  const marker = childSessionMarkerFromContext(ctx);
+  if (marker.kind === "absent") return true;
+  if (marker.kind !== "contract_valid") return false;
+  const metadata = marker.entry.data;
   const parentSessionId =
     typeof metadata.parentSessionId === "string" ? metadata.parentSessionId.trim() : "";
   return parentSessionId !== "" && parentSessionId === loadedMainSessionId;
@@ -234,20 +196,21 @@ function approvalOwnerId(ctx: unknown): string | undefined {
 
 function installIsolatedChildOwnershipLifecycle(
   pi: PiLike,
+  core: CoreBridge,
   childSessions: Map<string, ChildSessionBridge>,
 ): void {
   const loadParent = (ctx: unknown) => {
-    if (childSessionMetadataFromContext(ctx) !== undefined) return;
+    if (childSessionMarkerFromContext(ctx).kind !== "absent") return;
     loadedMainSessionId = sessionInfoFromContext(ctx).sessionId;
     bindHarnessApprovalUi(loadedMainSessionId, toolContext(ctx)?.hasUI === true, toolContext(ctx)?.ui);
-    refreshOwnedChildPermissions(childSessions, ctx);
+    refreshOwnedChildPermissions(childSessions, ctx, core);
   };
   // A newly spawned child starts while its parent is still loaded, so its
   // session_start must retain ownership. Resuming or switching into a child is
   // different: the parent is no longer the loaded main session.
   pi.on("session_start", (_event, ctx) => loadParent(ctx));
   const replaceLoadedSession = (_event: unknown, ctx: unknown) => {
-    if (childSessionMetadataFromContext(ctx) !== undefined) {
+    if (childSessionMarkerFromContext(ctx).kind !== "absent") {
       loadedMainSessionId = undefined;
       clearHarnessApprovalUi();
       return;
@@ -271,7 +234,7 @@ function boundedApprovalEvidence(prepared: PreparedApprovalAction): string {
   const lines: string[] = [];
   const sandbox = "sandbox" in prepared ? prepared.sandbox : undefined;
   if (sandbox !== undefined) {
-    lines.push(`Sandbox boundary: ${sandbox.filesystemMode || "active sandbox"}; roots: ${sandbox.workspaceRoots.join(", ")}`);
+    lines.push(`Sandbox boundary: ${sandbox.filesystemMode}; roots: ${sandbox.workspaceRoots.join(", ")}`);
   } else {
     const roots = "workspaceRoots" in prepared ? prepared.workspaceRoots : undefined;
     if (roots !== undefined) lines.push(`Sandbox boundary: workspace roots: ${roots.join(", ")}`);
@@ -293,10 +256,7 @@ function boundedApprovalEvidence(prepared: PreparedApprovalAction): string {
       patch ??
       (contents === undefined ? undefined : contents.split(/\r?\n/).map((line) => `+${line}`).join("\n")) ??
       edits
-        .map((edit) => {
-          const replacement = typeof edit === "object" && edit !== null ? edit as EditReplacement : {};
-          return `-${String(replacement.oldText ?? "")}\n+${String(replacement.newText ?? "")}`;
-        })
+        .map((edit) => `-${edit.oldText}\n+${edit.newText}`)
         .join("\n");
     if (effect !== undefined && effect !== "") lines.push(`Bounded effect diff:\n${effect}`);
   }
@@ -361,8 +321,8 @@ async function requestSandboxRetryApproval(
 ): Promise<ApprovalResolution> {
   if (!childApprovalOwnerIsLoaded(ctx)) return "unavailable";
   const metadata = childSessionMetadataFromContext(ctx);
-  const agentId = typeof metadata?.agentId === "string" ? metadata.agentId.trim() : "";
-  const requester = metadata?.kind === "agent" && agentId !== "" ? `Agent ${agentId}: ` : "";
+  const agentId = metadata?.kind === "agent" ? metadata.agentId.trim() : "";
+  const requester = agentId !== "" ? `Agent ${agentId}: ` : "";
   return requestHarnessApproval({
     ownerSessionId: approvalOwnerId(ctx),
     origin: requester === "" ? "top-level" : "agent",
@@ -509,8 +469,8 @@ async function confirmExecApproval(
   validate?: () => boolean,
 ): Promise<ApprovalResolution> {
   const childMetadata = childSessionMetadataFromContext(ctx);
-  const agentId = typeof childMetadata?.agentId === "string" ? childMetadata.agentId.trim() : "";
-  const requester = childMetadata?.kind === "agent" && agentId !== ""
+  const agentId = childMetadata?.kind === "agent" ? childMetadata.agentId.trim() : "";
+  const requester = agentId !== ""
     ? `Agent ${agentId}: `
     : "";
   if (!childApprovalOwnerIsLoaded(ctx)) return "unavailable";
@@ -525,7 +485,7 @@ async function confirmExecApproval(
       const allowAlwaysTokens = prepared.action === "exec_command_approval"
         ? prepared.execPolicyAllowAlwaysTokens
         : undefined;
-      if (allowAlwaysTokens !== undefined) appendExecPolicyAllowRule(core, allowAlwaysTokens);
+      if (allowAlwaysTokens !== undefined) await appendExecPolicyAllowRule(core, allowAlwaysTokens);
     },
     run: async (ui: ApprovalUi, requestSignal: AbortSignal) => {
       const plan = decodeExecApprovalPromptPlan(core.call("planExecApprovalPrompt", [{
@@ -601,18 +561,23 @@ async function withMutationApproval(
   return run();
 }
 
-async function validatePreparedMutationPath(
+type PreparedMutationAuthorization =
+  | Readonly<{ kind: "authorized"; paths: readonly MutationPathAuthorization[] }>
+  | Readonly<{ kind: "invalid"; error: string }>;
+
+async function authorizePreparedMutationPaths(
   core: CoreBridge,
   prepared: PreparedMutationAction,
   paths: readonly string[],
-): Promise<string | undefined> {
-  if (!prepared.validateWorkspacePaths) return undefined;
+): Promise<PreparedMutationAuthorization> {
   try {
-    await validateWorkspaceMutationPaths(core, paths, prepared.workspaceRoots);
+    const authorizations = prepared.validateWorkspacePaths
+      ? await validateWorkspaceMutationPaths(core, paths, prepared.workspaceRoots)
+      : await authorizeCanonicalMutationPaths(paths);
+    return { kind: "authorized", paths: authorizations };
   } catch (error) {
-    return error instanceof Error ? error.message : String(error);
+    return { kind: "invalid", error: error instanceof Error ? error.message : String(error) };
   }
-  return undefined;
 }
 
 async function runThreadTool(core: CoreBridge, name: string, prepared: Extract<PreparedSuccess, { action: "query_threads" | "read_thread" }>, ctx: unknown) {
@@ -627,16 +592,16 @@ async function executeLegacyWrite(
   prepared: Extract<PreparedSuccess, { action: "write" }>,
 ): Promise<ToolResultEnvelope> {
   const { path, contents } = prepared;
-  const displayPath = prepared.displayPath || path;
-  const mode = prepared.mode === "append" ? "append" : "overwrite";
-  const validationError = await validatePreparedMutationPath(core, prepared, [path]);
-  if (validationError !== undefined) {
-    return errorToolResult(core, validationError, { ok: false, error: validationError });
+  const displayPath = prepared.displayPath;
+  const mode = prepared.mode;
+  const authorization = await authorizePreparedMutationPaths(core, prepared, [path]);
+  if (authorization.kind === "invalid") {
+    return errorToolResult(core, authorization.error, { ok: false, error: authorization.error });
   }
   if (mode === "append") {
-    await appendToFile(path, contents);
+    await appendToFile(authorization.paths[0]!, contents);
   } else {
-    await writePatchFiles({ deletes: [], writes: [{ path, contents }] });
+    await writePatchFiles({ deletes: [], writes: [{ path, contents }], authorizations: authorization.paths });
   }
   return hostToolResult(core, "write", {
     ok: true,
@@ -654,14 +619,17 @@ async function executeLegacyEdit(
   prepared: Extract<PreparedSuccess, { action: "edit" }>,
 ): Promise<ToolResultEnvelope> {
   const { path } = prepared;
-  const displayPath = prepared.displayPath || path;
-  const validationError = await validatePreparedMutationPath(core, prepared, [path]);
-  if (validationError !== undefined) {
-    return errorToolResult(core, validationError, { ok: false, error: validationError });
+  const displayPath = prepared.displayPath;
+  const authorization = await authorizePreparedMutationPaths(core, prepared, [path]);
+  if (authorization.kind === "invalid") {
+    return errorToolResult(core, authorization.error, { ok: false, error: authorization.error });
   }
   let content: string;
+  let editAuthorization = authorization.paths[0]!;
   try {
-    content = await readFile(path, "utf8");
+    const read = await readAuthorizedFile(editAuthorization);
+    editAuthorization = read.authorization;
+    content = new TextDecoder().decode(read.contents);
   } catch (error) {
     const code = typeof error === "object" && error !== null ? (error as NodeError).code : undefined;
     const errorMessage = typeof code === "string"
@@ -672,11 +640,15 @@ async function executeLegacyEdit(
       error: errorMessage,
     });
   }
-  const application = decodeEditApplicationResult(core.call("applyEditToFile", [{ prepared, contents: content }]));
+  const application = decodeEditApplicationResult(core.call("applyEditToFile", [{
+    path, displayPath, edits: prepared.edits, contents: content,
+  }]));
   if (application.kind === "error") return errorToolResult(core, application.message, { ...application });
   const nextContent = application.contents;
   const editCount = application.editCount;
-  await writePatchFiles({ deletes: [], writes: [{ path, contents: nextContent }] });
+  await writePatchFiles({
+    deletes: [], writes: [{ path, contents: nextContent }], authorizations: [editAuthorization],
+  });
   return hostToolResult(core, "edit", {
     ok: true,
     action: "edit",
@@ -696,20 +668,38 @@ async function executeApplyPatch(
 ): Promise<ToolResultEnvelope> {
   const files: Record<string, string> = {};
   const { affectedPaths } = prepared;
-  const readValidationError = await validatePreparedMutationPath(core, prepared, affectedPaths);
-  if (readValidationError !== undefined) {
-    return errorToolResult(core, readValidationError, { ok: false, error: readValidationError });
+  const readAuthorization = await authorizePreparedMutationPaths(core, prepared, affectedPaths);
+  if (readAuthorization.kind === "invalid") {
+    return errorToolResult(core, readAuthorization.error, { ok: false, error: readAuthorization.error });
   }
-  for (const path of affectedPaths) {
-    try {
-      files[path] = await readFile(path, "utf8");
-    } catch (error) {
-      const code = typeof error === "object" && error !== null ? (error as NodeError).code : undefined;
-      if (code !== "ENOENT") throw error;
+  const authorizedResolvedPaths = new Set<string>();
+  for (const authorizedPath of prepared.authorizedPaths) {
+    if (authorizedResolvedPaths.has(authorizedPath.resolvedPath)) {
+      const error = `Duplicate canonical patch authorization: ${authorizedPath.resolvedPath}`;
+      return errorToolResult(core, error, { ok: false, error });
     }
+    authorizedResolvedPaths.add(authorizedPath.resolvedPath);
+  }
+  if (
+    authorizedResolvedPaths.size !== affectedPaths.length
+    || affectedPaths.some((path) => !authorizedResolvedPaths.has(path))
+  ) {
+    const error = "Patch authorization mapping does not match affected paths";
+    return errorToolResult(core, error, { ok: false, error });
+  }
+  const patchAuthorizations = new Map<string, MutationPathAuthorization>();
+  for (const authorization of readAuthorization.paths) {
+    if (authorization.targetState === undefined) {
+      patchAuthorizations.set(authorization.path, authorization);
+      continue;
+    }
+    const read = await readAuthorizedFile(authorization);
+    patchAuthorizations.set(authorization.path, read.authorization);
+    files[authorization.path] = new TextDecoder().decode(read.contents);
   }
   const application = decodePatchApplicationResult(core.call("applyPatchToFiles", [{
     params: rawParams, files, ctx, filesystemApproval: prepared.filesystemApproval === true,
+    authorizedPaths: prepared.authorizedPaths,
   }]));
   if (application.kind === "error") return errorToolResult(core, application.message, { ...application });
   const deletes = application.deletes;
@@ -723,15 +713,21 @@ async function executeApplyPatch(
     writesWithBefore.push({ ...write, before: files[write.path] ?? "" });
   }
   const deletedFiles = deletes.map((path) => ({ path, before: files[path] ?? "" }));
-  const writeValidationError = await validatePreparedMutationPath(core, prepared, [...deletes, ...writePaths]);
-  if (writeValidationError !== undefined) {
-    return errorToolResult(core, writeValidationError, { ok: false, error: writeValidationError });
+  const outputPaths = [...deletes, ...writePaths];
+  const outputAuthorizations: MutationPathAuthorization[] = [];
+  const seenOutputPaths = new Set<string>();
+  for (const path of outputPaths) {
+    const authorization = patchAuthorizations.get(path);
+    if (authorization === undefined || seenOutputPaths.has(path)) {
+      const error = `Patch output path was not authorized: ${path}`;
+      return errorToolResult(core, error, { ok: false, error });
+    }
+    seenOutputPaths.add(path);
+    outputAuthorizations.push(authorization);
   }
-  await writePatchFiles({ deletes, writes });
+  await writePatchFiles({ deletes, writes, authorizations: outputAuthorizations });
   return hostToolResult(core, "apply_patch", { ...application, writes: writesWithBefore, deletedFiles });
 }
-
-const pendingAgentWaits = new Map<string, Set<AbortController>>();
 
 export async function executeTool(
   pi: PiLike,
@@ -749,6 +745,17 @@ export async function executeTool(
       return agentErrorToolResult(core, "invalid_arguments", parsed.error);
     }
     return errorToolResult(core, parsed.error, { ok: false, error: parsed.error });
+  }
+  const childMarker = childSessionMarkerFromContext(ctx);
+  if (
+    !invalidChildSafeToolNames.has(name)
+    && (childMarker.kind === "invalid" || childMarker.kind === "unavailable")
+  ) {
+    return errorToolResult(core, "invalid child session authority metadata", {
+      ok: false,
+      error: "invalid child session authority metadata",
+      childMarker: childMarker.kind,
+    });
   }
   if (name === "view_media" && !contextModelSupportsImages(ctx)) {
     const error = "Current model does not support image input";
@@ -853,7 +860,13 @@ export async function executeTool(
     case "exec_command":
       return runPreparedExec(pi, core, prepared, ctx, signal, false, approvalStillCurrent, replan);
     case "exec_command_approval": {
-      const outcome = await confirmExecApproval(core, prepared, ctx, signal, approvalStillCurrent);
+      let outcome: ApprovalResolution;
+      try {
+        outcome = await confirmExecApproval(core, prepared, ctx, signal, approvalStillCurrent);
+      } catch (error) {
+        discardPreparedAuthorityPlan(core, prepared, ctx);
+        throw error;
+      }
       if (outcome === "replan") {
         discardPreparedAuthorityPlan(core, prepared, ctx);
         return replan();
@@ -944,7 +957,7 @@ export function registerGatewayTools(
   }
   installExecNotificationLifecycle(pi, core);
   installAgentLifecycle(pi, core, childSessions, pendingAgentWaits);
-  installIsolatedChildOwnershipLifecycle(pi, childSessions);
+  installIsolatedChildOwnershipLifecycle(pi, core, childSessions);
   assertToolCatalogMatchesCore(core);
   const allowed = new Set(decodeToolNamesResult(core.call("allowedToolNames", [])).names);
   for (const contract of toolContracts) {

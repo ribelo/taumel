@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { executeAgentPrepared } from "../src/agent-orchestration.ts";
+import { sendToChildSession } from "../src/child-sessions.ts";
 import { executeTool } from "../src/tool-executor.ts";
 
 const root = mkdtempSync(join(tmpdir(), "taumel-agent-async-"));
@@ -109,6 +110,15 @@ const pi = {
 
 const childSessions = new Map();
 const pendingWaits = new Map();
+const invalidPreparedSend = await executeAgentPrepared(pi, core, childSessions, pendingWaits, {
+  action: "agent_send", agentId: prepared.agentId, capabilityId: "forged",
+  dispatch: true, dispatchDeliverAs: "followUp", outcome: "started",
+}, ctx);
+assert.equal(JSON.parse(invalidPreparedSend.content[0].text).error.code, "internal_error");
+const invalidPreparedClose = await executeAgentPrepared(pi, core, childSessions, pendingWaits, {
+  action: "agent_close", agentId: prepared.agentId, capabilityId: "forged", deleteWorktree: true,
+}, ctx);
+assert.equal(JSON.parse(invalidPreparedClose.content[0].text).error.code, "internal_error");
 // agent-tc17: failed agent calls use the stable JSON error envelope.
 const invalidStart = await executeTool(pi, core, childSessions, "agent_spawn", { message: "missing label" }, ctx);
 assert.deepEqual(JSON.parse(invalidStart.content[0].text), {
@@ -249,6 +259,69 @@ const steeredWait = core.call("prepareTool", [{
   name: "agent_wait", params: { run_ids: [steered.runId], timeout_seconds: 0 }, ctx,
 }]);
 assert.equal(steeredWait.details.results[0].output, "steered answer");
+
+// agent-l7da: unknown SDK states must never be normalized to successful completion.
+const unknownCompletion = core.call("prepareTool", [{
+  name: "agent_send", params: { agent_id: prepared.agentId, message: "unknown completion", description: "Reject unknown completion" }, ctx,
+}]);
+await executeAgentPrepared(pi, core, childSessions, pendingWaits, unknownCompletion, ctx);
+settle({ role: "assistant", content: [{ type: "text", text: "ambiguous answer" }], stopReason: "future_terminal" });
+await new Promise((resolve) => setTimeout(resolve, 0));
+const unknownCompletionList = core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]).details.agents[0];
+assert.equal(unknownCompletionList.status, "failed");
+const unknownCompletionWait = core.call("prepareTool", [{
+  name: "agent_wait", params: { run_ids: [unknownCompletion.runId], timeout_seconds: 0 }, ctx,
+}]);
+assert.match(unknownCompletionWait.details.results[0].error, /unknown SDK stop reason.*future_terminal/i);
+
+const unknownHostCompletion = await sendToChildSession({}, {
+  call: () => ({
+    send: true, prompt: "probe", deliverAs: "followUp",
+    result: { dispatched: true },
+  }),
+}, {
+  sendUserMessage: async () => ({ status: "future_terminal", output: "ambiguous host answer" }),
+}, "probe");
+assert.equal(unknownHostCompletion.completion.status, "failed");
+assert.match(unknownHostCompletion.completion.reason, /unknown SDK completion status.*future_terminal/i);
+
+for (const malformedCompletion of [
+  { status: 42, output: "ambiguous" },
+  { stopReason: "", output: "ambiguous" },
+  { isError: "true", output: "ambiguous" },
+]) {
+  const malformedHostCompletion = await sendToChildSession({}, {
+    call: () => ({ send: true, prompt: "probe", deliverAs: "followUp", result: { dispatched: true } }),
+  }, { sendUserMessage: async () => malformedCompletion }, "probe");
+  assert.equal(malformedHostCompletion.completion.status, "failed");
+}
+const oversizedHostCompletion = await sendToChildSession({}, {
+  call: () => ({ send: true, prompt: "probe", deliverAs: "followUp", result: { dispatched: true } }),
+}, { sendUserMessage: async () => ({ status: `future_${"x".repeat(5000)}`, output: "ambiguous" }) }, "probe");
+assert.equal(oversizedHostCompletion.completion.reason.length, 4096);
+const errorOnlyHostCompletion = await sendToChildSession({}, {
+  call: () => ({ send: true, prompt: "probe", deliverAs: "followUp", result: { dispatched: true } }),
+}, { sendUserMessage: async () => ({ errorMessage: "provider failed" }) }, "probe");
+assert.equal(errorOnlyHostCompletion.completion.status, "failed");
+assert.equal(errorOnlyHostCompletion.completion.reason, "provider failed");
+
+const abortedCompletion = core.call("prepareTool", [{
+  name: "agent_send", params: { agent_id: prepared.agentId, message: "abort completion", description: "Classify aborted completion" }, ctx,
+}]);
+await executeAgentPrepared(pi, core, childSessions, pendingWaits, abortedCompletion, ctx);
+settle({ role: "assistant", content: [], stopReason: "aborted", errorMessage: "Request was aborted" });
+await new Promise((resolve) => setTimeout(resolve, 0));
+const abortedCompletionList = core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]).details.agents[0];
+assert.equal(abortedCompletionList.status, "cancelled");
+
+const malformedMessageCompletion = core.call("prepareTool", [{
+  name: "agent_send", params: { agent_id: prepared.agentId, message: "malformed completion", description: "Reject malformed completion" }, ctx,
+}]);
+await executeAgentPrepared(pi, core, childSessions, pendingWaits, malformedMessageCompletion, ctx);
+settle({ role: "assistant", content: [], stopReason: "stop", errorMessage: 42 });
+await new Promise((resolve) => setTimeout(resolve, 0));
+const malformedMessageList = core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]).details.agents[0];
+assert.equal(malformedMessageList.status, "failed");
 
 const closeRun = core.call("prepareTool", [{
   name: "agent_send", params: { agent_id: prepared.agentId, message: "wait for close", description: "Wait for agent close" }, ctx,

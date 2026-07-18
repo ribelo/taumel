@@ -1,5 +1,8 @@
 import Type, { type Static } from "typebox";
-import { BridgeToolResultSchema, CronPromptSchema, PermissionsPromptSchema, ToolResultEnvelopeSchema, VisibilitySavePlanSchema } from "./bridge-core-contracts.ts";
+import { AgentSessionMetadataSchema } from "./session-entry-contracts.ts";
+import { EditReplacementSchema } from "./tool-contracts.ts";
+export { AgentSessionMetadataSchema };
+import { AuthorizedMutationPathSchema, BridgeToolResultSchema, CronPromptSchema, PermissionsPromptSchema, ToolResultEnvelopeSchema, VisibilitySavePlanSchema } from "./bridge-core-contracts.ts";
 
 export const ComposerSettingsSchema = Type.Object(
   {
@@ -78,11 +81,17 @@ export const PrepareToolFactsSchema = Type.Object(
 );
 export const SandboxConfigSchema = Type.Object(
   {
-    filesystemMode: Type.String({ minLength: 1 }), networkMode: Type.String({ minLength: 1 }),
+    filesystemMode: Type.Union([
+      Type.Literal("read-only"), Type.Literal("workspace-write"), Type.Literal("danger-full-access"),
+    ]),
+    networkMode: Type.Union([Type.Literal("disabled"), Type.Literal("enabled")]),
     workspaceRoots: Type.Array(Type.String({ minLength: 1 })), noSandbox: Type.Boolean(),
     // bridge-7m4k: generated builders camel-case OCaml labels, so this bridge-only
     // field must remain `isolatedChild`; persisted session state uses `isolated_child`.
-    isolatedChild: Type.Boolean(), approvalPolicy: Type.Optional(Type.String({ minLength: 1 })),
+    isolatedChild: Type.Boolean(), approvalPolicy: Type.Union([
+      Type.Literal("never"), Type.Literal("on-request"),
+      Type.Literal("on-failure"), Type.Literal("untrusted"),
+    ]),
   },
   { $id: "SandboxConfig", additionalProperties: false },
 );
@@ -121,7 +130,7 @@ const approvalFields = {
   approvalTimeoutMs: Type.Number({ minimum: 0 }),
 };
 export const PreparedReadSchema = Type.Object(
-  { ok: Type.Literal(true), action: Type.Literal("read"), path: Type.String({ minLength: 1 }), offset: Type.Optional(Type.Integer({ minimum: 1 })), limit: Type.Optional(Type.Integer({ minimum: 1 })) },
+  { ok: Type.Literal(true), action: Type.Literal("read"), path: Type.String({ minLength: 1 }), offset: Type.Optional(Type.Integer()), limit: Type.Optional(Type.Integer({ minimum: 1 })) },
   { $id: "PreparedRead", additionalProperties: false },
 );
 export const PreparedViewMediaSchema = Type.Object(
@@ -155,40 +164,51 @@ const mutationBase = {
   validateWorkspacePaths: Type.Boolean(), path: Type.String({ minLength: 1 }),
   displayPath: Type.String({ minLength: 1 }),
 };
+const WriteModeSchema = Type.Union([Type.Literal("overwrite"), Type.Literal("append")]);
 export const PreparedWriteSchema = Type.Object(
-  { ...mutationBase, action: Type.Literal("write"), contents: Type.String(), mode: Type.String({ minLength: 1 }), filesystemApproval: Type.Optional(Type.Boolean()) },
+  { ...mutationBase, action: Type.Literal("write"), contents: Type.String(), mode: WriteModeSchema, filesystemApproval: Type.Optional(Type.Boolean()) },
   { $id: "PreparedWrite", additionalProperties: false },
 );
 export const PreparedWriteApprovalSchema = Type.Object(
-  { ...mutationBase, action: Type.Literal("write_approval"), contents: Type.String(), mode: Type.String({ minLength: 1 }), approvalAction: Type.String(), ...approvalFields },
+  { ...mutationBase, action: Type.Literal("write_approval"), contents: Type.String(), mode: WriteModeSchema, approvalAction: Type.Literal("write"), ...approvalFields },
   { $id: "PreparedWriteApproval", additionalProperties: false },
 );
 export const PreparedEditSchema = Type.Object(
-  { ...mutationBase, action: Type.Literal("edit"), edits: Type.Array(Type.Unknown()), filesystemApproval: Type.Optional(Type.Boolean()) },
+  { ...mutationBase, action: Type.Literal("edit"), edits: Type.Array(EditReplacementSchema, { minItems: 1 }), filesystemApproval: Type.Optional(Type.Boolean()) },
   { $id: "PreparedEdit", additionalProperties: false },
 );
 export const PreparedEditApprovalSchema = Type.Object(
-  { ...mutationBase, action: Type.Literal("edit_approval"), edits: Type.Array(Type.Unknown()), approvalAction: Type.String(), ...approvalFields },
+  { ...mutationBase, action: Type.Literal("edit_approval"), edits: Type.Array(EditReplacementSchema, { minItems: 1 }), approvalAction: Type.Literal("edit"), ...approvalFields },
   { $id: "PreparedEditApproval", additionalProperties: false },
 );
+const authorizedPatchPaths = { authorizedPaths: Type.Array(AuthorizedMutationPathSchema, { minItems: 1 }) };
 export const PreparedPatchSchema = Type.Object(
-  { ok: Type.Literal(true), action: Type.Literal("apply_patch"), workspaceRoots: Type.Array(Type.String({ minLength: 1 })), validateWorkspacePaths: Type.Boolean(), affectedPaths: Type.Array(Type.String({ minLength: 1 })), patch: Type.String(), filesystemApproval: Type.Optional(Type.Boolean()) },
+  { ok: Type.Literal(true), action: Type.Literal("apply_patch"), workspaceRoots: Type.Array(Type.String({ minLength: 1 })), validateWorkspacePaths: Type.Boolean(), affectedPaths: Type.Array(Type.String({ minLength: 1 })), ...authorizedPatchPaths, patch: Type.String(), filesystemApproval: Type.Optional(Type.Boolean()) },
   { $id: "PreparedPatch", additionalProperties: false },
 );
 export const PreparedPatchApprovalSchema = Type.Object(
-  { ok: Type.Literal(true), action: Type.Literal("apply_patch_approval"), workspaceRoots: Type.Array(Type.String({ minLength: 1 })), validateWorkspacePaths: Type.Boolean(), affectedPaths: Type.Array(Type.String({ minLength: 1 })), patch: Type.String(), approvalAction: Type.String(), ...approvalFields },
+  { ok: Type.Literal(true), action: Type.Literal("apply_patch_approval"), workspaceRoots: Type.Array(Type.String({ minLength: 1 })), validateWorkspacePaths: Type.Boolean(), affectedPaths: Type.Array(Type.String({ minLength: 1 })), ...authorizedPatchPaths, patch: Type.String(), approvalAction: Type.Literal("apply_patch"), ...approvalFields },
   { $id: "PreparedPatchApproval", additionalProperties: false },
 );
 export const PreparedThreadQuerySchema = Type.Object(
-  { ok: Type.Literal(true), action: Type.Literal("query_threads"), query: Type.String({ minLength: 1 }), limit: Type.Integer({ minimum: 1 }), scope: Type.String(), includeTools: Type.Boolean() },
+  { ok: Type.Literal(true), action: Type.Literal("query_threads"), query: Type.String({ minLength: 1, maxLength: 500 }), limit: Type.Integer({ minimum: 1, maximum: 50 }), scope: Type.Union([Type.Literal("current_workspace"), Type.Literal("all")]), includeTools: Type.Boolean() },
   { $id: "PreparedThreadQuery", additionalProperties: false },
 );
+export const PreparedThreadLocatorSchema = Type.Object({
+  threadID: Type.String({ minLength: 1 }),
+  sourcePath: Type.Optional(Type.String({ minLength: 1 })),
+  entryID: Type.Optional(Type.String({ minLength: 1 })),
+  line: Type.Optional(Type.Integer({ minimum: 1 })),
+}, { $id: "PreparedThreadLocator", additionalProperties: false });
 export const PreparedThreadReadSchema = Type.Object(
   {
     ok: Type.Literal(true), action: Type.Literal("read_thread"), threadID: Type.String({ minLength: 1 }),
-    mode: Type.String(), around: Type.Integer({ minimum: 0 }), entryID: Type.Union([Type.String(), Type.Null()]),
-    line: Type.Union([Type.Integer(), Type.Null()]), cursor: Type.Union([Type.String(), Type.Null()]),
-    locator: Type.Optional(Type.Unknown()),
+    mode: Type.Union([Type.Literal("overview"), Type.Literal("window"), Type.Literal("full")]),
+    around: Type.Integer({ minimum: 0, maximum: 10 }),
+    entryID: Type.Optional(Type.String({ minLength: 1 })),
+    line: Type.Optional(Type.Integer({ minimum: 1 })),
+    cursor: Type.Optional(Type.String({ minLength: 1 })),
+    locator: Type.Optional(PreparedThreadLocatorSchema),
   },
   { $id: "PreparedThreadRead", additionalProperties: false },
 );
@@ -200,17 +220,71 @@ export const PreparedExaApprovalSchema = Type.Object(
   { ok: Type.Literal(true), action: Type.Literal("exa_agent_create_run_approval"), planId: Type.String({ minLength: 1 }), toolName: Type.String({ minLength: 1 }), ...approvalFields },
   { $id: "PreparedExaApproval", additionalProperties: false },
 );
+const AgentKindSchema = Type.Union([
+  Type.Literal("generic"), Type.Literal("finder"), Type.Literal("oracle"),
+]);
+const AgentRunStatusSchema = Type.Union([
+  Type.Literal("running"), Type.Literal("suspended"), Type.Literal("completed"),
+  Type.Literal("failed"), Type.Literal("cancelled"), Type.Literal("lost"),
+]);
+const AgentSendOutcomeSchema = Type.Union([
+  Type.Literal("message_sent"), Type.Literal("interrupted_and_sent"),
+  Type.Literal("suspended"), Type.Literal("already_suspended"), Type.Literal("resumed"),
+  Type.Literal("started"), Type.Literal("no_active_run"),
+]);
+const AgentReasonCodeSchema = Type.Union([
+  Type.Literal("interrupted_by_parent"), Type.Literal("parent_shutdown"),
+  Type.Literal("process_interrupted"), Type.Literal("close_cleanup_failed"),
+  Type.Literal("host_cancelled"), Type.Literal("dispatch_failed"),
+  Type.Literal("agent_failed"), Type.Literal("internal_error"),
+  Type.Literal("child_session_lost"),
+]);
+const AgentSuspensionReasonCodeSchema = Type.Union([
+  Type.Literal("interrupted_by_parent"), Type.Literal("parent_shutdown"),
+  Type.Literal("process_interrupted"), Type.Literal("close_cleanup_failed"),
+]);
+export const AgentStartDetailsSchema = Type.Object({
+  ok: Type.Literal(true), runId: Type.String({ minLength: 1 }),
+  kind: AgentKindSchema, model: Type.String({ minLength: 1 }), thinking: Type.String({ minLength: 1 }),
+  status: Type.Literal("running"), prompt: Type.String(), agentId: Type.String({ minLength: 1 }),
+  activeTools: Type.Array(Type.String({ minLength: 1 })), workspace: Type.String({ minLength: 1 }),
+  isolation: Type.Union([Type.Literal("none"), Type.Literal("worktree")]),
+  tier: Type.Optional(Type.Union([Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")])),
+}, { $id: "AgentStartDetails", additionalProperties: false });
+export const AgentSendDetailsSchema = Type.Object({
+  agentId: Type.String({ minLength: 1 }), outcome: AgentSendOutcomeSchema,
+  runId: Type.Optional(Type.String({ minLength: 1 })),
+  status: Type.Optional(AgentRunStatusSchema),
+  submissionId: Type.Optional(Type.String({ minLength: 1 })),
+}, { $id: "AgentSendDetails", additionalProperties: false });
+const AgentWaitUnusedResultSchema = Type.Object(
+  { unused: Type.Literal(true) }, { additionalProperties: false },
+);
+export const AgentWaitDetailsSchema = Type.Object({
+  ok: Type.Literal(true), timedOut: Type.Literal(false),
+  results: Type.Array(AgentWaitUnusedResultSchema, { maxItems: 0 }),
+  pendingRunIds: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+  timeoutSeconds: Type.Optional(Type.Number({ minimum: 0 })),
+}, { $id: "AgentWaitDetails", additionalProperties: false });
+export const AgentCloseDetailsSchema = Type.Object({
+  agentId: Type.String({ minLength: 1 }), status: Type.Literal("closed"),
+}, { $id: "AgentCloseDetails", additionalProperties: false });
+export const AgentNotificationDetailsSchema = Type.Object(
+  { notificationId: Type.String({ pattern: "^agent_completion:.+" }) },
+  { $id: "AgentNotificationDetails", additionalProperties: false },
+);
 export const PreparedAgentStartSchema = Type.Object(
   {
     ok: Type.Literal(true),
     action: Type.Literal("agent_start"),
     text: Type.String(),
-    details: Type.Unknown(),
+    details: AgentStartDetailsSchema,
     prompt: Type.String(),
     agentId: Type.String({ minLength: 1 }),
     runId: Type.String({ minLength: 1 }),
     submissionId: Type.String({ minLength: 1 }),
-    metadata: Type.Unknown(),
+    capabilityId: Type.String({ minLength: 1 }),
+    metadata: AgentSessionMetadataSchema,
   },
   { $id: "PreparedAgentStart", additionalProperties: false },
 );
@@ -219,18 +293,19 @@ export const PreparedAgentSendSchema = Type.Object(
     ok: Type.Literal(true),
     action: Type.Literal("agent_send"),
     text: Type.String(),
-    details: Type.Unknown(),
+    details: AgentSendDetailsSchema,
     prompt: Type.String(),
     agentId: Type.String({ minLength: 1 }),
     dispatch: Type.Boolean(),
     interrupt: Type.Boolean(),
-    dispatchDeliverAs: Type.String(),
-    runId: Type.Optional(Type.String()),
-    submissionId: Type.Optional(Type.String()),
-    previousSubmissionId: Type.Optional(Type.String()),
-    previousReasonCode: Type.Optional(Type.String()),
-    outcome: Type.String({ minLength: 1 }),
-    metadata: Type.Optional(Type.Unknown()),
+    dispatchDeliverAs: Type.Union([Type.Literal("steer"), Type.Literal("followUp")]),
+    runId: Type.Optional(Type.String({ minLength: 1 })),
+    submissionId: Type.Optional(Type.String({ minLength: 1 })),
+    previousSubmissionId: Type.Optional(Type.String({ minLength: 1 })),
+    previousReasonCode: Type.Optional(AgentSuspensionReasonCodeSchema),
+    outcome: AgentSendOutcomeSchema,
+    capabilityId: Type.String({ minLength: 1 }),
+    metadata: AgentSessionMetadataSchema,
   },
   { $id: "PreparedAgentSend", additionalProperties: false },
 );
@@ -239,9 +314,9 @@ export const PreparedAgentWaitSchema = Type.Object(
     ok: Type.Literal(true),
     action: Type.Literal("agent_wait"),
     text: Type.String(),
-    details: Type.Unknown(),
-    runIds: Type.Array(Type.String()),
-    timeoutSeconds: Type.Optional(Type.Number()),
+    details: AgentWaitDetailsSchema,
+    runIds: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+    timeoutSeconds: Type.Optional(Type.Number({ minimum: 0 })),
   },
   { $id: "PreparedAgentWait", additionalProperties: false },
 );
@@ -250,7 +325,7 @@ export const PreparedAgentCloseSchema = Type.Object(
     ok: Type.Literal(true),
     action: Type.Literal("agent_close"),
     text: Type.String(),
-    details: Type.Unknown(),
+    details: AgentCloseDetailsSchema,
     agentId: Type.String({ minLength: 1 }),
     runIds: Type.Array(Type.String({ minLength: 1 })),
     deleteWorktree: Type.Optional(Type.Boolean()),
@@ -258,6 +333,7 @@ export const PreparedAgentCloseSchema = Type.Object(
     worktreeBranch: Type.Optional(Type.String()),
     mainRepositoryRoot: Type.Optional(Type.String()),
     isolation: Type.Optional(Type.Union([Type.Literal("none"), Type.Literal("worktree")])),
+    capabilityId: Type.String({ minLength: 1 }),
   },
   { $id: "PreparedAgentClose", additionalProperties: false },
 );
@@ -267,8 +343,9 @@ export const AgentRoutingDiagnosticsResultSchema = Type.Object(
 );
 export const AgentNotificationSchema = Type.Object(
   {
-    runId: Type.String({ minLength: 1 }), customType: Type.String({ minLength: 1 }),
-    content: Type.String({ minLength: 1 }), display: Type.Boolean(), details: Type.Unknown(),
+    runId: Type.String({ minLength: 1 }), customType: Type.Literal("notification"),
+    content: Type.String({ minLength: 1 }), display: Type.Literal(true),
+    details: AgentNotificationDetailsSchema,
   },
   { $id: "AgentNotification", additionalProperties: false },
 );
@@ -294,7 +371,7 @@ export const AgentCleanupPlanSchema = Type.Object(
 );
 export const AgentManagerIdentitySchema = Type.Object(
   {
-    agentId: Type.String({ minLength: 1 }), kind: Type.String({ minLength: 1 }),
+    agentId: Type.String({ minLength: 1 }), kind: AgentKindSchema,
     model: Type.String({ minLength: 1 }), thinking: Type.String({ minLength: 1 }),
     workspace: Type.String({ minLength: 1 }),
     isolation: Type.Optional(Type.Union([Type.Literal("none"), Type.Literal("worktree")])),
@@ -307,12 +384,20 @@ export const AgentManagerIdentitySchema = Type.Object(
 export const AgentManagerRunSchema = Type.Object(
   {
     runId: Type.String({ minLength: 1 }), agentId: Type.String({ minLength: 1 }),
-    status: Type.String({ minLength: 1 }), reasonCode: Type.Optional(Type.String({ minLength: 1 })),
+    status: AgentRunStatusSchema, reasonCode: Type.Optional(AgentReasonCodeSchema),
     startedAt: Type.Integer(), endedAt: Type.Optional(Type.Integer()),
     suspendedAt: Type.Optional(Type.Integer()), description: Type.String(), turnCount: Type.Integer({ minimum: 0 }),
-    lastActivityAt: Type.Optional(Type.Integer()), activityState: Type.String({ minLength: 1 }),
-    recommendation: Type.String({ minLength: 1 }), submissionId: Type.String({ minLength: 1 }),
-    error: Type.Optional(Type.String()), announcement: Type.String({ minLength: 1 }),
+    lastActivityAt: Type.Optional(Type.Integer()), activityState: Type.Union([
+      Type.Literal("starting"), Type.Literal("reasoning"), Type.Literal("using_tool"),
+      Type.Literal("orphaned"), Type.Literal("inactive"),
+    ]),
+    recommendation: Type.Union([
+      Type.Literal("wait"), Type.Literal("interrupt_or_close"),
+      Type.Literal("call_agent_wait"), Type.Literal("resume_or_close"),
+    ]), submissionId: Type.String({ minLength: 1 }),
+    error: Type.Optional(Type.String()), announcement: Type.Union([
+      Type.Literal("pending"), Type.Literal("observed_by_agent_wait"), Type.Literal("notification_sent"),
+    ]),
   },
   { $id: "AgentManagerRun", additionalProperties: false },
 );

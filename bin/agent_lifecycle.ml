@@ -301,18 +301,13 @@ let pending_agent_notifications ctx =
         | None -> None
         | Some identity ->
             let details =
-              Unsafe.obj
-                [|
-                  ( "notificationId",
-                    js_string ("agent_completion:" ^ run.run_id) );
-                |]
+              Tool_contracts.AgentNotificationDetails.create
+                ~notificationId:("agent_completion:" ^ run.run_id) ()
             in
             Some
-              (Tool_contracts.AgentNotification.create ~runId:run.run_id
-                 ~customType:"notification"
+              (Boundary_contracts.AgentNotification.create ~runId:run.run_id
                  ~content:(Taumel.Agent_registry.completion_message identity run)
-                 ~display:true
-                 ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details)) ()))
+                 ~details ()))
       pending
   in
   Tool_contracts.PendingAgentNotificationsResult.create ~notifications ()
@@ -409,7 +404,11 @@ let manager_snapshot ctx =
         in
         Tool_contracts.AgentManagerIdentity.create
           ~agentId:identity.identity_agent_id
-          ~kind:(Taumel.Agents.agent_kind_to_string identity.identity_kind)
+          ~kind:(Boundary_contracts.AgentManagerIdentity.kind_to_contract
+                   (match identity.identity_kind with
+                   | Taumel.Agents.Generic -> `V_generic
+                   | Finder -> `V_finder
+                   | Oracle -> `V_oracle))
           ~model:identity.identity_model ~thinking:identity.identity_thinking
           ~workspace:(Taumel.Agents.identity_source_workspace identity)
           ?isolation:
@@ -437,30 +436,61 @@ let manager_snapshot ctx =
     (!agent_state).runs
     |> List.filter (fun (run : Taumel.Agents.agent_run) -> List.mem run.run_agent_id owned_ids)
     |> List.map (fun (run : Taumel.Agents.agent_run) ->
-           let activity = Taumel.Agents.activity_state_to_string run.run_activity_state in
+           let activity =
+             Boundary_contracts.AgentManagerRun.activity_state_to_contract
+               (match run.run_activity_state with
+               | Taumel.Agents.Starting -> `V_starting
+               | Reasoning -> `V_reasoning
+               | Using_tool -> `V_using_tool
+               | Orphaned -> `V_orphaned
+               | Inactive -> `V_inactive)
+           in
            let recommendation =
              match (run.run_status, run.run_activity_state) with
              | Taumel.Agents.Running,
-               (Taumel.Agents.Starting | Taumel.Agents.Reasoning | Taumel.Agents.Using_tool) -> "wait"
-             | Taumel.Agents.Running, Taumel.Agents.Orphaned -> "interrupt_or_close"
+               (Taumel.Agents.Starting | Taumel.Agents.Reasoning | Taumel.Agents.Using_tool) -> `V_wait
+             | Taumel.Agents.Running, Taumel.Agents.Orphaned -> `V_interrupt_or_close
              | (Taumel.Agents.Completed | Taumel.Agents.Failed | Taumel.Agents.Cancelled | Taumel.Agents.Lost),
-               Taumel.Agents.Inactive -> "call_agent_wait"
-             | Taumel.Agents.Suspended, Taumel.Agents.Inactive -> "resume_or_close"
-             | _ -> "wait"
+               Taumel.Agents.Inactive -> `V_call_agent_wait
+             | Taumel.Agents.Suspended, Taumel.Agents.Inactive -> `V_resume_or_close
+             | _ -> invalid_arg "invalid agent status/activity combination"
            in
            Tool_contracts.AgentManagerRun.create ~runId:run.run_id
              ~agentId:run.run_agent_id
-             ~status:(Taumel.Agents.run_status_to_string run.run_status)
+             ~status:(Boundary_contracts.AgentManagerRun.status_to_contract
+                        (match run.run_status with
+                        | Taumel.Agents.Running -> `V_running
+                        | Suspended -> `V_suspended | Completed -> `V_completed
+                        | Failed -> `V_failed | Cancelled -> `V_cancelled | Lost -> `V_lost))
              ?reasonCode:
-               (Option.map Taumel.Agents.reason_code_to_string run.run_reason_code)
+               (Option.map
+                  (fun reason ->
+                    Boundary_contracts.AgentManagerRun.reason_code_to_contract
+                      (match reason with
+                      | Taumel.Agents.Interrupted_by_parent -> `V_interrupted_by_parent
+                      | Parent_shutdown -> `V_parent_shutdown
+                      | Process_interrupted -> `V_process_interrupted
+                      | Close_cleanup_failed -> `V_close_cleanup_failed
+                      | Host_cancelled -> `V_host_cancelled
+                      | Dispatch_failed -> `V_dispatch_failed
+                      | Agent_failed -> `V_agent_failed
+                      | Internal_error -> `V_internal_error
+                      | Child_session_lost -> `V_child_session_lost))
+                  run.run_reason_code)
              ~startedAt:(float_of_int run.run_started_at)
              ?endedAt:(Option.map float_of_int run.run_ended_at)
              ?suspendedAt:(Option.map float_of_int run.run_suspended_at)
              ~description:run.run_description ~turnCount:(float_of_int run.run_turn_count)
              ?lastActivityAt:(Option.map float_of_int run.run_last_activity_at)
-             ~activityState:activity ~recommendation ~submissionId:run.run_submission_id
+             ~activityState:activity
+             ~recommendation:(Boundary_contracts.AgentManagerRun.recommendation_to_contract recommendation)
+             ~submissionId:run.run_submission_id
              ?error:run.run_error
-             ~announcement:(Taumel.Agents.announcement_to_string run.run_announcement) ())
+             ~announcement:(Boundary_contracts.AgentManagerRun.announcement_to_contract
+                              (match run.run_announcement with
+                              | Taumel.Agents.Pending -> `V_pending
+                              | Observed_by_agent_wait -> `V_observed_by_agent_wait
+                              | Notification_sent -> `V_notification_sent)) ())
   in
   Tool_contracts.AgentManagerSnapshot.create ~agents ~runs ()
   |> Tool_contracts.AgentManagerSnapshot.t_to_js |> inject

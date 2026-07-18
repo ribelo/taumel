@@ -9,8 +9,14 @@ import { fileURLToPath } from "node:url";
 import finderPromptResource from "../resources/agents/finder.md" with { type: "text" };
 import oraclePromptResource from "../resources/agents/oracle.md" with { type: "text" };
 import subagentPromptResource from "../resources/agents/subagent.md" with { type: "text" };
-import type { ChildDispatchCompletion, ChildDispatchResult, ChildSessionCustomEntry, ChildSessionMetadata } from "./bridge-contracts.ts";
-import { decodeChildDispatchPlan, decodeCoreAck } from "./bridge-contracts.ts";
+import type { ChildDispatchCompletion, ChildDispatchResult, ChildSessionMetadata, ChildSessionSetupEntry } from "./bridge-contracts.ts";
+import { decodeChildDispatchPlan, decodeChildPermissionRefreshPlan, decodeCoreAck } from "./bridge-contracts.ts";
+import {
+  appendChildSessionSetupEntry,
+  appendTaumelCustomEntry,
+  isCanonicalEntryPresent,
+  latestTaumelCustomEntry,
+} from "./pi-session-entries.ts";
 
 import type {
   ChildSessionBridge,
@@ -38,11 +44,7 @@ type ModelRegistry = {
   readonly hasConfiguredAuth?: (model: unknown) => boolean;
 };
 type SessionManagerHost = { readonly getEntries?: () => unknown; readonly appendCustomEntry?: (customType: string, data: unknown) => unknown };
-type CustomEntry = { readonly customType?: unknown; readonly type?: unknown; readonly data?: unknown; readonly value?: unknown };
 type MessageEntry = { readonly type?: unknown; readonly id?: unknown; readonly message?: unknown };
-type CapabilityProfile = { readonly sandboxPreset?: unknown; readonly approvalPolicy?: unknown; [key: string]: unknown };
-type PermissionsEntry = { readonly profile?: unknown; readonly networkMode?: unknown };
-type ChildMetadataEntry = { readonly capabilityProfile?: unknown; readonly networkMode?: unknown };
 type AgentMessage = { readonly role?: unknown; readonly content?: unknown; readonly stopReason?: unknown; readonly errorMessage?: unknown };
 type TextPart = { readonly text?: unknown };
 type SdkSession = {
@@ -69,6 +71,14 @@ type HostCompletion = {
 type ChildSessionUpdate = { readonly action?: unknown; readonly key?: unknown; readonly reason?: unknown };
 type ChildUpdatesResult = { readonly details?: unknown };
 type ChildUpdatesDetails = { readonly childSessionUpdates?: unknown };
+
+const sdkStopReasons = new Set(["stop", "length", "toolUse", "error", "aborted"]);
+const hostCompletionStatuses = new Set(["completed", "failed", "cancelled", "aborted", "timed_out"]);
+const hostStopReasons = new Set([...sdkStopReasons, "cancelled", "timed_out"]);
+
+function boundedCompletionReason(value: string): string {
+  return value.slice(0, 4096);
+}
 
 function hostObject<T extends object>(value: unknown): Partial<T> | undefined {
   return typeof value === "object" && value !== null ? value as Partial<T> : undefined;
@@ -136,10 +146,10 @@ function validateAgentSessionMarker(
   agentId: string,
   parent: SessionInfo,
 ): string | undefined {
-  const marker = hostObject<{ readonly [key: string]: unknown }>(
-    latestCustomEntry(sessionManager, "taumel.childSession"),
-  );
-  if (marker === undefined) return "child_session_identity_missing";
+  const markerLookup = latestTaumelCustomEntry(sessionManager, "taumel.childSession");
+  if (markerLookup.kind !== "contract_valid") return "child_session_identity_missing";
+  const marker = markerLookup.entry.data;
+  if (marker.kind !== "agent") return "child_session_agent_mismatch";
   if (nonEmptyString(marker.agentId) !== agentId) return "child_session_agent_mismatch";
 
   const expectedParentFile = nonEmptyString(parent.sessionFile);
@@ -216,127 +226,44 @@ function resolveChildModel(pi: PiLike, ctx: unknown, modelId: string | undefined
   return inherited === undefined || inherited === null ? { applied: false } : { model: inherited, applied: true };
 }
 
-function hasCustomEntry(sessionManager: unknown, customType: string): boolean {
-  const manager = hostObject<SessionManagerHost>(sessionManager);
-  if (typeof manager?.getEntries !== "function") return false;
-  try {
-    const entries = manager.getEntries.call(sessionManager);
-    return Array.isArray(entries) && entries.some((entry) => {
-      const value = hostObject<CustomEntry>(entry);
-      return value !== undefined && (
-        value.customType === customType ||
-        value.type === customType ||
-        (value.type === "custom" && value.customType === customType)
-      );
-    });
-  } catch {
-    return false;
-  }
-}
-
-function customEntryData(entry: unknown, customType: string): unknown {
-  const value = hostObject<CustomEntry>(entry);
-  if (value === undefined) return undefined;
-  if (value.customType === customType) return value.data;
-  if (value.type === customType) return value.value;
-  if (value.type === "custom" && value.customType === customType) return value.data;
-  return undefined;
-}
-
-function latestCustomEntry(sessionManager: unknown, customType: string): unknown {
-  const manager = hostObject<SessionManagerHost>(sessionManager);
-  if (typeof manager?.getEntries !== "function") return undefined;
-  const entries = manager.getEntries.call(sessionManager);
-  if (!Array.isArray(entries)) return undefined;
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const data = customEntryData(entries[index], customType);
-    if (data !== undefined) return data;
-  }
-  return undefined;
-}
-
-const sandboxRank: Record<string, number> = {
-  "read-only": 0,
-  "workspace-write": 1,
-  "danger-full-access": 2,
-};
-
-const approvalRank: Record<string, number> = {
-  untrusted: 0,
-  "on-request": 1,
-  "on-failure": 2,
-  never: 3,
-};
-
-function stricterValue(
-  left: unknown,
-  right: unknown,
-  ranks: Record<string, number>,
-): string | undefined {
-  if (typeof left !== "string" || typeof right !== "string") return undefined;
-  const leftRank = ranks[left];
-  const rightRank = ranks[right];
-  if (leftRank === undefined || rightRank === undefined) return undefined;
-  return leftRank <= rightRank ? left : right;
-}
-
 export function refreshOwnedChildPermissions(
   childSessions: Map<string, ChildSessionBridge>,
   parentCtx: unknown,
+  core: CoreBridge,
 ): void {
   const parentManager = hostObject<ChildContext>(parentCtx)?.sessionManager;
-  if (parentManager === undefined) return;
-  const parentPermissions = latestCustomEntry(parentManager, "taumel.permissions");
-  const parentProfile = hostObject<CapabilityProfile>(hostObject<PermissionsEntry>(parentPermissions)?.profile);
-  if (parentProfile === undefined) return;
+  const parentLookup = latestTaumelCustomEntry(parentManager, "taumel.permissions");
+  const parentPermissions = parentLookup.kind === "absent"
+    ? null
+    : parentLookup.kind === "contract_valid"
+      ? parentLookup.entry.data
+      : parentLookup.kind === "invalid"
+        ? parentLookup.rawEntry.data
+        : {};
   const scopePrefix = `${childSessionCacheKeyScopeFromContext(parentCtx)}\0`;
 
   for (const [key, child] of childSessions) {
     if (!key.startsWith(scopePrefix)) continue;
     const manager = child.sessionManager;
-    const childMetadata = latestCustomEntry(manager, "taumel.childSession");
-    const ceiling = hostObject<CapabilityProfile>(hostObject<ChildMetadataEntry>(childMetadata)?.capabilityProfile);
-    const ceilingNetwork = hostObject<ChildMetadataEntry>(childMetadata)?.networkMode;
-    if (ceiling === undefined) continue;
-    const sandboxPreset = stricterValue(
-      ceiling.sandboxPreset,
-      parentProfile.sandboxPreset,
-      sandboxRank,
+    const childLookup = latestTaumelCustomEntry(manager, "taumel.childSession");
+    const childMetadata = childLookup.kind === "contract_valid"
+      ? childLookup.entry.data
+      : childLookup.kind === "invalid"
+        ? childLookup.rawEntry.data
+        : null;
+    const plan = decodeChildPermissionRefreshPlan(
+      core.call("planChildPermissionRefresh", [
+        parentPermissions,
+        childMetadata,
+        parentCtx,
+      ]),
     );
-    const approvalPolicy = stricterValue(
-      ceiling.approvalPolicy,
-      parentProfile.approvalPolicy,
-      approvalRank,
-    );
-    if (sandboxPreset === undefined || approvalPolicy === undefined) continue;
-    const parentNetwork = hostObject<PermissionsEntry>(parentPermissions)?.networkMode;
-    const networkMode = ceilingNetwork === "enabled" && parentNetwork === "enabled"
-      ? "enabled"
-      : "disabled";
-    const append = hostObject<SessionManagerHost>(manager)?.appendCustomEntry;
-    if (typeof append !== "function") continue;
-    append.call(manager, "taumel.permissions", {
-      version: 1,
-      profile: {
-        ...ceiling,
-        sandboxPreset,
-        approvalPolicy,
-        noSandboxAllowed: false,
-      },
-      networkMode,
-      noSandbox: false,
-      isolated_child: true,
-    });
+    appendTaumelCustomEntry(manager, "taumel.permissions", plan.permissions);
   }
 }
 
-function appendSetupEntries(sessionManager: unknown, entries: readonly ChildSessionCustomEntry[]): SessionInfo {
-  const append = hostObject<SessionManagerHost>(sessionManager)?.appendCustomEntry;
-  if (typeof append === "function") {
-    for (const entry of entries) {
-      append.call(sessionManager, entry.customType, entry.data);
-    }
-  }
+function appendSetupEntries(sessionManager: unknown, entries: readonly ChildSessionSetupEntry[]): SessionInfo {
+  for (const entry of entries) appendChildSessionSetupEntry(sessionManager, entry);
   return sessionInfoFromManager(sessionManager);
 }
 
@@ -376,14 +303,25 @@ function completionFromMessages(messages: unknown, startIndex = 0): ChildDispatc
   if (assistant === undefined) return undefined;
   const finalOutput = assistantTextFromMessage(assistant);
   const assistantMessage = hostObject<AgentMessage>(assistant);
-  const stopReason = typeof assistantMessage?.stopReason === "string" ? assistantMessage.stopReason : "";
-  const errorMessage = typeof assistantMessage?.errorMessage === "string" ? assistantMessage.errorMessage : undefined;
-  const status =
-    errorMessage !== undefined || stopReason === "error" ? "failed" :
-    stopReason === "cancelled" || stopReason === "aborted" ? "cancelled" :
-    stopReason === "timed_out" ? "timed_out" :
-    "completed";
-  const reason = errorMessage ?? (status !== "completed" && stopReason !== "" ? stopReason : undefined);
+  const stopReason = assistantMessage?.stopReason;
+  const hasErrorMessage = Object.prototype.hasOwnProperty.call(assistantMessage, "errorMessage");
+  const malformedErrorMessage = hasErrorMessage && typeof assistantMessage?.errorMessage !== "string";
+  const errorMessage = typeof assistantMessage?.errorMessage === "string" && assistantMessage.errorMessage !== ""
+    ? assistantMessage.errorMessage : undefined;
+  let status: ChildDispatchCompletion["status"];
+  let reason = errorMessage;
+  if (malformedErrorMessage) {
+    status = "failed";
+    reason = "Malformed SDK errorMessage state";
+  } else if (stopReason === "aborted") status = "cancelled";
+  else if (stopReason === "error" || (sdkStopReasons.has(String(stopReason)) && errorMessage !== undefined)) status = "failed";
+  else if (stopReason === "stop" || stopReason === "length" || stopReason === "toolUse") status = "completed";
+  else {
+    status = "failed";
+    reason = typeof stopReason === "string" && stopReason !== ""
+      ? boundedCompletionReason(`Unknown SDK stop reason: ${stopReason}`)
+      : "Missing SDK stop reason";
+  }
   return {
     status,
     ...(finalOutput !== undefined ? { finalOutput } : {}),
@@ -647,8 +585,11 @@ export async function createChildSession(
       }
     }
     const childSessionManager = session.sessionManager ?? sessionManager;
+    const childMarker = latestTaumelCustomEntry(childSessionManager, "taumel.childSession");
     const setupInfo =
-      childSessionManager === sessionManager || hasCustomEntry(childSessionManager, "taumel.childSession")
+      childSessionManager === sessionManager
+        || isCanonicalEntryPresent(childMarker)
+        || childMarker.kind === "unavailable"
         ? sessionInfoFromManager(childSessionManager)
         : appendSetupEntries(childSessionManager, setupEntries);
     const sessionId =
@@ -764,8 +705,7 @@ export async function sendToChildSession(
         if (completed["completion"] !== undefined) {
           await options.onCompletion?.(completed);
         }
-      })
-      .catch(async (error) => {
+      }, async (error) => {
         await options.onCompletion?.({
           ...result,
           completion: {
@@ -774,6 +714,9 @@ export async function sendToChildSession(
             reason: error instanceof Error ? error.message : String(error),
           },
         });
+      })
+      .catch((error) => {
+        console.error("Taumel child completion callback failed", error);
       });
     return result;
   };
@@ -825,16 +768,39 @@ function dispatchCompletionFromHostResult(hostResult: unknown): ChildDispatchCom
     completionTextFromContent(completion.content);
   const rawStatus = typeof completion.status === "string" ? completion.status : "";
   const stopReason = typeof completion.stopReason === "string" ? completion.stopReason : "";
-  const status = rawStatus === "failed" || completion.isError === true || stopReason === "error" ? "failed" :
+  const hasStatus = Object.prototype.hasOwnProperty.call(completion, "status");
+  const hasStopReason = Object.prototype.hasOwnProperty.call(completion, "stopReason");
+  const hasIsError = Object.prototype.hasOwnProperty.call(completion, "isError");
+  const hasErrorMessage = Object.prototype.hasOwnProperty.call(completion, "errorMessage");
+  const hasError = Object.prototype.hasOwnProperty.call(completion, "error");
+  const unknownStatus = hasStatus && (rawStatus === "" || !hostCompletionStatuses.has(rawStatus));
+  const unknownStopReason = hasStopReason && (stopReason === "" || !hostStopReasons.has(stopReason));
+  const malformedIsError = hasIsError && typeof completion.isError !== "boolean";
+  const malformedError = (hasErrorMessage && typeof completion.errorMessage !== "string")
+    || (hasError && typeof completion.error !== "string");
+  const hasErrorSignal = completion.isError === true
+    || (typeof completion.errorMessage === "string" && completion.errorMessage !== "")
+    || (typeof completion.error === "string" && completion.error !== "");
+  const status: ChildDispatchCompletion["status"] = unknownStatus || unknownStopReason || malformedIsError || malformedError ? "failed" :
     rawStatus === "cancelled" || rawStatus === "aborted" || stopReason === "cancelled" || stopReason === "aborted" ? "cancelled" :
     rawStatus === "timed_out" || stopReason === "timed_out" ? "timed_out" :
+    rawStatus === "failed" || hasErrorSignal || stopReason === "error" ? "failed" :
     "completed";
-  const reason =
+  const explicitReason =
     typeof completion.reason === "string" ? completion.reason :
     typeof completion.errorMessage === "string" ? completion.errorMessage :
     typeof completion.error === "string" ? completion.error :
     stopReason !== "" ? stopReason :
     undefined;
+  const reason = unknownStatus
+    ? boundedCompletionReason(`Unknown SDK completion status: ${typeof completion.status === "string" ? completion.status : String(completion.status)}`)
+    : unknownStopReason
+      ? boundedCompletionReason(`Unknown SDK stop reason: ${typeof completion.stopReason === "string" ? completion.stopReason : String(completion.stopReason)}`)
+      : malformedIsError
+        ? "Malformed SDK isError state"
+        : malformedError
+          ? "Malformed SDK error state"
+          : explicitReason;
   const hasOutput = finalOutput !== undefined;
   const explicitTerminal = rawStatus !== "" || completion.isError === true || stopReason !== "";
   if (!hasOutput && status === "completed" && !explicitTerminal) {

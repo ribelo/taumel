@@ -33,7 +33,10 @@ let status_of_string = function
   | _ -> None
 
 let start ?max_iterations ?reflection_every ~id ~controller_session objective =
-  match Shared.require_non_empty "ralph objective" objective with
+  let valid_limit = function None -> true | Some value -> value > 0 && value <= 2_147_483_647 in
+  if not (valid_limit max_iterations && valid_limit reflection_every) then
+    Error "ralph iteration controls must be representable positive integers"
+  else match Shared.require_non_empty "ralph objective" objective with
   | Error _ as error -> error
   | Ok objective ->
       Ok
@@ -84,6 +87,8 @@ let ralph_continue actor task =
   | Error _ as error -> error
   | Ok () ->
       if task.status <> Running then Error "ralph task is not running"
+      else if task.iteration >= 2_147_483_647 then
+        Error "ralph iteration limit is exhausted"
       else
         let next_iteration = task.iteration + 1 in
         match task.max_iterations with
@@ -142,7 +147,7 @@ let words value =
 
 let parse_positive_int label value =
   match int_of_string_opt value with
-  | Some int when int > 0 -> Ok int
+  | Some int when int > 0 && int <= 2_147_483_647 -> Ok int
   | _ -> Error (label ^ " must be a positive integer")
 
 let parse_start_args args =
@@ -300,24 +305,26 @@ let task_of_json = function
       in
       let option_string_field name =
         match List.assoc_opt name fields with
-        | None | Some Shared.Null -> Ok None
+        | Some Shared.Null -> Ok None
         | Some (Shared.String value) -> Ok (Some value)
+        | None -> Error (name ^ " is required")
         | _ -> Error (name ^ " must be null or a string")
       in
-      let int_field name =
-        match List.assoc_opt name fields with
-        | Some (Shared.Number value) when Float.is_finite value ->
-            Ok (int_of_float value)
-        | _ -> Error (name ^ " must be a number")
-      in
+      let int_field name = Shared.json_required_int "Ralph task" fields name in
       let option_int_field name =
         match List.assoc_opt name fields with
-        | None | Some Shared.Null -> Ok None
-        | Some (Shared.Number value) when Float.is_finite value ->
-            Ok (Some (int_of_float value))
-        | _ -> Error (name ^ " must be null or a number")
+        | None -> Error (name ^ " is required")
+        | Some Shared.Null -> Ok None
+        | Some value ->
+            Result.map Option.some (Shared.json_int ("Ralph task." ^ name) value)
       in
       let ( let* ) = Result.bind in
+      let* () =
+        Shared.json_exact_fields "Ralph task"
+          [ "id"; "objective"; "controllerSession"; "childSession";
+            "iteration"; "maxIterations"; "reflectionEvery"; "status" ]
+          fields
+      in
       let* status_name = string_field "status" in
       let* status =
         match status_of_string status_name with
@@ -331,6 +338,14 @@ let task_of_json = function
       let* iteration = int_field "iteration" in
       let* max_iterations = option_int_field "maxIterations" in
       let* reflection_every = option_int_field "reflectionEvery" in
+      let* () =
+        if iteration < 0 then Error "iteration must be non-negative"
+        else
+          match (max_iterations, reflection_every) with
+          | Some value, _ when value <= 0 -> Error "maxIterations must be positive"
+          | _, Some value when value <= 0 -> Error "reflectionEvery must be positive"
+          | _ -> Ok ()
+      in
       Ok
         {
           id;
@@ -353,6 +368,14 @@ let tasks_to_json tasks =
 
 let tasks_of_json = function
   | Shared.Object fields -> (
+      match
+        Result.bind
+          (Shared.json_exact_fields "Ralph state" [ "version"; "tasks" ] fields)
+          (fun () -> Shared.json_required_int "Ralph state" fields "version")
+      with
+      | Error _ as error -> error
+      | Ok version when version <> 1 -> Error "unsupported Ralph state version"
+      | Ok _ -> (
       match List.assoc_opt "tasks" fields with
       | Some (Shared.Array values) ->
           let rec collect acc = function
@@ -363,7 +386,7 @@ let tasks_of_json = function
                 | Error _ as error -> error)
           in
           collect [] values
-      | _ -> Error "Ralph state requires tasks")
+      | _ -> Error "Ralph state requires tasks"))
   | _ -> Error "Ralph state must be an object"
 
 let codec = { Shared.encode = tasks_to_json; decode = tasks_of_json }

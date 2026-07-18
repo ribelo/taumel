@@ -73,26 +73,33 @@ let encode state =
 
 let decode_category path fields name =
   let ( let* ) = Result.bind in
-  match Shared.json_optional_field fields name with
+  match Shared.json_required_field path fields name with
   | Error _ as error -> error
-  | Ok None -> Ok []
-  | Ok (Some value) ->
+  | Ok value ->
       let* category_fields = Shared.json_object_fields (Shared.json_path path name) value in
+      let category_path = Shared.json_path path name in
+      let* () = Shared.json_exact_fields category_path [ "disabled" ] category_fields in
+      let* disabled_value =
+        Shared.json_required_field category_path category_fields "disabled"
+      in
       let* disabled =
-        Result.bind
-          (Shared.json_optional_field category_fields "disabled")
-          (function
-            | None -> Ok []
-            | Some value ->
-                Shared.json_string_list
-                  (Shared.json_path (Shared.json_path path name) "disabled")
-                  value)
+        Shared.json_string_list (Shared.json_path category_path "disabled")
+          disabled_value
       in
       Ok (normalize_list disabled)
 
 let decode json =
   let ( let* ) = Result.bind in
   let* fields = Shared.json_object_fields "taumel.visibility" json in
+  let* () =
+    Shared.json_exact_fields "taumel.visibility"
+      [ "version"; "tools"; "skills" ] fields
+  in
+  let* version = Shared.json_required_int "taumel.visibility" fields "version" in
+  let* () =
+    if version = 1 then Ok ()
+    else Error "unsupported visibility state version"
+  in
   let* tools_disabled = decode_category "taumel.visibility" fields "tools" in
   let* skills_disabled = decode_category "taumel.visibility" fields "skills" in
   Ok { tools_disabled; skills_disabled }

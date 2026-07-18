@@ -2,8 +2,7 @@
    Domain rules follow plans/subagents.md. *)
 
 module String_set = Shared.String_set
-
-let schema_version = 5
+let schema_version = 6
 let max_identities_per_owner = 64
 let max_error_chars = 4096
 let nano_id_alphabet = "abcdefghjkmnpqrstuvwxyz23456789"
@@ -105,6 +104,7 @@ type issued_identity_counts = {
   generic : int;
   finder : int;
   oracle : int;
+  issued_ids : string list;
 }
 
 type cleanup_pending = {
@@ -154,7 +154,7 @@ type wait_result = {
   wait_pending_run_ids : string list;
 }
 
-let empty_issued_identity_counts = { generic = 0; finder = 0; oracle = 0 }
+let empty_issued_identity_counts = { generic = 0; finder = 0; oracle = 0; issued_ids = [] }
 
 let empty_session_state =
   {
@@ -426,7 +426,7 @@ let owned_identities state ~owner_session_id =
 let identity_count_for_owner state ~owner_session_id =
   List.length (owned_identities state ~owner_session_id)
 
-let agent_id_used state agent_id = find_identity state agent_id <> None
+let agent_id_used state agent_id = List.mem agent_id state.issued_identity_counts.issued_ids || find_identity state agent_id <> None || List.exists (fun pending -> pending.cleanup_agent_id = agent_id) state.cleanup_pending
 let run_id_used state run_id = find_run state run_id <> None
 
 let kind_prefix = function
@@ -586,8 +586,7 @@ let record_spawn state ~now ~owner_session_id ~kind ?effort ~model ~thinking
       {
         identities = identity :: state.identities;
         runs = run :: state.runs;
-        issued_identity_counts =
-          with_issued_count state.issued_identity_counts kind next_issued_count;
+        issued_identity_counts = { (with_issued_count state.issued_identity_counts kind next_issued_count) with issued_ids = agent_id :: state.issued_identity_counts.issued_ids };
         cleanup_pending = state.cleanup_pending;
       }
     in
@@ -760,6 +759,7 @@ let record_send ?(interrupt = false) state ~now ~owner_session_id ~agent_id
                 delivery_previous_status = None;
               }
         | None when message <> "" ->
+            if identity.identity_issued_run_count >= 2_147_483_647 then Error "agent run counter is exhausted" else
             let next_run_count = identity.identity_issued_run_count + 1 in
             let run_id = generate_run_id agent_id next_run_count in
             let run = create_run ~now ~agent_id ~run_id ~description in
