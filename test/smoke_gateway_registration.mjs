@@ -29,6 +29,7 @@ const core = {
   },
 };
 
+// gateway-nkm1: child gateways reuse the owning initialized core.
 registerGatewayTools(pi, core, new Map());
 
 if (JSON.stringify(registered) !== JSON.stringify(["read"])) {

@@ -30,6 +30,7 @@ exposure is a hint, never the enforcement boundary.
 - The system shall expose an agent's complete assigned tool surface without requiring the model to load, select, or rediscover tool schemas on demand. ^gateway-ex04
 - Taumel shall not provide a `select_tools` tool, model-capability negotiation for progressive tool disclosure, or post-compaction restoration of a model-selected tool subset. ^gateway-ex05
 - When deriving a child session, the system shall authorize that session's tool calls against the child capability profile. ^gateway-sa01
+- Taumel child sessions shall receive Taumel tools through a gateway-only binding to the owning extension's initialized OCaml core and shall not recursively initialize the full extension or a second mutable core. ^gateway-nkm1
 - When the TypeScript and OCaml tool-name sets drift, the system shall fail fast at startup. ^gateway-dr01
 
 ### Tool result delivery
