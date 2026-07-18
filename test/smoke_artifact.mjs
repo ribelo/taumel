@@ -109,6 +109,14 @@ const core = bootstrap.init({
 if (!core || typeof core.call !== "function" || Object.keys(core).join(",") !== "call") {
   throw new Error("Taumel initialization did not return the private core bridge");
 }
+const usageParams = core.call("openAiUsageHostParams", [{ apiKeyPresent: false, token: "token" }]);
+const originalFetch = globalThis.fetch;
+globalThis.fetch = async () => { throw new Error("usage bridge regression fetch"); };
+try {
+  await assert.doesNotReject(() => core.call("executeOpenAiUsage", [usageParams, ctx]));
+} finally {
+  globalThis.fetch = originalFetch;
+}
 assert.throws(() => core.call("hostToolResult", [{ action: "exec_command", details: {} }]));
 assert.throws(() => core.call("toolResultEnvelope", [{ error: "failed", text: "also text" }]));
 // shared-st03/shared-st04/shared-st08: failed synchronization cannot fall back

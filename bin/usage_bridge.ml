@@ -124,11 +124,13 @@ let account_fields params =
   (account_label, account_id)
 
 let token_state params =
+  let token_state = get_string params "tokenState" in
   Taumel.Usage.token_state_from_fields
     {
-      token_state = get_string params "tokenState";
-      token = get_string params "token";
-      token_error = get_string params "tokenError";
+      token_state;
+      token = (if token_state = "present" then get_string params "token" else "");
+      token_error =
+        (if token_state = "error" then get_string params "tokenError" else "");
     }
 
 let result_from_fetch_state params fetch_state =
@@ -163,7 +165,6 @@ let normalized_tool_result result =
   |> Tool_contracts.BridgeToolResult.t_to_js |> inject
 
 let execute_openai_effect params =
-  let token = String.trim (get_string params "token") in
   match token_state params with
   | Taumel.Usage.Token_error _ | Taumel.Usage.Token_missing ->
       Effect.pure
@@ -171,6 +172,7 @@ let execute_openai_effect params =
            (normalized_tool_result
               (result_from_fetch_state params Taumel.Usage.Fetch_not_started)))
   | Taumel.Usage.Token_present ->
+      let token = String.trim (get_string params "token") in
       let _account_label, account_id = account_fields params in
       let request = Taumel.Usage.openai_usage_request ?account_id ~token () in
       let http_request =
