@@ -148,7 +148,7 @@ export const OpenAiUsageHostParamsSchema = Type.Union([
   OpenAiUsageHostParamsPresentSchema,
   OpenAiUsageHostParamsMissingSchema,
   OpenAiUsageHostParamsErrorSchema,
-]);
+], { $id: "OpenAiUsageHostParams" });
 
 export type OpenAiUsageHostAuth = Static<typeof OpenAiUsageHostAuthSchema>;
 export type OpenAiUsageHostLookupFacts = Static<typeof OpenAiUsageHostLookupFactsSchema>;
@@ -491,6 +491,7 @@ export const CoreAckSchema = Type.Object(
   { ok: Type.Literal(true) },
   { $id: "CoreAck", additionalProperties: false },
 );
+export const AgentOwnerContextFactsSchema = Type.Object({ ctx: Type.Unknown() }, { $id: "AgentOwnerContextFacts", additionalProperties: false });
 export const AgentActionCapabilityFactsSchema = Type.Object({ capabilityId: Type.String({ minLength: 1 }), agentId: Type.String({ minLength: 1 }), action: Type.String({ pattern: "^agent_(start|send|close)$" }), runId: Type.Optional(Type.String({ minLength: 1 })), submissionId: Type.Optional(Type.String({ minLength: 1 })), ctx: Type.Unknown() }, { $id: "AgentActionCapabilityFacts", additionalProperties: false });
 type AgentActionCapabilityBase = { readonly capabilityId: string; readonly agentId: string; readonly ctx: unknown };
 export type AgentActionCapabilityFacts = AgentActionCapabilityBase & ({ readonly action: "agent_start"; readonly runId: string; readonly submissionId: string } | { readonly action: "agent_send"; readonly runId: string; readonly submissionId: string } | { readonly action: "agent_send"; readonly runId: string; readonly submissionId?: never } | { readonly action: "agent_send"; readonly runId?: never; readonly submissionId?: never } | { readonly action: "agent_close"; readonly runId?: never; readonly submissionId?: never });
@@ -584,6 +585,7 @@ export const ExecResultDetailsSchema = Type.Object(
   },
   { $id: "ExecResultDetails", additionalProperties: false },
 );
+export const HostExecResultSchema = Type.Object({ code: Type.Integer(), stdout: Type.String(), stderr: Type.String() }, { $id: "HostExecResult", additionalProperties: false });
 export const ExecToolResultSchema = Type.Object(
   { content: Type.Array(ToolResultTextContentSchema, { minItems: 1 }), details: ExecResultDetailsSchema },
   { $id: "ExecToolResult", additionalProperties: false },

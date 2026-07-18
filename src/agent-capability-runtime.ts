@@ -50,6 +50,6 @@ export function recordAuthorizedDispatchBoundary(
     }),
   };
   decodeCoreAck(core.call(
-    "recordAgentDispatchBoundaryAuthorized", [facts, capabilityFacts, ctx],
+    "recordAgentDispatchBoundaryAuthorized", [facts, capabilityFacts, { ctx }],
   ));
 }

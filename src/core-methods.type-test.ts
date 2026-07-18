@@ -8,7 +8,7 @@ core.call("notACoreMethod", []);
 // @ts-expect-error method arity is part of the bridge type
 core.call("recordAgentActivity", []);
 // @ts-expect-error lifecycle facts reject unknown activity variants statically
-core.call("recordAgentActivity", [{ run_id: "run", submission_id: "submission", event: "future_event" }, {}]);
+core.call("recordAgentActivity", [{ run_id: "run", submission_id: "submission", event: "future_event" }, { ctx: {} }]);
 // @ts-expect-error start capabilities always bind their run and submission
 core.call("claimAgentAction", [{ capabilityId: "cap", agentId: "agent", action: "agent_start", ctx: {} }]);
 // @ts-expect-error close capabilities cannot carry run/submission authority

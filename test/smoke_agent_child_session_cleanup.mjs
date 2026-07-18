@@ -98,7 +98,7 @@ try {
     assert.equal(core.call("claimAgentAction", [capabilityFacts]).ok, true);
     const result = core.call("recordAgentChildSessionStartAuthorized", [{
       agent_id: agentId, sessionId, sessionFile,
-    }, capabilityFacts, ctx]);
+    }, capabilityFacts, { ctx }]);
     assert.equal(core.call("releaseAgentAction", [capabilityFacts]).ok, true);
     return result;
   }
@@ -176,7 +176,7 @@ try {
   assert.equal(stoppedForFailedClose, true, "failed close did not exercise interruption");
   assert.equal(existsSync(mismatchedSentinel), true, "marker mismatch did not fail closed");
   assert.match(mismatchedClose.content[0].text, /identity marker is missing or mismatched/);
-  const failedCloseSnapshot = core.call("agentManagerSnapshot", [ctx]);
+  const failedCloseSnapshot = core.call("agentManagerSnapshot", [{ ctx }]);
   const failedCloseRun = failedCloseSnapshot.runs.find(
     (run) => run.agentId === mismatched.agentId,
   );
@@ -222,7 +222,7 @@ try {
     /cleanup_failed/,
     "finalize failure after durable close must fail closed",
   );
-  const afterFirst = core.call("agentManagerSnapshot", [ctx]);
+  const afterFirst = core.call("agentManagerSnapshot", [{ ctx }]);
   assert.equal(
     afterFirst.agents.some((agent) => agent.agentId === tombstone.agentId),
     false,
@@ -258,7 +258,7 @@ try {
     `retry close must succeed once artifacts are deletable: ${retryClose.content[0].text}`,
   );
   assert.equal(
-    core.call("agentManagerSnapshot", [ctx]).agents.some(
+    core.call("agentManagerSnapshot", [{ ctx }]).agents.some(
       (agent) => agent.agentId === tombstone.agentId,
     ),
     false,

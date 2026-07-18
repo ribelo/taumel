@@ -5,6 +5,7 @@ import {
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { realpathSync, statSync } from "node:fs";
+import { isAbsolute, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import finderPromptResource from "../resources/agents/finder.md" with { type: "text" };
 import oraclePromptResource from "../resources/agents/oracle.md" with { type: "text" };
@@ -139,6 +140,20 @@ function nonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed === "" ? undefined : trimmed;
+}
+
+function canonicalPrivateSessionFile(path: string, privateDirectory: string): string | undefined {
+  try {
+    const directory = realpathSync(privateDirectory);
+    const file = realpathSync(path);
+    const suffix = relative(directory, file);
+    if (suffix === "" || isAbsolute(suffix) || suffix === ".." || suffix.startsWith(`..${sep}`)) {
+      return undefined;
+    }
+    return statSync(file).isFile() ? file : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function validateAgentSessionMarker(
@@ -434,7 +449,7 @@ async function closeChildSession(
 }
 
 export function deleteAgentChildSession(core: CoreBridge, agentId: string, ctx: unknown): void {
-  decodeCoreAck(core.call("deleteAgentChildSession", [{ agent_id: agentId }, ctx]));
+  decodeCoreAck(core.call("deleteAgentChildSession", [{ agent_id: agentId }, { ctx }]));
 }
 
 async function removeNewPrivateSessionArtifacts(
@@ -513,7 +528,7 @@ export async function createChildSession(
     return { error: "agent_cleanup_authority_missing" };
   }
   const privateSessionDirectory = plan.privateSessionDirectory;
-  if (usePrivatePersistentSession && existingSessionFile === "" && privateSessionDirectory === undefined) {
+  if (usePrivatePersistentSession && privateSessionDirectory === undefined) {
     return { error: "private_child_session_directory_missing" };
   }
   const cwd = usePrivatePersistentSession ? boundWorkspace : parentCwd;
@@ -587,14 +602,20 @@ export async function createChildSession(
   };
   try {
     revalidateAuthority?.();
-    const sessionManager = usePrivatePersistentSession
-      ? (existingSessionFile !== ""
-        ? SessionManager.open(existingSessionFile)
-        : SessionManager.create(
-          cwd,
-          privateSessionDirectory as string,
-        ))
-      : SessionManager.inMemory(cwd);
+    const canonicalExistingSessionFile = !usePrivatePersistentSession || existingSessionFile === ""
+      ? undefined
+      : canonicalPrivateSessionFile(existingSessionFile, privateSessionDirectory as string);
+    if (usePrivatePersistentSession && existingSessionFile !== "" && canonicalExistingSessionFile === undefined) {
+      return { error: "private_child_session_path_mismatch" };
+    }
+    let sessionManager;
+    if (!usePrivatePersistentSession) {
+      sessionManager = SessionManager.inMemory(cwd);
+    } else if (canonicalExistingSessionFile !== undefined) {
+      sessionManager = SessionManager.open(canonicalExistingSessionFile);
+    } else {
+      sessionManager = SessionManager.create(cwd, privateSessionDirectory as string);
+    }
     if (usePrivatePersistentSession && existingSessionFile !== "") {
       const markerError = validateAgentSessionMarker(sessionManager, agentId, parent);
       if (markerError !== undefined) return { error: markerError };

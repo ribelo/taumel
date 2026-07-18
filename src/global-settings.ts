@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { writeFileAtomically } from "./util.ts";
+import { readJsonObjectForAtomicUpdate, writeFileAtomically } from "./util.ts";
 
 type SettingsObject = { [key: string]: unknown };
 type NodeError = { readonly code?: unknown };
@@ -57,6 +57,9 @@ async function readRoot(path: string): Promise<{ exists: boolean; root: Settings
     return { exists: true, root: {}, diagnostics: [diagnostic(path, "<root>", `global Pi settings could not be read as JSON: ${error instanceof Error ? error.message : String(error)}`)] };
   }
 }
+async function readRootForUpdate(path: string) {
+  return readJsonObjectForAtomicUpdate(path, true);
+}
 export function parseTaumelGlobalSettings(value: unknown, path = taumelGlobalSettingsPath()) {
   const root = settingsObject(value) ? value : undefined;
   const diagnostics: TaumelConfigDiagnostic[] = root !== undefined
@@ -78,13 +81,18 @@ function result(ok: boolean, message: string, path: string, initialized: string[
   return { ok, action: "command_result", message, details: { path, initialized, missing, diagnostics } };
 }
 export async function initializeTaumelGlobalConfig(path = taumelGlobalSettingsPath()): Promise<TaumelInitResult> {
-  const read = await readRoot(path);
-  const diagnostics = read.diagnostics;
-  diagnostics.push(...nestedDiagnostics(read.root, path));
+  let read;
+  try {
+    read = await readRootForUpdate(path);
+  } catch (error) {
+    const message = `global Pi settings could not be read as JSON: ${error instanceof Error ? error.message : String(error)}`;
+    return result(false, `Taumel global config is malformed: ${path}`, path, [], [], [diagnostic(path, "<root>", message)]);
+  }
+  const diagnostics = nestedDiagnostics(read.settings, path);
   if (diagnostics.length > 0) {
     return result(false, `Taumel global config is malformed: ${path}`, path, [], [], diagnostics);
   }
-  const root = read.root;
+  const root = read.settings;
   const initialized: string[] = [];
   const taumel = settingsObject(root["taumel"]) ? root["taumel"] : (root["taumel"] = {} as SettingsObject);
   const composer = settingsObject(taumel["composer"]) ? taumel["composer"] : (taumel["composer"] = {} as SettingsObject);
@@ -99,19 +107,24 @@ export async function initializeTaumelGlobalConfig(path = taumelGlobalSettingsPa
       initialized.push(`taumel.${name}.disabled`);
     }
   }
-  await writeFileAtomically(path, `${JSON.stringify(root, null, 2)}\n`, true);
+  await writeFileAtomically(read.authorization, `${JSON.stringify(root, null, 2)}\n`, true);
   return result(true, initialized.length ? `Initialized Taumel global config: ${path}` : `Taumel global config already initialized: ${path}`, path, initialized, [], []);
 }
 export async function writeTaumelComposerEnabled(path: string, enabled: boolean): Promise<void> {
-  const read = await readRoot(path);
-  if (read.diagnostics.length || nestedDiagnostics(read.root, path).length) {
+  let read;
+  try {
+    read = await readRootForUpdate(path);
+  } catch {
     throw new Error(`Cannot write Taumel composer config because global Pi settings are malformed: ${path}`);
   }
-  const root = read.root;
+  if (nestedDiagnostics(read.settings, path).length) {
+    throw new Error(`Cannot write Taumel composer config because global Pi settings are malformed: ${path}`);
+  }
+  const root = read.settings;
   const taumel = settingsObject(root["taumel"]) ? root["taumel"] : (root["taumel"] = {} as SettingsObject);
   const composer = settingsObject(taumel["composer"]) ? taumel["composer"] : (taumel["composer"] = {} as SettingsObject);
   composer["enabled"] = enabled;
-  await writeFileAtomically(path, `${JSON.stringify(root, null, 2)}\n`, true);
+  await writeFileAtomically(read.authorization, `${JSON.stringify(root, null, 2)}\n`, true);
 }
 export async function taumelStatus(path = taumelGlobalSettingsPath()): Promise<TaumelInitResult> {
   const read = await readRoot(path);

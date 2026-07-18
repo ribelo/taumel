@@ -159,6 +159,10 @@ export const PreparedExecApprovalSchema = Type.Object(
   },
   { $id: "PreparedExecApproval", additionalProperties: false },
 );
+export const PreparedExecInputSchema = Type.Union(
+  [PreparedExecSchema, PreparedExecApprovalSchema],
+  { $id: "PreparedExecInput" },
+);
 const mutationBase = {
   ok: Type.Literal(true), workspaceRoots: Type.Array(Type.String({ minLength: 1 })),
   validateWorkspacePaths: Type.Boolean(), path: Type.String({ minLength: 1 }),

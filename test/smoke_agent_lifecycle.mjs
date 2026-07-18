@@ -108,6 +108,14 @@ for (const method of [
 ]) {
   assert.throws(() => core.call(method, [{}]), `${method} accepted malformed capability facts`);
 }
+assert.throws(
+  () => core.call("agentManagerSnapshot", [ctx]),
+  "lifecycle core calls accepted an unwrapped owner context",
+);
+assert.throws(
+  () => core.call("agentManagerSnapshot", [{ ctx, extra: true }]),
+  "lifecycle owner context facts accepted unknown fields",
+);
 
 const start = core.call("prepareTool", [{
   name: "agent_spawn",
@@ -238,36 +246,36 @@ assert.equal(core.call("claimAgentAction", [rollbackCapabilityFacts]).ok, true);
 assert.equal(core.call("recordAgentChildSessionStartAuthorized", [{
   agent_id: agentId,
   sessionId: "forged-cross-agent-session",
-}, rollbackCapabilityFacts, ctx]).ok, false,
+}, rollbackCapabilityFacts, { ctx }]).ok, false,
 "capability authorized another agent's lifecycle transition");
 forceNextRegistryWriteFailure();
 assert.equal(core.call("recordAgentChildSessionStartAuthorized", [{
   agent_id: rollbackPrepared.agentId,
   sessionId: "uncommitted-child-session",
   sessionFile: "/tmp/uncommitted-child-session.jsonl",
-}, rollbackCapabilityFacts, ctx]).ok, false);
+}, rollbackCapabilityFacts, { ctx }]).ok, false);
 forceNextRegistryWriteFailure();
 assert.equal(core.call("recordAgentDispatchBoundaryAuthorized", [{
   run_id: rollbackPrepared.runId,
   submission_id: rollbackPrepared.submissionId,
   previous_assistant_entry_id: "uncommitted-boundary",
-}, rollbackCapabilityFacts, ctx]).ok, false);
+}, rollbackCapabilityFacts, { ctx }]).ok, false);
 assert.equal(core.call("authorizeAgentActionCleanup", [rollbackCapabilityFacts]).ok, true,
   "tentative persistence failure invalidated required compensation authority");
 assert.equal(core.call("rollbackUnacceptedAgentStart", [{
   agent_id: rollbackPrepared.agentId,
   run_id: rollbackPrepared.runId,
   submission_id: rollbackPrepared.submissionId,
-}, ctx]).ok, true);
+}, { ctx }]).ok, true);
 assert.equal(core.call("releaseAgentAction", [rollbackCapabilityFacts]).ok, true);
 // agent-id19: reconciliation without a live authoritative dispatch is observable as orphaned.
-assert.equal(core.call("reconcileLiveAgentDispatches", [{ live_agent_ids: [] }, ctx]).ok, true);
+assert.equal(core.call("reconcileLiveAgentDispatches", [{ live_agent_ids: [] }, { ctx }]).ok, true);
 const orphanedList = core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]);
 assert.equal(orphanedList.details.agents[0].activity.state, "orphaned");
 assert.equal(orphanedList.details.agents[0].activity.recommendation, "interrupt_or_close");
 // agent-id20/agent-id21: authoritative child events drive observable phase and turn count.
 for (const event of ["turn_start", "tool_execution_start", "tool_execution_update", "tool_execution_end", "turn_end"]) {
-  assert.equal(core.call("recordAgentActivity", [{ run_id: runId, submission_id: submissionId, event }, ctx]).ok, true);
+  assert.equal(core.call("recordAgentActivity", [{ run_id: runId, submission_id: submissionId, event }, { ctx }]).ok, true);
 }
 // agent-ls02: list exposes lifecycle/activity metadata without routing in model-visible JSON.
 const activeList = core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]);
@@ -298,7 +306,7 @@ assert.equal(registryEnvelope.registry.version, 6);
 const registryBeforeActivity = readFileSync(registryPath, "utf8");
 const registryInodeBeforeActivity = statSync(registryPath).ino;
 const markersBeforeActivity = presenceMarkers().length;
-assert.equal(core.call("recordAgentActivity", [{ run_id: runId, submission_id: submissionId, event: "turn_start" }, ctx]).ok, true);
+assert.equal(core.call("recordAgentActivity", [{ run_id: runId, submission_id: submissionId, event: "turn_start" }, { ctx }]).ok, true);
 assert.equal(readFileSync(registryPath, "utf8"), registryBeforeActivity, "agent-ishi: activity must not write durable state");
 assert.equal(statSync(registryPath).ino, registryInodeBeforeActivity,
   "agent-ishi: activity must not physically replace durable state");
@@ -320,10 +328,10 @@ const swapChildCtx = {
 // Isolated children may load their own non-agent session state, but nesting is
 // unavailable and they must not replace the live parent's agent projection.
 assert.throws(
-  () => core.call("agentManagerSnapshot", [swapChildCtx]),
+  () => core.call("agentManagerSnapshot", [{ ctx: swapChildCtx }]),
   /projection unavailable/,
 );
-core.call("agentManagerSnapshot", [ctx]);
+core.call("agentManagerSnapshot", [{ ctx }]);
 const afterSwapList = core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]);
 assert.equal(afterSwapList.details.agents.length, 1, "owner registry reloads from durable current registry");
 assert.equal(afterSwapList.details.agents[0].status, "running");
@@ -382,7 +390,7 @@ assert.equal(core.call("recordAgentChildSessionStartAuthorized", [{
   agent_id: agentId,
   sessionId: "private-child-session",
   sessionFile: childFile,
-}, childBindingCapability, ctx]).ok, true);
+}, childBindingCapability, { ctx }]).ok, true);
 assert.equal(core.call("releaseAgentAction", [childBindingCapability]).ok, true);
 
 const isolatedChildCtx = {
@@ -429,8 +437,8 @@ assert.equal(waited.action, "tool_result");
 assert.equal(waited.details.results[0].output, "the answer");
 assert.match(waited.text, /the answer/);
 assert.deepEqual(waited.details.pending_run_ids, []);
-assert.deepEqual(core.call("pendingAgentNotifications", [ctx]).notifications, []);
-const managerSnapshot = core.call("agentManagerSnapshot", [ctx]);
+assert.deepEqual(core.call("pendingAgentNotifications", [{ ctx }]).notifications, []);
+const managerSnapshot = core.call("agentManagerSnapshot", [{ ctx }]);
 assert.equal(managerSnapshot.agents[0].agentId, agentId);
 assert.equal(managerSnapshot.runs[0].runId, runId);
 assert.equal(managerSnapshot.runs[0].status, "completed");
@@ -471,7 +479,7 @@ assert.equal(core.call("recordAgentDispatchBoundaryAuthorized", [{
   run_id: followUp.runId,
   submission_id: followUp.submissionId,
   previous_assistant_entry_id: "answer-entry",
-}, followUpCapabilityFacts, ctx]).ok, true);
+}, followUpCapabilityFacts, { ctx }]).ok, true);
 assert.equal(core.call("releaseAgentAction", [followUpCapabilityFacts]).ok, true);
 assert.equal(
   core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]).details.agents[0].status,
@@ -513,7 +521,7 @@ assert.equal(
   1,
   "close planning must not remove state before physical cleanup",
 );
-assert.equal(core.call("finishAgentClose", [{ agent_id: agentId }, ctx]).ok, true);
+assert.equal(core.call("finishAgentClose", [{ agent_id: agentId }, { ctx }]).ok, true);
 assert.equal(core.call("releaseAgentAction", [closeCapabilityFacts]).ok, true);
 assert.equal(
   core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]).details.agents.length,
@@ -540,7 +548,7 @@ assert.equal(core.call("claimAgentAction", [replacementCapabilityFacts]).ok, tru
 assert.equal(core.call("releaseAgentAction", [replacementCapabilityFacts]).ok, true);
 assert.match(replacement.agentId, /^agent-[abcdefghjkmnpqrstuvwxyz23456789]{4}$/);
 assert.notEqual(replacement.agentId, agentId, "closed agent handles must remain retired");
-assert.equal(core.call("finishAgentClose", [{ agent_id: replacement.agentId }, ctx]).ok, true);
+assert.equal(core.call("finishAgentClose", [{ agent_id: replacement.agentId }, { ctx }]).ok, true);
 
 // agent-zr7q/agent-ishi: repeated active finishAgentWait polling and activity
 // produce zero physical registry writes; the first terminal observation writes once.
@@ -564,12 +572,12 @@ const startedAt = Date.now();
 while (Date.now() - startedAt < 50) {
   assert.equal(core.call("finishAgentWait", [{
     run_ids: [pollAgent.runId],
-  }, ctx]).ok, true);
+  }, { ctx }]).ok, true);
   assert.equal(core.call("recordAgentActivity", [{
     run_id: pollAgent.runId,
     submission_id: pollAgent.submissionId,
     event: "tool_execution_update",
-  }, ctx]).ok, true);
+  }, { ctx }]).ok, true);
 }
 assert.equal(readFileSync(registryPath, "utf8"), registryBeforePoll,
   "agent-zr7q: repeated active wait/activity loop must not rewrite the registry");
@@ -581,7 +589,7 @@ assert.equal(core.call("recordAgentDispatchCompletion", [{
   run_id: pollAgent.runId,
   submission_id: pollAgent.submissionId,
   completion: { status: "completed", finalOutput: "poll complete" },
-}, ctx]).ok, true);
+}, { ctx }]).ok, true);
 const registryAfterTerminal = readFileSync(registryPath, "utf8");
 assert.notEqual(registryAfterTerminal, registryBeforePoll,
   "first terminal lifecycle mutation must write the current registry once");
@@ -589,13 +597,13 @@ assert.equal(
   JSON.parse(registryAfterTerminal).registry.runs.find((run) => run.run_id === pollAgent.runId)?.status,
   "completed",
 );
-assert.equal(core.call("finishAgentWait", [{ run_ids: [pollAgent.runId] }, ctx]).ok, true);
+assert.equal(core.call("finishAgentWait", [{ run_ids: [pollAgent.runId] }, { ctx }]).ok, true);
 const registryAfterObservedWait = readFileSync(registryPath, "utf8");
 const registryInodeAfterObservedWait = statSync(registryPath).ino;
 assert.notEqual(registryAfterObservedWait, registryAfterTerminal,
   "first terminal observation must write announcement state once");
 const registryAfterRepeatWait = (() => {
-  assert.equal(core.call("finishAgentWait", [{ run_ids: [pollAgent.runId] }, ctx]).ok, true);
+  assert.equal(core.call("finishAgentWait", [{ run_ids: [pollAgent.runId] }, { ctx }]).ok, true);
   return readFileSync(registryPath, "utf8");
 })();
 assert.equal(registryAfterRepeatWait, registryAfterObservedWait,
@@ -604,7 +612,7 @@ assert.equal(statSync(registryPath).ino, registryInodeAfterObservedWait,
   "idempotent terminal wait must perform zero physical writes");
 assert.equal(presenceMarkers().length, markersBeforePoll,
   "later durable writes reuse the existing presence marker");
-assert.equal(core.call("finishAgentClose", [{ agent_id: pollAgent.agentId }, ctx]).ok, true);
+assert.equal(core.call("finishAgentClose", [{ agent_id: pollAgent.agentId }, { ctx }]).ok, true);
 
 // agent-ps12/shared-st03 regression: shutdown entry points must synchronize the
 // owner projection before touching the registry. With a child projection
@@ -627,7 +635,7 @@ assert.equal(core.call("recordAgentActivity", [{
   run_id: shutdownAgent.runId,
   submission_id: shutdownAgent.submissionId,
   event: "turn_end",
-}, ctx]).ok, true);
+}, { ctx }]).ok, true);
 const stateBoundClose = core.call("prepareTool", [{
   name: "agent_close", params: { agent_id: shutdownAgent.agentId }, ctx,
 }]);
@@ -639,12 +647,12 @@ const stateBoundFacts = {
 };
 assert.equal(core.call("claimAgentAction", [stateBoundFacts]).ok, true);
 assert.equal(core.call("prepareAgentCloseStop", [stateBoundFacts]).ok, true);
-assert.equal(core.call("suspendOwnerAgentsOnShutdown", [ctx]).ok, true);
+assert.equal(core.call("suspendOwnerAgentsOnShutdown", [{ ctx }]).ok, true);
 assert.equal(core.call("recordAgentDispatchCompletion", [{
   run_id: shutdownAgent.runId,
   submission_id: shutdownAgent.submissionId,
   completion: { status: "completed", finalOutput: "late completion" },
-}, ctx]).ok, true);
+}, { ctx }]).ok, true);
 const staleCloseStop = core.call("completeAgentCloseStop", [stateBoundFacts]);
 assert.equal(staleCloseStop.ok, false,
   "no-op late completion revived close-stop authority after suspension");
@@ -659,8 +667,8 @@ const stateStaleCleanup = core.call("authorizeAgentActionCleanup", [stateBoundFa
 assert.equal(stateStaleCleanup.ok, false, "agent-state-stale capability authorized cleanup");
 assert.match(stateStaleCleanup.error, /stale/);
 assert.equal(core.call("releaseAgentAction", [stateBoundFacts]).ok, true);
-assert.throws(() => core.call("agentManagerSnapshot", [swapChildCtx]), /projection unavailable/);
-assert.equal(core.call("suspendOwnerAgentsOnShutdown", [ctx]).ok, true);
+assert.throws(() => core.call("agentManagerSnapshot", [{ ctx: swapChildCtx }]), /projection unavailable/);
+assert.equal(core.call("suspendOwnerAgentsOnShutdown", [{ ctx }]).ok, true);
 const afterShutdownList = core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]);
 assert.equal(afterShutdownList.details.agents.length, 1,
   "shutdown with a child projection loaded must not clobber the owner registry");
@@ -719,7 +727,7 @@ for (let index = bootstrapEntries.length - 1; index >= 0; index -= 1) {
 }
 bootstrapEntries.push({ type: "custom", customType: "taumel.agents.v4", data: v4Snapshot });
 // Force a different main-owner projection before reloading bootstrapOwner.
-core.call("agentManagerSnapshot", [ctx]);
+core.call("agentManagerSnapshot", [{ ctx }]);
 const bootstrapped = core.call("prepareTool", [{ name: "agent_list", params: {}, ctx: bootstrapCtx }]);
 assert.equal(bootstrapped.details.agents.length, 1, "agent-7jhj: latest same-owner v4 snapshot bootstraps");
 assert.equal(bootstrapped.details.agents[0].agent_id, seed.agentId);
@@ -757,7 +765,7 @@ assert.throws(
 // whose host session snapshot fails must fail closed. Proceeding would load
 // the owner registry while state.cwd still points at the child workspace and
 // durably bind a parent identity to the wrong repository.
-assert.throws(() => core.call("agentManagerSnapshot", [swapChildCtx]), /projection unavailable/);
+assert.throws(() => core.call("agentManagerSnapshot", [{ ctx: swapChildCtx }]), /projection unavailable/);
 const originalSnapshot = host.sessionSnapshot;
 host.sessionSnapshot = () => { throw new Error("host unavailable"); };
 const hostFailSpawn = core.call("prepareTool", [{

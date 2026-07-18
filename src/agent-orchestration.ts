@@ -92,7 +92,7 @@ function reconcilePersistedAgentNotifications(core: CoreBridge, ctx: unknown): v
     const runId = notificationId.slice("agent_completion:".length);
     if (runId === "") continue;
     try {
-      decodeCoreAck(core.call("recordAgentBackgroundNotification", [{ run_id: runId }, ctx]));
+      decodeCoreAck(core.call("recordAgentBackgroundNotification", [{ run_id: runId }, { ctx }]));
     } catch {
       // A message for a closed or copied identity is inert history.
     }
@@ -128,7 +128,7 @@ export async function flushPendingAgentNotifications(
   pendingAgentWaits: PendingAgentWaits,
 ): Promise<number> {
   if (!contextIsLive(ctx)) return 0;
-  const result = decodePendingAgentNotificationsResult(core.call("pendingAgentNotifications", [ctx]));
+  const result = decodePendingAgentNotificationsResult(core.call("pendingAgentNotifications", [{ ctx }]));
   let sentCount = 0;
   for (const notification of result.notifications) {
     if (!isObject(notification)) continue;
@@ -139,7 +139,7 @@ export async function flushPendingAgentNotifications(
     }
     try {
       const validation = decodeAgentNotificationClaimValidation(
-        core.call("validateAgentBackgroundNotificationClaim", [{ run_id: runId }, ctx]),
+        core.call("validateAgentBackgroundNotificationClaim", [{ run_id: runId }, { ctx }]),
       );
       if (validation.valid !== true) continue;
       const sent = await deliverNotificationMessage(
@@ -151,7 +151,7 @@ export async function flushPendingAgentNotifications(
         notification.details,
       );
       if (sent && runId !== "") {
-        decodeCoreAck(core.call("recordAgentBackgroundNotification", [{ run_id: runId }, ctx]));
+        decodeCoreAck(core.call("recordAgentBackgroundNotification", [{ run_id: runId }, { ctx }]));
         sentCount += 1;
       } else if (runId !== "") {
         decodeCoreAck(core.call("releaseAgentBackgroundNotification", [{ run_id: runId }]));
@@ -187,7 +187,7 @@ function recordDispatchCompletionInBackground(
         ...completion,
         ...(resultEntryId === undefined ? {} : { resultEntryId }),
       },
-    }, ctx]));
+    }, { ctx }]));
     if (parentIsIdle(ctx)) {
       await flushPendingAgentNotifications(pi, core, ctx, "trigger", pendingAgentWaits);
     }
@@ -207,7 +207,7 @@ function recordDispatchActivity(core: CoreBridge, prepared: PreparedDispatchActi
       run_id: stringField(prepared, "runId"),
       submission_id: stringField(prepared, "submissionId"),
       event: event.type as AgentActivityEvent,
-    }, ctx]));
+    }, { ctx }]));
   };
 }
 
@@ -244,7 +244,7 @@ function rollbackUnacceptedStartState(
     agent_id: stringField(prepared, "agentId"),
     run_id: stringField(prepared, "runId"),
     submission_id: stringField(prepared, "submissionId"),
-  }, ctx]));
+  }, { ctx }]));
 }
 
 function rollbackAgentSendPreflight(
@@ -263,7 +263,7 @@ function rollbackAgentSendPreflight(
       previous_reason_code: prepared.previousReasonCode,
     }),
     outcome: prepared.outcome,
-  }, ctx]));
+  }, { ctx }]));
 }
 
 async function createAgentChildSession(
@@ -306,7 +306,7 @@ async function createAgentChildSession(
       ...(bridge.sessionFile === undefined ? {} : { sessionFile: bridge.sessionFile }),
     };
     decodeCoreAck(core.call(
-      "recordAgentChildSessionStartAuthorized", [childSessionFacts, capabilityFacts, ctx],
+      "recordAgentChildSessionStartAuthorized", [childSessionFacts, capabilityFacts, { ctx }],
     ));
     return bridge;
   } catch (error) {
@@ -402,7 +402,7 @@ export async function executeAgentPrepared(
     const details = isObject(prepared.details) ? prepared.details : {};
     const agentId = stringField(prepared, "agentId");
     const runIds = Array.isArray(prepared.runIds) ? prepared.runIds : [];
-    const snapshot = decodeAgentManagerSnapshot(core.call("agentManagerSnapshot", [ctx]));
+    const snapshot = decodeAgentManagerSnapshot(core.call("agentManagerSnapshot", [{ ctx }]));
     const authoritativeRunIds = snapshot.runs
       .filter((run) => run.agentId === agentId)
       .map((run) => run.runId)
@@ -460,7 +460,7 @@ export async function executeAgentPrepared(
         }
         try {
           authorizeCapabilityCleanup();
-          decodeCoreAck(core.call("rollbackAgentWorktreeStart", [{ agent_id: prepared.agentId }, ctx]));
+          decodeCoreAck(core.call("rollbackAgentWorktreeStart", [{ agent_id: prepared.agentId }, { ctx }]));
         } catch (error) {
           return error instanceof Error ? error.message : String(error);
         }
@@ -524,7 +524,7 @@ export async function executeAgentPrepared(
       }
       try {
         performCapabilityEffect(() => decodeCoreAck(core.call(
-          "acceptAgentWorktreeStart", [{ agent_id: prepared.agentId }, ctx],
+          "acceptAgentWorktreeStart", [{ agent_id: prepared.agentId }, { ctx }],
         )));
         startCompletion.release();
       } catch (error) {
@@ -558,7 +558,7 @@ export async function executeAgentPrepared(
           decodeCoreAck(core.call("rollbackFailedAgentInterruption", [{
             agent_id: agentId,
             run_id: stringField(prepared, "runId"),
-          }, ctx]));
+          }, { ctx }]));
           const message = error instanceof Error ? error.message : String(error);
           return agentErrorToolResult(core, "dispatch_failed", `agent interruption failed: ${message}`);
         }
@@ -628,7 +628,7 @@ export async function executeAgentPrepared(
             run_id: stringField(prepared, "runId"),
             submission_id: stringField(prepared, "submissionId"),
             error: error instanceof Error ? error.message : String(error),
-          }, ctx]));
+          }, { ctx }]));
           return agentErrorToolResult(
             core, "persistence_failed",
             error instanceof Error ? error.message : String(error),
@@ -663,7 +663,7 @@ export async function executeAgentPrepared(
               run_id: stringField(prepared, "runId"),
               submission_id: stringField(prepared, "submissionId"),
               error: reason,
-            }, ctx]));
+            }, { ctx }]));
           } else {
             rollbackAgentSendPreflight(core, prepared, ctx, authorizeCapabilityCleanup);
           }
@@ -718,7 +718,7 @@ export async function executeAgentPrepared(
         const started = Date.now();
         while (true) {
           const finished = decodePreparedToolAction(
-            core.call("finishAgentWait", [{ run_ids: runIds }, ctx]),
+            core.call("finishAgentWait", [{ run_ids: runIds }, { ctx }]),
           );
           if (finished.ok === false) {
             if (closed()) return cancelledByClose();
@@ -771,7 +771,7 @@ export async function executeAgentPrepared(
         if (childExecutionInterrupted && !/unknown agent:/.test(message)) {
           try {
             authorizeCapabilityCleanup();
-            decodeCoreAck(core.call("recordAgentCloseCleanupFailure", [{ agent_id: agentId }, ctx]));
+            decodeCoreAck(core.call("recordAgentCloseCleanupFailure", [{ agent_id: agentId }, { ctx }]));
           } catch (error) {
             transitionError = error instanceof Error ? error.message : String(error);
           }
@@ -804,7 +804,7 @@ export async function executeAgentPrepared(
         if (prepared.deleteWorktree === true) {
           try {
             revalidateCapability();
-            decodeCoreAck(core.call("deleteAgentWorktree", [{ agent_id: agentId }, ctx]));
+            decodeCoreAck(core.call("deleteAgentWorktree", [{ agent_id: agentId }, { ctx }]));
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             return failClose("cleanup_failed", message || "worktree deletion failed");
@@ -828,7 +828,7 @@ export async function executeAgentPrepared(
       let finished;
       try {
         revalidateCapability();
-        finished = decodeCoreAck(core.call("finishAgentClose", [{ agent_id: agentId }, ctx]));
+        finished = decodeCoreAck(core.call("finishAgentClose", [{ agent_id: agentId }, { ctx }]));
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return failClose(
@@ -865,7 +865,7 @@ export async function executeAgentPrepared(
 
 export function countActiveChildRuns(core: CoreBridge, ctx: unknown): number {
   try {
-    return decodeAgentActiveCountResult(core.call("countActiveChildRuns", [ctx])).count;
+    return decodeAgentActiveCountResult(core.call("countActiveChildRuns", [{ ctx }])).count;
   } catch {
     return 0;
   }
@@ -932,7 +932,7 @@ export function installAgentLifecycle(
     const shutdown = async () => {
       const info = sessionInfoFromContext(ctx);
       const agents = decodeAgentCleanupPlan(
-        core.call("ephemeralAgentCleanupPlan", [ctx]),
+        core.call("ephemeralAgentCleanupPlan", [{ ctx }]),
       ).agents;
       const keyScope = childSessionCacheKeyScopeFromContext(ctx);
       if (info.sessionFile === undefined) {
@@ -949,13 +949,13 @@ export function installAgentLifecycle(
         // ephemeral tombstones until this shutdown transaction has removed the
         // in-process identities or rolled staging back.
         try {
-          decodeCoreAck(core.call("finishEphemeralAgentCleanup", [ctx]));
+          decodeCoreAck(core.call("finishEphemeralAgentCleanup", [{ ctx }]));
         } finally {
-          decodeCoreAck(core.call("releaseEphemeralAgentCleanupLease", [ctx]));
+          decodeCoreAck(core.call("releaseEphemeralAgentCleanupLease", [{ ctx }]));
         }
         return;
       }
-      decodeCoreAck(core.call("suspendOwnerAgentsOnShutdown", [ctx]));
+      decodeCoreAck(core.call("suspendOwnerAgentsOnShutdown", [{ ctx }]));
       for (const agent of agents) {
         const agentId = agent.agentId;
         if (agentId === "") continue;

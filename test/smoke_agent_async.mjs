@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { executeAgentPrepared } from "../src/agent-orchestration.ts";
-import { sendToChildSession } from "../src/child-sessions.ts";
+import { createChildSession, sendToChildSession } from "../src/child-sessions.ts";
 import { executeTool } from "../src/tool-executor.ts";
 
 const root = mkdtempSync(join(tmpdir(), "taumel-agent-async-"));
@@ -59,6 +59,7 @@ let streaming = false;
 let allocatedSessionFile;
 let allocatedAppendPrompt;
 let allocatedResourceLoader;
+let createAgentSessionInvocations = 0;
 let createSessionError;
 let immediateCompletion = false;
 let omitSessionIdentifiers = false;
@@ -82,6 +83,7 @@ const pi = {
   },
   getAllTools: () => ["read", "exec_command", "write_stdin"],
   createAgentSession: async (options) => {
+    createAgentSessionInvocations += 1;
     if (createSessionError !== undefined) throw new Error(createSessionError);
     allocatedSessionFile = options.sessionManager.getSessionFile();
     mkdirSync(dirname(allocatedSessionFile), { recursive: true });
@@ -103,7 +105,7 @@ const pi = {
     } : childManager;
     if (staleDuringCreation) {
       staleCreationManagerEntries = anonymousManagerEntries;
-      core.call("suspendOwnerAgentsOnShutdown", [ctx]);
+      core.call("suspendOwnerAgentsOnShutdown", [{ ctx }]);
     }
     return ({
     session: {
@@ -205,10 +207,41 @@ assert.equal(
 assert.equal(typeof settle, "function", "start must dispatch without waiting for completion");
 assert.equal(core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]).details.agents[0].status, "running", "initial dispatch remained running");
 
+// agent-ps17: a persisted child path must remain canonically contained in the
+// derived owner/agent directory even when its identity marker is valid.
+const escapedChildDirectory = join(root, "escaped-private-child");
+const escapedChildFile = join(escapedChildDirectory, "session.jsonl");
+mkdirSync(escapedChildDirectory, { recursive: true });
+writeFileSync(escapedChildFile, `${JSON.stringify({
+  type: "session",
+  version: 3,
+  id: "019f7760-2e4b-7242-b08f-9ac80611d6be",
+  timestamp: new Date().toISOString(),
+  cwd: process.cwd(),
+})}\n${readFileSync(allocatedSessionFile, "utf8")}`);
+const escapedChildLink = join(dirname(allocatedSessionFile), "escaped-session.jsonl");
+symlinkSync(escapedChildFile, escapedChildLink);
+const invocationsBeforeEscapedReopen = createAgentSessionInvocations;
+const escapedReopen = await createChildSession(
+  pi,
+  core,
+  ctx,
+  { ...prepared.metadata, childSessionFile: escapedChildLink },
+  undefined,
+  () => undefined,
+  () => undefined,
+);
+assert.equal(escapedReopen?.error, "private_child_session_path_mismatch");
+assert.equal(
+  createAgentSessionInvocations,
+  invocationsBeforeEscapedReopen,
+  "an escaped persisted child path reached Pi session creation",
+);
+
 settle();
 await new Promise((resolve) => setTimeout(resolve, 0));
 // agent-nt04/agentui-3txs: completion carries attributed presentation metadata, never child output.
-const pendingNotification = core.call("pendingAgentNotifications", [ctx]).notifications[0];
+const pendingNotification = core.call("pendingAgentNotifications", [{ ctx }]).notifications[0];
 assert.deepEqual(JSON.parse(pendingNotification.content), {
   event: "agent_completion",
   agent_id: prepared.agentId,
@@ -260,7 +293,7 @@ const immediateResult = await executeAgentPrepared(
 assert.equal(immediateResult.details.status, "running",
   "already-resolved completion invalidated accepted dispatch authority");
 await new Promise((resolve) => setTimeout(resolve, 0));
-assert.equal(core.call("agentManagerSnapshot", [ctx]).runs
+assert.equal(core.call("agentManagerSnapshot", [{ ctx }]).runs
   .find((run) => run.runId === immediateSend.runId)?.status, "completed");
 immediateCompletion = false;
 
@@ -279,7 +312,7 @@ assert.equal(JSON.parse(failedPreflightResult.content[0].text).error.code, "chil
 createSessionError = undefined;
 for (const [key, bridge] of retainedChildSessions) childSessions.set(key, bridge);
 const failedPreflightRunId = `${prepared.agentId}-run-3`;
-const afterFailedPreflight = core.call("agentManagerSnapshot", [ctx]);
+const afterFailedPreflight = core.call("agentManagerSnapshot", [{ ctx }]);
 assert.equal(
   afterFailedPreflight.runs.some((run) => run.runId === failedPreflightRunId),
   false,
@@ -299,7 +332,7 @@ assert.equal(core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }])
 assert.equal(subscribers.size, 1);
 settle({ role: "assistant", content: [], stopReason: "error", errorMessage: "provider failed" });
 await new Promise((resolve) => setTimeout(resolve, 0));
-const failedNotification = JSON.parse(core.call("pendingAgentNotifications", [ctx]).notifications[0].content);
+const failedNotification = JSON.parse(core.call("pendingAgentNotifications", [{ ctx }]).notifications[0].content);
 assert.equal(failedNotification.description, "Trigger failed work");
 assert.equal(failedNotification.status, "failed");
 const failedWait = core.call("prepareTool", [{
@@ -441,7 +474,7 @@ const pendingWait = core.call("prepareTool", [{
   name: "agent_wait", params: { run_ids: [closeRun.runId] }, ctx,
 }]);
 assert.equal(pendingWait.action, "agent_wait");
-assert.equal(core.call("finishAgentWait", [{ run_ids: [closeRun.runId] }, ctx]).action, "agent_wait");
+assert.equal(core.call("finishAgentWait", [{ run_ids: [closeRun.runId] }, { ctx }]).action, "agent_wait");
 const waitPromise = executeAgentPrepared(pi, core, childSessions, pendingWaits, pendingWait, ctx);
 const secondWaitPromise = executeAgentPrepared(pi, core, childSessions, pendingWaits, pendingWait, ctx);
 await new Promise((resolve) => setTimeout(resolve, 0));
@@ -484,7 +517,7 @@ const refreshInvalidatingCore = {
     const result = core.call(method, args);
     if (method === "planChildPermissionRefresh" && !invalidatedDuringRefresh) {
       invalidatedDuringRefresh = true;
-      core.call("suspendOwnerAgentsOnShutdown", [ctx]);
+      core.call("suspendOwnerAgentsOnShutdown", [{ ctx }]);
     }
     return result;
   },

@@ -156,7 +156,12 @@ let planned_exec_host_call (plan : Authority_plans.exec_plan) _host _runtime
       Taumel.Sandbox.plan_exec_host_call plan.sandbox plan.host options
         ~force_unsandboxed
 
-let plan_exec_host_call prepared owner_context =
+let plan_exec_host_call raw_prepared owner_context =
+  let prepared =
+    decode_ojs_contract Tool_contracts.PreparedExecInput.t_of_js
+      (ojs_of_js raw_prepared)
+    |> Tool_contracts.PreparedExecInput.t_to_js |> inject
+  in
   let plan_id = get_string prepared "planId" in
   match Authority_plans.inspect_exec ~owner_context plan_id with
   | Error message -> error_obj message
@@ -175,7 +180,17 @@ let exec_result_from_js result =
     stderr = get_string result "stderr";
   }
 
-let format_exec_result prepared result sandboxed escalated =
+let format_exec_result raw_prepared raw_result sandboxed escalated =
+  let prepared =
+    decode_ojs_contract Tool_contracts.PreparedExecInput.t_of_js
+      (ojs_of_js raw_prepared)
+    |> Tool_contracts.PreparedExecInput.t_to_js |> inject
+  in
+  let result =
+    decode_ojs_contract Tool_contracts.HostExecResult.t_of_js
+      (ojs_of_js raw_result)
+    |> Tool_contracts.HostExecResult.t_to_js |> inject
+  in
   let sandbox = sandbox_config_from_js (Unsafe.get prepared "sandbox") in
   let sandboxed = Js.to_bool (Unsafe.coerce sandboxed) in
   let escalated = Js.to_bool (Unsafe.coerce escalated) in

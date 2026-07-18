@@ -132,6 +132,85 @@ for (let index = 0; index < runtimeBranches.length; index += 1) {
   const typedArity = tuple === "" ? 0 : (tuple?.split(",").length ?? -1);
   if (typedArity !== runtimeArity) failures.push(`${branch[1]}: CoreBridge arity ${typedArity} does not match dispatcher arity ${runtimeArity}`);
 }
+const schemaBackedCoreArgument = /^(?:Static<typeof (?:Action|Core)\.[A-Za-z0-9_]+Schema>|Core\.AgentActionCapabilityFacts|Action\.(?:ToolResultConstructionFacts|HostToolResultFacts))$/;
+const schemaBackedCoreModules = new Map([
+  ["Core.AgentActionCapabilityFacts", "AgentActionCapabilityFacts"],
+  ["Action.HostToolResultFacts", "HostToolResultFacts"],
+  ["Action.ToolResultConstructionFacts", "ToolResultConstructionFacts"],
+]);
+const auditedOpaqueCoreArguments = new Set([
+  "planEnvironmentContext:0:HostContext", "planChildSessionStart:1:HostContext",
+  "planChildPermissionRefresh:0:PersistedPermissionsEntry", "planChildPermissionRefresh:1:ChildMetadataHostValue",
+  "planChildPermissionRefresh:2:HostContext", "planExecHostCall:1:HostContext",
+  "formatExecResult:2:boolean", "formatExecResult:3:boolean",
+  "planWriteStdinHostCall:1:HostContext", "runExecCommand:1:string", "runExecCommand:2:HostAbortSignal",
+  "runExecCommand:3:HostContext", "shutdownExecOwner:0:string", "pendingExecNotifications:0:string",
+  "claimExecNotificationDelivery:0:string", "claimExecNotificationDelivery:1:number",
+  "releaseExecNotificationDelivery:0:number", "markExecNotificationDelivered:0:number", "awaitExecCompletion:0:number",
+  "refreshFooterState:0:HostContext",
+  'updateFooterThinking:0:"off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"',
+  "updateFooterThinking:1:HostContext", "planChildGoalContinuation:0:HostGoalEntry",
+  "interruptGoalAutomation:0:HostContext", "clearInterruptedGoalAutomation:0:HostContext",
+  "persistRalphControllerState:0:HostContext", "reloadSessionState:0:HostContext",
+  "finishCronPrompt:2:HostContext", "executeOpenAiUsage:1:HostContext",
+]);
+const observedOpaqueCoreArguments = new Set();
+for (const method of typedNames) {
+  const tuple = coreMethods.match(new RegExp(`^  readonly ${method}: readonly \\[(.*)\\];$`, "m"))?.[1] ?? "";
+  const arguments_ = tuple === "" ? [] : tuple.split(",").map((value) => value.trim());
+  for (const [index, argument] of arguments_.entries()) {
+    if (!schemaBackedCoreArgument.test(argument)) {
+      const key = `${method}:${index}:${argument}`;
+      if (!auditedOpaqueCoreArguments.has(key)) {
+        failures.push(`${method}: core argument ${index} is neither generated nor an audited opaque host value: ${argument}`);
+      } else {
+        observedOpaqueCoreArguments.add(key);
+      }
+      continue;
+    }
+    const moduleName = schemaBackedCoreModules.get(argument)
+      ?? argument.match(/\.([A-Za-z0-9_]+)Schema>/)?.[1];
+    if (moduleName === undefined || !new RegExp(`^module ${moduleName} : sig$`, "m").test(safeInterface)) {
+      failures.push(`${method}: generated core argument decoder is missing: ${moduleName ?? argument}`);
+    }
+  }
+}
+for (const key of auditedOpaqueCoreArguments) {
+  if (!observedOpaqueCoreArguments.has(key)) failures.push(`${key}: stale opaque core argument audit exception`);
+}
+const agentTools = readFileSync(join(binRoot.pathname, "agent_tools.ml"), "utf8");
+if (!/let agent_owner_context[\s\S]*?AgentOwnerContextFacts\.t_of_js/.test(agentTools)) {
+  failures.push("agent owner context wrapper does not use its generated runtime decoder");
+}
+for (let index = 0; index < runtimeBranches.length; index += 1) {
+  const branch = runtimeBranches[index];
+  const end = runtimeBranches[index + 1]?.index ?? runtimeDispatcher.length;
+  const body = runtimeDispatcher.slice(branch.index, end);
+  const tuple = coreMethods.match(new RegExp(`^  readonly ${branch[1]}: readonly \\[(.*)\\];$`, "m"))?.[1] ?? "";
+  const arguments_ = tuple === "" ? [] : tuple.split(",").map((value) => value.trim());
+  for (const [argumentIndex, argument] of arguments_.entries()) {
+    if (argument !== "Static<typeof Core.AgentOwnerContextFactsSchema>") continue;
+    if (!body.includes(`Agent_tools.agent_owner_context (arg ${argumentIndex})`)) {
+      failures.push(`${branch[1]}: agent owner context bypasses its generated runtime decoder`);
+    }
+  }
+}
+const usageBridge = readFileSync(join(binRoot.pathname, "usage_bridge.ml"), "utf8");
+if (!/let execute_openai[\s\S]*?OpenAiUsageHostParams\.t_of_js/.test(usageBridge)) {
+  failures.push("executeOpenAiUsage bypasses its generated runtime decoder");
+}
+const sandboxBridge = readFileSync(join(binRoot.pathname, "sandbox_bridge.ml"), "utf8");
+for (const [handler, decoder] of [
+  ["plan_exec_host_call", "PreparedExecInput.t_of_js"],
+  ["format_exec_result", "PreparedExecInput.t_of_js"],
+  ["format_exec_result", "HostExecResult.t_of_js"],
+]) {
+  const start = sandboxBridge.indexOf(`let ${handler}`);
+  const end = sandboxBridge.indexOf("\nlet ", start + 1);
+  if (start < 0 || !sandboxBridge.slice(start, end < 0 ? sandboxBridge.length : end).includes(decoder)) {
+    failures.push(`sandbox_bridge.ml:${handler} does not use ${decoder}`);
+  }
+}
 const lifecycleMethodSchemas = {
   recordAgentChildSessionStartAuthorized: "RecordAgentChildSessionStartFactsSchema",
   rollbackUnacceptedAgentStart: "RollbackUnacceptedAgentStartFactsSchema",

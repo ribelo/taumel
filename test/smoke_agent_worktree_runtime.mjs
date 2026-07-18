@@ -314,7 +314,7 @@ let core;
     ctx: parentCtx,
   }]);
   assert.equal(secondStart.ok, true);
-  assert.deepEqual(core.call("acceptAgentWorktreeStart", [{ agent_id: firstStart.agentId }, parentCtx]), { ok: true });
+  assert.deepEqual(core.call("acceptAgentWorktreeStart", [{ agent_id: firstStart.agentId }, { ctx: parentCtx }]), { ok: true });
   assert.deepEqual(core.call("releaseAgentAction", [firstStartCapability]), { ok: true });
   assert.deepEqual(core.call("reconcileProvisionalAgentWorktrees", []), { ok: true });
   assert.equal(

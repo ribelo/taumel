@@ -139,37 +139,65 @@ let core_call name_js args_js =
   | "persistRalphControllerState" -> Ralph_tools.persist_controller_state (arg 0)
   | "recordAgentChildSessionStartAuthorized" ->
       Agent_lifecycle.record_child_session_start_authorized (arg 0) (arg 1)
-        (arg 2)
+        (Agent_tools.agent_owner_context (arg 2))
   | "agentRoutingDiagnostics" -> Agent_tools.routing_diagnostics ()
   | "rollbackUnacceptedAgentStart" ->
-      Agent_lifecycle.rollback_unaccepted_start (arg 0) (arg 1)
+      Agent_lifecycle.rollback_unaccepted_start (arg 0)
+        (Agent_tools.agent_owner_context (arg 1))
   | "rollbackAgentSendPreflight" ->
-      Agent_lifecycle.rollback_send_preflight (arg 0) (arg 1)
+      Agent_lifecycle.rollback_send_preflight (arg 0)
+        (Agent_tools.agent_owner_context (arg 1))
   | "recordAgentSendDispatchFailure" ->
-      Agent_lifecycle.record_send_dispatch_failure (arg 0) (arg 1)
+      Agent_lifecycle.record_send_dispatch_failure (arg 0)
+        (Agent_tools.agent_owner_context (arg 1))
   | "rollbackFailedAgentInterruption" ->
-      Agent_lifecycle.rollback_failed_interruption (arg 0) (arg 1)
-  | "recordAgentDispatchCompletion" -> Agent_lifecycle.record_dispatch_completion (arg 0) (arg 1)
-  | "recordAgentActivity" -> Agent_lifecycle.record_activity (arg 0) (arg 1)
+      Agent_lifecycle.rollback_failed_interruption (arg 0)
+        (Agent_tools.agent_owner_context (arg 1))
+  | "recordAgentDispatchCompletion" ->
+      Agent_lifecycle.record_dispatch_completion (arg 0)
+        (Agent_tools.agent_owner_context (arg 1))
+  | "recordAgentActivity" ->
+      Agent_lifecycle.record_activity (arg 0)
+        (Agent_tools.agent_owner_context (arg 1))
   | "recordAgentDispatchBoundaryAuthorized" ->
       Agent_lifecycle.record_dispatch_boundary_authorized (arg 0) (arg 1)
-        (arg 2)
-  | "reconcileLiveAgentDispatches" -> Agent_lifecycle.reconcile_live_dispatches (arg 0) (arg 1)
-  | "pendingAgentNotifications" -> Agent_lifecycle.pending_agent_notifications (arg 0)
-  | "recordAgentBackgroundNotification" -> Agent_lifecycle.record_background_notification (arg 0) (arg 1)
+        (Agent_tools.agent_owner_context (arg 2))
+  | "reconcileLiveAgentDispatches" ->
+      Agent_lifecycle.reconcile_live_dispatches (arg 0)
+        (Agent_tools.agent_owner_context (arg 1))
+  | "pendingAgentNotifications" ->
+      Agent_lifecycle.pending_agent_notifications
+        (Agent_tools.agent_owner_context (arg 0))
+  | "recordAgentBackgroundNotification" ->
+      Agent_lifecycle.record_background_notification (arg 0)
+        (Agent_tools.agent_owner_context (arg 1))
   | "releaseAgentBackgroundNotification" ->
       Agent_lifecycle.release_background_notification (arg 0)
   | "validateAgentBackgroundNotificationClaim" ->
-      Agent_lifecycle.validate_background_notification_claim (arg 0) (arg 1)
-  | "countActiveChildRuns" -> Agent_lifecycle.count_active_child_runs (arg 0)
-  | "ephemeralAgentCleanupPlan" -> Agent_lifecycle.ephemeral_cleanup_plan (arg 0)
-  | "agentManagerSnapshot" -> Agent_lifecycle.manager_snapshot (arg 0)
-  | "finishEphemeralAgentCleanup" -> Agent_lifecycle.finish_ephemeral_cleanup (arg 0)
+      Agent_lifecycle.validate_background_notification_claim (arg 0)
+        (Agent_tools.agent_owner_context (arg 1))
+  | "countActiveChildRuns" ->
+      Agent_lifecycle.count_active_child_runs
+        (Agent_tools.agent_owner_context (arg 0))
+  | "ephemeralAgentCleanupPlan" ->
+      Agent_lifecycle.ephemeral_cleanup_plan
+        (Agent_tools.agent_owner_context (arg 0))
+  | "agentManagerSnapshot" ->
+      Agent_lifecycle.manager_snapshot (Agent_tools.agent_owner_context (arg 0))
+  | "finishEphemeralAgentCleanup" ->
+      Agent_lifecycle.finish_ephemeral_cleanup
+        (Agent_tools.agent_owner_context (arg 0))
   | "releaseEphemeralAgentCleanupLease" ->
-      Agent_lifecycle.release_ephemeral_cleanup_lease (arg 0)
-  | "suspendOwnerAgentsOnShutdown" -> Agent_lifecycle.suspend_owner_on_shutdown (arg 0)
-  | "finishAgentWait" -> Agent_lifecycle.finish_wait (arg 0) (arg 1)
-  | "finishAgentClose" -> Agent_tools.finish_close (arg 0) (arg 1)
+      Agent_lifecycle.release_ephemeral_cleanup_lease
+        (Agent_tools.agent_owner_context (arg 0))
+  | "suspendOwnerAgentsOnShutdown" ->
+      Agent_lifecycle.suspend_owner_on_shutdown
+        (Agent_tools.agent_owner_context (arg 0))
+  | "finishAgentWait" ->
+      Agent_lifecycle.finish_wait (arg 0)
+        (Agent_tools.agent_owner_context (arg 1))
+  | "finishAgentClose" ->
+      Agent_tools.finish_close (arg 0) (Agent_tools.agent_owner_context (arg 1))
   | "claimAgentAction" -> Agent_action_capability.claim (arg 0)
   | "revalidateAgentAction" -> Agent_action_capability.revalidate (arg 0)
   | "ratchetAgentAction" -> Agent_action_capability.ratchet (arg 0)
@@ -178,9 +206,15 @@ let core_call name_js args_js =
   | "prepareAgentCloseStop" -> Agent_action_capability.prepare_close_stop (arg 0)
   | "completeAgentCloseStop" -> Agent_action_capability.complete_close_stop (arg 0)
   | "releaseAgentAction" -> Agent_action_capability.release (arg 0)
-  | "acceptAgentWorktreeStart" -> Agent_tools.accept_worktree_start (arg 0) (arg 1)
-  | "rollbackAgentWorktreeStart" -> Agent_tools.rollback_worktree_start (arg 0) (arg 1)
-  | "deleteAgentWorktree" -> Agent_tools.delete_worktree (arg 0) (arg 1)
+  | "acceptAgentWorktreeStart" ->
+      Agent_tools.accept_worktree_start (arg 0)
+        (Agent_tools.agent_owner_context (arg 1))
+  | "rollbackAgentWorktreeStart" ->
+      Agent_tools.rollback_worktree_start (arg 0)
+        (Agent_tools.agent_owner_context (arg 1))
+  | "deleteAgentWorktree" ->
+      Agent_tools.delete_worktree (arg 0)
+        (Agent_tools.agent_owner_context (arg 1))
   | "reconcileProvisionalAgentWorktrees" -> Agent_tools.reconcile_provisional_worktrees ()
   | "cancelAgentBrokerSessions" ->
       let facts =
@@ -191,9 +225,12 @@ let core_call name_js args_js =
       let clean = Exec_session.cancel_broker_sessions_for_agent agent_id in
       if clean then core_ack ()
       else error_obj "cleanup_failed: could not terminate identity-owned broker sessions"
-  | "deleteAgentChildSession" -> Agent_tools.delete_child_session (arg 0) (arg 1)
+  | "deleteAgentChildSession" ->
+      Agent_tools.delete_child_session (arg 0)
+        (Agent_tools.agent_owner_context (arg 1))
   | "recordAgentCloseCleanupFailure" ->
-      Agent_tools.record_close_cleanup_failure (arg 0) (arg 1)
+      Agent_tools.record_close_cleanup_failure (arg 0)
+        (Agent_tools.agent_owner_context (arg 1))
   | "handleCommand" -> Command_bridge.handle (arg 0)
   | "handleComposerCommand" -> Composer_commands.handle (arg 0)
    | "planCommandNotification" ->

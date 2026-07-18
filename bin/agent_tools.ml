@@ -1,6 +1,11 @@
 open Jsoo_bridge
 open App_state
 open Runtime_access
+let agent_owner_context raw_facts =
+  decode_ojs_contract Tool_contracts.AgentOwnerContextFacts.t_of_js
+    (ojs_of_js raw_facts)
+  |> Tool_contracts.AgentOwnerContextFacts.get_ctx
+  |> Ts2ocaml.unknown_to_js |> js_of_ojs
 let owner_id ctx = Session_store.session_id_from_ctx ctx
 let is_agent_child ctx =
   match Session_store.custom_entry_data ctx "taumel.childSession" with

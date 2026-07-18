@@ -213,7 +213,7 @@ try {
   core.call("recordAgentActivity", [{
     run_id: "agent-test-run-1", submission_id: "agent-test-run-1-submission-1",
     event: "future_activity",
-  }, ctx]);
+  }, { ctx }]);
 } catch (error) {
   malformedLifecycleFacts = error instanceof Error ? error.message : String(error);
 }

@@ -41,7 +41,7 @@ import {
 } from "./child-sessions.ts";
 import { installExecNotificationLifecycle, startExecCompletionWaiter } from "./exec-notifications.ts";
 import { executeAgentPrepared, installAgentLifecycle, pendingAgentWaits } from "./agent-orchestration.ts";
-import { decodeAuthorityPlanIssued, decodeBridgeToolResult, decodeEditApplicationResult, decodeExecApprovalPromptPlan, decodeExecApprovalResult, decodeExecPolicyAllowRuleResult, decodeExecToolResult, decodePatchApplicationResult, decodeToolNamesResult, decodeToolResultEnvelope, decodeViewMediaResultEnvelope, type PreparedToolAction, type ToolResultEnvelope } from "./bridge-contracts.ts";
+import { decodeAuthorityPlanIssued, decodeBridgeToolResult, decodeCoreAck, decodeEditApplicationResult, decodeExecApprovalPromptPlan, decodeExecApprovalResult, decodeExecPolicyAllowRuleResult, decodeExecToolResult, decodePatchApplicationResult, decodeToolNamesResult, decodeToolResultEnvelope, decodeViewMediaResultEnvelope, type PreparedToolAction, type ToolResultEnvelope } from "./bridge-contracts.ts";
 import {
   decodeOpenAiUsageHostAuth,
   decodeOpenAiUsageHostParams,
@@ -767,7 +767,7 @@ export async function executeTool(
       .filter((key) => key.startsWith(prefix))
       .map((key) => key.slice(prefix.length));
     try {
-      core.call("reconcileLiveAgentDispatches", [{ live_agent_ids: liveAgentIds }, ctx]);
+      decodeCoreAck(core.call("reconcileLiveAgentDispatches", [{ live_agent_ids: liveAgentIds }, { ctx }]));
     } catch (error) {
       return agentErrorToolResult(core, "persistence_failed", error instanceof Error ? error.message : String(error));
     }

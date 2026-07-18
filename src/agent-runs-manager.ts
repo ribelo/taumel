@@ -28,7 +28,7 @@ function isObject(value: unknown): value is UnknownFields {
 }
 
 function loadSnapshot(core: CoreBridge, ctx: unknown): AgentManagerSnapshot {
-  return decodeAgentManagerSnapshot(core.call("agentManagerSnapshot", [ctx]));
+  return decodeAgentManagerSnapshot(core.call("agentManagerSnapshot", [{ ctx }]));
 }
 
 function agentLabel(agent: AgentListItem): string {
@@ -136,7 +136,7 @@ export async function executeAgentRunsManager(
   const liveAgentIds = [...childSessions.keys()]
     .filter((key) => key.startsWith(prefix))
     .map((key) => key.slice(prefix.length));
-  decodeCoreAck(core.call("reconcileLiveAgentDispatches", [{ live_agent_ids: liveAgentIds }, ctx]));
+  decodeCoreAck(core.call("reconcileLiveAgentDispatches", [{ live_agent_ids: liveAgentIds }, { ctx }]));
   const snapshot = loadSnapshot(core, ctx);
   const agents = snapshot.agents;
   if (agents.length === 0) {

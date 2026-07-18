@@ -226,7 +226,12 @@ let execute_openai_effect params =
                                    (result_from_fetch_state params
                                       (Taumel.Usage.Fetch_ok payload))))))
 
-let execute_openai params _ctx =
+let execute_openai raw_params _ctx =
+  let params =
+    decode_ojs_contract Tool_contracts.OpenAiUsageHostParams.t_of_js
+      (ojs_of_js raw_params)
+    |> Tool_contracts.OpenAiUsageHostParams.t_to_js |> inject
+  in
   js_promise_of_effect (execute_openai_effect params)
 
 let handle_command () =
