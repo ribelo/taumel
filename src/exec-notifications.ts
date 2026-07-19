@@ -1,6 +1,7 @@
 import type { CoreBridge, PiLike } from "./types.ts";
 import {
   contextIsLive,
+  extensionRuntimeIsLive,
   isStaleContextError,
   sessionInfoFromContext,
 } from "./util.ts";
@@ -76,7 +77,13 @@ export async function startExecCompletionWaiter(
   } catch {
     return;
   }
-  if (parentIsIdle(ctx)) await flushPendingExecNotifications(pi, core, ctx, "trigger");
+  try {
+    if (!extensionRuntimeIsLive(pi) || !contextIsLive(ctx)) return;
+    if (parentIsIdle(ctx)) await flushPendingExecNotifications(pi, core, ctx, "trigger");
+  } catch (error) {
+    if (isStaleContextError(error)) return;
+    throw error;
+  }
 }
 
 export function installExecNotificationLifecycle(pi: PiLike, core: CoreBridge): void {

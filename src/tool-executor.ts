@@ -391,7 +391,9 @@ async function runPreparedExec(
   // flushes cover the other cases.
   const sessionId = result.details.sessionId;
   if (sessionId !== undefined) {
-    void startExecCompletionWaiter(pi, core, ctx, sessionId);
+    void startExecCompletionWaiter(pi, core, ctx, sessionId).catch((error) => {
+      console.warn("Taumel exec completion waiter failed:", error);
+    });
   }
   return result;
 }
