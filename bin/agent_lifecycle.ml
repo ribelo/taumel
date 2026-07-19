@@ -161,6 +161,8 @@ let record_dispatch_completion facts ctx =
           ?reason_code ?error ?partial_output:final_output ?result_entry_id
           ?submission_id ()
   with
+  (* A completed close wins over a later SDK dispatch settlement. *)
+  | Error _ when Option.is_none previous_run -> core_ack ()
   | Error message -> error_obj message
   | Ok next ->
       let compatible_close_settlement =

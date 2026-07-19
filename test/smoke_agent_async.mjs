@@ -362,6 +362,49 @@ for (const [toolName, params, promptFile, requirementId] of [
   await executeAgentPrepared(pi, core, childSessions, pendingWaits, specialistClose, ctx);
 }
 
+// agent-cl03: a child completion that arrives after permanent close is inert.
+const lateCompletionAgent = core.call("prepareTool", [{
+  name: "finder", params: { query: "finish after close", description: "Finish after close" }, ctx,
+}]);
+await executeAgentPrepared(pi, core, childSessions, pendingWaits, lateCompletionAgent, ctx);
+const settleAfterClose = settle;
+const lateCompletionErrors = [];
+const originalConsoleError = console.error;
+console.error = (...args) => { lateCompletionErrors.push(args); };
+try {
+  const lateCompletionClose = core.call("prepareTool", [{
+    name: "agent_close", params: { agent_id: lateCompletionAgent.agentId }, ctx,
+  }]);
+  const lateCompletionCloseResult = await executeAgentPrepared(
+    pi, core, childSessions, pendingWaits, lateCompletionClose, ctx,
+  );
+  assert.equal(lateCompletionCloseResult.details.status, "closed");
+  settleAfterClose();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+} finally {
+  console.error = originalConsoleError;
+}
+assert.equal(
+  lateCompletionErrors.length,
+  0,
+  `closed child completion reported an internal callback failure: ${lateCompletionErrors.map((args) => args.join(" ")).join("\n")}`,
+);
+assert.equal(
+  core.call("pendingAgentNotifications", [{ ctx }]).notifications
+    .some((notification) => notification.runId === lateCompletionAgent.runId),
+  false,
+  "closed child completion created a notification",
+);
+assert.equal(
+  core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]).details.agents
+    .some((agent) => agent.agent_id === lateCompletionAgent.agentId),
+  false,
+  "closed child completion restored the identity",
+);
+assert.equal(core.call("prepareTool", [{
+  name: "agent_wait", params: { run_ids: [lateCompletionAgent.runId], timeout_seconds: 0 }, ctx,
+}]).ok, false, "closed child completion restored the run");
+
 // A close must cancel an indefinite wait for a run it removes.
 const send = core.call("prepareTool", [{
   name: "agent_send", params: { agent_id: prepared.agentId, message: "run again", description: "Run agent again" }, ctx,
