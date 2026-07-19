@@ -61,15 +61,15 @@ function buildGoal(name: string, result: unknown, options: unknown, theme: unkno
   entries.push(...labeled("Status", status, theme));
   const automation = recordFieldOrUndefined<ToolRenderFields>(details, "automation");
   entries.push(...labeled("Automation", automation !== undefined ? stringFieldOrUndefined(automation, "continuation") : undefined, theme));
-  if (details["accountingPending"] === true) entries.push({ text: themeFg(theme, "dim", "Accounting: final accounting pending"), exempt: true });
+  if (details["accountingPending"] === true) entries.push(...labeled("Accounting", "final accounting pending", theme));
   const tokens = goal !== undefined ? numberFieldOrUndefined(goal, "tokensUsed") : undefined;
   const seconds = goal !== undefined ? numberFieldOrUndefined(goal, "timeUsedSeconds") : undefined;
   const timeUsage = goal !== undefined ? stringFieldOrUndefined(goal, "timeUsage") : undefined;
   const timeLimit = goal !== undefined ? numberFieldOrUndefined(goal, "timeLimitSeconds") : undefined;
-  if (tokens !== undefined) entries.push({ text: themeFg(theme, "dim", `Tokens: ${tokens}`), exempt: true });
-  if (timeUsage !== undefined) entries.push({ text: themeFg(theme, "dim", `Active time: ${timeUsage}`), exempt: true });
-  else if (seconds !== undefined) entries.push({ text: themeFg(theme, "dim", `Active time: ${seconds}s`), exempt: true });
-  if (timeLimit !== undefined) entries.push({ text: themeFg(theme, "dim", `Time limit: ${timeLimit}s`), exempt: true });
+  if (tokens !== undefined) entries.push(...labeled("Tokens", String(tokens), theme));
+  if (timeUsage !== undefined) entries.push(...labeled("Active time", timeUsage, theme));
+  else if (seconds !== undefined) entries.push(...labeled("Active time", `${seconds}s`, theme));
+  if (timeLimit !== undefined) entries.push(...labeled("Time limit", `${timeLimit}s`, theme));
   if (goal !== undefined) {
     entries.push(...labeled("Goal ID", stringFieldOrUndefined(goal, "goalId"), theme));
     entries.push(...labeled("Session ID", stringFieldOrUndefined(goal, "sessionId"), theme));
@@ -88,16 +88,10 @@ function cronTaskLine(task: ToolRenderFields, theme: unknown): string {
 
 function cronTaskEntries(task: ToolRenderFields, theme: unknown): Entry[] {
   const entries: Entry[] = [{ text: cronTaskLine(task, theme) }];
-  const cron = stringFieldOrUndefined(task, "cron");
-  const nextDueText = stringFieldOrUndefined(task, "nextDueText");
-  const details = [
-    cron !== undefined ? `cron=${cron}` : undefined,
-    boolState(boolFieldOrUndefined(task, "recurring"), "recurring", "one-shot"),
-    nextDueText !== undefined ? `next=${nextDueText}` : undefined,
-  ].filter((part): part is string => part !== undefined && part !== "");
-  if (details.length > 0) entries.push({ text: themeFg(theme, "dim", details.join(" · ")), exempt: true });
-  const prompt = stringFieldOrUndefined(task, "prompt");
-  if (prompt !== undefined && prompt !== "") entries.push({ text: `${themeFg(theme, "dim", "Prompt:")} ${themeFg(theme, "toolOutput", prompt)}` });
+  entries.push(...labeled("Cron", stringFieldOrUndefined(task, "cron"), theme));
+  entries.push(...labeled("Recurrence", boolState(boolFieldOrUndefined(task, "recurring"), "recurring", "one-shot"), theme));
+  entries.push(...labeled("Next due", stringFieldOrUndefined(task, "nextDueText"), theme));
+  entries.push(...labeled("Prompt", stringFieldOrUndefined(task, "prompt"), theme));
   return entries;
 }
 
@@ -107,15 +101,16 @@ function buildCron(name: string, result: unknown, options: unknown, theme: unkno
   if (name === "cron_delete") {
     const id = stringFieldOrUndefined(details, "id") ?? stringFieldOrUndefined(args, "id") ?? "";
     const deleted = boolFieldOrUndefined(details, "deleted") === true;
-    const header = headerSpec(name, `${id} (${deleted ? "deleted" : "not found"})`, dotFromDetails(details), theme);
-    return expanded ? { header, body: { mode: "rail", entries: [{ text: themeFg(theme, "toolOutput", `Task ${id}: ${deleted ? "deleted" : "not found"}`) }] } } : { header, body: undefined };
+    const outcome = deleted ? "deleted" : "not found";
+    const header = headerSpec(name, id, dotFromDetails(details), theme, themeFg(theme, "dim", `(${outcome})`));
+    return expanded ? { header, body: { mode: "rail", entries: [...labeled("Task ID", id, theme), ...labeled("Outcome", outcome, theme)] } } : { header, body: undefined };
   }
   if (name === "cron_list") {
     const tasks = recordArrayFieldOrEmpty<ToolRenderFields>(details, "tasks");
     const enabled = boolFieldOrUndefined(details, "enabled") === true;
-    const header = headerSpec(name, `${tasks.length} task${tasks.length === 1 ? "" : "s"} (${enabled ? "enabled" : "disabled"})`, dotFromDetails(details), theme);
+    const header = headerSpec(name, `${tasks.length} task${tasks.length === 1 ? "" : "s"}`, dotFromDetails(details), theme, themeFg(theme, "dim", `(${enabled ? "enabled" : "disabled"})`));
     if (!expanded) return { header, body: undefined };
-    const entries: Entry[] = [{ text: themeFg(theme, "dim", `Master switch: ${enabled ? "enabled" : "disabled"}`), exempt: true }];
+    const entries: Entry[] = [...labeled("Master switch", enabled ? "enabled" : "disabled", theme)];
     if (tasks.length === 0) entries.push({ text: themeFg(theme, "dim", "(none)"), exempt: true });
     tasks.forEach((task, index) => {
       if (index > 0) entries.push({ text: "" });
@@ -127,7 +122,7 @@ function buildCron(name: string, result: unknown, options: unknown, theme: unkno
   const id = stringFieldOrUndefined(task, "id") ?? stringFieldOrUndefined(details, "id") ?? "";
   const schedule = stringFieldOrUndefined(task, "schedule") ?? stringFieldOrUndefined(task, "cron") ?? stringFieldOrUndefined(details, "schedule") ?? "";
   const enabled = boolState(boolFieldOrUndefined(task, "enabled") ?? boolFieldOrUndefined(details, "enabled"), "enabled", "disabled");
-  const header = headerSpec(name, [id, schedule, enabled].filter((part): part is string => part !== undefined && part !== "").join(" · "), dotFromDetails(details), theme);
+  const header = headerSpec(name, [id, schedule].filter((part) => part !== "").join(" · "), dotFromDetails(details), theme, enabled === undefined ? "" : themeFg(theme, "dim", `(${enabled})`));
   return expanded ? { header, body: { mode: "rail", entries: cronTaskEntries(task, theme) } } : { header, body: undefined };
 }
 
@@ -179,12 +174,12 @@ function buildReadThread(name: string, result: unknown, options: unknown, theme:
   if (thread !== undefined) {
     entries.push(...labeled("Title", stringFieldOrUndefined(thread, "title"), theme));
     const messages = numberFieldOrUndefined(thread, "messageCount") ?? numberFieldOrUndefined(thread, "message_count");
-    if (messages !== undefined) entries.push({ text: themeFg(theme, "dim", `Messages: ${messages}`), exempt: true });
+    entries.push(...labeled("Messages", messages === undefined ? undefined : String(messages), theme));
   }
   entries.push(...fullTextEntries(textContent(result), theme));
   if (diagnostics.length > 0) {
     entries.push({ text: "" });
-    entries.push({ text: themeFg(theme, "dim", `Diagnostics: ${diagnostics.length}`), exempt: true });
+    entries.push(...labeled("Diagnostics", String(diagnostics.length), theme));
   }
   return { header, body: entries.length === 0 ? undefined : { mode: "rail", entries } };
 }
@@ -197,8 +192,8 @@ function buildRalph(name: string, result: unknown, options: unknown, theme: unkn
   const facts = [iteration !== undefined ? `iteration ${iteration}` : undefined, stringFieldOrUndefined(details, "status")].filter((part): part is string => part !== undefined && part !== "");
   const header = headerSpec(name, taskId, dotFromDetails(details), theme, facts.length > 0 ? themeFg(theme, "dim", `(${facts.join(" · ")})`) : "");
   if (!expanded) return { header, body: undefined };
-  const entries = [...labeled("Task id", taskId, theme), ...labeled("Status", stringFieldOrUndefined(details, "status"), theme)];
-  if (boolFieldOrUndefined(details, "reflection") === true) entries.push({ text: themeFg(theme, "dim", "Reflection: true"), exempt: true });
+  const entries = [...labeled("Task ID", taskId, theme), ...labeled("Status", stringFieldOrUndefined(details, "status"), theme)];
+  if (boolFieldOrUndefined(details, "reflection") === true) entries.push(...labeled("Reflection", "true", theme));
   entries.push(...fullTextEntries(textContent(result), theme));
   return { header, body: entries.length === 0 ? undefined : { mode: "rail", entries } };
 }
@@ -274,7 +269,7 @@ function buildExaAgent(name: string, result: unknown, options: unknown, theme: u
   const output = recordFieldOrUndefined<ToolRenderFields>(response, "output");
   const text = output !== undefined ? stringFieldOrUndefined(output, "text") ?? "" : stringFieldOrUndefined(response, "response") ?? "";
   const entries = [
-    ...labeled("ID", id, theme),
+    ...labeled("Run ID", id, theme),
     ...labeled("Status", status, theme),
     ...labeled("Created", stringFieldOrUndefined(response, "createdAt"), theme),
     ...labeled("Updated", stringFieldOrUndefined(response, "updatedAt"), theme),
@@ -314,7 +309,7 @@ function agentLine(item: ToolRenderFields, theme: unknown): string {
 function agentResultEntries(item: ToolRenderFields, theme: unknown): Entry[] {
   return [
     ...labeled("Agent", stringFieldOrUndefined(item, "agent_id"), theme),
-    ...labeled("Run", stringFieldOrUndefined(item, "run_id"), theme),
+    ...labeled("Run ID", stringFieldOrUndefined(item, "run_id"), theme),
     ...labeled("Kind", stringFieldOrUndefined(item, "kind"), theme),
     ...labeled("Model", stringFieldOrUndefined(item, "model"), theme),
     ...labeled("Thinking", stringFieldOrUndefined(item, "thinking"), theme),
@@ -336,10 +331,13 @@ function buildAgent(name: string, result: unknown, options: unknown, theme: unkn
   const status = stringFieldOrUndefined(details, "status")
     ?? stringFieldOrUndefined(details, "outcome");
   let subject: string;
+  let trailing = "";
   if (name === "agent_list") subject = `${agents.length} agent${agents.length === 1 ? "" : "s"}`;
   else if (name === "agent_wait") {
     const pending = Array.isArray(details["pending_run_ids"]) ? details["pending_run_ids"].length : 0;
-    subject = `${results.length} ready · ${pending} pending`;
+    const total = results.length + pending;
+    subject = `${total} run${total === 1 ? "" : "s"}`;
+    trailing = themeFg(theme, "dim", `(${results.length} ready, ${pending} pending)`);
   } else if (name === "agent_spawn") {
     subject = [
       agentId,
@@ -351,11 +349,12 @@ function buildAgent(name: string, result: unknown, options: unknown, theme: unkn
   } else if (name === "agent_send") {
     subject = [agentId, stringFieldOrUndefined(args, "description")].filter((part) => part !== undefined && part !== "").join(" · ");
   } else if (name === "agent_close") {
-    subject = [agentId, status].filter((part) => part !== undefined && part !== "").join(" · ");
+    subject = agentId;
+    trailing = status === undefined ? "" : themeFg(theme, "dim", `(${status})`);
   } else {
     subject = [agentId, runId, kind, status].filter((part) => part !== "").join(" · ");
   }
-  const header = headerSpec(name, subject, dotFromDetails(details), theme);
+  const header = headerSpec(name, subject, dotFromDetails(details), theme, trailing);
   if (!expanded) return { header, body: undefined };
   const entries: Entry[] = [];
   if (agents.length > 0) {

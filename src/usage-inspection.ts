@@ -92,7 +92,7 @@ function localTime(targetSeconds: number, nowMs: number): string {
 }
 
 function timedEvent(prefix: string, targetSeconds: number, nowMs: number): string {
-  return `${prefix} in ${relativeDuration((targetSeconds * 1000 - nowMs) / 1000)}  ·  ${localTime(targetSeconds, nowMs)}`;
+  return `${prefix} in ${relativeDuration((targetSeconds * 1000 - nowMs) / 1000)} · ${localTime(targetSeconds, nowMs)}`;
 }
 
 function quotaColor(percentLeft: number | undefined): string {
@@ -108,7 +108,7 @@ function sanitizeError(error: string): string {
 
 export function renderUsageInspection(data: UsageInspection, theme: Theme, width: number, nowMs = Date.now()): string[] {
   const w = Math.max(1, width);
-  const line = (value: string) => truncateToWidth(value, w, "...");
+  const line = (value: string) => truncateToWidth(value, w, "…");
   const lines: string[] = [theme.fg("accent", " OpenAI Codex Usage"), ""];
   if (data.notConfigured) {
     lines.push(" OpenAI Codex is not configured.", " Sign in with /login and try again.");
@@ -135,7 +135,7 @@ export function renderUsageInspection(data: UsageInspection, theme: Theme, width
       lines.push(` ${theme.fg(quotaColor(percent), bar)} ${percent === undefined ? "?" : percent}% left`);
       if (row.resetsAt !== undefined) {
         const reset = timedEvent("Resets", row.resetsAt, nowMs);
-        const parts = reset.split("  ·  ");
+        const parts = reset.split(" · ");
         if (` ${reset}`.length <= w || parts.length !== 2) lines.push(` ${reset}`);
         else lines.push(` ${parts[0]}`, ` at ${parts[1]}`);
       }
@@ -149,7 +149,7 @@ export function renderUsageInspection(data: UsageInspection, theme: Theme, width
         const estimate = row.exhaustsBeforeReset === false
           ? "Safe until reset"
           : exhaustionTarget === undefined ? undefined : timedEvent("Est. empty", exhaustionTarget, nowMs);
-        const burnLine = `${burn}${estimate === undefined ? "" : `  ·  ${estimate}`}`;
+        const burnLine = `${burn}${estimate === undefined ? "" : ` · ${estimate}`}`;
         if (` ${burnLine}`.length <= w || estimate === undefined) lines.push(` ${burnLine}`);
         else lines.push(` ${burn}`, ` ${estimate}`);
       }

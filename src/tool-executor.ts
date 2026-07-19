@@ -951,7 +951,7 @@ export function registerGatewayTools(
 ): void {
   if (typeof pi.registerTool !== "function") return;
   if (typeof pi.registerMessageRenderer === "function") {
-    pi.registerMessageRenderer("notification", notificationMessageRenderer(), { background: "toolSuccessBg" });
+    pi.registerMessageRenderer("notification", notificationMessageRenderer());
     pi.registerMessageRenderer("taumel.goal.continue", goalContinuationMessageRenderer());
   }
   installExecNotificationLifecycle(pi, core);
@@ -982,6 +982,9 @@ export function registerGatewayTools(
         return result;
       },
       ...(renderersForTool(name) ?? {}),
+      // render-sh01: Taumel supplies its own framing so Pi's default tool shell
+      // cannot background-paint bodies, diff gutters, or wrapped whitespace.
+      renderShell: "self",
     });
   }
 }

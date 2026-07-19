@@ -287,7 +287,7 @@ function buildShell(name: string, result: unknown, options: unknown, theme: unkn
     const trailing = themeFg(
       theme,
       "dim",
-      `(${state}; suppressed ${suppressedLines} line${suppressedLines === 1 ? "" : "s"} / ${suppressedBytes} bytes)`,
+      `(${state}, suppressed ${suppressedLines} line${suppressedLines === 1 ? "" : "s"} / ${suppressedBytes} bytes)`,
     );
     return {
       header: headerSpec(name, subjectFromArgs(name, args), sid !== undefined ? "warning" : dotFromDetails(details), theme, trailing),
@@ -307,7 +307,7 @@ function buildShell(name: string, result: unknown, options: unknown, theme: unkn
   if (name === "write_stdin") {
     const chars = stringFieldOrUndefined(args, "chars") ?? "";
     if (chars.trim() === "" && output.trim() === "") {
-      return { header, body: { mode: "rail", entries: [{ text: themeFg(theme, "dim", "(still running; no new output)"), exempt: true }] } };
+      return { header, body: { mode: "rail", entries: [{ text: themeFg(theme, "dim", "(still running, no new output)"), exempt: true }] } };
     }
   }
 
@@ -350,7 +350,7 @@ function buildViewMedia(name: string, result: unknown, options: unknown, theme: 
     width === undefined || height === undefined
       ? ""
       : wasResized && originalWidth !== undefined && originalHeight !== undefined
-        ? `(${originalWidth}x${originalHeight} -> ${width}x${height})`
+        ? `(${originalWidth}x${originalHeight} → ${width}x${height})`
         : `(${width}x${height})`;
   const header = pathHeaderSpec(name, path, dotFromDetails(details), theme, dimensions === "" ? "" : themeFg(theme, "dim", dimensions));
   if (!expanded) return { header, body: undefined };
@@ -383,7 +383,7 @@ function buildWrite(result: unknown, options: unknown, theme: unknown, args: Too
   const contents = stringFieldOrUndefined(details, "contents") ?? "";
   const lines = contents === "" ? [] : contents.trimEnd().split(/\r?\n/);
   const lineCount = lines.length;
-  const trailing = themeFg(theme, "dim", mode === "append" ? `(append +${lineCount})` : `(${lineCount} line${lineCount === 1 ? "" : "s"})`);
+  const trailing = themeFg(theme, "dim", mode === "append" ? `(append, ${lineCount} line${lineCount === 1 ? "" : "s"})` : `(${lineCount} line${lineCount === 1 ? "" : "s"})`);
   const header = pathHeaderSpec("write", path, dotFromDetails(details), theme, trailing);
   if (contents.trim() === "") return { header, body: undefined };
   const limit = expanded ? lines.length : Math.min(lines.length, 3);
@@ -613,11 +613,12 @@ function buildNotificationBlock(message: unknown, options: unknown, theme: unkno
     ? "exec_completion"
     : agent !== undefined ? "agent_completion" : "notification";
   const subject = execMatch !== null
-    ? `session ${execMatch[1]} ready`
+    ? `session ${execMatch[1]}`
     : agent !== undefined
       ? [stringFieldOrUndefined(agent, "agent_id"), stringFieldOrUndefined(agent, "description")]
           .filter((part) => part !== undefined && part !== "").join(" · ")
       : "ready";
+  const trailing = execMatch !== null ? themeFg(theme, "dim", "(ready)") : "";
   const status = agent === undefined ? undefined : stringFieldOrUndefined(agent, "status");
   const dot = agent === undefined
     ? "muted"
@@ -626,11 +627,19 @@ function buildNotificationBlock(message: unknown, options: unknown, theme: unkno
       : status === "failed" || status === "lost"
         ? "error"
         : "muted";
+  // render-sj0j: expanded exec completion shows labeled user-facing fields, not
+  // the model-facing consumption instruction carried by the notification text.
+  const execEntries: Entry[] = execMatch === null
+    ? []
+    : [
+        { text: `${themeFg(theme, "dim", "Session:")} ${themeFg(theme, "toolOutput", execMatch[1])}` },
+        { text: `${themeFg(theme, "dim", "Status:")} ${themeFg(theme, "toolOutput", "finished")}` },
+      ];
   const agentEntries: Entry[] = agent === undefined
     ? []
     : [
         ["Agent", stringFieldOrUndefined(agent, "agent_id")],
-        ["Run", stringFieldOrUndefined(agent, "run_id")],
+        ["Run ID", stringFieldOrUndefined(agent, "run_id")],
         ["Description", stringFieldOrUndefined(agent, "description")],
         ["Status", status],
       ].flatMap(([label, value]) => value === undefined || value === ""
@@ -638,9 +647,9 @@ function buildNotificationBlock(message: unknown, options: unknown, theme: unkno
         : [{ text: `${themeFg(theme, "dim", `${label}:`)} ${themeFg(theme, "toolOutput", value)}` }]);
 
   return {
-    header: headerSpec(name, subject, dot, theme),
+    header: headerSpec(name, subject, dot, theme, trailing),
     body: expanded
-      ? { mode: "rail", entries: agent === undefined ? tailEntries(content, true, theme, 6, 100000) : agentEntries }
+      ? { mode: "rail", entries: agent !== undefined ? agentEntries : execMatch !== null ? execEntries : tailEntries(content, true, theme, 6, 100000) }
       : undefined,
   };
 }
@@ -662,7 +671,7 @@ export function goalContinuationMessageRenderer() {
     if (objective === "" || content === "") return undefined;
     const expanded = expandedFromOptions(options);
     const block: Block = {
-      header: headerSpec("Goal continuation", objective, "muted", theme),
+      header: headerSpec("goal.continue", objective, "muted", theme),
       body: expanded
         ? { mode: "rail", entries: fullTextEntries(content, theme) }
         : undefined,
@@ -687,19 +696,17 @@ function buildCronFireBlock(message: unknown, options: unknown, theme: unknown):
     "";
   if (id === "" && prompt === "") return undefined;
 
-  const trailingParts = [schedule].filter((part) => part !== "");
-  if (coalesced > 1) trailingParts.push(`${coalesced} coalesced`);
-  const trailing = trailingParts.length > 0 ? themeFg(theme, "dim", trailingParts.join(" · ")) : "";
-  const subject = trailing === "" ? id : `${id} · ${trailing}`;
-  const header = headerSpec("cron.fire", subject, "muted", theme);
+  const subject = schedule === "" ? id : `${id} · ${schedule}`;
+  const trailing = coalesced > 1 ? themeFg(theme, "dim", `(${coalesced} coalesced)`) : "";
+  const header = headerSpec("cron.fire", subject, "muted", theme, trailing);
 
   if (!expanded) return { header, body: undefined };
 
   const cronExpr = stringFieldOrUndefined(details, "cron");
   const entries: Entry[] = [
-    ...(id !== "" ? [{ text: `${themeFg(theme, "dim", "Task:")} ${themeFg(theme, "toolOutput", id)}` }] : []),
-    ...(cronExpr !== undefined ? [{ text: `${themeFg(theme, "dim", "Schedule:")} ${themeFg(theme, "toolOutput", cronExpr)}` }] : []),
-    ...(schedule !== "" ? [{ text: `${themeFg(theme, "dim", "Human:")} ${themeFg(theme, "toolOutput", schedule)}` }] : []),
+    ...(id !== "" ? [{ text: `${themeFg(theme, "dim", "Task ID:")} ${themeFg(theme, "toolOutput", id)}` }] : []),
+    ...(cronExpr !== undefined ? [{ text: `${themeFg(theme, "dim", "Cron:")} ${themeFg(theme, "toolOutput", cronExpr)}` }] : []),
+    ...(schedule !== "" ? [{ text: `${themeFg(theme, "dim", "Schedule:")} ${themeFg(theme, "toolOutput", schedule)}` }] : []),
     ...(coalesced > 1 ? [{ text: `${themeFg(theme, "dim", "Coalesced:")} ${themeFg(theme, "toolOutput", String(coalesced))}` }] : []),
   ];
   if (prompt !== "") {

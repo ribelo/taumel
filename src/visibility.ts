@@ -252,7 +252,7 @@ class VisibilityManagerComponent {
   }
 
   private runToggle(name: string): void {
-    this.busy = "Updating visibility...";
+    this.busy = "Updating visibility…";
     this.status = undefined;
     this.callbacks.requestRender();
     void this.callbacks.onToggle(name).then((outcome) => {
@@ -265,7 +265,7 @@ class VisibilityManagerComponent {
   }
 
   private runSave(): void {
-    this.busy = "Saving visibility...";
+    this.busy = "Saving visibility…";
     this.status = undefined;
     this.callbacks.requestRender();
     void this.callbacks.onSave().then((outcome) => {

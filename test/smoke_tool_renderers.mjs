@@ -229,7 +229,7 @@ for (const name of ["agent_spawn", "finder", "oracle", "agent_send", "agent_wait
   );
   const stacked = [...call.render(120), ...result.render(120)].join("\n");
   assert((stacked.match(/•/g) ?? []).length === 1, `settled agent_close must occupy one visible tool slot: ${stacked}`);
-  assert(/^• agent_close · agent-zmrk · closed$/.test(stacked), `agent_close compact slot wrong: ${stacked}`);
+  assert(/^• agent_close · agent-zmrk \(closed\)$/.test(stacked), `agent_close compact slot wrong: ${stacked}`);
   const expanded = renderText(renderers.renderResult(
     { content: [{ type: "text", text: "closed" }], details: { ok: true, agent_id: "agent-zmrk", status: "closed" } },
     { expanded: true, isPartial: false },
@@ -258,7 +258,7 @@ const expandedSpawnedAgent = renderText(renderersForTool("agent_spawn").renderRe
 ));
 for (const expected of [
   "Agent: agent-7k2m",
-  "Run: agent-7k2m-run-1",
+  "Run ID: agent-7k2m-run-1",
   "Kind: generic",
   "Model: provider/model",
   "Thinking: low",
@@ -293,7 +293,7 @@ const expandedWait = renderText(renderersForTool("agent_wait").renderResult(
 ));
 for (const expected of [
   "Agent: worker-1",
-  "Run: worker-1-run-1",
+  "Run ID: worker-1-run-1",
   "Kind: generic",
   "Model: provider/model",
   "Thinking: medium",
@@ -309,7 +309,7 @@ const compactWait = renderText(renderersForTool("agent_wait").renderResult(
   { args: argsFor("agent_wait") },
 ));
 // agentui-hdst: compact wait preserves ready and pending counts.
-assert(/^• agent_wait · 1 ready · 0 pending$/.test(compactWait), `agent_wait compact slot wrong: ${compactWait}`);
+assert(/^• agent_wait · 1 run \(1 ready, 0 pending\)$/.test(compactWait), `agent_wait compact slot wrong: ${compactWait}`);
 
 const longAgentText = "first agent presentation words must remain visible through the middle and finish with final words";
 const wrappedFinder = renderersForTool("finder").renderResult(
@@ -355,7 +355,7 @@ const statusWaitCompact = renderText(renderersForTool("write_stdin").renderResul
   theme,
   { args: { session_id: 7, chars: "", output_mode: "status" } },
 ));
-assert(/• write_stdin · wait session 7 \(running; suppressed 42 lines \/ 8192 bytes\)/.test(statusWaitCompact) && !statusWaitCompact.includes("\n"), `status-only wait should be one line without process output: ${statusWaitCompact}`);
+assert(/• write_stdin · wait session 7 \(running, suppressed 42 lines \/ 8192 bytes\)/.test(statusWaitCompact) && !statusWaitCompact.includes("\n"), `status-only wait should be one line without process output: ${statusWaitCompact}`);
 
 // Load-bearing trailing state survives clipping of a long command subject.
 const longRunningCommand = "npm --prefix packages/agent run build && npm --prefix packages/coding-agent run build && npm --prefix packages/orchestrator run build";
@@ -607,7 +607,7 @@ assert(largeRead.includes("(lines 1–1230 of 2898)"), `large read should show i
 
 const mediaCompact = renderText(renderersForTool("view_media").renderResult(resultFor("view_media"), { expanded: false, isPartial: false }, theme, { args: { path: "/tmp/pi-clipboard-6e6a501780841a8c.png" } }));
 const mediaExpanded = renderText(renderersForTool("view_media").renderResult(resultFor("view_media"), { expanded: true, isPartial: false }, theme, { args: { path: "/tmp/pi-clipboard-6e6a501780841a8c.png" } }));
-assert(/• view_media · \/tmp\/pi-clipboard-6e6a501780841a8c\.png \(4096x1536 -> 2048x768\)/.test(mediaCompact), `view_media compact should show path and resize dimensions: ${mediaCompact}`);
+assert(/• view_media · \/tmp\/pi-clipboard-6e6a501780841a8c\.png \(4096x1536 → 2048x768\)/.test(mediaCompact), `view_media compact should show path and resize dimensions: ${mediaCompact}`);
 assert(mediaExpanded.includes("Type: image/png") && mediaExpanded.includes("Payload: 12345 bytes") && !mediaExpanded.includes("base64"), `view_media expanded should show metadata but no base64: ${mediaExpanded}`);
 const narrowMedia = renderersForTool("view_media").renderResult(resultFor("view_media"), { expanded: false, isPartial: false }, theme, { args: { path: "/tmp/pi-clipboard-6e6a501780841a8c.png" } }).render(60)[0];
 assert(narrowMedia.includes("/tmp/") && narrowMedia.includes(".png") && narrowMedia.includes("…"), `compact long media paths should middle-truncate and preserve suffix: ${narrowMedia}`);
@@ -643,9 +643,10 @@ const cronCreateCompact = renderText(renderersForTool("cron_create").renderResul
 const cronListCompact = renderText(renderersForTool("cron_list").renderResult(resultFor("cron_list"), { expanded: false, isPartial: false }, theme, { args: argsFor("cron_list") }));
 const cronListExpanded = renderText(renderersForTool("cron_list").renderResult(resultFor("cron_list"), { expanded: true, isPartial: false }, theme, { args: argsFor("cron_list") }));
 const cronDeleteCompact = renderText(renderersForTool("cron_delete").renderResult(resultFor("cron_delete"), { expanded: false, isPartial: false }, theme, { args: argsFor("cron_delete") }));
-assert(/• cron_create · cron-a · every 5 minutes · enabled/.test(cronCreateCompact), `cron_create compact should show id, schedule, enabled state: ${cronCreateCompact}`);
+assert(/• cron_create · cron-a · every 5 minutes \(enabled\)/.test(cronCreateCompact), `cron_create compact should show id, schedule, enabled state: ${cronCreateCompact}`);
 assert(/• cron_list · 1 task \(disabled\)/.test(cronListCompact) && !cronListCompact.includes("check status"), `cron_list compact should be one-line count and master state: ${cronListCompact}`);
 assert(cronListExpanded.includes("Master switch: disabled") && cronListExpanded.includes("Prompt: check status"), `cron_list expanded should show task details: ${cronListExpanded}`);
+assert(cronListExpanded.includes("Cron: */5 * * * *") && cronListExpanded.includes("Recurrence: recurring") && cronListExpanded.includes("Next due: soon"), `cron_list expanded should use labeled fields, not key=value: ${cronListExpanded}`);
 assert(/• cron_delete · cron-a \(deleted\)/.test(cronDeleteCompact), `cron_delete compact should show deletion outcome: ${cronDeleteCompact}`);
 
 // Exa search — compact count only; expanded rows with domain/full URL.
@@ -679,7 +680,7 @@ const goalContinuationMessage = {
 };
 const compactGoalContinuation = renderText(renderGoalContinuation(goalContinuationMessage, { expanded: false }, theme));
 const expandedGoalContinuation = renderText(renderGoalContinuation(goalContinuationMessage, { expanded: true }, theme));
-assert(compactGoalContinuation.includes("Goal continuation") && compactGoalContinuation.includes("ship renderer coverage"), `goal continuation compact rendering wrong: ${compactGoalContinuation}`);
+assert(compactGoalContinuation.includes("goal.continue") && compactGoalContinuation.includes("ship renderer coverage"), `goal continuation compact rendering wrong: ${compactGoalContinuation}`);
 assert(!compactGoalContinuation.includes("Full exact prompt"), `goal continuation compact rendering leaked prompt: ${compactGoalContinuation}`);
 assert(expandedGoalContinuation.includes("Full exact prompt"), `goal continuation expanded rendering omitted exact prompt: ${expandedGoalContinuation}`);
 
@@ -690,10 +691,12 @@ const expandedExecNote = renderText(renderNotification({ customType: "notificati
 assertDirectLayout(compactExecNote, "compact exec notification");
 assertDirectLayout(expandedExecNote, "expanded exec notification");
 assert(compactExecNote.startsWith("• exec_completion"), `exec notification should let Pi provide the outer margin: ${compactExecNote}`);
-assert(/• exec_completion · session 3 ready/.test(compactExecNote), `exec notification header wrong: ${compactExecNote}`);
+assert(/• exec_completion · session 3 \(ready\)/.test(compactExecNote), `exec notification header wrong: ${compactExecNote}`);
 assert(!/exit|code|line-1/.test(compactExecNote), `exec notification should not include terminal status or output: ${compactExecNote}`);
 assert(!compactExecNote.includes("\n") && !compactExecNote.includes("write_stdin"), `exec compact notification should be one-line ready signal only: ${compactExecNote}`);
-assert(expandedExecNote.includes("Command session 3 has finished") && expandedExecNote.includes("yield_time_ms=5000"), `expanded exec notification should preserve visible body: ${expandedExecNote}`);
+// render-sj0j: expanded exec completion shows labeled fields, not model instructions.
+assert(expandedExecNote.includes("Session: 3") && expandedExecNote.includes("Status: finished"), `expanded exec notification should show labeled session and outcome: ${expandedExecNote}`);
+assert(!expandedExecNote.includes("write_stdin") && !expandedExecNote.includes("yield_time_ms"), `expanded exec notification should not echo model-facing instructions: ${expandedExecNote}`);
 const agentNote = JSON.stringify({
   event: "agent_completion", agent_id: "agent-7k2m", run_id: "agent-7k2m-run-1", kind: "generic",
   description: "Inspect renderer coverage", status: "completed",
@@ -706,7 +709,7 @@ const expandedAgentNote = renderText(renderNotification({ customType: "notificat
 // agentui-go7t/agentui-3txs/agentui-pz83/agentui-e5yj: expanded completion is labeled, human-readable metadata only.
 for (const expected of [
   "Agent: agent-7k2m",
-  "Run: agent-7k2m-run-1",
+  "Run ID: agent-7k2m-run-1",
   "Description: Inspect renderer coverage",
   "Status: completed",
 ]) {
@@ -741,7 +744,7 @@ const strictTheme = {
   },
 };
 assert(
-  /• exec_completion · session 3 ready/.test(renderText(renderNotification({ customType: "notification", content: execNote }, { expanded: false }, strictTheme))),
+  /• exec_completion · session 3 \(ready\)/.test(renderText(renderNotification({ customType: "notification", content: execNote }, { expanded: false }, strictTheme))),
   "notification renderer should use only real Pi theme tokens",
 );
 
@@ -844,11 +847,12 @@ assert(
 );
 assert(!cronFireCompact.includes("\n"), `cron fire compact should be one line: ${cronFireCompact}`);
 assert(
-  cronFireExpanded.includes("Schedule: */5 * * * *") &&
-  cronFireExpanded.includes("Human: every 5 minutes") &&
+  cronFireExpanded.includes("Cron: */5 * * * *") &&
+  cronFireExpanded.includes("Schedule: every 5 minutes") &&
+  cronFireExpanded.includes("Task ID: deadbeef") &&
   cronFireExpanded.includes("check disk usage") &&
   !cronFireExpanded.includes("[cron]"),
-  `cron fire expanded should show schedule, human, and prompt, not prefix: ${cronFireExpanded}`,
+  `cron fire expanded should show cron, schedule, task ID, and prompt, not prefix: ${cronFireExpanded}`,
 );
 
 // Coalesced cron fire shows coalesced count.

@@ -7,12 +7,13 @@ import { executeTool, registerGatewayTools } from "../src/tool-executor.ts";
 import { toolNames } from "../src/tool-contracts.ts";
 
 const registered = [];
+const registeredTools = new Map();
 const renderers = [];
 const rendererOptions = new Map();
 const handlers = new Map();
 const injectedMessages = [];
 const pi = {
-  registerTool: (tool) => registered.push(tool.name),
+  registerTool: (tool) => { registered.push(tool.name); registeredTools.set(tool.name, tool); },
   registerMessageRenderer: (name, _renderer, options) => {
     renderers.push(name);
     rendererOptions.set(name, options);
@@ -38,8 +39,13 @@ if (JSON.stringify(registered) !== JSON.stringify(["read"])) {
 if (!renderers.includes("notification")) {
   throw new Error("notification renderer was not registered");
 }
-if (rendererOptions.get("notification")?.background !== "toolSuccessBg") {
-  throw new Error("notification renderer did not request the successful tool background");
+// render-nt03: the notification renderer renders flush, without a Pi background box.
+if (rendererOptions.get("notification") !== undefined) {
+  throw new Error("notification renderer must not request a background box");
+}
+// render-sh01: every Taumel-rendered tool registers its own shell.
+for (const [name, tool] of registeredTools) {
+  if (tool.renderShell !== "self") throw new Error(`${name} did not register renderShell \"self\"`);
 }
 if (!renderers.includes("taumel.goal.continue")) {
   throw new Error("goal continuation renderer was not registered");
