@@ -159,18 +159,38 @@ let hit_of_entry (thread : thread) query (entry : visible_entry) =
     hit_snippet = hit_snippet_of_entry query entry;
   }
 
+let locator_text (locator : locator) =
+  let optional name value =
+    match value with None -> [] | Some value -> [ (name, Shared.String value) ]
+  in
+  let optional_line =
+    match locator.locator_line with
+    | None -> []
+    | Some line -> [ ("line", Shared.Number (float_of_int line)) ]
+  in
+  Shared.encode_json
+    (Shared.Object
+       ([ ("threadID", Shared.String locator.locator_thread_id) ]
+       @ optional "sourcePath" locator.locator_source_path
+       @ optional "entryID" locator.locator_entry_id @ optional_line))
+
 let metadata_hits (thread : thread) query =
+  let locator =
+    match thread.entries with
+    | entry :: _ -> locator_of_entry thread entry
+    | [] ->
+        {
+          locator_thread_id = thread.id;
+          locator_source_path = thread.source_path;
+          locator_entry_id = None;
+          locator_line = None;
+        }
+  in
   let add field value hits =
     match value with
     | Some value when contains value query ->
         {
-          hit_locator =
-            {
-              locator_thread_id = thread.id;
-              locator_source_path = thread.source_path;
-              locator_entry_id = None;
-              locator_line = None;
-            };
+          hit_locator = locator;
           hit_kind = "metadata";
           hit_field = field;
           hit_role = None;
@@ -251,11 +271,11 @@ let plan_query ~workspace (request : query_request) (catalog : catalog) =
                let hits =
                  thread.hits
                  |> List.map (fun hit ->
-                        Printf.sprintf "- %s%s: %s" hit.hit_kind
+                        Printf.sprintf "- %s%s: %s\n  Locator: %s" hit.hit_kind
                           (match hit.hit_tool_name with
                           | None -> ""
                           | Some tool -> "/" ^ tool)
-                          hit.hit_snippet)
+                          hit.hit_snippet (locator_text hit.hit_locator))
                  |> String.concat "\n"
                in
                Printf.sprintf "[%d] %s\nID: %s\nHits: %d%s%s" (index + 1)

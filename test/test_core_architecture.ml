@@ -567,6 +567,7 @@ let test_usage_openai_rendering () =
       account_label = Some "team";
       plan = Some "pro";
       credits_balance = Some 87.5;
+      credits_currency = None;
       not_configured = false;
       error = None;
       rate_limits = [];
@@ -597,7 +598,7 @@ let test_usage_openai_rendering () =
   assert_bool "http error is live" http_error.live;
   assert_equal "http error normalized" "OpenAI usage request failed: 429 Too Many Requests"
     (Option.value http_error.account.error ~default:"");
-  (match Usage.result_details http_error with
+  (match Usage.provider_result_details http_error with
   | Shared.Object fields ->
       assert_bool "details carries account id"
         (List.assoc_opt "accountId" fields = Some (Shared.String "acct_1"));

@@ -490,6 +490,7 @@ let jsonl_thread_of_text ~path text : (thread, diagnostic list) result =
   let workspace = ref None in
   let started_at = ref None in
   let updated_at = ref None in
+  let title = ref None in
   let entries = ref [] in
   let json_entries = ref [] in
   let diagnostics = ref [] in
@@ -516,6 +517,9 @@ let jsonl_thread_of_text ~path text : (thread, diagnostic list) result =
                    if cwd <> "" then workspace := Some cwd;
                    let timestamp = string_from_fields json [ "timestamp"; "createdAt"; "created_at" ] in
                    if timestamp <> "" then started_at := Some timestamp
+               | Some "session_info" ->
+                   let name = string_from_fields json [ "name"; "title" ] in
+                   title := if name = "" then None else Some name
                | _ -> ());
                let event_timestamp =
                  string_from_fields json [ "timestamp"; "createdAt"; "created_at" ]
@@ -532,7 +536,11 @@ let jsonl_thread_of_text ~path text : (thread, diagnostic list) result =
   else
     let entries = List.rev !entries in
     let json_entries = List.rev !json_entries in
-    let title = match !workspace with Some cwd -> basename cwd | None -> id in
+    let title =
+      match !title with
+      | Some value -> value
+      | None -> (match !workspace with Some cwd -> basename cwd | None -> id)
+    in
     Ok
       {
         id;

@@ -82,6 +82,12 @@ let session_text =
            ("timestamp", String "2026-07-05T00:00:00Z");
            ("cwd", String "/repo");
          ];
+       json_line
+         [
+           ("type", String "session_info");
+           ("id", String "named");
+           ("name", String "Renderer investigation");
+         ];
        message_line ~id:"01" ~role:"user" "please inspect renderer";
        message_line ~id:"02" ~role:"assistant" "running search";
        message_line ~id:"03" ~role:"toolResult" ~tool:"exec_command"
@@ -149,7 +155,7 @@ let test_query_jsonl_tool_hits () =
   assert_bool "invalid line diagnostic recorded"
     (List.exists
        (fun (diagnostic : Threads.diagnostic) ->
-         diagnostic.Threads.line = Some 6
+         diagnostic.Threads.line = Some 7
          && contains diagnostic.message "invalid jsonl")
        result.diagnostics)
 
@@ -164,6 +170,9 @@ let test_read_modes () =
     | hit :: _ -> hit.Threads.hit_locator
     | [] -> fail "locator" "expected hit locator"
   in
+  assert_bool "query text exposes exact locator"
+    (contains query_result.text
+       "Locator: {\"threadID\":\"thread-1\",\"sourcePath\":\"/repo/.pi/agent/sessions/thread-1.jsonl\",\"entryID\":\"03\",\"line\":5.0}");
   let overview_request = read_request "thread-1" in
   let overview =
     Threads.plan_read ~id:overview_request.thread_id overview_request catalog
@@ -183,7 +192,7 @@ let test_read_modes () =
           Threads.locator_thread_id = "thread-1";
           locator_source_path = Some "/repo/.pi/agent/sessions/thread-1.jsonl";
           locator_entry_id = Some "03";
-          locator_line = Some 4;
+          locator_line = Some 5;
         });
   let full_request = read_request ~mode:"full" "thread-1" in
   let full = Threads.plan_read ~id:full_request.thread_id full_request catalog in
@@ -197,6 +206,16 @@ let test_read_modes () =
   assert_bool "cursor page ok" next.ok;
   assert_bool "cursor page reaches tail" (contains next.text "visible transcript line 84");
   assert_bool "full text not raw json" (not (contains full.text "\"message\""))
+
+let test_session_name_is_title () =
+  let result = query "renderer investigation" in
+  assert_int "named thread found" 1 (List.length result.threads);
+  let thread = List.hd result.threads in
+  assert_equal "session name title" "Renderer investigation" thread.title;
+  let locator = (List.hd thread.hits).Threads.hit_locator in
+  let request = read_request ~mode:"window" ~locator "thread-1" in
+  let window = Threads.plan_read ~id:request.thread_id request catalog in
+  assert_bool "metadata hit locator opens a window" window.ok
 
 let test_request_preparation () =
   (match Threads.prepare_query_request "  needle  " with
@@ -304,5 +323,6 @@ let () =
   test_query_jsonl_tool_hits ();
   test_hidden_reasoning_not_searched ();
   test_read_modes ();
+  test_session_name_is_title ();
   test_request_preparation ();
   test_cursor_validation ()

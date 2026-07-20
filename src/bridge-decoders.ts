@@ -1,5 +1,5 @@
 import { Compile } from "typebox/compile";
-import { ActiveToolsPlanSchema, AuthorityPlanIssuedSchema, BridgeCommandResultSchema, BridgeErrorResultSchema, BridgeToolExecutionResultSchema, BridgeToolResultSchema, ChildDispatchPlanSchema, ChildSessionStartPlanSchema, CommandChildDispatchPlanSchema, CommandChildSessionPlanSchema, CommandExecutionPlanSchema, CommandNotificationPlanSchema, CommandSpecsResultSchema, CompactionCommandPlanSchema, CompactionSessionPlanSchema, CoreAckSchema, CronCommandResultSchema, CronDeliveredResultSchema, CronGoalFactsSchema, CronListResultSchema, CronPollPlanSchema, CronPromptPlanSchema, CronPromptSchema, CronStartupPlanSchema, EditApplicationResultSchema, EnvironmentContextPlanSchema, ExecApprovalPromptPlanSchema, ExecApprovalResultSchema, ExecNotificationClaimSchema, ExecPolicyAllowRuleResultSchema, ExecToolResultSchema, GoalContinuationPlanSchema, GoalRollbackResultSchema, OpenAiUsageHostAuthSchema, OpenAiUsageHostParamsSchema, PatchApplicationResultSchema, PendingExecNotificationsResultSchema, PermissionsCommandResultSchema, PermissionsPromptPlanSchema, PermissionsPromptSchema, RefreshExecPolicyResultSchema, SandboxHostPathPlanSchema, SkillListResultSchema, SkillResolveResultSchema, ThreadCatalogScansResultSchema, ToolNamesResultSchema, ToolResultEnvelopeSchema, ViewMediaResultEnvelopeSchema, VisibilityListResultSchema, VisibilityRowsResultSchema, VisibilitySavePlanSchema, VisibilityToggleResultSchema, VisibilityWarningsResultSchema, WorkspaceMutationValidationSchema, type ActiveToolsPlan, type AuthorityPlanIssued, type BridgeCommandResult, type BridgeToolExecutionResult, type BridgeToolResult, type ChildDispatchPlan, type ChildSessionStartPlan, type CommandChildDispatchPlan, type CommandChildSessionPlan, type CommandExecutionPlan, type CommandNotificationPlan, type CommandSpecsResult, type CompactionCommandPlan, type CompactionSessionPlan, type CoreAck, type CronCommandResult, type CronDeliveredResult, type CronGoalFacts, type CronListResult, type CronPollPlan, type CronPrompt, type CronPromptPlan, type CronStartupPlan, type EditApplicationResult, type EnvironmentContextPlan, type ExecApprovalPromptPlan, type ExecApprovalResult, type ExecNotificationClaim, type ExecPolicyAllowRuleResult, type ExecToolResult, type GoalContinuationPlan, type GoalRollbackResult, type OpenAiUsageHostAuth, type OpenAiUsageHostParams, type PatchApplicationResult, type PendingExecNotificationsResult, type PermissionsCommandResult, type PermissionsPrompt, type PermissionsPromptPlan, type RefreshExecPolicyResult, type SandboxHostPathPlan, type SkillListResult, type SkillResolveResult, type ThreadCatalogScansResult, type ToolNamesResult, type ToolResultEnvelope, type ViewMediaResultEnvelope, type VisibilityListResult, type VisibilityRowsResult, type VisibilitySavePlan, type VisibilityToggleResult, type VisibilityWarningsResult, type WorkspaceMutationValidation } from "./bridge-core-contracts.ts";
+import { ActiveToolsPlanSchema, AuthorityPlanIssuedSchema, BridgeCommandResultSchema, BridgeErrorResultSchema, BridgeToolExecutionResultSchema, BridgeToolResultSchema, ChildDispatchPlanSchema, ChildSessionStartPlanSchema, CommandChildDispatchPlanSchema, CommandChildSessionPlanSchema, CommandExecutionPlanSchema, CommandNotificationPlanSchema, CommandSpecsResultSchema, CompactionCommandPlanSchema, CompactionSessionPlanSchema, CoreAckSchema, CronCommandResultSchema, CronDeliveredResultSchema, CronGoalFactsSchema, CronListResultSchema, CronPollPlanSchema, CronPromptPlanSchema, CronPromptSchema, CronStartupPlanSchema, EditApplicationResultSchema, EnvironmentContextPlanSchema, ExecApprovalPromptPlanSchema, ExecApprovalResultSchema, ExecNotificationClaimSchema, ExecPolicyAllowRuleResultSchema, ExecToolResultSchema, GoalContinuationPlanSchema, GoalRollbackResultSchema, KimiUsageHostAuthSchema, KimiUsageHostParamsSchema, OpenAiUsageHostAuthSchema, OpenAiUsageHostParamsSchema, UsagePairHostParamsSchema, PatchApplicationResultSchema, PendingExecNotificationsResultSchema, PermissionsCommandResultSchema, PermissionsPromptPlanSchema, PermissionsPromptSchema, RefreshExecPolicyResultSchema, SandboxHostPathPlanSchema, SkillListResultSchema, SkillResolveResultSchema, ThreadCatalogScansResultSchema, ToolNamesResultSchema, ToolResultEnvelopeSchema, ViewMediaResultEnvelopeSchema, VisibilityListResultSchema, VisibilityRowsResultSchema, VisibilitySavePlanSchema, VisibilityToggleResultSchema, VisibilityWarningsResultSchema, WorkspaceMutationValidationSchema, type ActiveToolsPlan, type AuthorityPlanIssued, type BridgeCommandResult, type BridgeToolExecutionResult, type BridgeToolResult, type ChildDispatchPlan, type ChildSessionStartPlan, type CommandChildDispatchPlan, type CommandChildSessionPlan, type CommandExecutionPlan, type CommandNotificationPlan, type CommandSpecsResult, type CompactionCommandPlan, type CompactionSessionPlan, type CoreAck, type CronCommandResult, type CronDeliveredResult, type CronGoalFacts, type CronListResult, type CronPollPlan, type CronPrompt, type CronPromptPlan, type CronStartupPlan, type EditApplicationResult, type EnvironmentContextPlan, type ExecApprovalPromptPlan, type ExecApprovalResult, type ExecNotificationClaim, type ExecPolicyAllowRuleResult, type ExecToolResult, type GoalContinuationPlan, type GoalRollbackResult, type KimiUsageHostAuth, type KimiUsageHostParams, type OpenAiUsageHostAuth, type OpenAiUsageHostParams, type UsagePairHostParams, type PatchApplicationResult, type PendingExecNotificationsResult, type PermissionsCommandResult, type PermissionsPrompt, type PermissionsPromptPlan, type RefreshExecPolicyResult, type SandboxHostPathPlan, type SkillListResult, type SkillResolveResult, type ThreadCatalogScansResult, type ToolNamesResult, type ToolResultEnvelope, type ViewMediaResultEnvelope, type VisibilityListResult, type VisibilityRowsResult, type VisibilitySavePlan, type VisibilityToggleResult, type VisibilityWarningsResult, type WorkspaceMutationValidation } from "./bridge-core-contracts.ts";
 import { AgentActiveCountResultSchema, AgentCleanupPlanSchema, AgentManagerSnapshotSchema, AgentNotificationClaimValidationSchema, AgentRoutingDiagnosticsResultSchema, ComposerCommandResultSchema, CronGoalCreationResultSchema, GatewayCommandOutputSchema, PendingAgentNotificationsResultSchema, PreparedToolActionSchema, type AgentActiveCountResult, type AgentCleanupPlan, type AgentManagerSnapshot, type AgentNotificationClaimValidation, type AgentRoutingDiagnosticsResult, type ComposerCommandResult, type CronGoalCreationResult, type GatewayCommandOutput, type PendingAgentNotificationsResult, type PreparedToolAction } from "./bridge-action-contracts.ts";
 import { ChildSessionMetadataSchema, type ChildSessionMetadata } from "./bridge-child-session-contracts.ts";
 import { ChildPermissionRefreshPlanSchema, type ChildPermissionRefreshPlan } from "./bridge-core-contracts.ts";
@@ -12,7 +12,10 @@ const threadCatalogScansResultDecoder = Compile(ThreadCatalogScansResultSchema);
 const pendingExecNotificationsResultDecoder = Compile(PendingExecNotificationsResultSchema);
 const execNotificationClaimDecoder = Compile(ExecNotificationClaimSchema);
 const openAiUsageHostAuthDecoder = Compile(OpenAiUsageHostAuthSchema);
+const kimiUsageHostAuthDecoder = Compile(KimiUsageHostAuthSchema);
 const openAiUsageHostParamsDecoder = Compile(OpenAiUsageHostParamsSchema);
+const kimiUsageHostParamsDecoder = Compile(KimiUsageHostParamsSchema);
+const usagePairHostParamsDecoder = Compile(UsagePairHostParamsSchema);
 const refreshExecPolicyResultDecoder = Compile(RefreshExecPolicyResultSchema);
 const skillListResultDecoder = Compile(SkillListResultSchema);
 const skillResolveResultDecoder = Compile(SkillResolveResultSchema);
@@ -129,11 +132,35 @@ export function decodeOpenAiUsageHostAuth(value: unknown): OpenAiUsageHostAuth {
   }
 }
 
+export function decodeKimiUsageHostAuth(value: unknown): KimiUsageHostAuth {
+  try {
+    return kimiUsageHostAuthDecoder.Decode(value);
+  } catch {
+    throw new Error("Invalid OCaml Kimi usage host-auth response");
+  }
+}
+
 export function decodeOpenAiUsageHostParams(value: unknown): OpenAiUsageHostParams {
   try {
     return openAiUsageHostParamsDecoder.Decode(value);
   } catch {
     throw new Error("Invalid OCaml OpenAI usage host-params response");
+  }
+}
+
+export function decodeKimiUsageHostParams(value: unknown): KimiUsageHostParams {
+  try {
+    return kimiUsageHostParamsDecoder.Decode(value);
+  } catch {
+    throw new Error("Invalid OCaml Kimi usage host-params response");
+  }
+}
+
+export function decodeUsagePairHostParams(value: unknown): UsagePairHostParams {
+  try {
+    return usagePairHostParamsDecoder.Decode(value);
+  } catch {
+    throw new Error("Invalid OCaml usage-pair host-params response");
   }
 }
 

@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { authorizeMutationPaths, readJsonObjectForAtomicUpdate, resolveAuthorizationPath, writeFileAtomically, writePatchFiles } from "../src/util.ts";
+import { authorizeMutationPaths, readJsonObjectForAtomicUpdate, resolveAuthorizationPath, threadCatalogFacts, writeFileAtomically, writePatchFiles } from "../src/util.ts";
 
 async function writeAuthorizedPatch(application) {
   const paths = [...application.deletes, ...application.writes.map((write) => write.path)];
@@ -109,6 +109,14 @@ try {
     resolveAuthorizationPath(join(directoryLink, "new.txt")),
     join(directoryTarget, "new.txt"),
     "authorization paths should resolve the nearest existing symlink parent",
+  );
+
+  const sessionsDir = join(root, "sessions");
+  await mkdir(sessionsDir);
+  assert.deepEqual(
+    threadCatalogFacts({ cwd: root, sessionManager: { getSessionDir: () => sessionsDir } }),
+    { cwd: root, home: process.env.HOME, override: sessionsDir },
+    "thread discovery must prioritize Pi's configured session directory",
   );
 } finally {
   await rm(root, { recursive: true, force: true });

@@ -15,9 +15,6 @@ import { toolContracts } from "./tool-contract-catalog.ts";
 
 import {
   cwdFromContext,
-  modelRegistryFrom,
-  openAiCredentialRaw,
-  openAiUsageTokenRaw,
   sessionInfoFromContext,
   threadSources,
   authorizeCanonicalMutationPaths,
@@ -41,13 +38,7 @@ import {
 } from "./child-sessions.ts";
 import { installExecNotificationLifecycle, startExecCompletionWaiter } from "./exec-notifications.ts";
 import { executeAgentPrepared, installAgentLifecycle, pendingAgentWaits } from "./agent-orchestration.ts";
-import { decodeAuthorityPlanIssued, decodeBridgeToolResult, decodeCoreAck, decodeEditApplicationResult, decodeExecApprovalPromptPlan, decodeExecApprovalResult, decodeExecPolicyAllowRuleResult, decodeExecToolResult, decodePatchApplicationResult, decodeToolNamesResult, decodeToolResultEnvelope, decodeViewMediaResultEnvelope, type PreparedToolAction, type ToolResultEnvelope } from "./bridge-contracts.ts";
-import {
-  decodeOpenAiUsageHostAuth,
-  decodeOpenAiUsageHostParams,
-  type OpenAiUsageHostLookupFacts,
-  type OpenAiUsageHostParams,
-} from "./bridge-contracts.ts";
+import { decodeAuthorityPlanIssued, decodeCoreAck, decodeEditApplicationResult, decodeExecApprovalPromptPlan, decodeExecApprovalResult, decodeExecPolicyAllowRuleResult, decodeExecToolResult, decodePatchApplicationResult, decodeToolNamesResult, decodeToolResultEnvelope, decodeViewMediaResultEnvelope, type PreparedToolAction, type ToolResultEnvelope } from "./bridge-contracts.ts";
 import {
   agentErrorToolResult,
   errorToolResult,
@@ -56,13 +47,13 @@ import {
   preparedToolResult,
 } from "./tool-results.ts";
 import { authorityPlanId, discardPreparedAuthorityPlan, executeApprovedExaInCore, executeExaInCore } from "./authority-plans.ts";
+import { executeOpenAiUsageWithHostAuth, executeUsagePairWithHostAuth } from "./usage-host.ts";
 import { latestTaumelCustomEntry } from "./pi-session-entries.ts";
 type SettingsObject = { [key: string]: unknown };
 type ToolContext = { readonly cwd?: unknown; readonly model?: unknown; readonly ui?: unknown; readonly hasUI?: unknown; readonly sessionManager?: unknown };
 type ImageModel = { readonly input?: unknown };
 type NodeError = { readonly code?: unknown };
 type PreparedSuccess = Exclude<PreparedToolAction, { ok: false }>;
-type PreparedOpenAiAction = Extract<PreparedSuccess, { action: "openai_usage_fetch" }>;
 type PreparedApprovalAction = Extract<PreparedSuccess, { action: "exec_command_approval" | "write_approval" | "edit_approval" | "apply_patch_approval" | "exa_agent_create_run_approval" }>;
 type PreparedMutationAction = Extract<PreparedSuccess, { action: "write" | "write_approval" | "edit" | "edit_approval" | "apply_patch" | "apply_patch_approval" }>;
 type GatewayToolResult = ToolResultEnvelope | ReturnType<typeof decodeViewMediaResultEnvelope>;
@@ -97,6 +88,8 @@ export {
   refreshOwnedChildPermissions,
   sendToChildSession,
 };
+
+export { executeOpenAiUsageWithHostAuth, executeUsagePairWithHostAuth } from "./usage-host.ts";
 
 async function withGoalClockPaused<T>(core: CoreBridge, run: () => Promise<T>): Promise<T> {
   core.call("goalClockPauseStart", []);
@@ -262,54 +255,6 @@ function boundedApprovalEvidence(prepared: PreparedApprovalAction): string {
   }
   const evidence = lines.join("\n\n");
   return evidence.length <= limit ? evidence : `${evidence.slice(0, limit)}\n… effect diff truncated`;
-}
-
-function openAiUsageHostAuth(core: CoreBridge) {
-  return decodeOpenAiUsageHostAuth(core.call("openAiUsageHostAuth", []));
-}
-
-function openAiUsageHostParams(core: CoreBridge, facts: OpenAiUsageHostLookupFacts): OpenAiUsageHostParams {
-  return decodeOpenAiUsageHostParams(core.call("openAiUsageHostParams", [facts]));
-}
-
-async function executeOpenAiUsageInCore(
-  core: CoreBridge,
-  ctx: unknown,
-  params: OpenAiUsageHostParams,
-) {
-  const rendered = decodeBridgeToolResult(await core.call("executeOpenAiUsage", [params, ctx]));
-  return preparedToolResult(core, { ...rendered });
-}
-
-
-export async function executeOpenAiUsageWithHostAuth(
-  pi: PiLike,
-  core: CoreBridge,
-  prepared: PreparedOpenAiAction,
-  ctx: unknown,
-) {
-  const apiKeyPresent = prepared["apiKeyPresent"] === true;
-  const registry = modelRegistryFrom(pi, ctx);
-  const auth = openAiUsageHostAuth(core);
-  const providerKey = auth.providerKey;
-  const credentialKey = auth.credentialKey;
-  const credential = openAiCredentialRaw(registry, credentialKey);
-  let tokenFacts: Omit<OpenAiUsageHostLookupFacts, "apiKeyPresent">;
-
-  try {
-    tokenFacts = { token: await openAiUsageTokenRaw(registry, providerKey) };
-  } catch (error) {
-    tokenFacts = { tokenError: error instanceof Error ? error.message : String(error) };
-  }
-  return executeOpenAiUsageInCore(
-    core,
-    ctx,
-    openAiUsageHostParams(core, {
-      apiKeyPresent,
-      ...(credential !== undefined ? { credential } : {}),
-      ...tokenFacts,
-    }),
-  );
 }
 
 async function requestSandboxRetryApproval(
@@ -847,6 +792,8 @@ export async function executeTool(
       );
     case "openai_usage_fetch":
       return executeOpenAiUsageWithHostAuth(pi, core, prepared, ctx);
+    case "usage_pair_fetch":
+      return executeUsagePairWithHostAuth(pi, core, prepared, ctx);
     case "exa_fetch":
       return executeExaInCore(core, prepared, ctx);
     case "exa_agent_create_run_approval":

@@ -54,7 +54,7 @@ let command_specs =
     { name = "network"; description = "Enable or disable sandbox network access." };
     { name = "composer"; description = "Configure the Taumel composer UI." };
     { name = "ralph"; description = "Start, pause, resume, finish, and list Ralph tasks." };
-    { name = "usage"; description = "Show OpenAI account and quota usage." };
+    { name = "usage"; description = "Show OpenAI Codex and Kimi Code account usage." };
     { name = "goal"; description = "Show or update the thread goal." };
     { name = "cron"; description = "List, enable, disable, or cancel cron tasks." };
     { name = "tools"; description = "List, enable, disable, or save Taumel tool visibility." };

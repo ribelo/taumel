@@ -263,7 +263,7 @@ export function openAiCredentialRaw(registry: unknown, credentialKey: string): u
   return maybeCall(authStorage, "get", [credentialKey]);
 }
 
-export async function openAiUsageTokenRaw(registry: unknown, providerKey: string): Promise<string> {
+export async function usageTokenRaw(registry: unknown, providerKey: string): Promise<string> {
   const value = await maybeCall(registry, "getApiKeyForProvider", [providerKey]);
   return typeof value === "string" ? value : "";
 }
@@ -429,9 +429,13 @@ export async function discoverCatalogFiles(scan: ThreadCatalogScan): Promise<str
 export function threadCatalogFacts(ctx: unknown): ThreadCatalogFacts {
   const context = objectValue(ctx);
   const cwd = context === undefined ? undefined : property(context, "cwd");
+  const sessionManager = context === undefined ? undefined : objectValue(property(context, "sessionManager"));
+  const getSessionDir = sessionManager === undefined ? undefined : property(sessionManager, "getSessionDir");
+  const sessionDir = typeof getSessionDir === "function" ? getSessionDir.call(sessionManager) : undefined;
   return {
     cwd: typeof cwd === "string" ? cwd : "",
     home: homedir(),
+    ...(typeof sessionDir === "string" && sessionDir !== "" ? { override: sessionDir } : {}),
   };
 }
 

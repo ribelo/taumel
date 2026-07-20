@@ -29,7 +29,7 @@ This split keeps policy testable without replacing or patching Pi's agent loop.
 | Commands | PTY execution, stdin polling, sandbox policy, approvals, and path authorization |
 | Agents | Durable generic agents plus read-only Finder and Oracle specialists |
 | Automation | Goals, continuations, cron tasks, and Ralph loops |
-| Inspection | Persisted thread search/read, system-prompt inspection, and OpenAI usage |
+| Inspection | Persisted thread search/read, system-prompt inspection, and OpenAI/Kimi usage |
 | Research | Exa search, crawling, code context, and asynchronous Exa Agent runs |
 | Pi controls | Tool and skill visibility, composer settings, permissions, and compaction-model selection |
 | Rendering | Compact and expanded TUI renderers for every Taumel tool and custom message |
@@ -92,7 +92,7 @@ Use slash commands for local inspection and configuration.
 | `/execpolicy` | Inspect command-policy decisions |
 | `/compaction-model` | Select the model used for compaction |
 | `/system-prompt` | Inspect Pi's effective system prompt |
-| `/usage` | Inspect OpenAI Codex account usage |
+| `/usage` | Inspect OpenAI Codex and Kimi Code account usage |
 | `/ralph` | Manage Ralph tasks |
 
 Model-facing agent workflow:

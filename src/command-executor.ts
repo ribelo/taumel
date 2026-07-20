@@ -17,6 +17,7 @@ import {
   applyChildSessionUpdate,
   createChildSession,
   executeOpenAiUsageWithHostAuth,
+  executeUsagePairWithHostAuth,
   refreshOwnedChildPermissions,
   sendToChildSession,
 } from "./tool-executor.ts";
@@ -366,6 +367,8 @@ async function executeCommandAction(
     }
     case "openai_usage_fetch":
       return commandResultFromToolResult(core, await executeOpenAiUsageWithHostAuth(pi, core, { ...result }, ctx));
+    case "usage_pair_fetch":
+      return commandResultFromToolResult(core, await executeUsagePairWithHostAuth(pi, core, { ...result }, ctx));
     default:
       return result;
   }
@@ -504,7 +507,7 @@ export function registerGatewayCommands(
         const rawUi = commandContext(ctx)?.ui;
         const ui = typeof rawUi === "object" && rawUi !== null ? rawUi as CommandUi : undefined;
         if (name === "usage" && typeof ui?.setStatus === "function") {
-          ui.setStatus.call(ui, "taumel:usage", "Fetching OpenAI Codex usage...");
+          ui.setStatus.call(ui, "taumel:usage", "Fetching account usage...");
         }
         let result: unknown;
         try {
@@ -526,9 +529,16 @@ export function registerGatewayCommands(
         if (name === "usage") {
           const usageResult = commandResult(result);
           const usageDetails = usageResult?.details ?? {
-            error: typeof usageResult?.error === "string" ? usageResult.error : "OpenAI Codex usage fetch failed",
-            notConfigured: false,
-            rateLimits: [],
+            openai: {
+              error: typeof usageResult?.error === "string" ? usageResult.error : "OpenAI Codex usage fetch failed",
+              notConfigured: false,
+              rateLimits: [],
+            },
+            kimi: {
+              error: typeof usageResult?.error === "string" ? usageResult.error : "Kimi Code usage fetch failed",
+              notConfigured: false,
+              rateLimits: [],
+            },
           };
           await showUsageInspection(usageDetails, ctx);
           return result;

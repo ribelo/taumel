@@ -152,7 +152,7 @@ const auditedOpaqueCoreArguments = new Set([
   "updateFooterThinking:1:HostContext", "planChildGoalContinuation:0:HostGoalEntry",
   "interruptGoalAutomation:0:HostContext", "clearInterruptedGoalAutomation:0:HostContext",
   "persistRalphControllerState:0:HostContext", "reloadSessionState:0:HostContext",
-  "finishCronPrompt:2:HostContext", "executeOpenAiUsage:1:HostContext",
+  "finishCronPrompt:2:HostContext", "executeOpenAiUsage:1:HostContext", "executeUsagePair:1:HostContext",
 ]);
 const observedOpaqueCoreArguments = new Set();
 for (const method of typedNames) {
@@ -198,6 +198,9 @@ for (let index = 0; index < runtimeBranches.length; index += 1) {
 const usageBridge = readFileSync(join(binRoot.pathname, "usage_bridge.ml"), "utf8");
 if (!/let execute_openai[\s\S]*?OpenAiUsageHostParams\.t_of_js/.test(usageBridge)) {
   failures.push("executeOpenAiUsage bypasses its generated runtime decoder");
+}
+if (!/let execute_pair[\s\S]*?UsagePairHostParams\.t_of_js/.test(usageBridge)) {
+  failures.push("executeUsagePair bypasses its generated runtime decoder");
 }
 const sandboxBridge = readFileSync(join(binRoot.pathname, "sandbox_bridge.ml"), "utf8");
 for (const [handler, decoder] of [

@@ -8,17 +8,32 @@ import {
 } from "../src/usage-inspection.ts";
 
 const details = {
-  accountLabel: "person-with-a-long-address@example.com",
-  plan: "Pro",
-  creditsBalance: 990.563425,
-  notConfigured: false,
-  rateLimits: [
-    { label: "Weekly Limit", durationSeconds: 604800, percentLeft: 41, resetsAt: 1_700_300_000, burnRatePerHour: 0.4, exhaustsAt: 1_800_000_000, exhaustsBeforeReset: false },
-    { label: "5h Limit", durationSeconds: 18000, percentLeft: 9, resetsAt: 1_700_010_000, burnRatePerHour: 5.2, exhaustsAt: 1_700_005_000, exhaustsBeforeReset: true },
-  ],
+  openai: {
+    accountLabel: "person-with-a-long-address@example.com",
+    plan: "Pro",
+    creditsBalance: 990.563425,
+    notConfigured: false,
+    rateLimits: [
+      { label: "Weekly Limit", durationSeconds: 604800, percentLeft: 41, resetsAt: 1_700_300_000, burnRatePerHour: 0.4, exhaustsAt: 1_800_000_000, exhaustsBeforeReset: false },
+      { label: "5h Limit", durationSeconds: 18000, percentLeft: 9, resetsAt: 1_700_010_000, burnRatePerHour: 5.2, exhaustsAt: 1_700_005_000, exhaustsBeforeReset: true },
+    ],
+  },
+  kimi: {
+    plan: "Advanced",
+    creditsBalance: 12.5,
+    creditsCurrency: "USD",
+    notConfigured: false,
+    rateLimits: [
+      { label: "Plan limit", percentLeft: 74, resetsAt: 1_700_400_000 },
+      { label: "5h Limit", durationSeconds: 18000, percentLeft: 61, resetsAt: 1_700_020_000 },
+      { label: "Total quota", percentLeft: 40 },
+    ],
+  },
 };
 const decoded = decodeUsageInspection(details);
-assert.deepEqual(decoded.rateLimits.map((row) => row.label), ["5h Limit", "Weekly Limit"]);
+assert.deepEqual(decoded.openai.rateLimits.map((row) => row.label), ["5h Limit", "Weekly Limit"]);
+assert.deepEqual(decoded.kimi.rateLimits.map((row) => row.label), ["5h Limit", "Plan limit", "Total quota"]);
+assert.equal(decoded.kimi.plan, "Advanced");
 
 const colors = [];
 const theme = {
@@ -31,7 +46,10 @@ const theme = {
 const rendered = renderUsageInspection(decoded, theme, 80, 1_700_000_000_000);
 const output = rendered.join("\n");
 assert.match(output, /OpenAI Codex Usage/);
+assert.match(output, /Kimi Code Usage/);
+assert.ok(output.indexOf("OpenAI Codex Usage") < output.indexOf("Kimi Code Usage"));
 assert.match(output, /Credits\s+990\.56/);
+assert.match(output, /Credits\s+USD 12\.50/);
 assert.doesNotMatch(output, /\$990\.56/, "credits must not assume a currency");
 assert.ok(output.indexOf("5h limit") < output.indexOf("Weekly limit"));
 assert.match(output, /Burn 5\.2%\/h/);
@@ -43,10 +61,13 @@ assert.doesNotMatch(output, /\[[#-]+\]/, "usage bars should not use ASCII hash b
 assert.ok(colors.some(({ color, text }) => color === "error" && text.includes("[")), "low quota bar should be error-colored");
 assert.ok(colors.some(({ color, text }) => color === "success" && text.includes("[")), "healthy quota bar should be success-colored");
 const thresholdColors = [];
-renderUsageInspection({ notConfigured: false, rateLimits: [
-  { label: "Warning", percentLeft: 20 },
-  { label: "Unknown" },
-] }, { fg: (color, text) => { thresholdColors.push({ color, text }); return text; } }, 80);
+renderUsageInspection({
+  openai: { notConfigured: false, rateLimits: [
+    { label: "Warning", percentLeft: 20 },
+    { label: "Unknown" },
+  ] },
+  kimi: { notConfigured: true, rateLimits: [] },
+}, { fg: (color, text) => { thresholdColors.push({ color, text }); return text; } }, 80);
 assert.ok(thresholdColors.some(({ color, text }) => color === "warning" && text.includes("[")));
 assert.ok(thresholdColors.some(({ color, text }) => color === "dim" && text.includes("[")));
 
@@ -54,13 +75,42 @@ const narrow = renderUsageInspection(decoded, theme, 32, 1_700_000_000_000);
 assert.ok(narrow.every((line) => visibleWidth(line) <= 32), "narrow usage lines must fit their width");
 assert.ok(narrow.some((line) => line.includes("...")), "narrow account metadata should ellipsize");
 
-const empty = renderUsageInspection(decodeUsageInspection({ notConfigured: false, rateLimits: [] }), theme, 80);
-assert.match(empty.join("\n"), /No quota windows returned/);
-const failed = renderUsageInspection(decodeUsageInspection({ notConfigured: false, error: "Bearer secret-token failed", rateLimits: [] }), theme, 80);
+const empty = renderUsageInspection(decodeUsageInspection({
+  openai: { notConfigured: false, rateLimits: [] },
+  kimi: { notConfigured: false, rateLimits: [] },
+}), theme, 80);
+assert.equal((empty.join("\n").match(/No quota windows returned/g) ?? []).length, 2);
+const failed = renderUsageInspection(decodeUsageInspection({
+  openai: { notConfigured: false, error: "Bearer secret-token failed", rateLimits: [] },
+  kimi: { notConfigured: false, error: "Kimi Code usage request failed: 401", rateLimits: [] },
+}), theme, 80);
 assert.doesNotMatch(failed.join("\n"), /secret-token/);
+for (const partial of [
+  {
+    openai: { notConfigured: false, error: "OpenAI usage request failed: 429", rateLimits: [] },
+    kimi: { notConfigured: false, rateLimits: [{ label: "5h Limit", percentLeft: 60 }] },
+  },
+  {
+    openai: { notConfigured: false, rateLimits: [{ label: "5h Limit", percentLeft: 60 }] },
+    kimi: { notConfigured: false, error: "Kimi Code usage request failed: 429", rateLimits: [] },
+  },
+]) {
+  const partialOutput = renderUsageInspection(decodeUsageInspection(partial), theme, 80).join("\n");
+  assert.match(partialOutput, /Unable to fetch usage/);
+  assert.match(partialOutput, /60% left/);
+}
+const missingKimi = renderUsageInspection(decodeUsageInspection({
+  openai: { notConfigured: false, rateLimits: [{ label: "5h Limit", percentLeft: 50 }] },
+  kimi: { notConfigured: true, rateLimits: [] },
+}), theme, 80).join("\n");
+assert.match(missingKimi, /Kimi Code is not configured in Pi\./);
+assert.match(missingKimi, /Configure the moonshot provider and try again\./);
 const staleEstimate = renderUsageInspection(decodeUsageInspection({
-  notConfigured: false,
-  rateLimits: [{ label: "Weekly Limit", percentLeft: 99, burnRatePerHour: 1.8, exhaustsAt: 1_699_999_000, exhaustsBeforeReset: true }],
+  openai: {
+    notConfigured: false,
+    rateLimits: [{ label: "Weekly Limit", percentLeft: 99, burnRatePerHour: 1.8, exhaustsAt: 1_699_999_000, exhaustsBeforeReset: true }],
+  },
+  kimi: { notConfigured: true, rateLimits: [] },
 }), theme, 80, 1_700_000_000_000).join("\n");
 assert.doesNotMatch(staleEstimate, /Est\. empty in under 1m/, "past exhaustion timestamps must not render as imminent estimates");
 
@@ -89,9 +139,18 @@ const integrationCore = {
   call(method, args = []) {
     if (method === "commandSpecs") return { specs: [{ name: "usage", description: "Show usage" }] };
     if (method === "planCommandExecution") return { kind: "direct" };
-    if (method === "handleCommand") return { ok: true, action: "openai_usage_fetch", apiKeyPresent: false };
+    if (method === "handleCommand") {
+      return {
+        ok: true,
+        action: "usage_pair_fetch",
+        openaiApiKeyPresent: false,
+      };
+    }
     if (method === "openAiUsageHostAuth") return { providerKey: "openai-codex", credentialKey: "openai-codex", source: "openai-codex" };
+    if (method === "kimiUsageHostAuth") return { providerKey: "moonshot", source: "moonshot" };
     if (method === "openAiUsageHostParams") return { apiKeyPresent: false, tokenState: "present", token: "token" };
+    if (method === "kimiUsageHostParams") return { apiKeyPresent: false, tokenState: "missing" };
+    if (method === "executeUsagePair") return { ok: true, action: "tool_result", text: "legacy", details };
     if (method === "executeOpenAiUsage") return { ok: true, action: "tool_result", text: "legacy", details };
     if (method === "toolResultEnvelope") {
       const prepared = args[0].prepared;
@@ -111,14 +170,16 @@ registerGatewayCommands({ registerCommand: (name, command) => commands.set(name,
 await commands.get("usage").handler("", {
   modelRegistry: {
     authStorage: { get: () => ({}) },
-    getApiKeyForProvider: async () => "token",
+    getApiKeyForProvider: async (provider) => provider === "moonshot" ? "" : "token",
   },
   ui: {
     setStatus: (key, value) => statuses.push([key, value]),
     custom: async (factory) => {
       await new Promise((done) => {
         const modal = factory({}, theme, {}, done);
-        assert.match(modal.render(80).join("\n"), /OpenAI Codex Usage/);
+        const text = modal.render(80).join("\n");
+        assert.match(text, /OpenAI Codex Usage/);
+        assert.match(text, /Kimi Code Usage/);
         modal.handleInput("q");
       });
     },
@@ -126,7 +187,7 @@ await commands.get("usage").handler("", {
   },
 });
 assert.deepEqual(statuses, [
-  ["taumel:usage", "Fetching OpenAI Codex usage..."],
+  ["taumel:usage", "Fetching account usage..."],
   ["taumel:usage", undefined],
 ]);
 assert.equal(notificationPlans, 0, "usage should suppress command completion notification planning");

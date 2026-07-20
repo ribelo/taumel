@@ -16,13 +16,19 @@ type UsageWindow = {
   readonly exhaustsBeforeReset?: boolean;
 };
 
-export type UsageInspection = {
+export type ProviderUsageInspection = {
   readonly accountLabel?: string;
   readonly plan?: string;
   readonly creditsBalance?: number;
+  readonly creditsCurrency?: string;
   readonly notConfigured: boolean;
   readonly error?: string;
   readonly rateLimits: readonly UsageWindow[];
+};
+
+export type UsageInspection = {
+  readonly openai: ProviderUsageInspection;
+  readonly kimi: ProviderUsageInspection;
 };
 
 function record(value: unknown): UnknownObject | undefined {
@@ -37,7 +43,7 @@ function optionalNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-export function decodeUsageInspection(value: unknown): UsageInspection {
+function decodeProviderUsage(value: unknown): ProviderUsageInspection {
   const details = record(value) ?? {};
   const rateLimits = Array.isArray(details["rateLimits"])
     ? details["rateLimits"].flatMap((raw): UsageWindow[] => {
@@ -62,7 +68,26 @@ export function decodeUsageInspection(value: unknown): UsageInspection {
     ...(optionalString(details["accountLabel"]) === undefined ? {} : { accountLabel: optionalString(details["accountLabel"]) }),
     ...(optionalString(details["plan"]) === undefined ? {} : { plan: optionalString(details["plan"]) }),
     ...(optionalNumber(details["creditsBalance"]) === undefined ? {} : { creditsBalance: optionalNumber(details["creditsBalance"]) }),
+    ...(optionalString(details["creditsCurrency"]) === undefined ? {} : { creditsCurrency: optionalString(details["creditsCurrency"]) }),
     ...(optionalString(details["error"]) === undefined ? {} : { error: optionalString(details["error"]) }),
+  };
+}
+
+export function decodeUsageInspection(value: unknown): UsageInspection {
+  const details = record(value) ?? {};
+  if (record(details["openai"]) !== undefined || record(details["kimi"]) !== undefined) {
+    return {
+      openai: decodeProviderUsage(details["openai"]),
+      kimi: decodeProviderUsage(details["kimi"]),
+    };
+  }
+  // Legacy single-provider payload compatibility.
+  return {
+    openai: decodeProviderUsage(details),
+    kimi: {
+      notConfigured: true,
+      rateLimits: [],
+    },
   };
 }
 
@@ -106,38 +131,53 @@ function sanitizeError(error: string): string {
   return error.replace(/Bearer\s+\S+/gi, "Bearer [redacted]").replace(/\s+/g, " ").trim().slice(0, 240);
 }
 
-export function renderUsageInspection(data: UsageInspection, theme: Theme, width: number, nowMs = Date.now()): string[] {
+function renderProviderSection(
+  title: string,
+  data: ProviderUsageInspection,
+  theme: Theme,
+  width: number,
+  nowMs: number,
+  notConfiguredLines: readonly [string, string],
+): string[] {
   const w = Math.max(1, width);
-  const line = (value: string) => truncateToWidth(value, w, "…");
-  const lines: string[] = [theme.fg("accent", " OpenAI Codex Usage"), ""];
+  const line = (value: string) => truncateToWidth(value, w, "...");
+  const lines: string[] = [theme.fg("accent", ` ${title}`), ""];
   if (data.notConfigured) {
-    lines.push(" OpenAI Codex is not configured.", " Sign in with /login and try again.");
+    lines.push(` ${notConfiguredLines[0]}`, ` ${notConfiguredLines[1]}`);
   } else if (data.error !== undefined) {
     lines.push(theme.fg("error", " Unable to fetch usage"), ` ${sanitizeError(data.error)}`);
   } else {
     const metadata: [string, string][] = [];
     if (data.accountLabel !== undefined) metadata.push(["Account", data.accountLabel]);
     if (data.plan !== undefined) metadata.push(["Plan", data.plan]);
-    if (data.creditsBalance !== undefined) metadata.push(["Credits", data.creditsBalance.toFixed(2)]);
+    if (data.creditsBalance !== undefined) {
+      const credits = data.creditsCurrency === undefined
+        ? data.creditsBalance.toFixed(2)
+        : `${data.creditsCurrency} ${data.creditsBalance.toFixed(2)}`;
+      metadata.push(["Credits", credits]);
+    }
     const labelWidth = metadata.reduce((max, [label]) => Math.max(max, label.length), 0);
-    for (const [label, value] of metadata) lines.push(` ${label.padEnd(labelWidth)}   ${value}`);
+    for (const [label, value] of metadata) lines.push(line(` ${label.padEnd(labelWidth)}   ${value}`));
     if (metadata.length > 0 && data.rateLimits.length > 0) lines.push("");
     if (data.rateLimits.length === 0) lines.push(theme.fg("dim", " No quota windows returned"));
     for (let index = 0; index < data.rateLimits.length; index += 1) {
       const row = data.rateLimits[index]!;
       if (index > 0) lines.push("");
       const label = row.label.replace(/\bLimit\b/, "limit");
-      lines.push(` ${label}`);
+      lines.push(line(` ${label}`));
       const barWidth = Math.max(6, Math.min(20, w - 15));
       const percent = row.percentLeft === undefined ? undefined : Math.max(0, Math.min(100, Math.round(row.percentLeft)));
       const filled = percent === undefined ? 0 : Math.round((percent / 100) * barWidth);
       const bar = `[${"█".repeat(filled)}${"░".repeat(barWidth - filled)}]`;
-      lines.push(` ${theme.fg(quotaColor(percent), bar)} ${percent === undefined ? "?" : percent}% left`);
+      lines.push(line(` ${theme.fg(quotaColor(percent), bar)} ${percent === undefined ? "?" : percent}% left`));
       if (row.resetsAt !== undefined) {
         const reset = timedEvent("Resets", row.resetsAt, nowMs);
         const parts = reset.split(" · ");
-        if (` ${reset}`.length <= w || parts.length !== 2) lines.push(` ${reset}`);
-        else lines.push(` ${parts[0]}`, ` at ${parts[1]}`);
+        if (` ${reset}`.length <= w || parts.length !== 2) lines.push(line(` ${reset}`));
+        else {
+          lines.push(line(` ${parts[0]}`));
+          lines.push(line(` at ${parts[1]}`));
+        }
       }
       if (row.burnRatePerHour !== undefined && row.burnRatePerHour >= 0.01) {
         const burn = `Burn ${row.burnRatePerHour.toFixed(1)}%/h`;
@@ -150,13 +190,35 @@ export function renderUsageInspection(data: UsageInspection, theme: Theme, width
           ? "Safe until reset"
           : exhaustionTarget === undefined ? undefined : timedEvent("Est. empty", exhaustionTarget, nowMs);
         const burnLine = `${burn}${estimate === undefined ? "" : ` · ${estimate}`}`;
-        if (` ${burnLine}`.length <= w || estimate === undefined) lines.push(` ${burnLine}`);
-        else lines.push(` ${burn}`, ` ${estimate}`);
+        if (` ${burnLine}`.length <= w || estimate === undefined) lines.push(line(` ${burnLine}`));
+        else {
+          lines.push(line(` ${burn}`));
+          lines.push(line(` ${estimate}`));
+        }
       }
     }
   }
-  lines.push("", theme.fg("dim", " Esc/q/Enter close"));
   return lines.map(line);
+}
+
+export function renderUsageInspection(data: UsageInspection, theme: Theme, width: number, nowMs = Date.now()): string[] {
+  const openai = renderProviderSection(
+    "OpenAI Codex Usage",
+    data.openai,
+    theme,
+    width,
+    nowMs,
+    ["OpenAI Codex is not configured.", "Sign in with /login and try again."],
+  );
+  const kimi = renderProviderSection(
+    "Kimi Code Usage",
+    data.kimi,
+    theme,
+    width,
+    nowMs,
+    ["Kimi Code is not configured in Pi.", "Configure the moonshot provider and try again."],
+  );
+  return [...openai, "", ...kimi, "", theme.fg("dim", " Esc/q/Enter close")];
 }
 
 export async function showUsageInspection(details: unknown, ctx: unknown): Promise<void> {

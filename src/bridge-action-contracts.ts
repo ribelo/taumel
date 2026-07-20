@@ -70,9 +70,18 @@ export const OpenAiUsageFetchSchema = Type.Object(
   { ok: Type.Literal(true), action: Type.Literal("openai_usage_fetch"), apiKeyPresent: Type.Boolean() },
   { $id: "OpenAiUsageFetch", additionalProperties: false },
 );
+export const UsagePairFetchSchema = Type.Object(
+  {
+    ok: Type.Literal(true),
+    action: Type.Literal("usage_pair_fetch"),
+    openaiApiKeyPresent: Type.Boolean(),
+  },
+  { $id: "UsagePairFetch", additionalProperties: false },
+);
 export const GatewayCommandOutputSchema = Type.Union([
   GatewayCommandErrorSchema, GatewayCommandResultSchema, PermissionsPromptSchema,
   CronPromptSchema, VisibilityPromptSchema, VisibilitySavePlanSchema, OpenAiUsageFetchSchema,
+  UsagePairFetchSchema,
 ]);
 export type GatewayCommandOutput = Static<typeof GatewayCommandOutputSchema>;
 export const PrepareToolFactsSchema = Type.Object(
@@ -488,7 +497,7 @@ export type AgentActiveCountResult = Static<typeof AgentActiveCountResultSchema>
 export type AgentCleanupPlan = Static<typeof AgentCleanupPlanSchema>;
 export type AgentManagerSnapshot = Static<typeof AgentManagerSnapshotSchema>;
 export const PreparedToolActionSchema = Type.Union([
-  GatewayCommandErrorSchema, BridgeToolResultSchema, OpenAiUsageFetchSchema, PreparedReadSchema,
+  GatewayCommandErrorSchema, BridgeToolResultSchema, OpenAiUsageFetchSchema, UsagePairFetchSchema, PreparedReadSchema,
   PreparedViewMediaSchema, PreparedWriteStdinSchema, PreparedExecSchema, PreparedExecApprovalSchema,
   PreparedWriteSchema, PreparedWriteApprovalSchema, PreparedEditSchema, PreparedEditApprovalSchema,
   PreparedPatchSchema, PreparedPatchApprovalSchema, PreparedThreadQuerySchema, PreparedThreadReadSchema,

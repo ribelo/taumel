@@ -108,51 +108,28 @@ export const ExecNotificationClaimSchema = Type.Union([
 export type PendingExecNotificationsResult = Static<typeof PendingExecNotificationsResultSchema>;
 export type ExecNotificationClaim = Static<typeof ExecNotificationClaimSchema>;
 
-export const OpenAiUsageHostAuthSchema = Type.Object(
-  {
-    providerKey: Type.String({ minLength: 1 }),
-    credentialKey: Type.String({ minLength: 1 }),
-    source: Type.String({ minLength: 1 }),
-  },
-  { $id: "OpenAiUsageHostAuth", additionalProperties: false },
-);
-
-export const OpenAiUsageHostLookupFactsSchema = Type.Object(
-  {
-    apiKeyPresent: Type.Boolean(),
-    credential: Type.Optional(Type.Unknown()),
-    token: Type.Optional(Type.String()),
-    tokenError: Type.Optional(Type.String()),
-  },
-  { $id: "OpenAiUsageHostLookupFacts", additionalProperties: false },
-);
-
-const hostParamsBase = {
-  apiKeyPresent: Type.Boolean(),
-  credential: Type.Optional(Type.Unknown()),
-};
-
-export const OpenAiUsageHostParamsPresentSchema = Type.Object(
-  { ...hostParamsBase, tokenState: Type.Literal("present"), token: Type.String({ minLength: 1 }) },
-  { $id: "OpenAiUsageHostParamsPresent", additionalProperties: false },
-);
-export const OpenAiUsageHostParamsMissingSchema = Type.Object(
-  { ...hostParamsBase, tokenState: Type.Literal("missing") },
-  { $id: "OpenAiUsageHostParamsMissing", additionalProperties: false },
-);
-export const OpenAiUsageHostParamsErrorSchema = Type.Object(
-  { ...hostParamsBase, tokenState: Type.Literal("error"), tokenError: Type.String({ minLength: 1 }) },
-  { $id: "OpenAiUsageHostParamsError", additionalProperties: false },
-);
-export const OpenAiUsageHostParamsSchema = Type.Union([
+export {
+  OpenAiUsageHostAuthSchema,
+  KimiUsageHostAuthSchema,
+  OpenAiUsageHostLookupFactsSchema,
+  KimiUsageHostLookupFactsSchema,
   OpenAiUsageHostParamsPresentSchema,
   OpenAiUsageHostParamsMissingSchema,
   OpenAiUsageHostParamsErrorSchema,
-], { $id: "OpenAiUsageHostParams" });
-
-export type OpenAiUsageHostAuth = Static<typeof OpenAiUsageHostAuthSchema>;
-export type OpenAiUsageHostLookupFacts = Static<typeof OpenAiUsageHostLookupFactsSchema>;
-export type OpenAiUsageHostParams = Static<typeof OpenAiUsageHostParamsSchema>;
+  OpenAiUsageHostParamsSchema,
+  KimiUsageHostParamsPresentSchema,
+  KimiUsageHostParamsMissingSchema,
+  KimiUsageHostParamsErrorSchema,
+  KimiUsageHostParamsSchema,
+  UsagePairHostParamsSchema,
+  type OpenAiUsageHostAuth,
+  type KimiUsageHostAuth,
+  type OpenAiUsageHostLookupFacts,
+  type KimiUsageHostLookupFacts,
+  type OpenAiUsageHostParams,
+  type KimiUsageHostParams,
+  type UsagePairHostParams,
+} from "./bridge-usage-contracts.ts";
 
 export const ExecPolicyScopeSchema = Type.Object(
   { scope: Type.String({ minLength: 1 }), execPolicy: Type.Unknown() },

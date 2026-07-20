@@ -48,6 +48,9 @@ import {
   decodeGoalContinuationPlan,
   decodeOpenAiUsageHostAuth,
   decodeOpenAiUsageHostParams,
+  decodeKimiUsageHostAuth,
+  decodeKimiUsageHostParams,
+  decodeUsagePairHostParams,
   decodePendingExecNotificationsResult,
   decodeRefreshExecPolicyResult,
   decodeSkillListResult,
@@ -177,6 +180,11 @@ const usageAuth = decodeOpenAiUsageHostAuth({
   source: "host",
 });
 if (usageAuth.providerKey !== "openai-codex") throw new Error("usage auth did not decode");
+const kimiAuth = decodeKimiUsageHostAuth({
+  providerKey: "moonshot",
+  source: "moonshot",
+});
+if (kimiAuth.providerKey !== "moonshot") throw new Error("kimi usage auth did not decode");
 for (const value of [
   { apiKeyPresent: false, tokenState: "missing" },
   { apiKeyPresent: false, tokenState: "present", token: "token" },
@@ -185,16 +193,30 @@ for (const value of [
   if (decodeOpenAiUsageHostParams(value).tokenState !== value.tokenState) {
     throw new Error("usage host params did not decode");
   }
+  if (decodeKimiUsageHostParams(value).tokenState !== value.tokenState) {
+    throw new Error("kimi usage host params did not decode");
+  }
+}
+const pair = decodeUsagePairHostParams({
+  openai: { apiKeyPresent: true, tokenState: "present", token: "token" },
+  kimi: { apiKeyPresent: false, tokenState: "missing" },
+});
+if (pair.openai.tokenState !== "present" || pair.kimi.tokenState !== "missing") {
+  throw new Error("usage pair host params did not decode");
 }
 for (const invalid of [
   { providerKey: "", credentialKey: "x", source: "host" },
+  { providerKey: "", source: "moonshot" },
   { apiKeyPresent: false, tokenState: "present" },
   { apiKeyPresent: false, tokenState: "missing", token: "unexpected" },
   { apiKeyPresent: false, tokenState: "unknown" },
+  { openai: { apiKeyPresent: true, tokenState: "present", token: "token" } },
 ]) {
   let rejected = false;
   try {
-    if ("providerKey" in invalid) decodeOpenAiUsageHostAuth(invalid);
+    if ("credentialKey" in invalid) decodeOpenAiUsageHostAuth(invalid);
+    else if ("source" in invalid && !("apiKeyPresent" in invalid) && !("openai" in invalid)) decodeKimiUsageHostAuth(invalid);
+    else if ("openai" in invalid || "kimi" in invalid) decodeUsagePairHostParams(invalid);
     else decodeOpenAiUsageHostParams(invalid);
   } catch {
     rejected = true;

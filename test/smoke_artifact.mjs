@@ -110,11 +110,38 @@ if (!core || typeof core.call !== "function" || Object.keys(core).join(",") !== 
   throw new Error("Taumel initialization did not return the private core bridge");
 }
 const usageParams = core.call("openAiUsageHostParams", [{ apiKeyPresent: false, token: "token" }]);
+const kimiUsageParams = core.call("kimiUsageHostParams", [{ token: "kimi-token" }]);
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async () => { throw new Error("usage bridge regression fetch"); };
 try {
   await assert.doesNotReject(() => core.call("executeOpenAiUsage", [usageParams, ctx]));
 } finally {
+  globalThis.fetch = originalFetch;
+}
+let releaseUsageFetches;
+const usageFetchGate = new Promise((resolve) => { releaseUsageFetches = resolve; });
+let concurrentUsageFetches = 0;
+globalThis.fetch = async (url) => {
+  concurrentUsageFetches += 1;
+  await usageFetchGate;
+  const payload = String(url).includes("api.kimi.com")
+    ? { usage: { used: 1, limit: 10 } }
+    : { rate_limit: {} };
+  return new Response(JSON.stringify(payload), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+};
+try {
+  const pairFetch = core.call("executeUsagePair", [{ openai: usageParams, kimi: kimiUsageParams }, ctx]);
+  for (let attempt = 0; attempt < 20 && concurrentUsageFetches < 2; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  assert.equal(concurrentUsageFetches, 2, "usage providers must start concurrently");
+  releaseUsageFetches();
+  await pairFetch;
+} finally {
+  releaseUsageFetches();
   globalThis.fetch = originalFetch;
 }
 assert.throws(() => core.call("hostToolResult", [{ action: "exec_command", details: {} }]));

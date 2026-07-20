@@ -302,9 +302,9 @@ contact the agent or become part of the conversation.
 _Avoid_: Prompt capture, system prompt message
 
 **Usage inspection**:
-A user-requested, transient view of current OpenAI Codex account quota that does
-not contact the agent or become part of the conversation.
-_Avoid_: Usage message, provider status
+A user-requested, transient view of the fixed OpenAI Codex and Kimi Code account
+quota pair that does not contact the agent or become part of the conversation.
+_Avoid_: Usage message, provider status, generic provider registry
 
 **Goal objective submission**:
 The visible user-authored message that starts work on a newly created goal.

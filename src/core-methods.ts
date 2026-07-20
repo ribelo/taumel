@@ -124,8 +124,11 @@ export type CoreMethodArgs = {
   readonly runThreadTool: readonly [Static<typeof Core.ThreadToolFactsSchema>];
   readonly planThreadCatalogScans: readonly [Static<typeof Core.ThreadCatalogFactsSchema>];
   readonly openAiUsageHostAuth: readonly [];
+  readonly kimiUsageHostAuth: readonly [];
   readonly openAiUsageHostParams: readonly [Static<typeof Core.OpenAiUsageHostLookupFactsSchema>];
+  readonly kimiUsageHostParams: readonly [Static<typeof Core.KimiUsageHostLookupFactsSchema>];
   readonly executeOpenAiUsage: readonly [Static<typeof Core.OpenAiUsageHostParamsSchema>, HostContext];
+  readonly executeUsagePair: readonly [Static<typeof Core.UsagePairHostParamsSchema>, HostContext];
   readonly executeExa: readonly [Static<typeof Core.ExaExecutionFactsSchema>];
   readonly approveExaPlan: readonly [Static<typeof Core.ExaExecutionFactsSchema>];
 };
