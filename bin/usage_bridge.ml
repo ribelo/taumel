@@ -218,7 +218,7 @@ let fetch_json_effect ~label ~request ~on_http_error ~on_error ~on_ok =
   in
   let client = http_client () in
   Eta_http.Client.request client http_request
-  |> Effect.result
+  |> Effect.to_result
   |> Effect.bind (function
        | Error error -> Effect.pure (on_error (Eta_http.Error.to_string error))
        | Ok response ->
@@ -232,7 +232,7 @@ let fetch_json_effect ~label ~request ~on_http_error ~on_error ~on_ok =
                     on_http_error (string_of_int response.Eta_http.Response.status))
            else
              Eta_http.Body.Stream.read_all response.Eta_http.Response.body
-             |> Effect.result
+             |> Effect.to_result
              |> Effect.map (function
                   | Error error -> on_error (Eta_http.Error.to_string error)
                   | Ok body -> (

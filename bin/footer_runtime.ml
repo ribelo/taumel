@@ -57,7 +57,7 @@ let start_refresh_loop () =
   let rt = Runtime.create () in
   runtime := Some rt;
   let loop =
-    Effect.repeat (Schedule.spaced (Duration.seconds 5))
+    Effect.repeat ~schedule:(Schedule.spaced (Duration.seconds 5))
       (refresh_active_host ())
   in
   Runtime.run rt loop ~on_result:(fun _ -> ())

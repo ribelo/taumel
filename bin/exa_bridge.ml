@@ -262,7 +262,7 @@ let execute_effect raw_prepared =
                 ~max_response_body_bytes:(4 * 1024 * 1024) ()
             in
             Eta_http.Client.request client request
-            |> Effect.result
+            |> Effect.to_result
             |> Effect.bind (function
                  | Error error ->
                      Effect.pure
@@ -272,7 +272,7 @@ let execute_effect raw_prepared =
                                 (Eta_http.Error.to_string error))))
                  | Ok response ->
                      Eta_http.Body.Stream.read_all response.Eta_http.Response.body
-                     |> Effect.result
+                     |> Effect.to_result
                      |> Effect.map (function
                           | Error error ->
                               inject
