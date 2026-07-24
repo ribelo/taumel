@@ -1,3 +1,5 @@
+// Synced byte-identical from openai/codex codex-rs/core/src/tools/handlers/apply_patch.lark (2026-07-24). Re-sync: cp + diff.
+import applyPatchGrammar from "./apply_patch.lark" with { type: "text" };
 import type { ToolContract } from "./tool-contract-model.ts";
 import { toolParameters } from "./tool-contract-model.ts";
 import {
@@ -60,6 +62,7 @@ export const toolContracts: readonly ToolContract[] = [
     description: "Apply a patch to add, update, move, or delete one or more workspace files. Use the *** Begin Patch format.",
     promptSnippet: "Add, update, move, or delete workspace files with one patch.",
     parameters: toolParameters(ApplyPatchParamsSchema),
+    constrainedSampling: { type: "grammar", variants: { openai_lark: applyPatchGrammar } },
   },
   {
     name: "read",

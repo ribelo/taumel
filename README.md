@@ -36,7 +36,7 @@ This split keeps policy testable without replacing or patching Pi's agent loop.
 
 ## Requirements
 
-- Pi with `@earendil-works/pi-coding-agent` compatible with `^0.79.9`
+- Pi with `@earendil-works/pi-coding-agent` compatible with `^0.82.0`
 - Node.js and npm
 - Nix with flakes enabled
 - An Eta checkout at `../ocaml/Eta`, relative to this repository, or at

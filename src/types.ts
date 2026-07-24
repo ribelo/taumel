@@ -56,6 +56,10 @@ export type ToolDefinition = {
   readonly promptSnippet: string;
   readonly promptGuidelines?: readonly string[];
   readonly parameters: unknown;
+  readonly constrainedSampling?:
+    | false
+    | { readonly type: "json_schema"; readonly strict: "prefer" | "require" }
+    | { readonly type: "grammar"; readonly variants: { readonly openai_lark?: string; readonly openai_regex?: string } };
   readonly execute: (...args: unknown[]) => Promise<unknown>;
   readonly renderCall?: (...args: unknown[]) => unknown;
   readonly renderResult?: (...args: unknown[]) => unknown;

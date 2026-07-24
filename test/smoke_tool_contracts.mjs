@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { parseToolParams } from "../src/tool-contracts.ts";
 import { toolContracts } from "../src/tool-contract-catalog.ts";
 
@@ -63,6 +64,20 @@ const patch = "*** Begin Patch\n*** End Patch\n";
 expectOk("apply_patch", { input: patch });
 expectError("apply_patch", { input: "*** Begin Patch\n*** End Patch\n", patch: "x" }, "additional");
 expectError("apply_patch", {}, "required");
+
+const constrainedTools = toolContracts.filter((tool) => Object.hasOwn(tool, "constrainedSampling"));
+assert(constrainedTools.length === 1, "only apply_patch should use constrained sampling");
+assert(constrainedTools[0]?.name === "apply_patch", "apply_patch should use constrained sampling");
+assert(
+  JSON.stringify(Object.keys(constrainedTools[0]?.constrainedSampling?.variants ?? {})) ===
+    JSON.stringify(["openai_lark"]),
+  "apply_patch constrained sampling should define only the openai_lark variant",
+);
+assert(
+  constrainedTools[0]?.constrainedSampling?.variants.openai_lark ===
+    readFileSync(new URL("../src/apply_patch.lark", import.meta.url), "utf8"),
+  "apply_patch constrained sampling grammar should match src/apply_patch.lark byte-for-byte",
+);
 
 const cronSnippet = toolContracts.find((t) => t.name === "cron_create");
 assert(

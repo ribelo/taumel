@@ -5,6 +5,10 @@ export type ToolContract = {
   readonly promptSnippet: string;
   readonly promptGuidelines?: readonly string[];
   readonly parameters: object;
+  readonly constrainedSampling?:
+    | false
+    | { readonly type: "json_schema"; readonly strict: "prefer" | "require" }
+    | { readonly type: "grammar"; readonly variants: { readonly openai_lark?: string; readonly openai_regex?: string } };
 };
 
 type JsonSchemaObject = {

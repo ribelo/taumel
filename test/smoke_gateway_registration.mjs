@@ -33,6 +33,29 @@ const core = {
 // gateway-nkm1: child gateways reuse the owning initialized core.
 registerGatewayTools(pi, core, new Map());
 
+const childRegisteredTools = new Map();
+registerGatewayTools(
+  { ...pi, registerTool: (tool) => childRegisteredTools.set(tool.name, tool) },
+  {
+    call(method) {
+      if (method === "toolPolicyNames") return { names: [...toolNames] };
+      if (method === "allowedToolNames") return { names: ["apply_patch"] };
+      throw new Error(`unexpected child core call: ${method}`);
+    },
+  },
+  new Map(),
+);
+assert.deepEqual(
+  childRegisteredTools.get("apply_patch")?.constrainedSampling,
+  {
+    type: "grammar",
+    variants: {
+      openai_lark: readFileSync(new URL("../src/apply_patch.lark", import.meta.url), "utf8"),
+    },
+  },
+  "child-style gateway registration stripped apply_patch constrained sampling",
+);
+
 if (JSON.stringify(registered) !== JSON.stringify(["read"])) {
   throw new Error(`gateway registration ignored OCaml exposure policy: ${JSON.stringify(registered)}`);
 }

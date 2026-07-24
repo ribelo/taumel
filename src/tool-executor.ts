@@ -918,6 +918,7 @@ export function registerGatewayTools(
       parameters: contract.parameters,
       promptSnippet: contract.promptSnippet ?? "",
       ...(contract.promptGuidelines !== undefined ? { promptGuidelines: contract.promptGuidelines } : {}),
+      ...(contract.constrainedSampling !== undefined ? { constrainedSampling: contract.constrainedSampling } : {}),
       execute: async (...args: unknown[]) => {
         const childExtensionFactory = (childPi: PiLike) =>
           registerGatewayTools(childPi, core, childSessions);
