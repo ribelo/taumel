@@ -58,6 +58,27 @@ _Avoid_: Global session state, session cache
 
 **Owned asynchronous resource**:
 Taumel work that may remain live after its initiating call and therefore carries
+
+**Plan**:
+A per-session ordered task list with a lifecycle (`draft`, `active`,
+`paused`, `blocked`, `time_limited`, `complete`), telemetry,
+and an
+automation gate; the plan is defined by its tasks, and activation commits the
+task list and starts continuation.
+_Avoid_: goal, objective record, todo list
+
+**Plan task**:
+A unit of tracked work inside the plan record, carrying a `task-` identity,
+title, optional description, lifecycle status, `depends_on` edges, and a
+`user` or `agent` origin; task state is session-local, drives continuation
+content, and gates plan completion.
+_Avoid_: todo, plan item, subagent task
+
+**Frozen plan**:
+The derived, never-stored condition of a plan in any status other than
+`draft`; while frozen the agent may not create tasks or edit task content,
+and only the user may return the plan to `draft`.
+_Avoid_: locked flag, plan mode, read-only mode
 the identity of the parent session that may observe or control it.
 _Avoid_: Background global, detached task
 
