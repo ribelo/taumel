@@ -118,24 +118,24 @@ let task ?(mode = Cron.Message) ?(recurring = true) ?(enabled = true) ?(pending_
 
 let test_deliverable_precedence () =
   let message_task = task "deadbeef" in
-  let active_goal =
-    { Cron.host_idle = true; goal_driving = true; goal_slot_free = false }
+  let active_plan =
+    { Cron.host_idle = true; plan_driving = true; plan_slot_free = false }
   in
-  let paused_goal =
-    { Cron.host_idle = true; goal_driving = false; goal_slot_free = false }
+  let paused_plan =
+    { Cron.host_idle = true; plan_driving = false; plan_slot_free = false }
   in
-  assert_bool "active goal automation holds message cron"
-    (not (Cron.deliverable active_goal message_task));
-  assert_bool "paused/non-driving goal permits message cron"
-    (Cron.deliverable paused_goal message_task);
-  assert_bool "goal mode still needs free slot"
-    (not (Cron.deliverable paused_goal { message_task with mode = Cron.Goal }));
+  assert_bool "active plan automation holds message cron"
+    (not (Cron.deliverable active_plan message_task));
+  assert_bool "paused/non-driving plan permits message cron"
+    (Cron.deliverable paused_plan message_task);
+  assert_bool "plan mode still needs free slot"
+    (not (Cron.deliverable paused_plan { message_task with mode = Cron.Plan }));
   assert_bool "busy host holds cron"
-    (not (Cron.deliverable { paused_goal with host_idle = false } message_task))
+    (not (Cron.deliverable { paused_plan with host_idle = false } message_task))
 
 let test_disabled_state_holds_pending_fire () =
   let pending = task "dddddddd" ~pending_since:(Some 60) in
-  let facts = { Cron.host_idle = true; goal_driving = false; goal_slot_free = true } in
+  let facts = { Cron.host_idle = true; plan_driving = false; plan_slot_free = true } in
   let disabled = { Cron.enabled = false; tasks = [ pending ] } in
   assert_bool "disabled cron does not deliver pending fire"
     (Cron.pending_delivery ~now:240 facts disabled = None);
@@ -153,7 +153,7 @@ let test_disabled_task_holds_pending_fire () =
   | _ -> failwith "expected one disabled task");
   let reenabled = Cron.set_task_enabled "eeeeeeee" true ticked in
   let ticked = Cron.tick ~now:240 reenabled in
-  let facts = { Cron.host_idle = true; goal_driving = false; goal_slot_free = true } in
+  let facts = { Cron.host_idle = true; plan_driving = false; plan_slot_free = true } in
   match Cron.pending_delivery ~now:240 facts ticked with
   | Some delivery -> assert_equal_int "disabled task coalesces after re-enable" 4 delivery.coalesced
   | None -> failwith "re-enabled task should deliver held fire"
@@ -204,11 +204,11 @@ let test_task_updates () =
   | Error _ -> ());
 
   let mode_updated =
-    expect_ok "update mode" (Cron.update_task_mode "ffffffff" Cron.Goal state)
+    expect_ok "update mode" (Cron.update_task_mode "ffffffff" Cron.Plan state)
   in
   (match mode_updated.tasks with
   | [ updated ] ->
-      assert_bool "mode updated" (updated.mode = Cron.Goal);
+      assert_bool "mode updated" (updated.mode = Cron.Plan);
       assert_bool "mode edit preserves pending" (updated.pending_since = Some 60)
   | _ -> failwith "expected one mode-updated task");
 

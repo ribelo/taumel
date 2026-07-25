@@ -31,15 +31,15 @@ export const ComposerCommandSuccessSchema = Type.Object(
 export const ComposerCommandResultSchema = Type.Union([ComposerCommandErrorSchema, ComposerCommandSuccessSchema]);
 export type ComposerSettings = Static<typeof ComposerSettingsSchema>;
 export type ComposerCommandResult = Static<typeof ComposerCommandResultSchema>;
-export const CronGoalCreationFactsSchema = Type.Object(
-  { objective: Type.String({ minLength: 1 }), ctx: Type.Unknown() },
-  { $id: "CronGoalCreationFacts", additionalProperties: false },
+export const CronPlanCreationFactsSchema = Type.Object(
+  { title: Type.String({ minLength: 1 }), ctx: Type.Unknown() },
+  { $id: "CronPlanCreationFacts", additionalProperties: false },
 );
-export const CronGoalCreationResultSchema = Type.Object(
+export const CronPlanCreationResultSchema = Type.Object(
   { created: Type.Boolean() },
-  { $id: "CronGoalCreationResult", additionalProperties: false },
+  { $id: "CronPlanCreationResult", additionalProperties: false },
 );
-export type CronGoalCreationResult = Static<typeof CronGoalCreationResultSchema>;
+export type CronPlanCreationResult = Static<typeof CronPlanCreationResultSchema>;
 export const HandleCommandFactsSchema = Type.Object(
   { name: Type.String({ minLength: 1 }), args: Type.String(), ctx: Type.Unknown() },
   { $id: "HandleCommandFacts", additionalProperties: false },
@@ -52,8 +52,8 @@ export const GatewayCommandResultSchema = Type.Object(
   {
     ok: Type.Boolean(), action: Type.Literal("command_result"), message: Type.String(),
     error: Type.Optional(Type.String()), details: Type.Optional(Type.Unknown()),
-    goalFollowup: Type.Optional(Type.Boolean()), goalStartObjective: Type.Optional(Type.String()),
-    goalRollback: Type.Optional(Type.Unknown()), goalInspection: Type.Optional(Type.Boolean()),
+    planFollowup: Type.Optional(Type.Boolean()), planSubmitUserMessage: Type.Optional(Type.String()),
+    planRollback: Type.Optional(Type.Unknown()), planInspection: Type.Optional(Type.Boolean()),
   },
   { $id: "GatewayCommandResult", additionalProperties: false },
 );

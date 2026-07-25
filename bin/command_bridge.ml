@@ -138,7 +138,7 @@ let handle raw_facts =
   match name with
   | "permissions" -> Permissions_commands.handle args ctx
   | "network" -> Permissions_commands.handle_network args ctx
-  | "goal" -> Goal_tools.handle_command args ctx
+  | "plan" -> Plan_tools.handle_command args ctx
   | "cron" -> Cron_tools.handle_command args ctx
   | "ralph" -> Ralph_tools.handle_command args ctx
   | "usage" -> Usage_bridge.handle_command ()

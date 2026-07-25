@@ -19,7 +19,7 @@ type snapshot = {
   total_cost : float;
   context_percent : float;
   context_window : float;
-  goal : Goal.presentation option;
+  plan : Plan.presentation option;
 }
 
 let empty_git_delta = { added = 0; removed = 0 }
@@ -252,35 +252,35 @@ let render_line ~colorize ~width snapshot =
           indicator ^ String.make gap ' '
           ^ colorize "dim" (take_width rest_budget rest_raw)
 
-let goal_status_label = function
-  | Goal.Active -> "Goal active"
-  | Goal.Paused -> "Goal paused"
-  | Goal.Blocked -> "Goal blocked"
-  | Goal.Usage_limited -> "Goal usage limited"
-  | Goal.Time_limited -> "Goal time limited"
-  | Goal.Complete -> "Goal complete"
+let plan_status_label = function
+  | Plan.Draft -> "Plan draft"
+  | Plan.Active -> "Plan active"
+  | Plan.Paused -> "Plan paused"
+  | Plan.Blocked -> "Plan blocked"
+  | Plan.Time_limited -> "Plan time limited"
+  | Plan.Complete -> "Plan complete"
 
-let render_goal_line ~colorize ~width (goal : Goal.presentation) =
-  let status = goal_status_label goal.status in
+let render_plan_line ~colorize ~width (plan : Plan.presentation) =
+  let status = plan_status_label plan.status in
   let automation =
-    match goal.automation with
-    | Goal.Automation_enabled -> ""
-    | Goal.Automation_interrupted -> " · interrupted"
+    match plan.automation with
+    | Plan.Automation_enabled -> ""
+    | Plan.Automation_interrupted -> " (interrupted)"
   in
   let time =
-    match goal.time_limit_seconds with
-    | None -> Goal.format_duration goal.time_used_seconds
+    match plan.time_limit_seconds with
+    | None -> Plan.format_duration plan.time_used_seconds
     | Some limit ->
-        Goal.format_duration goal.time_used_seconds ^ "/" ^ Goal.format_duration limit
+        Plan.format_duration plan.time_used_seconds ^ "/" ^ Plan.format_duration limit
   in
-  let fixed = status ^ automation ^ " · " ^ time in
-  let objective_budget = width - visible_width fixed - 3 in
-  let objective = truncate_middle goal.objective (max 0 objective_budget) in
-  let raw = if objective = "" then fixed else status ^ automation ^ " · " ^ objective ^ " · " ^ time in
+  let progress =
+    Printf.sprintf "%d/%d tasks" plan.completed_tasks plan.total_tasks
+  in
+  let raw = status ^ automation ^ " · " ^ progress ^ " · " ^ time in
   colorize "dim" (take_width width raw)
 
 let render_lines ~colorize ~width snapshot =
   let primary = render_line ~colorize ~width snapshot in
-  match snapshot.goal with
+  match snapshot.plan with
   | None -> [ primary ]
-  | Some goal -> [ primary; render_goal_line ~colorize ~width goal ]
+  | Some plan -> [ primary; render_plan_line ~colorize ~width plan ]

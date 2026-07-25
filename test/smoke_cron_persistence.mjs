@@ -42,15 +42,13 @@ const sessionManager = {
 };
 const ctx = { cwd: process.cwd(), sessionManager };
 
-const goal = core.call("prepareTool", [{
-  name: "create_goal", params: { objective: "verify persisted contracts" }, ctx,
+const plan = core.call("prepareTool", [{
+  name: "create_task", params: { tasks: [{ title: "verify persisted contracts" }] }, ctx,
 }]);
-assert.equal(goal?.ok, true, `create_goal failed: ${JSON.stringify(goal)}`);
-for (const customType of ["taumel.goal", "taumel.goal_automation"]) {
-  const entry = entries.findLast((candidate) => candidate.customType === customType);
-  assert.ok(entry);
-  assert.equal(latestTaumelCustomEntry(sessionManager, customType).kind, "contract_valid");
-}
+assert.equal(plan?.ok, true, `create_task failed: ${JSON.stringify(plan)}`);
+assert.ok(entries.findLast((candidate) => candidate.customType === "taumel.plan"));
+assert.equal(latestTaumelCustomEntry(sessionManager, "taumel.plan").kind, "contract_valid");
+assert.equal(entries.some((candidate) => candidate.customType === "taumel.plan_automation"), false);
 
 const create = core.call("prepareTool", [{
   name: "cron_create", params: { cron: "* * * * *", prompt: "persist me", recurring: true }, ctx,

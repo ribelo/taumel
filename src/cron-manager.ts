@@ -18,7 +18,7 @@ import {
   uiFromContext,
 } from "./manager-kit.ts";
 
-type CronMode = "message" | "goal";
+type CronMode = "message" | "plan";
 
 type CronTask = {
   readonly id: string;
@@ -74,7 +74,7 @@ function normalizeCronInput(input: string): string {
 }
 
 function taskModeLabel(task: CronTask): string {
-  return task.mode === "goal" ? "goal" : "message";
+  return task.mode === "plan" ? "plan" : "message";
 }
 
 function taskTypeLabel(task: CronTask): string {
@@ -156,7 +156,7 @@ class CronManagerComponent {
     this.addStatus(lines, width);
     lines.push("");
     lines.push(this.line(this.dim("  ↑↓ select • enter details • e toggle • c cancel • p prompt • s schedule"), width));
-    lines.push(this.line(this.dim("  r recurring • g goal/message • m master • esc close"), width));
+    lines.push(this.line(this.dim("  r recurring • g plan/message • m master • esc close"), width));
     lines.push(this.border(width));
     return lines;
   }
@@ -178,7 +178,7 @@ class CronManagerComponent {
     this.addStatus(lines, width);
     lines.push("");
     lines.push(this.line(this.dim("  p edit prompt • s edit schedule • e toggle • c cancel • r recurring"), width));
-    lines.push(this.line(this.dim("  g goal/message • esc back"), width));
+    lines.push(this.line(this.dim("  g plan/message • esc back"), width));
     lines.push(this.border(width));
     return lines;
   }
@@ -362,7 +362,7 @@ async function runMutation(
       case "toggle_recurring":
         return updateTask(core, { id: action.id, recurring: !(task?.recurring ?? true) }, ctx);
       case "toggle_mode":
-        return updateTask(core, { id: action.id, mode: task?.mode === "goal" ? "message" : "goal" }, ctx);
+        return updateTask(core, { id: action.id, mode: task?.mode === "plan" ? "message" : "plan" }, ctx);
     }
   })();
   const nextState = loadCronState(core, ctx);

@@ -1,10 +1,10 @@
 import type { CoreBridge, PiLike } from "./types.ts";
 import { contextIsLive, extensionRuntimeIsLive, isStaleContextError } from "./util.ts";
-import { decodeCronDeliveredResult, decodeCronGoalCreationResult, decodeCronGoalFacts, decodeCronPollPlan, decodeCronStartupPlan, type CronPollPlan } from "./bridge-contracts.ts";
+import { decodeCronDeliveredResult, decodeCronPlanCreationResult, decodeCronPlanFacts, decodeCronPollPlan, decodeCronStartupPlan, type CronPollPlan } from "./bridge-contracts.ts";
 
 type CronMessageDetails = {
   readonly id: string; readonly cron: string; readonly schedule: string;
-  readonly coalesced: number; readonly prompt: string; readonly goalCreated?: boolean;
+  readonly coalesced: number; readonly prompt: string; readonly planCreated?: boolean;
 };
 type CronUi = { notify: (message: string, level: "warning") => unknown };
 type CronContext = { ui?: unknown };
@@ -53,18 +53,18 @@ async function deliverCron(
     coalesced,
     prompt: content,
   };
-  if (mode !== "goal") {
+  if (mode !== "plan") {
     return sendCronMessage(pi, content, deliveryKind, coalesced, cronDetails);
   }
 
-  const objective = coalesced > 1 ? `[cron: ${coalesced} coalesced fires]\n${content}` : content;
-  const result = decodeCronGoalCreationResult(core.call("createCronGoal", [{ objective, ctx }]));
+  const title = coalesced > 1 ? `[cron: ${coalesced} coalesced fires]\n${content}` : content;
+  const result = decodeCronPlanCreationResult(core.call("createCronPlan", [{ title, ctx }]));
   if (!result.created) {
     return sendCronMessage(pi, content, deliveryKind, coalesced, cronDetails);
   }
   return sendCronMessage(pi, content, deliveryKind, coalesced, {
     ...cronDetails,
-    goalCreated: true,
+    planCreated: true,
   });
 }
 
@@ -106,14 +106,14 @@ export function installCronLoop(pi: PiLike, core: CoreBridge): void {
         if (latestCtx === ctx) latestCtx = undefined;
         return;
       }
-      const goalFacts = decodeCronGoalFacts(core.call("cronGoalFacts", [{ ctx }]));
-      const goalSlotFree = goalFacts.goalSlotFree;
-      const goalDriving = goalFacts.goalDriving;
+      const planFacts = decodeCronPlanFacts(core.call("cronPlanFacts", [{ ctx }]));
+      const planSlotFree = planFacts.planSlotFree;
+      const planDriving = planFacts.planDriving;
       const plan = decodeCronPollPlan(core.call("cronPoll", [{
         now: Date.now(),
         hostIdle: typeof pi.isIdle === "function" ? pi.isIdle() : true,
-        goalDriving,
-        goalSlotFree,
+        planDriving,
+        planSlotFree,
         ctx,
       }]));
       if (stopped || generation !== pollGeneration) return;

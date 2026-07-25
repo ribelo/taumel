@@ -4,7 +4,8 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { authorizeMutationPaths, readJsonObjectForAtomicUpdate, resolveAuthorizationPath, threadCatalogFacts, writeFileAtomically, writePatchFiles } from "../src/util.ts";
+import { authorizeMutationPaths, readJsonObjectForAtomicUpdate, resolveAuthorizationPath, writeFileAtomically, writePatchFiles } from "../src/util.ts";
+import { threadCatalogFacts } from "../src/thread-sources.ts";
 
 async function writeAuthorizedPatch(application) {
   const paths = [...application.deletes, ...application.writes.map((write) => write.path)];

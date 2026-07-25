@@ -18,11 +18,11 @@ import {
   decodeExecToolResult,
   decodeExecApprovalResult,
   decodeCommandChildDispatchPlan,
-  decodeCronGoalFacts,
+  decodeCronPlanFacts,
   decodeCronPollPlan,
   decodeCronDeliveredResult,
   decodeCronStartupPlan,
-  decodeGoalRollbackResult,
+  decodePlanRollbackResult,
   decodeEditApplicationResult,
   decodePatchApplicationResult,
   decodeVisibilityWarningsResult,
@@ -40,12 +40,12 @@ import {
   decodeCronPrompt,
   decodeCronPromptPlan,
   decodeComposerCommandResult,
-  decodeCronGoalCreationResult,
+  decodeCronPlanCreationResult,
   decodeGatewayCommandOutput,
   decodePreparedToolAction,
   decodeExecNotificationClaim,
   decodeEnvironmentContextPlan,
-  decodeGoalContinuationPlan,
+  decodePlanContinuationPlan,
   decodeOpenAiUsageHostAuth,
   decodeOpenAiUsageHostParams,
   decodeKimiUsageHostAuth,
@@ -94,13 +94,13 @@ for (const invalid of [
 console.log("bridge contract smoke: all assertions passed");
 
 const commandSpecs = decodeCommandSpecsResult({
-  specs: [{ name: "goal", description: "Manage the active goal" }],
+  specs: [{ name: "plan", description: "Manage the active plan" }],
 });
-if (commandSpecs.specs[0]?.name !== "goal") throw new Error("command specs did not decode");
+if (commandSpecs.specs[0]?.name !== "plan") throw new Error("command specs did not decode");
 for (const invalid of [
   [],
   { specs: [{ name: "", description: "bad" }] },
-  { specs: [{ name: "goal" }] },
+  { specs: [{ name: "plan" }] },
   { specs: [], extra: true },
 ]) {
   let rejected = false;
@@ -305,24 +305,32 @@ for (const invalid of [
   if (!rejected) throw new Error(`command-notification bridge decoder accepted ${JSON.stringify(invalid)}`);
 }
 
-if (decodeGoalContinuationPlan({ kind: "none" }).kind !== "none") {
-  throw new Error("empty goal continuation did not decode");
+if (decodePlanContinuationPlan({ kind: "none" }).kind !== "none") {
+  throw new Error("empty plan continuation did not decode");
 }
-const continuation = decodeGoalContinuationPlan({
-  kind: "send", customType: "taumel.goal.continue", content: "Continue", display: true,
-  triggerTurn: true, deliverAs: "followUp", details: { goal: { objective: "ship" } },
+const continuation = decodePlanContinuationPlan({
+  kind: "send", customType: "taumel.plan.continue", content: "Continue", display: true,
+  triggerTurn: true, deliverAs: "followUp", details: {
+    plan: {
+      planId: "plan-1", sessionId: "session-1", status: "active", statusLabel: "active",
+      tasks: [{ taskId: "task-1", title: "ship", description: null, status: "in_progress", depends_on: [], origin: "user" }],
+      completedTasks: 0, totalTasks: 1, tokensUsed: 10, timeUsedSeconds: 2,
+      timeUsage: "2s", timeLimitSeconds: null, createdAt: 1, updatedAt: 2,
+    },
+    automation: { continuation: "enabled", requiresUserInput: false },
+  },
 });
 if (continuation.kind !== "send" || continuation.content !== "Continue") {
-  throw new Error("goal continuation did not decode");
+  throw new Error("plan continuation did not decode");
 }
 for (const invalid of [
   { kind: "none", content: "unexpected" },
   { kind: "send", customType: "", content: "Continue", display: false, triggerTurn: true, deliverAs: "followUp" },
-  { kind: "send", customType: "goal", content: "", display: false, triggerTurn: true, deliverAs: "followUp" },
+  { kind: "send", customType: "plan", content: "", display: false, triggerTurn: true, deliverAs: "followUp" },
 ]) {
   let rejected = false;
-  try { decodeGoalContinuationPlan(invalid); } catch { rejected = true; }
-  if (!rejected) throw new Error(`goal-continuation bridge decoder accepted ${JSON.stringify(invalid)}`);
+  try { decodePlanContinuationPlan(invalid); } catch { rejected = true; }
+  if (!rejected) throw new Error(`plan-continuation bridge decoder accepted ${JSON.stringify(invalid)}`);
 }
 
 const capabilityProfile = {
@@ -608,8 +616,8 @@ for (const invalid of [
   try { decodeCommandChildDispatchPlan(invalid); } catch { rejected = true; }
   if (!rejected) throw new Error(`command-child-dispatch decoder accepted ${JSON.stringify(invalid)}`);
 }
-const cronGoalFacts = decodeCronGoalFacts({ goalSlotFree: true, goalDriving: false });
-if (!cronGoalFacts.goalSlotFree || cronGoalFacts.goalDriving) throw new Error("cron goal facts did not decode");
+const cronPlanFacts = decodeCronPlanFacts({ planSlotFree: true, planDriving: false });
+if (!cronPlanFacts.planSlotFree || cronPlanFacts.planDriving) throw new Error("cron plan facts did not decode");
 const cronDelivery = decodeCronPollPlan({
   kind: "deliver", id: "task-1", mode: "message", content: "check status",
   coalesced: 2, cron: "*/5 * * * *", schedule: "every five minutes",
@@ -620,7 +628,7 @@ if (cronDelivery.kind !== "deliver" || cronDelivery.coalesced !== 2) {
 for (const invalid of [
   { kind: "none", extra: true },
   { kind: "deliver", id: "task", mode: "other", content: "run", coalesced: 1, cron: "* * * * *", schedule: "" },
-  { kind: "deliver", id: "task", mode: "goal", content: "run", coalesced: 0, cron: "* * * * *", schedule: "" },
+  { kind: "deliver", id: "task", mode: "plan", content: "run", coalesced: 0, cron: "* * * * *", schedule: "" },
 ]) {
   let rejected = false;
   try { decodeCronPollPlan(invalid); } catch { rejected = true; }
@@ -640,13 +648,13 @@ for (const invalid of [
   try { decodeCronStartupPlan(invalid); } catch { rejected = true; }
   if (!rejected) throw new Error(`cron-startup decoder accepted ${JSON.stringify(invalid)}`);
 }
-if (!decodeGoalRollbackResult({ completed: true }).completed) {
-  throw new Error("goal rollback did not decode");
+if (!decodePlanRollbackResult({ completed: true }).completed) {
+  throw new Error("plan rollback did not decode");
 }
 for (const invalid of [{ completed: false }, {}, { completed: true, extra: true }]) {
   let rejected = false;
-  try { decodeGoalRollbackResult(invalid); } catch { rejected = true; }
-  if (!rejected) throw new Error(`goal-rollback decoder accepted ${JSON.stringify(invalid)}`);
+  try { decodePlanRollbackResult(invalid); } catch { rejected = true; }
+  if (!rejected) throw new Error(`plan-rollback decoder accepted ${JSON.stringify(invalid)}`);
 }
 const editApplied = decodeEditApplicationResult({
   kind: "applied", path: "/tmp/a", displayPath: "a", contents: "next", editCount: 1,
@@ -823,13 +831,13 @@ for (const invalid of [
   try { decodeComposerCommandResult(invalid); } catch { rejected = true; }
   if (!rejected) throw new Error(`composer-command decoder accepted ${JSON.stringify(invalid)}`);
 }
-if (!decodeCronGoalCreationResult({ created: true }).created) {
-  throw new Error("cron goal creation did not decode");
+if (!decodeCronPlanCreationResult({ created: true }).created) {
+  throw new Error("cron plan creation did not decode");
 }
 for (const invalid of [{ created: "yes" }, {}, { created: false, extra: true }]) {
   let rejected = false;
-  try { decodeCronGoalCreationResult(invalid); } catch { rejected = true; }
-  if (!rejected) throw new Error(`cron-goal-creation decoder accepted ${JSON.stringify(invalid)}`);
+  try { decodeCronPlanCreationResult(invalid); } catch { rejected = true; }
+  if (!rejected) throw new Error(`cron-plan-creation decoder accepted ${JSON.stringify(invalid)}`);
 }
 const gatewayCommand = decodeGatewayCommandOutput({
   ok: true, action: "command_result", message: "Done.", details: { ok: true },

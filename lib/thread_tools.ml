@@ -205,7 +205,8 @@ let metadata_hits (thread : thread) query =
   |> add "id" (Some thread.id)
   |> add "title" (Some thread.title)
   |> add "workspace" thread.workspace
-  |> add "goal_summary" thread.goal_summary
+  |> add "source_path" thread.source_path
+  |> add "plan_summary" thread.plan_summary
   |> add "branch_summary" thread.branch_summary
   |> add "compaction_summary" thread.compaction_summary
   |> List.rev
@@ -238,7 +239,7 @@ let summarize ?(hits = []) (thread : thread) =
     workspace = thread.workspace;
     message_count = List.length thread.messages;
     source_path = thread.source_path;
-    goal_summary = thread.goal_summary;
+    plan_summary = thread.plan_summary;
     branch_summary = thread.branch_summary;
     compaction_summary = thread.compaction_summary;
     hits;
@@ -318,7 +319,7 @@ let entry_line ?(target = false) (entry : visible_entry) =
 let overview_text (thread : thread) entries =
   let summaries =
     [
-      Option.map (fun value -> "Goal: " ^ value) thread.goal_summary;
+      Option.map (fun value -> "Plan: " ^ value) thread.plan_summary;
       Option.map (fun value -> "Branch: " ^ value) thread.branch_summary;
       Option.map (fun value -> "Compaction: " ^ value) thread.compaction_summary;
     ]
@@ -612,7 +613,7 @@ let unique_by_id threads =
 
 let message_content (thread : thread) =
   [
-    thread.goal_summary;
+    thread.plan_summary;
     thread.branch_summary;
     thread.compaction_summary;
   ]
@@ -633,17 +634,17 @@ let find ~workspace ~query threads =
       |> List.filter_map (fun summary ->
              List.find_opt (fun (thread : thread) -> thread.id = summary.id) threads)
 
-let transcript ?(goal_only = false) (thread : thread) =
+let transcript ?(plan_only = false) (thread : thread) =
   let summaries =
     [
-      thread.goal_summary;
-      (if goal_only then None else thread.branch_summary);
-      (if goal_only then None else thread.compaction_summary);
+      thread.plan_summary;
+      (if plan_only then None else thread.branch_summary);
+      (if plan_only then None else thread.compaction_summary);
     ]
     |> List.filter_map Fun.id
   in
   let messages =
-    if goal_only then []
+    if plan_only then []
     else
       List.map
         (fun (message : message) -> Printf.sprintf "%s: %s" message.role message.content)
@@ -658,7 +659,7 @@ let plan_find ~workspace ~query threads =
       { text = message; ok = false; query; scope = "current_workspace"; threads = []; diagnostics = [] }
   | Ok request -> plan_query ~workspace request catalog
 
-let plan_read_legacy ~id ~goal_only:_ threads =
+let plan_read_legacy ~id ~plan_only:_ threads =
   let catalog = { threads; diagnostics = [] } in
   let request =
     {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { installGoalContinuationLoop, registerGatewayCommands } from "../src/command-executor.ts";
+import { installPlanContinuationLoop, registerGatewayCommands } from "../src/command-executor.ts";
 
 const commands = new Map();
 const sentUserMessages = [];
@@ -13,26 +13,26 @@ const pi = {
 
 const core = {
   call(method, args = []) {
-    if (method === "commandSpecs") return { specs: [{ name: "goal", description: "Manage goal" }] };
+    if (method === "commandSpecs") return { specs: [{ name: "plan", description: "Manage plan" }] };
     if (method === "planCommandExecution") return { kind: "direct" };
     if (method === "handleCommand") {
       const input = args[0].args;
       if (input === "") return {
         ok: true,
         action: "command_result",
-        message: "Goal active: ship (2s)",
-        details: { goal: { statusLabel: "active", objective: "ship", timeUsage: "2s", tokensUsed: 3, timeLimitSeconds: null }, automation: { continuation: "enabled" } },
-        goalInspection: true,
+        message: "Plan active: ship (2s)",
+        details: { plan: { statusLabel: "active", completedTasks: 0, totalTasks: 1, tasks: [{ taskId: "task-1", title: "ship", status: "pending", origin: "user", depends_on: [] }], timeUsage: "2s", tokensUsed: 3, timeLimitSeconds: null }, automation: { continuation: "enabled" } },
+        planInspection: true,
       };
       if (input === "ship") return {
         ok: true,
         action: "command_result",
-        message: "Goal active: ship (0s)",
+        message: "Plan active: ship (0s)",
         details: {},
-        goalStartObjective: "ship",
-        goalRollback: { goal: null, automation: { continuation: "enabled", requiresUserInput: false } },
+        planSubmitUserMessage: "ship",
+        planRollback: { plan: null, automation: { continuation: "enabled", requiresUserInput: false } },
       };
-      return { ok: true, action: "command_result", message: "Goal cleared.", details: {} };
+      return { ok: true, action: "command_result", message: "Plan cleared.", details: {} };
     }
     if (method === "planCommandNotification") {
       return { kind: "notify", message: args[0].message || "done", level: "info" };
@@ -48,7 +48,7 @@ const ctx = {
       inspections += 1;
       await new Promise((resolve) => {
         const component = factory({ requestRender() {} }, { fg: (_color, text) => text }, {}, resolve);
-        assert.deepEqual(component.render(120), ["Goal · active · ship · 2s"]);
+        assert.deepEqual(component.render(120), ["Plan · active · 0/1 tasks · 2s"]);
         component.handleInput("escape");
       });
     },
@@ -56,8 +56,8 @@ const ctx = {
 };
 
 registerGatewayCommands(pi, core, new Map());
-const goal = commands.get("goal");
-assert(goal, "goal command not registered");
+const plan = commands.get("plan");
+assert(plan, "plan command not registered");
 const systemPrompt = commands.get("system-prompt");
 assert(systemPrompt, "system-prompt command not registered");
 
@@ -84,17 +84,17 @@ await systemPrompt.handler("", {
 assert.match(inspectedPrompt, /first line\nsecond line/, "system-prompt should inspect the current prompt");
 assert.deepEqual(sentUserMessages, [], "system-prompt should not contact agent");
 
-await goal.handler("", ctx);
-assert.equal(inspections, 1, "bare goal should render one local inspection");
-assert.deepEqual(notifications, [], "bare goal should not notify");
-assert.deepEqual(sentUserMessages, [], "bare goal should not contact agent");
+await plan.handler("", ctx);
+assert.equal(inspections, 1, "bare plan should render one local inspection");
+assert.deepEqual(notifications, [], "bare plan should not notify");
+assert.deepEqual(sentUserMessages, [], "bare plan should not contact agent");
 
-await goal.handler("ship", ctx);
-assert.deepEqual(sentUserMessages, ["ship"], "goal objective should be the only agent message");
-assert.deepEqual(notifications, [], "goal creation should not notify");
+await plan.handler("ship", ctx);
+assert.deepEqual(sentUserMessages, ["ship"], "plan task text should be the only agent message");
+assert.deepEqual(notifications, [], "plan creation should not notify");
 
-await goal.handler("clear", ctx);
-assert.deepEqual(notifications, [{ message: "Goal cleared.", level: "info" }], "clear should notify exactly once");
+await plan.handler("clear", ctx);
+assert.deepEqual(notifications, [{ message: "Plan cleared.", level: "info" }], "clear should notify exactly once");
 
 const lifecycleHandlers = new Map();
 const finalizations = [];
@@ -106,19 +106,19 @@ const lifecyclePi = {
 };
 const lifecycleCore = {
   call(method, args = []) {
-    if (method === "finalizeGoalError") {
+    if (method === "finalizePlanError") {
       finalizations.push(args[0].status);
       return {};
     }
-    if (method === "planGoalContinuation") return { kind: "none" };
-    if (method === "clearInterruptedGoalAutomation" || method === "interruptGoalAutomation") return {};
+    if (method === "planPlanContinuation") return { kind: "none" };
+    if (method === "clearInterruptedPlanAutomation" || method === "interruptPlanAutomation") return {};
     throw new Error(`unexpected lifecycle core call: ${method}`);
   },
 };
-installGoalContinuationLoop(lifecyclePi, lifecycleCore);
+installPlanContinuationLoop(lifecyclePi, lifecycleCore);
 const agentEnd = lifecycleHandlers.get("agent_end");
 await agentEnd({
   willRetry: false,
   messages: [{ role: "assistant", stopReason: "error", errorMessage: "insufficient_quota" }],
 }, { sessionManager: { getSessionId: () => "s" } });
-assert.deepEqual(finalizations, ["usage_limited"], "final quota errors should usage-limit the goal");
+assert.deepEqual(finalizations, ["blocked"], "final unrecoverable errors should block the plan");

@@ -138,33 +138,41 @@ export const VisibilityStateV1Schema = Type.Object({
 }, { $id: "VisibilityStateV1", additionalProperties: false });
 export type VisibilityStateV1 = Static<typeof VisibilityStateV1Schema>;
 
-export const GoalStateSchema = Type.Union([
+const PlanTaskSchema = Type.Object({
+  taskId: Type.String({ minLength: 1 }), title: Type.String({ minLength: 1 }),
+  description: Type.Union([Type.String(), Type.Null()]),
+  status: Type.Union([
+    Type.Literal("pending"), Type.Literal("in_progress"),
+    Type.Literal("completed"), Type.Literal("cancelled"),
+  ]),
+  depends_on: Type.Array(Type.String({ minLength: 1 })),
+  origin: Type.Union([Type.Literal("user"), Type.Literal("agent")]),
+}, { additionalProperties: false });
+
+export const PlanStateSchema = Type.Union([
   Type.Null(),
   Type.Object({
-    goalId: Type.String({ minLength: 1 }),
-    sessionId: Type.String({ minLength: 1 }),
-    objective: Type.String({ minLength: 1 }),
+    planId: Type.String({ minLength: 1 }), sessionId: Type.String({ minLength: 1 }),
     status: Type.Union([
-      Type.Literal("active"), Type.Literal("paused"), Type.Literal("blocked"),
-      Type.Literal("usage_limited"), Type.Literal("time_limited"), Type.Literal("complete"),
+      Type.Literal("draft"), Type.Literal("active"), Type.Literal("paused"),
+      Type.Literal("blocked"), Type.Literal("time_limited"), Type.Literal("complete"),
     ]),
-    tokensUsed: Type.Integer({ minimum: 0 }),
-    timeUsedSeconds: Type.Integer({ minimum: 0 }),
+    tasks: Type.Array(PlanTaskSchema, { minItems: 1 }),
+    tokensUsed: Type.Integer({ minimum: 0 }), timeUsedSeconds: Type.Integer({ minimum: 0 }),
     timeLimitSeconds: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
-    createdAt: Type.Integer({ minimum: 0 }),
-    updatedAt: Type.Integer({ minimum: 0 }),
+    createdAt: Type.Integer({ minimum: 0 }), updatedAt: Type.Integer({ minimum: 0 }),
   }, { additionalProperties: false }),
-], { $id: "GoalState" });
-export type GoalState = Static<typeof GoalStateSchema>;
+], { $id: "PlanState" });
+export type PlanState = Static<typeof PlanStateSchema>;
 
-export const GoalAutomationStateSchema = Type.Union([
+export const PlanAutomationStateSchema = Type.Union([
   Type.Null(),
   Type.Object(
     { continuation: Type.Literal("interrupted"), requiresUserInput: Type.Literal(true) },
     { additionalProperties: false },
   ),
-], { $id: "GoalAutomationState" });
-export type GoalAutomationState = Static<typeof GoalAutomationStateSchema>;
+], { $id: "PlanAutomationState" });
+export type PlanAutomationState = Static<typeof PlanAutomationStateSchema>;
 
 const RalphTaskSchema = Type.Object({
   id: Type.String(), objective: Type.String(), controllerSession: Type.String(),
@@ -256,7 +264,7 @@ const CronTaskSchema = Type.Object({
   id: Type.String({ pattern: "^[0-9a-f]{8}$" }),
   cron: Type.String({ pattern: "^\\S+(?:\\s+\\S+){4}$" }),
   prompt: Type.String({ pattern: "\\S" }), recurring: Type.Boolean(),
-  mode: Type.Union([Type.Literal("message"), Type.Literal("goal")]), enabled: Type.Boolean(),
+  mode: Type.Union([Type.Literal("message"), Type.Literal("plan")]), enabled: Type.Boolean(),
   createdAt: Type.Integer({ minimum: 0, maximum: 2147483647 }),
   nextDue: Type.Integer({ minimum: 0, maximum: 2147483647 }),
   pendingSince: Type.Optional(Type.Integer({ minimum: 0, maximum: 2147483647 })),
@@ -275,8 +283,8 @@ const persistedEntry = <K extends string, S extends TSchema>(customType: K, data
 export const ChildSessionSetupEntrySchema = Type.Union([
   setupEntry("taumel.childSession", ChildSessionMarkerSchema),
   setupEntry("taumel.permissions", PermissionsStateV1Schema),
-  setupEntry("taumel.goal", GoalStateSchema),
-  setupEntry("taumel.goal_automation", GoalAutomationStateSchema),
+  setupEntry("taumel.plan", PlanStateSchema),
+  setupEntry("taumel.plan_automation", PlanAutomationStateSchema),
 ], { $id: "ChildSessionSetupEntry" });
 export type ChildSessionSetupEntry = Static<typeof ChildSessionSetupEntrySchema>;
 
@@ -284,8 +292,8 @@ export const TaumelPersistedCustomEntrySchema = Type.Union([
   persistedEntry("taumel.childSession", ChildSessionMarkerSchema),
   persistedEntry("taumel.permissions", PermissionsStateV1Schema),
   persistedEntry("taumel.visibility", VisibilityStateV1Schema),
-  persistedEntry("taumel.goal", GoalStateSchema),
-  persistedEntry("taumel.goal_automation", GoalAutomationStateSchema),
+  persistedEntry("taumel.plan", PlanStateSchema),
+  persistedEntry("taumel.plan_automation", PlanAutomationStateSchema),
   persistedEntry("taumel.ralph", RalphStateV1Schema),
   persistedEntry("taumel.agents.v4", AgentsStateV6Schema),
   persistedEntry("taumel.agents.presence", AgentsPresenceMarkerSchema),
@@ -297,8 +305,8 @@ export interface TaumelCustomEntryDataMap {
   readonly "taumel.childSession": ChildSessionMarker;
   readonly "taumel.permissions": PermissionsStateV1;
   readonly "taumel.visibility": VisibilityStateV1;
-  readonly "taumel.goal": GoalState;
-  readonly "taumel.goal_automation": GoalAutomationState;
+  readonly "taumel.plan": PlanState;
+  readonly "taumel.plan_automation": PlanAutomationState;
   readonly "taumel.ralph": RalphStateV1;
   readonly "taumel.agents.v4": AgentsStateV6;
   readonly "taumel.agents.presence": AgentsPresenceMarker;

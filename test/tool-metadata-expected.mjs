@@ -10,11 +10,13 @@ export const TOOL_DESCRIPTIONS = {
   view_media: "View a PNG, JPEG, GIF, or WebP image.",
   write: "Create, overwrite, or append to a UTF-8 text file. Parent directories are created as needed.",
   edit: "Edit an existing text file with one or more exact text replacements.",
-  get_goal:
-    "Get the current goal for this thread, including status, automation state, token telemetry, elapsed active time, and optional time limit.",
-  create_goal:
-    "Create a goal only when explicitly requested by the user or system/developer instructions. Set time_limit_seconds only when the user explicitly requests a time limit; do not invent or extend a time limit yourself.",
-  update_goal: "Update the existing goal only to mark it complete or genuinely blocked.",
+  get_plan:
+    "Get the current plan for this thread, including status, automation state, tasks, token telemetry, elapsed active time, and optional time limit.",
+  create_task:
+    "Create one or more tasks for the current plan. Tasks are the living breakdown of the work: order, dependencies, and completion state drive continuation and gate plan completion. Creating a task while no plan exists creates a draft plan; activate it with update_plan to start continuation. Tasks may be created only while the plan is in draft.",
+  update_task:
+    "Update one task's status, title, description, or dependencies. Content edits require a draft plan; status changes require an active or draft plan. Setting in_progress requires every depended task to be completed or cancelled. Mark a task completed only when its work is verifiably done; cancel tasks that are no longer needed. User-authored task text and cancellation are reserved to the user.",
+  update_plan: "Update the plan lifecycle: activate a draft plan to commit its task list and start continuation, or mark an active plan complete or genuinely blocked. Completion requires every task to be completed or cancelled first.",
   cron_create:
     "Schedule a prompt in this Pi session with a standard 5-field cron expression evaluated in the host\u2019s local timezone. Tasks run only while the session is open.",
   cron_list: "List this Pi session\u2019s cron tasks and scheduling state.",
@@ -60,9 +62,10 @@ export const PROMPT_SNIPPETS = {
   view_media: "View an image file.",
   write: "Create, overwrite, or append to a text file.",
   edit: "Make one or more exact replacements in a text file.",
-  get_goal: "Inspect the current goal, status, usage, and automation state.",
-  create_goal: "Create an explicitly requested goal for continued work across turns.",
-  update_goal: "Mark the active goal complete or genuinely blocked.",
+  get_plan: "Inspect the current plan, tasks, status, usage, and automation state.",
+  create_task: "Create one or more plan tasks while the plan is in draft.",
+  update_task: "Update one plan task's status or content within editability rules.",
+  update_plan: "Activate the plan, or mark it complete or genuinely blocked.",
   cron_create:
     "Create a recurring or one-shot cron task. Tell the user the returned task id and that /cron manages crons.",
   cron_list: "List cron tasks.",
@@ -118,19 +121,21 @@ export const PARAM_DESCRIPTIONS = {
   "cron_create.cron":
     "Standard 5-field cron expression: minute, hour, day of month, month, and day of week. Evaluated in the host\u2019s local timezone.",
   "cron_create.prompt":
-    "Prompt delivered to the main session when the task fires. With goal = true, it becomes the goal objective.",
+    "Prompt delivered to the main session when the task fires. With plan = true, it becomes a user-authored plan task.",
   "cron_create.recurring":
     "Whether the task repeats. Defaults to true; false fires once and deletes the task after delivery.",
-  "cron_create.goal":
-    "Whether to deliver the prompt as a goal instead of a message. Defaults to false; a goal-mode fire waits while the session\u2019s goal slot is occupied.",
+  "cron_create.plan":
+    "Whether to deliver the prompt as a plan instead of a message. Defaults to false; a plan-mode fire waits while the session\u2019s plan slot is occupied.",
   "cron_delete.id":
     "Eight-character lowercase hexadecimal task ID returned by cron_create or cron_list.",
-  "create_goal.objective":
-    "The objective to pursue across turns. Preserve the user\u2019s full requested outcome, scope, constraints, and completion criteria.",
-  "create_goal.time_limit_seconds":
-    "User-requested active-time limit in seconds. Minimum 1. Omit unless the user explicitly requested it.",
-  "update_goal.status":
-    "Terminal status to set. Use complete only when every required outcome is satisfied; use blocked only at a genuine impasse requiring user input or an external-state change.",
+  "create_task.tasks.items.id":
+    "Optional explicit task identity, unique within this plan. Omit to auto-generate a task- identity.",
+  "create_task.tasks.items.title": "Short statement of the work. Trimmed; must not be empty.",
+  "create_task.tasks.items.description": "Optional longer specification of this step.",
+  "create_task.tasks.items.depends_on":
+    "Task identities that must reach completed or cancelled before this task may enter in_progress. May reference identities supplied earlier in this call.",
+  "update_plan.status":
+    "Lifecycle status to set: active commits the task list and starts continuation; complete declares every required outcome satisfied; blocked marks a genuine impasse requiring user input or an external-state change.",
   "ralph_continue.task_id": "Ralph task ID from the Ralph session prompt.",
   "ralph_finish.task_id": "Ralph task ID from the Ralph session prompt.",
   "exec_command.cmd": "The bash command to run.",
@@ -345,21 +350,25 @@ export const REQUIREMENT_CHECKS = [
   ["sandbox-tl29", "param", "write.path"],
   ["sandbox-tl30", "param", "write.content"],
   ["sandbox-tl31", "param", "write.mode"],
-  ["goal-gt04", "tool", "get_goal"],
-  ["goal-gt05", "snippet", "get_goal"],
-  ["goal-gt06", "tool", "create_goal"],
-  ["goal-gt09", "snippet", "create_goal"],
-  ["goal-gt07", "param", "create_goal.objective"],
-  ["goal-gt08", "param", "create_goal.time_limit_seconds"],
-  ["goal-gt10", "tool", "update_goal"],
-  ["goal-gt12", "snippet", "update_goal"],
-  ["goal-gt11", "param", "update_goal.status"],
+  ["plan-gt04", "tool", "get_plan"],
+  ["plan-gt05", "snippet", "get_plan"],
+  ["plan-gt06", "tool", "create_task"],
+  ["plan-gt07", "param", "create_task.tasks.items.id"],
+  ["plan-gt08", "param", "create_task.tasks.items.title"],
+  ["plan-gt09", "param", "create_task.tasks.items.description"],
+  ["plan-gt10", "param", "create_task.tasks.items.depends_on"],
+  ["plan-gt11", "snippet", "create_task"],
+  ["plan-gt12", "tool", "update_task"],
+  ["plan-gt13", "snippet", "update_task"],
+  ["plan-gt14", "tool", "update_plan"],
+  ["plan-gt15", "param", "update_plan.status"],
+  ["plan-gt16", "snippet", "update_plan"],
   ["cron-tl05", "tool", "cron_create"],
   ["cron-tl10", "snippet", "cron_create"],
   ["cron-tl06", "param", "cron_create.cron"],
   ["cron-tl07", "param", "cron_create.prompt"],
   ["cron-tl08", "param", "cron_create.recurring"],
-  ["cron-tl09", "param", "cron_create.goal"],
+  ["cron-tl09", "param", "cron_create.plan"],
   ["cron-tl11", "tool", "cron_list"],
   ["cron-tl11", "snippet", "cron_list"],
   ["cron-tl12", "tool", "cron_delete"],

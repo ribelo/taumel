@@ -33,14 +33,14 @@ let report_session_sync_error scope error =
               ^ Printexc.to_string error);
            |])
 
-let notify_pending_goal_warning ctx =
-  match !pending_goal_load_warning with
+let notify_pending_plan_warning ctx =
+  match !pending_plan_load_warning with
   | None -> ()
   | Some message ->
       let ui = Unsafe.get ctx "ui" in
       if Option.is_some (function_field ui "notify") then (
         ignore (call2 ui "notify" (js_string message) (js_string "warning"));
-        pending_goal_load_warning := None)
+        pending_plan_load_warning := None)
 
 let message_cost entry =
   let message =
@@ -247,8 +247,9 @@ let refresh_session_state_from_host ?(scope = "session state refresh") ctx =
 type persisted_session_snapshot = {
   session_id : string;
   child_session : Unsafe.any option;
-  goal : Unsafe.any option;
-  goal_automation_entry : Unsafe.any option;
+  plan : Unsafe.any option;
+  plan_automation_entry : Unsafe.any option;
+  legacy_plan_entry : bool;
   permissions : Unsafe.any option;
   ralph : Unsafe.any option;
   visibility : Unsafe.any option;
@@ -261,9 +262,13 @@ let persisted_session_snapshot ctx =
   {
     session_id = Session_store.session_id_from_ctx ctx;
     child_session = Session_store.custom_entry_data ctx "taumel.childSession";
-    goal = Session_store.custom_entry_data ctx "taumel.goal";
-    goal_automation_entry =
-      Session_store.custom_entry_data ctx "taumel.goal_automation";
+    plan = Session_store.custom_entry_data ctx "taumel.plan";
+    plan_automation_entry =
+      Session_store.custom_entry_data ctx "taumel.plan_automation";
+    legacy_plan_entry =
+      Option.is_some (Session_store.custom_entry_data ctx "taumel.goal")
+      || Option.is_some
+           (Session_store.custom_entry_data ctx "taumel.goal_automation");
     permissions = Session_store.custom_entry_data ctx "taumel.permissions";
     ralph = Session_store.custom_entry_data ctx "taumel.ralph";
     visibility = Session_store.custom_entry_data ctx "taumel.visibility";
@@ -277,39 +282,50 @@ let persisted_session_snapshot ctx =
       not (Session_store.session_has_parent ctx);
   }
 
-let load_goal_state_data ~session_id = function
+let load_plan_state_data ~session_id = function
   | None ->
-      current_goal := None;
+      current_plan := None;
       false
   | Some data -> (
-      match Result.bind (json_from_js data) Taumel.Goal.codec.decode with
-      | Ok (Some goal) when goal.thread_id <> session_id ->
-          current_goal := Some (Taumel.Goal.rebind_for_fork ~session_id goal);
+      match Result.bind (json_from_js data) Taumel.Plan.codec.decode with
+      | Ok (Some plan) when plan.session_id <> session_id ->
+          current_plan := Some (Taumel.Plan.rebind_for_fork ~session_id plan);
           true
-      | Ok goal ->
-          current_goal := goal;
+      | Ok plan ->
+          current_plan := plan;
           false
       | Error message ->
-          pending_goal_load_warning :=
-            Some ("Ignoring incompatible saved Taumel goal entry: " ^ message);
-          report_session_sync_error "goal load"
-            (Failure ("Ignoring incompatible saved Taumel goal entry: " ^ message));
-          current_goal := None;
+          pending_plan_load_warning :=
+            Some ("Ignoring incompatible saved Taumel plan entry: " ^ message);
+          report_session_sync_error "plan load"
+            (Failure ("Ignoring incompatible saved Taumel plan entry: " ^ message));
+          current_plan := None;
           false)
 
-let load_goal_automation_state_data = function
-  | None -> goal_automation := Taumel.Goal.Automation_enabled
+let load_plan_automation_state_data = function
+  | None -> plan_automation := Taumel.Plan.Automation_enabled
   | Some data -> (
-      match Result.bind (json_from_js data) Taumel.Goal.automation_codec.decode with
-      | Ok automation -> goal_automation := automation
+      match Result.bind (json_from_js data) Taumel.Plan.automation_codec.decode with
+      | Ok automation -> plan_automation := automation
       | Error message ->
-          pending_goal_load_warning :=
+          pending_plan_load_warning :=
             Some
-              ("Ignoring incompatible saved Taumel goal automation entry: "
+              ("Ignoring incompatible saved Taumel plan automation entry: "
              ^ message);
-          report_session_sync_error "goal automation load"
-            (Failure ("Ignoring incompatible saved Taumel goal automation entry: " ^ message));
-          goal_automation := Taumel.Goal.Automation_enabled)
+          report_session_sync_error "plan automation load"
+            (Failure ("Ignoring incompatible saved Taumel plan automation entry: " ^ message));
+          plan_automation := Taumel.Plan.Automation_enabled)
+
+let note_legacy_plan_entry snapshot =
+  if
+    snapshot.legacy_plan_entry
+    && not (List.mem snapshot.session_id !legacy_plan_warned_sessions)
+  then (
+    legacy_plan_warned_sessions :=
+      snapshot.session_id :: !legacy_plan_warned_sessions;
+    pending_plan_load_warning :=
+      Some
+        "Ignoring incompatible legacy Taumel plan session entries (taumel.goal/taumel.goal_automation); migration is not supported.")
 
 let apply_active_permissions (resolved : Taumel.Permissions.active) =
   if
@@ -644,9 +660,10 @@ let load_agent_state_data ~ctx ~session_id ~recover_running ~presence
           | Taumel.Agent_state_store.Fail_closed message -> fail_agent_load message))
 let load_session_state ctx =
   let snapshot = persisted_session_snapshot ctx in
-  let forked = load_goal_state_data ~session_id:snapshot.session_id snapshot.goal in
-  if forked then goal_automation := Taumel.Goal.Automation_interrupted
-  else load_goal_automation_state_data snapshot.goal_automation_entry;
+  note_legacy_plan_entry snapshot;
+  let forked = load_plan_state_data ~session_id:snapshot.session_id snapshot.plan in
+  if forked then plan_automation := Taumel.Plan.Automation_interrupted
+  else load_plan_automation_state_data snapshot.plan_automation_entry;
   load_permissions_state_data ~child_session:snapshot.child_session
     snapshot.permissions;
   load_ralph_state_data snapshot.ralph;
@@ -660,16 +677,17 @@ let load_session_state ctx =
         ~allow_parent_snapshot_bootstrap:
           snapshot.agent_parent_snapshot_bootstrap_allowed;
     remember_agent_session snapshot.session_id);
-  last_goal_accounting_key := None;
-  goal_turn_clock := Taumel.Goal.empty_clock;
-  pending_goal_terminal_status := None;
-  goal_retrying := false;
-  goal_compacting := false;
-  notify_pending_goal_warning ctx
+  last_plan_accounting_key := None;
+  plan_turn_clock := Taumel.Plan.empty_clock;
+  pending_plan_terminal_status := None;
+  plan_retrying := false;
+  plan_compacting := false;
+  notify_pending_plan_warning ctx
 
 let has_persisted_component_entry snapshot =
-  snapshot.goal <> None
-  || snapshot.goal_automation_entry <> None
+  snapshot.plan <> None
+  || snapshot.plan_automation_entry <> None
+  || snapshot.legacy_plan_entry
   || snapshot.permissions <> None
   || snapshot.ralph <> None
   || snapshot.visibility <> None
@@ -683,18 +701,19 @@ let sync_persisted_session_snapshot ?(reset_missing = true)
     !loaded_session_id <> Some session_id
     && (reset_missing || has_persisted_component_entry snapshot)
   then (
+    note_legacy_plan_entry snapshot;
     let load_if_present loader value =
       if reset_missing || Option.is_some value then loader value
     in
     let forked =
-      if reset_missing || Option.is_some snapshot.goal then
-        load_goal_state_data ~session_id:snapshot.session_id snapshot.goal
+      if reset_missing || Option.is_some snapshot.plan then
+        load_plan_state_data ~session_id:snapshot.session_id snapshot.plan
       else false
     in
-    if forked then goal_automation := Taumel.Goal.Automation_interrupted
+    if forked then plan_automation := Taumel.Plan.Automation_interrupted
     else
-      load_if_present load_goal_automation_state_data
-        snapshot.goal_automation_entry;
+      load_if_present load_plan_automation_state_data
+        snapshot.plan_automation_entry;
     load_if_present
       (load_permissions_state_data ~child_session:snapshot.child_session)
       snapshot.permissions;
@@ -719,29 +738,29 @@ let sync_persisted_session_snapshot ?(reset_missing = true)
             ~allow_parent_snapshot_bootstrap:
               snapshot.agent_parent_snapshot_bootstrap_allowed);
       remember_agent_session snapshot.session_id);
-    last_goal_accounting_key := None;
-    goal_turn_clock := Taumel.Goal.empty_clock;
-    pending_goal_terminal_status := None;
-    goal_retrying := false;
-    goal_compacting := false;
+    last_plan_accounting_key := None;
+    plan_turn_clock := Taumel.Plan.empty_clock;
+    pending_plan_terminal_status := None;
+    plan_retrying := false;
+    plan_compacting := false;
     if !loaded_session_id <> Some session_id then incr owner_session_epoch;
     loaded_session_id := Some session_id)
 
-let finish_goal_load ctx snapshot =
+let finish_plan_load ctx snapshot =
   let inherited_owner =
-    match snapshot.goal with
+    match snapshot.plan with
     | None -> None
     | Some data -> (
-        match Result.bind (json_from_js data) Taumel.Goal.codec.decode with
-        | Ok (Some goal) -> Some goal.thread_id
+        match Result.bind (json_from_js data) Taumel.Plan.codec.decode with
+        | Ok (Some plan) -> Some plan.session_id
         | _ -> None)
   in
   if inherited_owner <> None && inherited_owner <> Some snapshot.session_id then (
-    Session_store.append_custom_entry ctx "taumel.goal"
-      (Taumel.Goal.codec.encode !current_goal);
-    Session_store.append_custom_entry ctx "taumel.goal_automation"
-      (Taumel.Goal.automation_codec.encode !goal_automation));
-  notify_pending_goal_warning ctx
+    Session_store.append_custom_entry ctx "taumel.plan"
+      (Taumel.Plan.codec.encode !current_plan);
+    Session_store.append_custom_entry ctx "taumel.plan_automation"
+      (Taumel.Plan.automation_codec.encode !plan_automation));
+  notify_pending_plan_warning ctx
 
 let sync_persisted_session ?(reset_missing = true)
     ?(clear_retained_outputs = false) ctx =
@@ -749,14 +768,14 @@ let sync_persisted_session ?(reset_missing = true)
   if !loaded_session_id = Some session_id && not clear_retained_outputs then
     (* This session id is already the loaded one: the snapshot would be
        built and discarded, so skip the seven full entry scans. The
-       fork-repair append in [finish_goal_load] can only fire for a
-       foreign-thread goal, which the already-loaded session cannot have. *)
-    notify_pending_goal_warning ctx
+       fork-repair append in [finish_plan_load] can only fire for a
+       foreign-thread plan, which the already-loaded session cannot have. *)
+    notify_pending_plan_warning ctx
   else
     let snapshot = persisted_session_snapshot ctx in
     sync_persisted_session_snapshot ~reset_missing ~clear_retained_outputs ~ctx
       snapshot;
-    finish_goal_load ctx snapshot
+    finish_plan_load ctx snapshot
 
 let persisted_session_snapshot_is_isolated_child snapshot =
   session_is_isolated_child_data snapshot.child_session
@@ -804,7 +823,7 @@ let try_sync_session_from_host_with ?(scope = "session sync")
     update_session_state host ctx;
     sync_persisted_session_snapshot ~reset_missing ~clear_retained_outputs ~ctx
       snapshot;
-    finish_goal_load ctx snapshot;
+    finish_plan_load ctx snapshot;
     Ok snapshot
   with error ->
     report_session_sync_error scope error;
@@ -826,29 +845,29 @@ let require_session_from_host ?(scope = "session sync")
   | Ok () -> ()
   | Error message -> failwith message
 
-let save_goal_state ctx =
-  Session_store.append_custom_entry ctx "taumel.goal"
-    (Taumel.Goal.codec.encode !current_goal);
-  if not (session_is_isolated_child ctx) then capture_loaded_footer_goal ()
+let save_plan_state ctx =
+  Session_store.append_custom_entry ctx "taumel.plan"
+    (Taumel.Plan.codec.encode !current_plan);
+  if not (session_is_isolated_child ctx) then capture_loaded_footer_plan ()
 
-let save_goal_automation_state ctx =
-  Session_store.append_custom_entry ctx "taumel.goal_automation"
-    (Taumel.Goal.automation_codec.encode !goal_automation);
-  (* Automation changes must reach the retained footer goal immediately;
+let save_plan_automation_state ctx =
+  Session_store.append_custom_entry ctx "taumel.plan_automation"
+    (Taumel.Plan.automation_codec.encode !plan_automation);
+  (* Automation changes must reach the retained footer plan immediately;
      there may be no following turn to repair a stale presentation. *)
   if not (session_is_isolated_child ctx) then (
-    capture_loaded_footer_goal ();
+    capture_loaded_footer_plan ();
     match !active_host with
     | Some host -> emit_changed host
     | None -> ())
 
-let set_goal_automation ctx automation =
-  if !goal_automation <> automation then (
-    goal_automation := automation;
-    save_goal_automation_state ctx)
+let set_plan_automation ctx automation =
+  if !plan_automation <> automation then (
+    plan_automation := automation;
+    save_plan_automation_state ctx)
 
-let clear_goal_automation ctx =
-  set_goal_automation ctx Taumel.Goal.Automation_enabled
+let clear_plan_automation ctx =
+  set_plan_automation ctx Taumel.Plan.Automation_enabled
 
 let save_permissions_state ctx =
   let workspace_roots = if state.cwd = "" then [] else [ state.cwd ] in
@@ -873,7 +892,7 @@ let save_visibility_state ctx =
 (* Scan the branch backwards for the latest assistant usage without
    converting the whole branch. Only candidate assistant entries cross the
    JSON boundary; everything else is skipped on cheap JS property reads.
-   Mirrors [Taumel.Goal.message_usage]: the message gate falls back to the
+   Mirrors [Taumel.Plan.message_usage]: the message gate falls back to the
    entry itself when no message object is present. *)
 let latest_branch_usage ctx =
   match Session_store.branch_entries_array_opt ctx with
@@ -897,7 +916,7 @@ let latest_branch_usage ctx =
             match json_from_js entry with
             | Error _ -> probe (index - 1)
             | Ok json -> (
-                match Taumel.Goal.message_usage json with
+                match Taumel.Plan.message_usage json with
                 | Some _ as usage -> usage
                 | None -> probe (index - 1))
       in
@@ -905,47 +924,47 @@ let latest_branch_usage ctx =
       | None -> None
       | Some usage -> Some (Array.length entries, usage))
 
-let account_goal_turn_end ctx =
+let account_plan_turn_end ctx =
   let active_time_seconds, next_clock =
-    Taumel.Goal.finish_turn_clock ~now_ms:(now_milliseconds ()) !goal_turn_clock
+    Taumel.Plan.finish_turn_clock ~now_ms:(now_milliseconds ()) !plan_turn_clock
   in
-  goal_turn_clock := next_clock;
+  plan_turn_clock := next_clock;
   let now = now_seconds () in
   let result =
-    Taumel.Goal.account_turn_end
-      ?pending_terminal_status:!pending_goal_terminal_status
+    Taumel.Plan.account_turn_end
+      ?pending_terminal_status:!pending_plan_terminal_status
       ~session_id:(Session_store.session_id_from_ctx ctx) ~now
-      ~active_time_seconds ~last_accounting_key:!last_goal_accounting_key
-      ~latest_usage:(latest_branch_usage ctx) !current_goal
+      ~active_time_seconds ~last_accounting_key:!last_plan_accounting_key
+      ~latest_usage:(latest_branch_usage ctx) !current_plan
   in
-  pending_goal_terminal_status := None;
+  pending_plan_terminal_status := None;
   if result.changed then (
-    current_goal := result.goal;
-    last_goal_accounting_key := result.accounting_key;
-    save_goal_state ctx)
+    current_plan := result.plan;
+    last_plan_accounting_key := result.accounting_key;
+    save_plan_state ctx)
 
-let try_account_goal_turn_end ?(scope = "goal turn accounting") ctx =
+let try_account_plan_turn_end ?(scope = "plan turn accounting") ctx =
   try
-    account_goal_turn_end ctx;
+    account_plan_turn_end ctx;
     true
   with error ->
     report_session_sync_error scope error;
     false
 
-let start_goal_turn () =
-  goal_turn_clock :=
-    Taumel.Goal.start_turn_clock ~now_ms:(now_milliseconds ()) !goal_turn_clock
+let start_plan_turn () =
+  plan_turn_clock :=
+    Taumel.Plan.start_turn_clock ~now_ms:(now_milliseconds ()) !plan_turn_clock
 
-let goal_clock_pause_start () =
-  goal_turn_clock :=
-    Taumel.Goal.pause_clock_start ~now_ms:(now_milliseconds ()) !goal_turn_clock
+let plan_clock_pause_start () =
+  plan_turn_clock :=
+    Taumel.Plan.pause_clock_start ~now_ms:(now_milliseconds ()) !plan_turn_clock
 
-let goal_clock_pause_end () =
-  goal_turn_clock :=
-    Taumel.Goal.pause_clock_end ~now_ms:(now_milliseconds ()) !goal_turn_clock
+let plan_clock_pause_end () =
+  plan_turn_clock :=
+    Taumel.Plan.pause_clock_end ~now_ms:(now_milliseconds ()) !plan_turn_clock
 
-let interrupt_goal_automation ctx =
-  set_goal_automation ctx Taumel.Goal.Automation_interrupted
+let interrupt_plan_automation ctx =
+  set_plan_automation ctx Taumel.Plan.Automation_interrupted
 
-let clear_interrupted_goal_automation ctx =
-  clear_goal_automation ctx
+let clear_interrupted_plan_automation ctx =
+  clear_plan_automation ctx

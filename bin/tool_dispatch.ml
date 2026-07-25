@@ -33,9 +33,10 @@ let prepare raw_facts =
       | "read" -> Mutation_tools.prepare_read params
       | "view_media" -> View_media_tool.prepare params
       | "edit" -> Mutation_tools.prepare_edit params ctx
-      | "get_goal" -> Goal_tools.prepare_get ()
-      | "create_goal" -> Goal_tools.prepare_create params ctx
-      | "update_goal" -> Goal_tools.prepare_update params ctx
+      | "get_plan" -> Plan_tools.prepare_get ()
+      | "create_task" -> Plan_tools.prepare_create_task params ctx
+      | "update_task" -> Plan_tools.prepare_update_task params ctx
+      | "update_plan" -> Plan_tools.prepare_update_plan params ctx
       | "query_threads" -> Thread_bridge.prepare_query params
       | "read_thread" -> Thread_bridge.prepare_read params
       | "cron_create" | "cron_list" | "cron_delete" ->

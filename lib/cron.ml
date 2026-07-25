@@ -1,6 +1,6 @@
 open Shared
 
-type mode = Message | Goal
+type mode = Message | Plan
 
 type task = {
   id : string;
@@ -25,8 +25,8 @@ type create_request = {
 
 type deliverability_facts = {
   host_idle : bool;
-  goal_driving : bool;
-  goal_slot_free : bool;
+  plan_driving : bool;
+  plan_slot_free : bool;
 }
 
 type delivery = {
@@ -44,8 +44,8 @@ type startup_plan = {
 }
 
 let empty = { enabled = true; tasks = [] }
-let mode_to_string = function Message -> "message" | Goal -> "goal"
-let mode_of_string = function "goal" -> Some Goal | "message" -> Some Message | _ -> None
+let mode_to_string = function Message -> "message" | Plan -> "plan"
+let mode_of_string = function "plan" -> Some Plan | "message" -> Some Message | _ -> None
 
 let validate_prompt prompt = Shared.require_non_empty "cron prompt" prompt
 
@@ -180,8 +180,8 @@ let deliverable facts task =
   | Some _ ->
       task.enabled
       && facts.host_idle
-      && (not facts.goal_driving)
-      && (match task.mode with Message -> true | Goal -> facts.goal_slot_free)
+      && (not facts.plan_driving)
+      && (match task.mode with Message -> true | Plan -> facts.plan_slot_free)
 
 let pending_delivery ~now facts state =
   if not state.enabled then None

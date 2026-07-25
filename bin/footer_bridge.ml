@@ -81,7 +81,7 @@ let network_mode_string = function
   | Taumel.Sandbox.Network_enabled -> "enabled"
   | Taumel.Sandbox.Network_disabled -> "disabled"
 
-let goal_presentation () = !loaded_footer_goal
+let plan_presentation () = !loaded_footer_plan
 
 let snapshot_for_render host footer_data =
   let permissions = !loaded_footer_permissions in
@@ -111,5 +111,5 @@ let snapshot_for_render host footer_data =
     total_cost = state.total_cost;
     context_percent = state.context_percent;
     context_window = state.context_window;
-    goal = goal_presentation ();
+    plan = plan_presentation ();
   }

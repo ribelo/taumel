@@ -93,44 +93,44 @@ let core_call name_js args_js =
       Exec_session.await_exec_completion (int_arg args 0)
    | "planCommandExecution" ->
        Command_bridge.plan_execution (arg 0)
-   | "planGoalContinuation" ->
-       Goal_tools.plan_continuation (arg 0)
-   | "rollbackGoalCommand" -> Goal_tools.rollback_goal_command (arg 0)
+   | "planPlanContinuation" ->
+       Plan_tools.plan_continuation (arg 0)
+   | "rollbackPlanCommand" -> Plan_tools.rollback_plan_command (arg 0)
    | "cronPoll" -> Cron_tools.poll (arg 0)
    | "cronDelivered" -> Cron_tools.delivered (arg 0)
-  | "cronGoalFacts" -> Cron_tools.goal_facts (arg 0)
-  | "createCronGoal" -> Goal_tools.create_from_cron (arg 0)
+  | "cronPlanFacts" -> Cron_tools.plan_facts (arg 0)
+  | "createCronPlan" -> Plan_tools.create_from_cron (arg 0)
    | "cronStartup" -> Cron_tools.startup (arg 0)
   | "cronUpdateTask" -> Cron_tools.update_task (arg 0)
   | "handleCronManagerCommand" -> Cron_tools.handle_manager_command (arg 0)
   | "refreshFooterState" -> Footer_runtime.refresh_state (arg 0)
   | "updateFooterThinking" ->
       Footer_runtime.update_thinking (string_arg args 0) (arg 1)
-  | "planChildGoalContinuation" ->
-      Goal_tools.plan_child_goal_continuation (arg 0)
-  | "startGoalTurn" ->
-      Session_sync.start_goal_turn ();
+  | "planChildPlanContinuation" ->
+      Plan_tools.plan_child_plan_continuation (arg 0)
+  | "startPlanTurn" ->
+      Session_sync.start_plan_turn ();
       core_ack ()
-  | "goalClockPauseStart" ->
-      Session_sync.goal_clock_pause_start ();
+  | "planClockPauseStart" ->
+      Session_sync.plan_clock_pause_start ();
       core_ack ()
-  | "goalClockPauseEnd" ->
-      Session_sync.goal_clock_pause_end ();
+  | "planClockPauseEnd" ->
+      Session_sync.plan_clock_pause_end ();
       core_ack ()
-  | "interruptGoalAutomation" ->
-      Session_sync.interrupt_goal_automation (arg 0);
+  | "interruptPlanAutomation" ->
+      Session_sync.interrupt_plan_automation (arg 0);
       core_ack ()
-  | "clearInterruptedGoalAutomation" ->
-      Session_sync.clear_interrupted_goal_automation (arg 0);
+  | "clearInterruptedPlanAutomation" ->
+      Session_sync.clear_interrupted_plan_automation (arg 0);
       core_ack ()
-  | "finalizeGoalError" ->
+  | "finalizePlanError" ->
       let facts =
-        decode_ojs_contract Tool_contracts.FinalizeGoalErrorFacts.t_of_js
+        decode_ojs_contract Tool_contracts.FinalizePlanErrorFacts.t_of_js
           (ojs_of_js (arg 0))
       in
-      Goal_tools.finalize_error
-        (Tool_contracts.FinalizeGoalErrorFacts.get_status facts)
-        (Tool_contracts.FinalizeGoalErrorFacts.get_ctx facts
+      Plan_tools.finalize_error
+        (Tool_contracts.FinalizePlanErrorFacts.get_status facts)
+        (Tool_contracts.FinalizePlanErrorFacts.get_ctx facts
         |> Ts2ocaml.unknown_to_js |> js_of_ojs);
       core_ack ()
   | "planCommandChildSession" -> Command_bridge.plan_child_session (arg 0)

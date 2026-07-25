@@ -267,31 +267,44 @@ export const EditParamsSchema = Type.Object(
   { $id: "EditParams", additionalProperties: false },
 );
 
-export const CreateGoalParamsSchema = Type.Object(
+export const CreateTaskItemSchema = Type.Object(
   {
-    objective: Type.String({
-      minLength: 1,
-      description:
-        "The objective to pursue across turns. Preserve the user\u2019s full requested outcome, scope, constraints, and completion criteria.",
-    }),
-    time_limit_seconds: Type.Optional(
-      Type.Integer({
-        minimum: 1,
-        description: "User-requested active-time limit in seconds. Minimum 1. Omit unless the user explicitly requested it.",
-      }),
-    ),
+    id: Type.Optional(Type.String({ description: "Optional explicit task identity, unique within this plan. Omit to auto-generate a task- identity." })),
+    title: Type.String({ description: "Short statement of the work. Trimmed; must not be empty." }),
+    description: Type.Optional(Type.String({ description: "Optional longer specification of this step." })),
+    depends_on: Type.Optional(Type.Array(Type.String(), {
+      description: "Task identities that must reach completed or cancelled before this task may enter in_progress. May reference identities supplied earlier in this call.",
+    })),
   },
-  { $id: "CreateGoalParams", additionalProperties: false },
+  { $id: "CreateTaskItem", additionalProperties: false },
 );
 
-export const UpdateGoalParamsSchema = Type.Object(
+export const CreateTaskParamsSchema = Type.Object(
+  { tasks: Type.Array(CreateTaskItemSchema, { minItems: 1 }) },
+  { $id: "CreateTaskParams", additionalProperties: false },
+);
+
+export const UpdateTaskParamsSchema = Type.Object(
   {
-    status: Type.Union([Type.Literal("complete"), Type.Literal("blocked")], {
-      description:
-        "Terminal status to set. Use complete only when every required outcome is satisfied; use blocked only at a genuine impasse requiring user input or an external-state change.",
+    taskId: Type.String(),
+    status: Type.Optional(Type.Union([
+      Type.Literal("pending"), Type.Literal("in_progress"),
+      Type.Literal("completed"), Type.Literal("cancelled"),
+    ])),
+    title: Type.Optional(Type.String()),
+    description: Type.Optional(Type.String()),
+    depends_on: Type.Optional(Type.Array(Type.String())),
+  },
+  { $id: "UpdateTaskParams", additionalProperties: false },
+);
+
+export const UpdatePlanParamsSchema = Type.Object(
+  {
+    status: Type.Union([Type.Literal("active"), Type.Literal("complete"), Type.Literal("blocked")], {
+      description: "Lifecycle status to set: active commits the task list and starts continuation; complete declares every required outcome satisfied; blocked marks a genuine impasse requiring user input or an external-state change.",
     }),
   },
-  { $id: "UpdateGoalParams", additionalProperties: false },
+  { $id: "UpdatePlanParams", additionalProperties: false },
 );
 
 export const CronCreateParamsSchema = Type.Object(
@@ -304,7 +317,7 @@ export const CronCreateParamsSchema = Type.Object(
     prompt: Type.String({
       minLength: 1,
       description:
-        "Prompt delivered to the main session when the task fires. With goal = true, it becomes the goal objective.",
+        "Prompt delivered to the main session when the task fires. With plan = true, it becomes a user-authored plan task.",
     }),
     recurring: Type.Optional(
       Type.Boolean({
@@ -312,10 +325,10 @@ export const CronCreateParamsSchema = Type.Object(
           "Whether the task repeats. Defaults to true; false fires once and deletes the task after delivery.",
       }),
     ),
-    goal: Type.Optional(
+    plan: Type.Optional(
       Type.Boolean({
         description:
-          "Whether to deliver the prompt as a goal instead of a message. Defaults to false; a goal-mode fire waits while the session\u2019s goal slot is occupied.",
+          "Whether to deliver the prompt as a plan instead of a message. Defaults to false; a plan-mode fire waits while the session\u2019s plan slot is occupied.",
       }),
     ),
   },
@@ -826,8 +839,10 @@ export const dtsSchemas = [
   ["ReadParams", ReadParamsSchema],
   ["ViewMediaParams", ViewMediaParamsSchema],
   ["EditParams", EditParamsSchema],
-  ["CreateGoalParams", CreateGoalParamsSchema],
-  ["UpdateGoalParams", UpdateGoalParamsSchema],
+  ["CreateTaskItem", CreateTaskItemSchema],
+  ["CreateTaskParams", CreateTaskParamsSchema],
+  ["UpdateTaskParams", UpdateTaskParamsSchema],
+  ["UpdatePlanParams", UpdatePlanParamsSchema],
   ["CronCreateParams", CronCreateParamsSchema],
   ["CronDeleteParams", CronDeleteParamsSchema],
   ["ThreadLocator", ThreadLocatorSchema],
@@ -857,9 +872,10 @@ export const toolParamSchemas = [
   { name: "read", interfaceName: "ReadParams", schema: ReadParamsSchema },
   { name: "view_media", interfaceName: "ViewMediaParams", schema: ViewMediaParamsSchema },
   { name: "edit", interfaceName: "EditParams", schema: EditParamsSchema },
-  { name: "get_goal", interfaceName: "EmptyParams", schema: EmptyParamsSchema },
-  { name: "create_goal", interfaceName: "CreateGoalParams", schema: CreateGoalParamsSchema },
-  { name: "update_goal", interfaceName: "UpdateGoalParams", schema: UpdateGoalParamsSchema },
+  { name: "get_plan", interfaceName: "EmptyParams", schema: EmptyParamsSchema },
+  { name: "create_task", interfaceName: "CreateTaskParams", schema: CreateTaskParamsSchema },
+  { name: "update_task", interfaceName: "UpdateTaskParams", schema: UpdateTaskParamsSchema },
+  { name: "update_plan", interfaceName: "UpdatePlanParams", schema: UpdatePlanParamsSchema },
   { name: "cron_create", interfaceName: "CronCreateParams", schema: CronCreateParamsSchema },
   { name: "cron_list", interfaceName: "EmptyParams", schema: EmptyParamsSchema },
   { name: "cron_delete", interfaceName: "CronDeleteParams", schema: CronDeleteParamsSchema },

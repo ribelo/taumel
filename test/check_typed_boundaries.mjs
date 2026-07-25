@@ -149,8 +149,8 @@ const auditedOpaqueCoreArguments = new Set([
   "releaseExecNotificationDelivery:0:number", "markExecNotificationDelivered:0:number", "awaitExecCompletion:0:number",
   "refreshFooterState:0:HostContext",
   'updateFooterThinking:0:"off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"',
-  "updateFooterThinking:1:HostContext", "planChildGoalContinuation:0:HostGoalEntry",
-  "interruptGoalAutomation:0:HostContext", "clearInterruptedGoalAutomation:0:HostContext",
+  "updateFooterThinking:1:HostContext", "planChildPlanContinuation:0:HostPlanEntry",
+  "interruptPlanAutomation:0:HostContext", "clearInterruptedPlanAutomation:0:HostContext",
   "persistRalphControllerState:0:HostContext", "reloadSessionState:0:HostContext",
   "finishCronPrompt:2:HostContext", "executeOpenAiUsage:1:HostContext", "executeUsagePair:1:HostContext",
 ]);

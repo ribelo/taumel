@@ -1,4 +1,6 @@
 import Type, { type Static } from "typebox";
+import { PlanPresentationDetailsSchema } from "./plan-presentation-contract.ts";
+export { PlanPresentationDetailsSchema } from "./plan-presentation-contract.ts";
 import { ChildSessionMetadataSchema, ChildSessionSetupEntrySchema, PermissionsStateV1Schema, type ChildSessionMetadata } from "./session-entry-contracts.ts";
 import { ApplyPatchParamsSchema, EditReplacementSchema } from "./tool-contracts.ts";
 export { ChildSessionMetadataSchema, ChildSessionSetupEntrySchema, PermissionsStateV1Schema, type ChildSessionMetadata };
@@ -233,46 +235,46 @@ export const CommandNotificationPlanSchema = Type.Union([
 ]);
 export type CommandNotificationPlan = Static<typeof CommandNotificationPlanSchema>;
 
-export const GoalContinuationFactsSchema = Type.Object(
+export const PlanContinuationFactsSchema = Type.Object(
   {
     initial: Type.Boolean(), hostIdle: Type.Boolean(), hasPendingMessages: Type.Boolean(),
     retrying: Type.Boolean(), compacting: Type.Boolean(), latestAssistantStopReason: Type.Optional(Type.String({ minLength: 1 })),
     ctx: Type.Optional(Type.Unknown()),
   },
-  { $id: "GoalContinuationFacts", additionalProperties: false },
+  { $id: "PlanContinuationFacts", additionalProperties: false },
 );
-export const GoalContinuationNoneSchema = Type.Object(
+export const PlanContinuationNoneSchema = Type.Object(
   { kind: Type.Literal("none") },
-  { $id: "GoalContinuationNone", additionalProperties: false },
+  { $id: "PlanContinuationNone", additionalProperties: false },
 );
-export const GoalContinuationSendSchema = Type.Object(
+export const PlanContinuationSendSchema = Type.Object(
   {
     kind: Type.Literal("send"), customType: Type.String({ minLength: 1 }),
     content: Type.String({ minLength: 1 }), display: Type.Boolean(),
     triggerTurn: Type.Boolean(), deliverAs: Type.String({ minLength: 1 }),
-    details: Type.Unknown(),
+    details: PlanPresentationDetailsSchema,
   },
-  { $id: "GoalContinuationSend", additionalProperties: false },
+  { $id: "PlanContinuationSend", additionalProperties: false },
 );
-export const GoalContinuationPlanSchema = Type.Union([
-  GoalContinuationNoneSchema, GoalContinuationSendSchema,
+export const PlanContinuationPlanSchema = Type.Union([
+  PlanContinuationNoneSchema, PlanContinuationSendSchema,
 ]);
-export type GoalContinuationFacts = Static<typeof GoalContinuationFactsSchema>;
-export type GoalContinuationPlan = Static<typeof GoalContinuationPlanSchema>;
-export const ChildGoalContinuationSendSchema = Type.Object(
+export type PlanContinuationFacts = Static<typeof PlanContinuationFactsSchema>;
+export type PlanContinuationPlan = Static<typeof PlanContinuationPlanSchema>;
+export const ChildPlanContinuationSendSchema = Type.Object(
   {
-    ok: Type.Literal(true), action: Type.Literal("send_goal_continuation"),
+    ok: Type.Literal(true), action: Type.Literal("send_plan_continuation"),
     customType: Type.String({ minLength: 1 }), content: Type.String({ minLength: 1 }),
     display: Type.Boolean(), triggerTurn: Type.Boolean(), deliverAs: Type.String({ minLength: 1 }),
   },
-  { $id: "ChildGoalContinuationSend", additionalProperties: false },
+  { $id: "ChildPlanContinuationSend", additionalProperties: false },
 );
-export const ChildGoalContinuationFinalizeSchema = Type.Object(
+export const ChildPlanContinuationFinalizeSchema = Type.Object(
   {
     ok: Type.Literal(true), action: Type.Literal("finalize"),
     status: Type.String({ minLength: 1 }), reason: Type.Optional(Type.String({ minLength: 1 })),
   },
-  { $id: "ChildGoalContinuationFinalize", additionalProperties: false },
+  { $id: "ChildPlanContinuationFinalize", additionalProperties: false },
 );
 
 export const ChildSessionStartFactsSchema = Type.Object(
@@ -625,14 +627,14 @@ export const CommandChildDispatchFinishFactsSchema = Type.Object(
 export const CronContextFactsSchema = Type.Object(
   { ctx: Type.Unknown() }, { $id: "CronContextFacts", additionalProperties: false },
 );
-export const CronGoalFactsSchema = Type.Object(
-  { goalSlotFree: Type.Boolean(), goalDriving: Type.Boolean() },
-  { $id: "CronGoalFacts", additionalProperties: false },
+export const CronPlanFactsSchema = Type.Object(
+  { planSlotFree: Type.Boolean(), planDriving: Type.Boolean() },
+  { $id: "CronPlanFacts", additionalProperties: false },
 );
 export const CronPollFactsSchema = Type.Object(
   {
-    now: Type.Number(), hostIdle: Type.Boolean(), goalDriving: Type.Boolean(),
-    goalSlotFree: Type.Boolean(), ctx: Type.Unknown(),
+    now: Type.Number(), hostIdle: Type.Boolean(), planDriving: Type.Boolean(),
+    planSlotFree: Type.Boolean(), ctx: Type.Unknown(),
   },
   { $id: "CronPollFacts", additionalProperties: false },
 );
@@ -642,14 +644,14 @@ export const CronPollNoneSchema = Type.Object(
 export const CronPollDeliverySchema = Type.Object(
   {
     kind: Type.Literal("deliver"), id: Type.String({ minLength: 1 }),
-    mode: Type.Union([Type.Literal("message"), Type.Literal("goal")]),
+    mode: Type.Union([Type.Literal("message"), Type.Literal("plan")]),
     content: Type.String({ minLength: 1 }), coalesced: Type.Integer({ minimum: 1 }),
     cron: Type.String({ minLength: 1 }), schedule: Type.String(),
   },
   { $id: "CronPollDelivery", additionalProperties: false },
 );
 export const CronPollPlanSchema = Type.Union([CronPollNoneSchema, CronPollDeliverySchema]);
-export type CronGoalFacts = Static<typeof CronGoalFactsSchema>;
+export type CronPlanFacts = Static<typeof CronPlanFactsSchema>;
 export type CronPollPlan = Static<typeof CronPollPlanSchema>;
 export const CronDeliveredFactsSchema = Type.Object(
   { id: Type.String({ minLength: 1 }), now: Type.Number(), ctx: Type.Unknown() },
@@ -680,16 +682,16 @@ export const ThreadToolFactsSchema = Type.Object(
   },
   { $id: "ThreadToolFacts", additionalProperties: false },
 );
-export const GoalRollbackFactsSchema = Type.Object(
+export const PlanRollbackFactsSchema = Type.Object(
   { snapshot: Type.Unknown(), ctx: Type.Unknown() },
-  { $id: "GoalRollbackFacts", additionalProperties: false },
+  { $id: "PlanRollbackFacts", additionalProperties: false },
 );
-export const FinalizeGoalErrorFactsSchema = Type.Object({ status: Type.String({ minLength: 1 }), ctx: Type.Unknown() }, { $id: "FinalizeGoalErrorFacts", additionalProperties: false });
-export const GoalRollbackResultSchema = Type.Object(
+export const FinalizePlanErrorFactsSchema = Type.Object({ status: Type.String({ minLength: 1 }), ctx: Type.Unknown() }, { $id: "FinalizePlanErrorFacts", additionalProperties: false });
+export const PlanRollbackResultSchema = Type.Object(
   { completed: Type.Literal(true) },
-  { $id: "GoalRollbackResult", additionalProperties: false },
+  { $id: "PlanRollbackResult", additionalProperties: false },
 );
-export type GoalRollbackResult = Static<typeof GoalRollbackResultSchema>;
+export type PlanRollbackResult = Static<typeof PlanRollbackResultSchema>;
 export const MutationErrorSchema = Type.Object(
   { kind: Type.Literal("error"), message: Type.String({ minLength: 1 }) },
   { $id: "MutationError", additionalProperties: false },
@@ -916,7 +918,7 @@ export const CronTaskSchema = Type.Object(
   {
     id: Type.String({ minLength: 1 }), schedule: Type.String(), cron: Type.String({ minLength: 1 }),
     prompt: Type.String(), recurring: Type.Boolean(),
-    mode: Type.Union([Type.Literal("message"), Type.Literal("goal")]),
+    mode: Type.Union([Type.Literal("message"), Type.Literal("plan")]),
     enabled: Type.Boolean(), nextDue: Type.Integer(), nextDueText: Type.String(), pending: Type.Boolean(),
   },
   { $id: "CronTask", additionalProperties: false },
@@ -937,7 +939,7 @@ export const CronTaskPatchSchema = Type.Object(
   {
     id: Type.String({ minLength: 1 }), prompt: Type.Optional(Type.String()),
     cron: Type.Optional(Type.String({ minLength: 1 })), recurring: Type.Optional(Type.Boolean()),
-    mode: Type.Optional(Type.Union([Type.Literal("message"), Type.Literal("goal")])),
+    mode: Type.Optional(Type.Union([Type.Literal("message"), Type.Literal("plan")])),
   },
   { $id: "CronTaskPatch", additionalProperties: false },
 );

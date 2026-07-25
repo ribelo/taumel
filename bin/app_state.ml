@@ -44,12 +44,12 @@ let state =
 
 let runtime : unit Runtime.t option ref = ref None
 let active_host : Unsafe.any option ref = ref None
-let current_goal : Taumel.Goal.t option ref = ref None
-let goal_automation = ref Taumel.Goal.Automation_enabled
-let goal_turn_clock = ref Taumel.Goal.empty_clock
-let pending_goal_terminal_status : Taumel.Goal.status option ref = ref None
-let goal_retrying = ref false
-let goal_compacting = ref false
+let current_plan : Taumel.Plan.t option ref = ref None
+let plan_automation = ref Taumel.Plan.Automation_enabled
+let plan_turn_clock = ref Taumel.Plan.empty_clock
+let pending_plan_terminal_status : Taumel.Plan.pending_terminal_status option ref = ref None
+let plan_retrying = ref false
+let plan_compacting = ref false
 let active_profile_state = ref Taumel.Capability_profile.default
 let active_network_mode = ref Taumel.Sandbox.Network_disabled
 let active_no_sandbox = ref false
@@ -62,13 +62,13 @@ let loaded_footer_permissions =
       footer_approval_policy = !active_profile_state.approval_policy;
       footer_no_sandbox = !active_no_sandbox;
     }
-(* Parent-only footer goal line. The shared goal state is swapped out while
+(* Parent-only footer plan line. The shared plan state is swapped out while
    isolated children load their own projection, so the footer renders this
    retained presentation, captured only from main-session contexts. *)
-let loaded_footer_goal = ref None
-let capture_loaded_footer_goal () =
-  loaded_footer_goal :=
-    Option.map (Taumel.Goal.present !goal_automation) !current_goal
+let loaded_footer_plan = ref None
+let capture_loaded_footer_plan () =
+  loaded_footer_plan :=
+    Option.map (Taumel.Plan.present !plan_automation) !current_plan
 let host_sandbox_preset : Taumel.Capability_profile.sandbox_preset option ref = ref None
 let host_network_mode : Taumel.Sandbox.network_mode option ref = ref None
 let host_no_sandbox : bool option ref = ref None
@@ -153,8 +153,9 @@ let loaded_agent_owner_id : string option ref = ref None
 let loaded_session_id : string option ref = ref None
 let owner_session_epoch = ref 0
 let permission_state_epoch = ref 0
-let last_goal_accounting_key : string option ref = ref None
-let pending_goal_load_warning : string option ref = ref None
+let last_plan_accounting_key : string option ref = ref None
+let pending_plan_load_warning : string option ref = ref None
+let legacy_plan_warned_sessions : string list ref = ref []
 let footer_event = "taumel:footer:changed"
 
 let active_host_or_empty () =

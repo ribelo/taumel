@@ -35,7 +35,7 @@ let base_snapshot =
     total_cost = 0.0;
     context_percent = 0.0;
     context_window = 0.0;
-    goal = None;
+    plan = None;
   }
 
 let test_parse_git_numstat () =
@@ -71,7 +71,7 @@ let test_render_line () =
         total_cost = 0.125;
         context_percent = 12.0;
         context_window = 200000.0;
-        goal = None;
+        plan = None;
       }
   in
   if not (String.contains line '$') then failwith "rendered line omits cost";
@@ -177,7 +177,7 @@ let test_narrow_width_preserves_colored_dots () =
     failwith
       (Printf.sprintf "narrow footer flattened permission dots: %S" line)
 
-let test_render_goal_status () =
+let test_render_plan_status () =
   let line =
     String.concat "\n"
       (Footer.render_lines
@@ -191,22 +191,30 @@ let test_render_goal_status () =
            provider = "openai-codex";
            model = "gpt-test";
            thinking = "medium";
-           goal =
+           plan =
              Some
                {
-                 status = Taumel.Goal.Active;
-                 automation = Taumel.Goal.Automation_enabled;
-                 objective = "ship";
+                 status = Taumel.Plan.Active;
+                 automation = Taumel.Plan.Automation_interrupted;
+                 tasks = [];
+                 completed_tasks = 1;
+                 total_tasks = 2;
                  tokens_used = 0;
                  time_used_seconds = 720;
                  time_limit_seconds = Some 1800;
-                 goal_id = "g";
+                 plan_id = "g";
                  session_id = "s";
                };
          })
   in
-  if not (contains_substring line "Goal active · ship · 12m/30m") then
-    failwith "rendered line omits goal status"
+  if
+    not
+      (contains_substring line
+         "Plan active (interrupted) · 1/2 tasks · 12m/30m")
+  then
+    failwith "rendered line omits plan status"
+  else if contains_substring line "tokens" then
+    failwith "rendered plan line includes token telemetry"
 
 let () =
   test_parse_git_numstat ();
@@ -218,4 +226,4 @@ let () =
   test_no_sandbox_all_text_tokens ();
   test_render_git_states ();
   test_narrow_width_preserves_colored_dots ();
-  test_render_goal_status ()
+  test_render_plan_status ()

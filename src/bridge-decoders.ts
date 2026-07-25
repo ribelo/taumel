@@ -1,6 +1,6 @@
 import { Compile } from "typebox/compile";
-import { ActiveToolsPlanSchema, AuthorityPlanIssuedSchema, BridgeCommandResultSchema, BridgeErrorResultSchema, BridgeToolExecutionResultSchema, BridgeToolResultSchema, ChildDispatchPlanSchema, ChildSessionStartPlanSchema, CommandChildDispatchPlanSchema, CommandChildSessionPlanSchema, CommandExecutionPlanSchema, CommandNotificationPlanSchema, CommandSpecsResultSchema, CompactionCommandPlanSchema, CompactionSessionPlanSchema, CoreAckSchema, CronCommandResultSchema, CronDeliveredResultSchema, CronGoalFactsSchema, CronListResultSchema, CronPollPlanSchema, CronPromptPlanSchema, CronPromptSchema, CronStartupPlanSchema, EditApplicationResultSchema, EnvironmentContextPlanSchema, ExecApprovalPromptPlanSchema, ExecApprovalResultSchema, ExecNotificationClaimSchema, ExecPolicyAllowRuleResultSchema, ExecToolResultSchema, GoalContinuationPlanSchema, GoalRollbackResultSchema, KimiUsageHostAuthSchema, KimiUsageHostParamsSchema, OpenAiUsageHostAuthSchema, OpenAiUsageHostParamsSchema, UsagePairHostParamsSchema, PatchApplicationResultSchema, PendingExecNotificationsResultSchema, PermissionsCommandResultSchema, PermissionsPromptPlanSchema, PermissionsPromptSchema, RefreshExecPolicyResultSchema, SandboxHostPathPlanSchema, SkillListResultSchema, SkillResolveResultSchema, ThreadCatalogScansResultSchema, ToolNamesResultSchema, ToolResultEnvelopeSchema, ViewMediaResultEnvelopeSchema, VisibilityListResultSchema, VisibilityRowsResultSchema, VisibilitySavePlanSchema, VisibilityToggleResultSchema, VisibilityWarningsResultSchema, WorkspaceMutationValidationSchema, type ActiveToolsPlan, type AuthorityPlanIssued, type BridgeCommandResult, type BridgeToolExecutionResult, type BridgeToolResult, type ChildDispatchPlan, type ChildSessionStartPlan, type CommandChildDispatchPlan, type CommandChildSessionPlan, type CommandExecutionPlan, type CommandNotificationPlan, type CommandSpecsResult, type CompactionCommandPlan, type CompactionSessionPlan, type CoreAck, type CronCommandResult, type CronDeliveredResult, type CronGoalFacts, type CronListResult, type CronPollPlan, type CronPrompt, type CronPromptPlan, type CronStartupPlan, type EditApplicationResult, type EnvironmentContextPlan, type ExecApprovalPromptPlan, type ExecApprovalResult, type ExecNotificationClaim, type ExecPolicyAllowRuleResult, type ExecToolResult, type GoalContinuationPlan, type GoalRollbackResult, type KimiUsageHostAuth, type KimiUsageHostParams, type OpenAiUsageHostAuth, type OpenAiUsageHostParams, type UsagePairHostParams, type PatchApplicationResult, type PendingExecNotificationsResult, type PermissionsCommandResult, type PermissionsPrompt, type PermissionsPromptPlan, type RefreshExecPolicyResult, type SandboxHostPathPlan, type SkillListResult, type SkillResolveResult, type ThreadCatalogScansResult, type ToolNamesResult, type ToolResultEnvelope, type ViewMediaResultEnvelope, type VisibilityListResult, type VisibilityRowsResult, type VisibilitySavePlan, type VisibilityToggleResult, type VisibilityWarningsResult, type WorkspaceMutationValidation } from "./bridge-core-contracts.ts";
-import { AgentActiveCountResultSchema, AgentCleanupPlanSchema, AgentManagerSnapshotSchema, AgentNotificationClaimValidationSchema, AgentRoutingDiagnosticsResultSchema, ComposerCommandResultSchema, CronGoalCreationResultSchema, GatewayCommandOutputSchema, PendingAgentNotificationsResultSchema, PreparedToolActionSchema, type AgentActiveCountResult, type AgentCleanupPlan, type AgentManagerSnapshot, type AgentNotificationClaimValidation, type AgentRoutingDiagnosticsResult, type ComposerCommandResult, type CronGoalCreationResult, type GatewayCommandOutput, type PendingAgentNotificationsResult, type PreparedToolAction } from "./bridge-action-contracts.ts";
+import { ActiveToolsPlanSchema, AuthorityPlanIssuedSchema, BridgeCommandResultSchema, BridgeErrorResultSchema, BridgeToolExecutionResultSchema, BridgeToolResultSchema, ChildDispatchPlanSchema, ChildSessionStartPlanSchema, CommandChildDispatchPlanSchema, CommandChildSessionPlanSchema, CommandExecutionPlanSchema, CommandNotificationPlanSchema, CommandSpecsResultSchema, CompactionCommandPlanSchema, CompactionSessionPlanSchema, CoreAckSchema, CronCommandResultSchema, CronDeliveredResultSchema, CronPlanFactsSchema, CronListResultSchema, CronPollPlanSchema, CronPromptPlanSchema, CronPromptSchema, CronStartupPlanSchema, EditApplicationResultSchema, EnvironmentContextPlanSchema, ExecApprovalPromptPlanSchema, ExecApprovalResultSchema, ExecNotificationClaimSchema, ExecPolicyAllowRuleResultSchema, ExecToolResultSchema, PlanContinuationPlanSchema, PlanRollbackResultSchema, KimiUsageHostAuthSchema, KimiUsageHostParamsSchema, OpenAiUsageHostAuthSchema, OpenAiUsageHostParamsSchema, UsagePairHostParamsSchema, PatchApplicationResultSchema, PendingExecNotificationsResultSchema, PermissionsCommandResultSchema, PermissionsPromptPlanSchema, PermissionsPromptSchema, RefreshExecPolicyResultSchema, SandboxHostPathPlanSchema, SkillListResultSchema, SkillResolveResultSchema, ThreadCatalogScansResultSchema, ToolNamesResultSchema, ToolResultEnvelopeSchema, ViewMediaResultEnvelopeSchema, VisibilityListResultSchema, VisibilityRowsResultSchema, VisibilitySavePlanSchema, VisibilityToggleResultSchema, VisibilityWarningsResultSchema, WorkspaceMutationValidationSchema, type ActiveToolsPlan, type AuthorityPlanIssued, type BridgeCommandResult, type BridgeToolExecutionResult, type BridgeToolResult, type ChildDispatchPlan, type ChildSessionStartPlan, type CommandChildDispatchPlan, type CommandChildSessionPlan, type CommandExecutionPlan, type CommandNotificationPlan, type CommandSpecsResult, type CompactionCommandPlan, type CompactionSessionPlan, type CoreAck, type CronCommandResult, type CronDeliveredResult, type CronPlanFacts, type CronListResult, type CronPollPlan, type CronPrompt, type CronPromptPlan, type CronStartupPlan, type EditApplicationResult, type EnvironmentContextPlan, type ExecApprovalPromptPlan, type ExecApprovalResult, type ExecNotificationClaim, type ExecPolicyAllowRuleResult, type ExecToolResult, type PlanContinuationPlan, type PlanRollbackResult, type KimiUsageHostAuth, type KimiUsageHostParams, type OpenAiUsageHostAuth, type OpenAiUsageHostParams, type UsagePairHostParams, type PatchApplicationResult, type PendingExecNotificationsResult, type PermissionsCommandResult, type PermissionsPrompt, type PermissionsPromptPlan, type RefreshExecPolicyResult, type SandboxHostPathPlan, type SkillListResult, type SkillResolveResult, type ThreadCatalogScansResult, type ToolNamesResult, type ToolResultEnvelope, type ViewMediaResultEnvelope, type VisibilityListResult, type VisibilityRowsResult, type VisibilitySavePlan, type VisibilityToggleResult, type VisibilityWarningsResult, type WorkspaceMutationValidation } from "./bridge-core-contracts.ts";
+import { AgentActiveCountResultSchema, AgentCleanupPlanSchema, AgentManagerSnapshotSchema, AgentNotificationClaimValidationSchema, AgentRoutingDiagnosticsResultSchema, ComposerCommandResultSchema, CronPlanCreationResultSchema, GatewayCommandOutputSchema, PendingAgentNotificationsResultSchema, PreparedToolActionSchema, type AgentActiveCountResult, type AgentCleanupPlan, type AgentManagerSnapshot, type AgentNotificationClaimValidation, type AgentRoutingDiagnosticsResult, type ComposerCommandResult, type CronPlanCreationResult, type GatewayCommandOutput, type PendingAgentNotificationsResult, type PreparedToolAction } from "./bridge-action-contracts.ts";
 import { ChildSessionMetadataSchema, type ChildSessionMetadata } from "./bridge-child-session-contracts.ts";
 import { ChildPermissionRefreshPlanSchema, type ChildPermissionRefreshPlan } from "./bridge-core-contracts.ts";
 import { TaumelPersistedCustomEntrySchema, type AnyPersistedTaumelCustomEntry } from "./session-entry-contracts.ts";
@@ -21,7 +21,7 @@ const skillListResultDecoder = Compile(SkillListResultSchema);
 const skillResolveResultDecoder = Compile(SkillResolveResultSchema);
 const environmentContextPlanDecoder = Compile(EnvironmentContextPlanSchema);
 const commandNotificationPlanDecoder = Compile(CommandNotificationPlanSchema);
-const goalContinuationPlanDecoder = Compile(GoalContinuationPlanSchema);
+const planContinuationPlanDecoder = Compile(PlanContinuationPlanSchema);
 const childSessionStartPlanDecoder = Compile(ChildSessionStartPlanSchema);
 const childPermissionRefreshPlanDecoder = Compile(ChildPermissionRefreshPlanSchema);
 const sessionCustomEntryDecoder = Compile(TaumelPersistedCustomEntrySchema);
@@ -42,11 +42,11 @@ const execToolResultDecoder = Compile(ExecToolResultSchema);
 const execApprovalResultDecoder = Compile(ExecApprovalResultSchema);
 const authorityPlanIssuedDecoder = Compile(AuthorityPlanIssuedSchema);
 const commandChildDispatchPlanDecoder = Compile(CommandChildDispatchPlanSchema);
-const cronGoalFactsDecoder = Compile(CronGoalFactsSchema);
+const cronPlanFactsDecoder = Compile(CronPlanFactsSchema);
 const cronPollPlanDecoder = Compile(CronPollPlanSchema);
 const cronDeliveredResultDecoder = Compile(CronDeliveredResultSchema);
 const cronStartupPlanDecoder = Compile(CronStartupPlanSchema);
-const goalRollbackResultDecoder = Compile(GoalRollbackResultSchema);
+const planRollbackResultDecoder = Compile(PlanRollbackResultSchema);
 const editApplicationResultDecoder = Compile(EditApplicationResultSchema);
 const patchApplicationResultDecoder = Compile(PatchApplicationResultSchema);
 const visibilityWarningsResultDecoder = Compile(VisibilityWarningsResultSchema);
@@ -64,7 +64,7 @@ const cronCommandResultDecoder = Compile(CronCommandResultSchema);
 const cronPromptDecoder = Compile(CronPromptSchema);
 const cronPromptPlanDecoder = Compile(CronPromptPlanSchema);
 const composerCommandResultDecoder = Compile(ComposerCommandResultSchema);
-const cronGoalCreationResultDecoder = Compile(CronGoalCreationResultSchema);
+const cronPlanCreationResultDecoder = Compile(CronPlanCreationResultSchema);
 const gatewayCommandOutputDecoder = Compile(GatewayCommandOutputSchema);
 const preparedToolActionDecoder = Compile(PreparedToolActionSchema);
 const coreAckDecoder = Compile(CoreAckSchema);
@@ -192,9 +192,9 @@ export function decodeCommandNotificationPlan(value: unknown): CommandNotificati
   catch { throw new Error("Invalid OCaml command-notification plan response"); }
 }
 
-export function decodeGoalContinuationPlan(value: unknown): GoalContinuationPlan {
-  try { return goalContinuationPlanDecoder.Decode(value); }
-  catch { throw new Error("Invalid OCaml goal-continuation plan response"); }
+export function decodePlanContinuationPlan(value: unknown): PlanContinuationPlan {
+  try { return planContinuationPlanDecoder.Decode(value); }
+  catch { throw new Error("Invalid OCaml plan-continuation plan response"); }
 }
 
 export function decodeChildSessionStartPlan(value: unknown): ChildSessionStartPlan {
@@ -298,9 +298,9 @@ export function decodeCommandChildDispatchPlan(value: unknown): CommandChildDisp
   try { return commandChildDispatchPlanDecoder.Decode(value); }
   catch { throw new Error("Invalid OCaml command child-dispatch plan response"); }
 }
-export function decodeCronGoalFacts(value: unknown): CronGoalFacts {
-  try { return cronGoalFactsDecoder.Decode(value); }
-  catch { throw new Error("Invalid OCaml cron goal-facts response"); }
+export function decodeCronPlanFacts(value: unknown): CronPlanFacts {
+  try { return cronPlanFactsDecoder.Decode(value); }
+  catch { throw new Error("Invalid OCaml cron plan-facts response"); }
 }
 export function decodeCronPollPlan(value: unknown): CronPollPlan {
   try { return cronPollPlanDecoder.Decode(value); }
@@ -314,9 +314,9 @@ export function decodeCronStartupPlan(value: unknown): CronStartupPlan {
   try { return cronStartupPlanDecoder.Decode(value); }
   catch { throw new Error("Invalid OCaml cron-startup response"); }
 }
-export function decodeGoalRollbackResult(value: unknown): GoalRollbackResult {
-  try { return goalRollbackResultDecoder.Decode(value); }
-  catch { throw new Error("Invalid OCaml goal-rollback response"); }
+export function decodePlanRollbackResult(value: unknown): PlanRollbackResult {
+  try { return planRollbackResultDecoder.Decode(value); }
+  catch { throw new Error("Invalid OCaml plan-rollback response"); }
 }
 export function decodeEditApplicationResult(value: unknown): EditApplicationResult {
   try { return editApplicationResultDecoder.Decode(value); }
@@ -386,9 +386,9 @@ export function decodeComposerCommandResult(value: unknown): ComposerCommandResu
   try { return composerCommandResultDecoder.Decode(value); }
   catch { throw new Error("Invalid OCaml composer command response"); }
 }
-export function decodeCronGoalCreationResult(value: unknown): CronGoalCreationResult {
-  try { return cronGoalCreationResultDecoder.Decode(value); }
-  catch { throw new Error("Invalid OCaml cron goal-creation response"); }
+export function decodeCronPlanCreationResult(value: unknown): CronPlanCreationResult {
+  try { return cronPlanCreationResultDecoder.Decode(value); }
+  catch { throw new Error("Invalid OCaml cron plan-creation response"); }
 }
 export function decodeGatewayCommandOutput(value: unknown): GatewayCommandOutput {
   try { return gatewayCommandOutputDecoder.Decode(value); }

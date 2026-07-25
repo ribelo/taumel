@@ -66,7 +66,7 @@ let tasks_array tasks = js_array (List.map (fun task -> inject (task_summary tas
 
 let typed_mode = function
   | Taumel.Cron.Message -> `V_message
-  | Taumel.Cron.Goal -> `V_goal
+  | Taumel.Cron.Plan -> `V_plan
 
 let typed_task (task : Taumel.Cron.task) =
   let mode = typed_mode task.mode in
@@ -90,8 +90,8 @@ let prepare_create params ctx =
     let cron = get_string params "cron" in
     let prompt = get_string params "prompt" in
     let recurring = if has_property params "recurring" then get_bool params "recurring" else true in
-    let goal = if has_property params "goal" then get_bool params "goal" else false in
-    let mode = if goal then Taumel.Cron.Goal else Taumel.Cron.Message in
+    let plan = if has_property params "plan" then get_bool params "plan" else false in
+    let mode = if plan then Taumel.Cron.Plan else Taumel.Cron.Message in
     let request : Taumel.Cron.create_request = { cron; prompt; recurring; mode } in
     match Taumel.Cron.create ~now:(App_state.now_seconds ()) ~id:(random_id ()) request !cron_state with
     | Error message -> error_obj message
@@ -205,7 +205,7 @@ let update_task_impl params ctx =
            (Taumel.Cron.update_task_recurring id (get_bool params "recurring"))
       |> apply_if (has_property params "mode") (fun state ->
              match Taumel.Cron.mode_of_string (get_string params "mode") with
-             | None -> Error "cron task mode must be message or goal"
+             | None -> Error "cron task mode must be message or plan"
              | Some mode -> Taumel.Cron.update_task_mode id mode state)
     in
     match result with
@@ -350,8 +350,8 @@ let finish_prompt raw_prompt raw_selection ctx =
 let facts_from_js facts =
   {
     Taumel.Cron.host_idle = Tool_contracts.CronPollFacts.get_hostIdle facts;
-    goal_driving = Tool_contracts.CronPollFacts.get_goalDriving facts;
-    goal_slot_free = Tool_contracts.CronPollFacts.get_goalSlotFree facts;
+    plan_driving = Tool_contracts.CronPollFacts.get_planDriving facts;
+    plan_slot_free = Tool_contracts.CronPollFacts.get_planSlotFree facts;
   }
 
 let poll raw_facts =
@@ -405,30 +405,30 @@ let delivered raw_facts =
         save_state ctx;
         result true
 
-let goal_facts raw_facts =
+let plan_facts raw_facts =
   let facts = decode_ojs_contract Tool_contracts.CronContextFacts.t_of_js (ojs_of_js raw_facts) in
   let ctx = Tool_contracts.CronContextFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> js_of_ojs in
-  let result goalSlotFree goalDriving =
-    Tool_contracts.CronGoalFacts.create ~goalSlotFree ~goalDriving ()
-    |> Tool_contracts.CronGoalFacts.t_to_js |> inject
+  let result planSlotFree planDriving =
+    Tool_contracts.CronPlanFacts.create ~planSlotFree ~planDriving ()
+    |> Tool_contracts.CronPlanFacts.t_to_js |> inject
   in
   match
-    Session_sync.try_sync_session_from_host ~scope:"cron goal facts" ctx
+    Session_sync.try_sync_session_from_host ~scope:"cron plan facts" ctx
   with
   | Error _ -> result false true
   | Ok () ->
-    let goal_slot_free, goal_driving =
-      match !App_state.current_goal with
+    let plan_slot_free, plan_driving =
+      match !App_state.current_plan with
       | None -> (true, false)
-      | Some goal ->
-          let slot_free = match goal.Taumel.Goal.status with Taumel.Goal.Complete -> true | _ -> false in
+      | Some plan ->
+          let slot_free = match plan.Taumel.Plan.status with Taumel.Plan.Complete -> true | _ -> false in
           let driving =
-            goal.Taumel.Goal.status = Taumel.Goal.Active
-            && !App_state.goal_automation = Taumel.Goal.Automation_enabled
+            plan.Taumel.Plan.status = Taumel.Plan.Active
+            && !App_state.plan_automation = Taumel.Plan.Automation_enabled
           in
           (slot_free, driving)
     in
-    result goal_slot_free goal_driving
+    result plan_slot_free plan_driving
 
 let startup_reason = function
   | "new" -> Taumel.Cron.New

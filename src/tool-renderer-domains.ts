@@ -45,34 +45,50 @@ function resultDescription(item: ToolRenderFields): string | undefined {
   return Array.isArray(highlights) ? highlights.find((part): part is string => typeof part === "string") : undefined;
 }
 
-function buildGoal(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
+function buildPlan(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
-  const goal = recordFieldOrUndefined<ToolRenderFields>(details, "goal");
-  const objective = goal !== undefined ? stringFieldOrUndefined(goal, "objective") : undefined;
-  const status = goal !== undefined
-    ? stringFieldOrUndefined(goal, "statusLabel") ?? stringFieldOrUndefined(goal, "status")
+  const plan = recordFieldOrUndefined<ToolRenderFields>(details, "plan");
+  const status = plan !== undefined
+    ? stringFieldOrUndefined(plan, "statusLabel") ?? stringFieldOrUndefined(plan, "status")
     : undefined;
-  const subject = oneLine(objective ?? stringFieldOrUndefined(args, "objective") ?? stringFieldOrUndefined(args, "status") ?? name);
+  const argTasks = recordArrayFieldOrEmpty<ToolRenderFields>(args, "tasks");
+  const taskId = stringFieldOrUndefined(args, "taskId");
+  const completed = plan !== undefined ? numberFieldOrUndefined(plan, "completedTasks") : undefined;
+  const total = plan !== undefined ? numberFieldOrUndefined(plan, "totalTasks") : undefined;
+  const progress = completed === undefined || total === undefined ? undefined : `${completed}/${total} tasks`;
+  const createdTitles = argTasks.map((task) => stringFieldOrUndefined(task, "title") ?? "").filter(Boolean).join(", ");
+  const subject = oneLine(taskId ?? (createdTitles === "" ? undefined : createdTitles) ?? progress ?? stringFieldOrUndefined(args, "status") ?? name);
   const header = headerSpec(name, subject, dotFromDetails(details), theme, status !== undefined ? themeFg(theme, "dim", `(${status})`) : "");
   if (!expanded) return { header, body: undefined };
   const entries: Entry[] = [];
-  entries.push(...labeled("Objective", objective, theme));
   entries.push(...labeled("Status", status, theme));
+  entries.push(...labeled("Progress", progress, theme));
   const automation = recordFieldOrUndefined<ToolRenderFields>(details, "automation");
   entries.push(...labeled("Automation", automation !== undefined ? stringFieldOrUndefined(automation, "continuation") : undefined, theme));
   if (details["accountingPending"] === true) entries.push(...labeled("Accounting", "final accounting pending", theme));
-  const tokens = goal !== undefined ? numberFieldOrUndefined(goal, "tokensUsed") : undefined;
-  const seconds = goal !== undefined ? numberFieldOrUndefined(goal, "timeUsedSeconds") : undefined;
-  const timeUsage = goal !== undefined ? stringFieldOrUndefined(goal, "timeUsage") : undefined;
-  const timeLimit = goal !== undefined ? numberFieldOrUndefined(goal, "timeLimitSeconds") : undefined;
+  const tokens = plan !== undefined ? numberFieldOrUndefined(plan, "tokensUsed") : undefined;
+  const seconds = plan !== undefined ? numberFieldOrUndefined(plan, "timeUsedSeconds") : undefined;
+  const timeUsage = plan !== undefined ? stringFieldOrUndefined(plan, "timeUsage") : undefined;
+  const timeLimit = plan !== undefined ? numberFieldOrUndefined(plan, "timeLimitSeconds") : undefined;
   if (tokens !== undefined) entries.push(...labeled("Tokens", String(tokens), theme));
   if (timeUsage !== undefined) entries.push(...labeled("Active time", timeUsage, theme));
   else if (seconds !== undefined) entries.push(...labeled("Active time", `${seconds}s`, theme));
   if (timeLimit !== undefined) entries.push(...labeled("Time limit", `${timeLimit}s`, theme));
-  if (goal !== undefined) {
-    entries.push(...labeled("Goal ID", stringFieldOrUndefined(goal, "goalId"), theme));
-    entries.push(...labeled("Session ID", stringFieldOrUndefined(goal, "sessionId"), theme));
+  if (plan !== undefined) {
+    for (const task of recordArrayFieldOrEmpty<ToolRenderFields>(plan, "tasks")) {
+      const id = stringFieldOrUndefined(task, "taskId") ?? "task";
+      const title = stringFieldOrUndefined(task, "title") ?? "";
+      const taskStatus = stringFieldOrUndefined(task, "status") ?? "unknown";
+      const origin = stringFieldOrUndefined(task, "origin") ?? "unknown";
+      entries.push({ text: `${themeFg(theme, "dim", `${id} [${taskStatus}/${origin}]:`)} ${themeFg(theme, "toolOutput", title)}` });
+      const dependencies = task["depends_on"];
+      if (Array.isArray(dependencies) && dependencies.length > 0) {
+        entries.push(...labeled("Depends on", dependencies.filter((value): value is string => typeof value === "string").join(", "), theme));
+      }
+    }
+    entries.push(...labeled("Plan ID", stringFieldOrUndefined(plan, "planId"), theme));
+    entries.push(...labeled("Session ID", stringFieldOrUndefined(plan, "sessionId"), theme));
   }
   entries.push(...fullTextEntries(textContent(result), theme));
   return { header, body: entries.length === 0 ? undefined : { mode: "rail", entries } };
@@ -396,7 +412,7 @@ export function buildDomainResult(name: string, result: unknown, options: unknow
   if (["agent_spawn", "agent_send", "agent_wait", "agent_list", "agent_close", "finder", "oracle"].includes(name)) {
     return buildAgent(name, result, options, theme, args);
   }
-  if (name === "get_goal" || name === "create_goal" || name === "update_goal") return buildGoal(name, result, options, theme, args);
+  if (name === "get_plan" || name === "create_task" || name === "update_task" || name === "update_plan") return buildPlan(name, result, options, theme, args);
   if (name.startsWith("cron_")) return buildCron(name, result, options, theme, args);
   if (name === "query_threads") return buildQueryThreads(name, result, options, theme, args);
   if (name === "read_thread") return buildReadThread(name, result, options, theme, args);

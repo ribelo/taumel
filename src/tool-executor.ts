@@ -16,7 +16,6 @@ import { toolContracts } from "./tool-contract-catalog.ts";
 import {
   cwdFromContext,
   sessionInfoFromContext,
-  threadSources,
   authorizeCanonicalMutationPaths,
   readAuthorizedFile,
   readJsonObjectForAtomicUpdate,
@@ -27,7 +26,8 @@ import {
   contextWithOverrides,
   type MutationPathAuthorization,
 } from "./util.ts";
-import { goalContinuationMessageRenderer, notificationMessageRenderer, renderersForTool } from "./tool-renderer.ts";
+import { threadSources } from "./thread-sources.ts";
+import { planContinuationMessageRenderer, notificationMessageRenderer, renderersForTool } from "./tool-renderer.ts";
 import { bindHarnessApprovalUi, clearHarnessApprovalUi, requestHarnessApproval, type ApprovalOutcome, type ApprovalResolution, type ApprovalUi } from "./approval-coordinator.ts";
 import {
   applyChildSessionUpdate,
@@ -59,7 +59,7 @@ type PreparedMutationAction = Extract<PreparedSuccess, { action: "write" | "writ
 type GatewayToolResult = ToolResultEnvelope | ReturnType<typeof decodeViewMediaResultEnvelope>;
 const agentToolNames = new Set(["agent_spawn", "finder", "oracle", "agent_send", "agent_wait", "agent_list", "agent_close"]);
 const invalidChildSafeToolNames = new Set([
-  "read", "view_media", "get_goal", "query_threads", "read_thread",
+  "read", "view_media", "get_plan", "query_threads", "read_thread",
   "ralph_continue", "ralph_finish", "cron_list", "agent_wait", "agent_list",
 ]);
 
@@ -91,12 +91,12 @@ export {
 
 export { executeOpenAiUsageWithHostAuth, executeUsagePairWithHostAuth } from "./usage-host.ts";
 
-async function withGoalClockPaused<T>(core: CoreBridge, run: () => Promise<T>): Promise<T> {
-  core.call("goalClockPauseStart", []);
+async function withPlanClockPaused<T>(core: CoreBridge, run: () => Promise<T>): Promise<T> {
+  core.call("planClockPauseStart", []);
   try {
     return await run();
   } finally {
-    core.call("goalClockPauseEnd", []);
+    core.call("planClockPauseEnd", []);
   }
 }
 
@@ -275,7 +275,7 @@ async function requestSandboxRetryApproval(
     signal,
     validate,
     run: async (ui, requestSignal) => {
-      const approved = await withGoalClockPaused(core, async () =>
+      const approved = await withPlanClockPaused(core, async () =>
         await ui.confirm(
           `${requester}Command requires approval`,
           `command failed; retry without sandbox?\n\n${prepared.cmd}`,
@@ -462,14 +462,14 @@ async function confirmExecApproval(
       try {
         const prompt = `${plan.prompt}\n\n${boundedApprovalEvidence(prepared)}`;
         if (allowAlwaysTokens !== undefined && allowAlwaysTokens.length > 0 && typeof ui.select === "function") {
-          const selected = await withGoalClockPaused(core, async () =>
+          const selected = await withPlanClockPaused(core, async () =>
             await ui.select?.(`${plan.title}\n\n${prompt}`, ["Deny", "Allow once", "Allow always"], { signal: controller.signal })
           );
           if (selected === "Allow once") return "approved";
           if (selected === "Allow always") return "approved_always";
           return controller.signal.aborted ? outcome ?? "interrupted" : "denied_by_user";
         }
-        const approved = await withGoalClockPaused(core, async () =>
+        const approved = await withPlanClockPaused(core, async () =>
           await ui.confirm(plan.title, prompt, { signal: controller.signal })
         );
         if (approved === true) return "approved";
@@ -530,7 +530,7 @@ async function authorizePreparedMutationPaths(
 async function runThreadTool(core: CoreBridge, name: string, prepared: Extract<PreparedSuccess, { action: "query_threads" | "read_thread" }>, ctx: unknown) {
   if (name !== "query_threads" && name !== "read_thread") throw new Error(`Invalid thread tool: ${name}`);
   return decodeToolResultEnvelope(core.call("runThreadTool", [{
-    name, params: prepared, catalog: await threadSources(core, ctx), ctx,
+    name, params: prepared, catalog: await threadSources(core, ctx, prepared), ctx,
   }]));
 }
 
@@ -901,7 +901,7 @@ export function registerGatewayTools(
   if (typeof pi.registerTool !== "function") return;
   if (typeof pi.registerMessageRenderer === "function") {
     pi.registerMessageRenderer("notification", notificationMessageRenderer());
-    pi.registerMessageRenderer("taumel.goal.continue", goalContinuationMessageRenderer());
+    pi.registerMessageRenderer("taumel.plan.continue", planContinuationMessageRenderer());
   }
   installExecNotificationLifecycle(pi, core);
   installAgentLifecycle(pi, core, childSessions, pendingAgentWaits);

@@ -41,8 +41,8 @@ for (const persistedEntry of [
   persisted("taumel.visibility", {
     version: 1, tools: { disabled: [] }, skills: { disabled: [] },
   }),
-  persisted("taumel.goal", null),
-  persisted("taumel.goal_automation", null),
+  persisted("taumel.plan", null),
+  persisted("taumel.plan_automation", null),
   persisted("taumel.ralph", { version: 1, tasks: [] }),
   persisted("taumel.agents.v4", {
     version: 6,
@@ -125,8 +125,8 @@ const legacy = latestTaumelCustomEntry(
 assert.equal(legacy.kind, "absent");
 
 const tombstone = latestTaumelCustomEntry(
-  manager([persisted("taumel.goal", null)]),
-  "taumel.goal",
+  manager([persisted("taumel.plan", null)]),
+  "taumel.plan",
 );
 assert.equal(tombstone.kind, "contract_valid");
 assert.equal(tombstone.kind === "contract_valid" && tombstone.entry.data, null);
@@ -145,9 +145,11 @@ assert.equal(malformedMarker.kind, "invalid");
 assert.equal(isCanonicalEntryPresent(malformedMarker), true);
 
 for (const invalid of [
+  { type: "custom", customType: "taumel.goal", data: null },
+  { type: "custom", customType: "taumel.goal_automation", data: null },
   { type: "custom", customType: "taumel.unknown", data: {} },
   { type: "custom", customType: "taumel.permissions", data: { kind: "ralph" } },
-  { customType: "taumel.goal", data: null },
+  { customType: "taumel.plan", data: null },
   wire(persisted("taumel.cron", {
     version: 1, enabled: true,
     tasks: [{

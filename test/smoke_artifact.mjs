@@ -210,7 +210,7 @@ for (const [name, params, expectedError] of [
   ["agent_send", { agent_id: "agent-test", interrupt: "false" }, /AgentSendParams.*interrupt.*boolean/],
   ["query_threads", { query: "safe", includeTools: "false" }, /QueryThreadsParams.*includeTools.*boolean/],
   ["web_search_exa", { query: 42 }, /WebSearchExaParams.*query.*string/],
-  ["get_goal", { unexpected: true }, /EmptyParams.*unexpected.*not allowed/],
+  ["get_plan", { unexpected: true }, /EmptyParams.*unexpected.*not allowed/],
 ]) {
   let rejection = "";
   try {
@@ -422,7 +422,7 @@ if (footerInstallSessionIds.includes("artifact-child-session")) {
 renderedPermissionTokens.length = 0;
 component.render(120);
 const parentPermissionTokens = renderedPermissionTokens.slice(0, 3);
-core.call("prepareTool", [{ name: "get_goal", params: {}, ctx: childCtx }]);
+core.call("prepareTool", [{ name: "get_plan", params: {}, ctx: childCtx }]);
 renderedPermissionTokens.length = 0;
 component.render(120);
 const permissionTokensAfterChildTool = renderedPermissionTokens.slice(0, 3);

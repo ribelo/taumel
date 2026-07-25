@@ -24,7 +24,7 @@ type thread = {
   title : string;
   workspace : string option;
   messages : message list;
-  goal_summary : string option;
+  plan_summary : string option;
   branch_summary : string option;
   compaction_summary : string option;
   source_path : string option;
@@ -74,7 +74,7 @@ type thread_summary = {
   workspace : string option;
   message_count : int;
   source_path : string option;
-  goal_summary : string option;
+  plan_summary : string option;
   branch_summary : string option;
   compaction_summary : string option;
   hits : hit list;
@@ -292,8 +292,8 @@ let summary_candidate_text json =
             "compactionSummary";
             "compaction_summary";
             "compactSummary";
-            "goalSummary";
-            "goal_summary";
+            "planSummary";
+            "plan_summary";
           ]
       in
       if direct <> "" then direct
@@ -308,7 +308,7 @@ let matches_summary_kind kind value =
   match kind with
   | `Branch -> contains value "branch"
   | `Compaction -> contains value "compaction" || contains value "compact"
-  | `Goal -> contains value "goal"
+  | `Plan -> contains value "plan"
 
 let summary_from_entries entries kind =
   let rec loop = function
@@ -547,7 +547,7 @@ let jsonl_thread_of_text ~path text : (thread, diagnostic list) result =
         title;
         workspace = !workspace;
         messages = messages_from_entries entries;
-        goal_summary = summary_from_entries json_entries `Goal;
+        plan_summary = summary_from_entries json_entries `Plan;
         branch_summary = summary_from_entries json_entries `Branch;
         compaction_summary = summary_from_entries json_entries `Compaction;
         source_path = Some path;
@@ -607,10 +607,10 @@ let legacy_thread_of_json ~path json : thread option =
             title;
             workspace = (if workspace = "" then None else Some workspace);
             messages = messages_from_entries entries;
-            goal_summary =
-              (string_field "goalSummary" json
-              |> fun value -> option_or_else value (string_field "goal_summary" json)
-              |> fun value -> option_or_else value (summary_from_entries summary_entries `Goal));
+            plan_summary =
+              (string_field "planSummary" json
+              |> fun value -> option_or_else value (string_field "plan_summary" json)
+              |> fun value -> option_or_else value (summary_from_entries summary_entries `Plan));
             branch_summary =
               (string_field "branchSummary" json
               |> fun value -> option_or_else value (string_field "branch_summary" json)

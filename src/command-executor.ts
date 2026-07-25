@@ -32,7 +32,7 @@ import {
 } from "./util.ts";
 import { toolNames } from "./tool-contracts.ts";
 import { decodeActiveToolsPlan, decodeCommandChildSessionPlan, decodeCommandExecutionPlan, decodeCommandNotificationPlan, decodeCommandSpecsResult, decodeCoreAck } from "./bridge-contracts.ts";
-import { decodeBridgeCommandResult, decodeCommandChildDispatchPlan, decodeGatewayCommandOutput, decodeGoalContinuationPlan, decodeGoalRollbackResult, decodePermissionsCommandResult, decodePermissionsPrompt, decodePermissionsPromptPlan, type GatewayCommandOutput, type GoalContinuationFacts, type ToolResultEnvelope } from "./bridge-contracts.ts";
+import { decodeBridgeCommandResult, decodeCommandChildDispatchPlan, decodeGatewayCommandOutput, decodePlanContinuationPlan, decodePlanRollbackResult, decodePermissionsCommandResult, decodePermissionsPrompt, decodePermissionsPromptPlan, type GatewayCommandOutput, type PlanContinuationFacts, type ToolResultEnvelope } from "./bridge-contracts.ts";
 
 type CommandContext = {
   readonly getSystemPrompt?: () => unknown;
@@ -45,21 +45,25 @@ type CommandUi = {
   readonly custom?: (factory: unknown) => Promise<unknown>;
   readonly setStatus?: (key: string, value: string | undefined) => unknown;
 };
-type AssistantMessage = { readonly role?: unknown; readonly stopReason?: unknown; readonly errorMessage?: unknown };
+type AssistantMessage = { readonly role?: unknown; readonly stopReason?: unknown };
 type AssistantEvent = { readonly messages?: unknown; readonly willRetry?: unknown };
 type CommandResultLike = {
   readonly ok?: unknown; readonly action?: unknown; readonly message?: unknown; readonly error?: unknown;
-  readonly details?: unknown; readonly goalStartObjective?: unknown; readonly goalRollback?: unknown;
-  readonly goalFollowup?: unknown;
-  readonly goalInspection?: unknown;
+  readonly details?: unknown; readonly planSubmitUserMessage?: unknown; readonly planRollback?: unknown;
+  readonly planFollowup?: unknown;
+  readonly planInspection?: unknown;
 };
 type VisibilityCommandDetails = { readonly visibilityChanged?: unknown; readonly category?: unknown; readonly enabledName?: unknown };
 type ChildUpdateDetails = { readonly childSessionUpdates?: unknown };
-type GoalCommandDetails = { readonly goal?: unknown; readonly automation?: unknown };
-type GoalAutomationView = { readonly continuation?: unknown };
-type GoalView = {
-  readonly statusLabel?: unknown; readonly objective?: unknown; readonly timeUsage?: unknown;
+type PlanCommandDetails = { readonly plan?: unknown; readonly automation?: unknown };
+type PlanAutomationView = { readonly continuation?: unknown };
+type PlanView = {
+  readonly statusLabel?: unknown; readonly tasks?: unknown; readonly completedTasks?: unknown; readonly totalTasks?: unknown; readonly timeUsage?: unknown;
   readonly tokensUsed?: unknown; readonly timeUsedSeconds?: unknown; readonly timeLimitSeconds?: unknown;
+};
+type PlanTaskView = {
+  readonly taskId?: unknown; readonly title?: unknown; readonly status?: unknown;
+  readonly origin?: unknown; readonly depends_on?: unknown;
 };
 type SessionLifecycleEvent = { readonly type?: unknown; readonly willRetry?: unknown };
 type InputEvent = { readonly source?: unknown };
@@ -112,33 +116,7 @@ function latestAssistantStopReason(event: unknown): string {
   return "";
 }
 
-function latestAssistantErrorMessage(event: unknown): string {
-  const messages = typeof event === "object" && event !== null ? (event as AssistantEvent).messages : undefined;
-  if (!Array.isArray(messages)) return "";
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const rawMessage = messages[index];
-    const message = typeof rawMessage === "object" && rawMessage !== null ? rawMessage as AssistantMessage : undefined;
-    if (message?.role !== "assistant") continue;
-    return typeof message.errorMessage === "string" ? message.errorMessage : "";
-  }
-  return "";
-}
-
-function isUsageLimitedError(message: string): boolean {
-  const normalized = message.toLowerCase();
-  return [
-    "gousagelimiterror",
-    "freeusagelimiterror",
-    "monthly usage limit reached",
-    "available balance",
-    "insufficient_quota",
-    "out of budget",
-    "quota exceeded",
-    "billing",
-  ].some((marker) => normalized.includes(marker));
-}
-
-async function sendGoalMessage(
+async function sendPlanMessage(
   pi: PiLike,
   customType: string,
   content: string,
@@ -155,24 +133,42 @@ async function sendGoalMessage(
   }
 }
 
-async function showGoalInspection(result: CommandResultLike, ctx: unknown): Promise<void> {
+async function showPlanInspection(result: CommandResultLike, ctx: unknown): Promise<void> {
   const rawUi = commandContext(ctx)?.ui;
   const ui = typeof rawUi === "object" && rawUi !== null ? rawUi as CommandUi : undefined;
   if (typeof ui?.custom !== "function") return;
-  const details = typeof result.details === "object" && result.details !== null ? result.details as GoalCommandDetails : {};
-  const goal = typeof details.goal === "object" && details.goal !== null ? details.goal as GoalView : undefined;
+  const details = typeof result.details === "object" && result.details !== null ? result.details as PlanCommandDetails : {};
+  const plan = typeof details.plan === "object" && details.plan !== null ? details.plan as PlanView : undefined;
   const automation = typeof details.automation === "object" && details.automation !== null
-    ? details.automation as GoalAutomationView
+    ? details.automation as PlanAutomationView
     : undefined;
-  const status = typeof goal?.statusLabel === "string" ? goal.statusLabel : "none";
-  const objective = typeof goal?.objective === "string" ? goal.objective : "";
-  const time = typeof goal?.timeUsage === "string" ? goal.timeUsage : "";
-  const candidate = ["Goal", status, objective, time].filter((part) => part !== "").join(" · ");
+  const status = typeof plan?.statusLabel === "string" ? plan.statusLabel : "none";
+  const time = typeof plan?.timeUsage === "string" ? plan.timeUsage : "";
+  const completed = typeof plan?.completedTasks === "number" ? plan.completedTasks : 0;
+  const total = typeof plan?.totalTasks === "number" ? plan.totalTasks : 0;
+  const progress = plan === undefined ? "" : `${completed}/${total} tasks`;
+  const candidate = ["Plan", status, progress, time].filter((part) => part !== "").join(" · ");
   let expanded = false;
   await ui.custom((tui: unknown, theme: unknown, _keys: unknown, done: () => void) => ({
     render: (width: number) => {
-      const rawLines = expanded && goal !== undefined
-        ? [candidate, `Objective: ${objective}`, `Status: ${status}`, `Automation: ${String(automation?.continuation ?? "enabled")}`, `Tokens: ${String(goal.tokensUsed ?? 0)}`, `Active time: ${time}`, `Time limit: ${goal.timeLimitSeconds == null ? "none" : String(goal.timeLimitSeconds)}`]
+      const rawLines = expanded && plan !== undefined
+        ? [
+            candidate,
+            `Status: ${status}`,
+            `Automation: ${String(automation?.continuation ?? "enabled")}`,
+            `Tokens: ${String(plan.tokensUsed ?? 0)}`,
+            `Active time: ${time}`,
+            `Time limit: ${plan.timeLimitSeconds == null ? "none" : String(plan.timeLimitSeconds)}`,
+            ...(Array.isArray(plan.tasks) ? plan.tasks.map((rawTask) => {
+              const task = typeof rawTask === "object" && rawTask !== null ? rawTask as PlanTaskView : {};
+              const id = typeof task.taskId === "string" ? task.taskId : "task";
+              const title = typeof task.title === "string" ? task.title : "";
+              const taskStatus = typeof task.status === "string" ? task.status : "unknown";
+              const origin = typeof task.origin === "string" ? task.origin : "unknown";
+              const dependencies = Array.isArray(task.depends_on) ? task.depends_on.filter((value): value is string => typeof value === "string") : [];
+              return `${id} [${taskStatus}/${origin}] ${title}${dependencies.length === 0 ? "" : ` (depends on ${dependencies.join(", ")})`}`;
+            }) : []),
+          ]
         : [candidate];
       const lines = rawLines.map((raw) => raw.length <= width ? raw : `${raw.slice(0, Math.max(0, width - 3))}...`);
       const themed = typeof theme === "object" && theme !== null && typeof (theme as { fg?: unknown }).fg === "function"
@@ -235,23 +231,23 @@ async function showSystemPromptInspection(ctx: unknown): Promise<void> {
   }));
 }
 
-async function sendGoalContinuation(
+async function sendPlanContinuation(
   pi: PiLike,
   core: CoreBridge,
   ctx: unknown,
   initial: boolean,
-  facts: Omit<GoalContinuationFacts, "initial" | "latestAssistantStopReason" | "ctx">,
+  facts: Omit<PlanContinuationFacts, "initial" | "latestAssistantStopReason" | "ctx">,
   event: unknown,
 ): Promise<void> {
   if (!extensionRuntimeIsLive(pi) || !contextIsLive(ctx)) return;
   const stopReason = latestAssistantStopReason(event);
-  const plan = decodeGoalContinuationPlan(core.call("planGoalContinuation", [{
+  const plan = decodePlanContinuationPlan(core.call("planPlanContinuation", [{
     ...facts, initial, ...(stopReason === "" ? {} : { latestAssistantStopReason: stopReason }), ctx,
   }]));
   if (plan.kind === "none") return;
   try {
     if (!extensionRuntimeIsLive(pi) || !contextIsLive(ctx)) return;
-    await sendGoalMessage(
+    await sendPlanMessage(
       pi,
       plan.customType,
       plan.content,
@@ -268,7 +264,7 @@ async function sendGoalContinuation(
   }
 }
 
-async function executeGoalCommandSideEffects(
+async function executePlanCommandSideEffects(
   pi: PiLike,
   core: CoreBridge,
   name: string,
@@ -276,31 +272,31 @@ async function executeGoalCommandSideEffects(
   ctx: unknown,
 ): Promise<void> {
   const command = commandResult(result);
-  if (name !== "goal" || command?.action !== "command_result") {
+  if (name !== "plan" || command?.action !== "command_result") {
     return;
   }
-  const startObjective =
-    typeof command.goalStartObjective === "string" ? command.goalStartObjective : "";
-  if (startObjective !== "") {
+  const submittedMessage =
+    typeof command.planSubmitUserMessage === "string" ? command.planSubmitUserMessage : "";
+  if (submittedMessage !== "") {
     try {
       if (typeof pi.sendUserMessage !== "function") {
         throw new Error("Pi sendUserMessage is unavailable");
       }
-      await pi.sendUserMessage(startObjective);
+      await pi.sendUserMessage(submittedMessage);
     } catch (error) {
-      if (typeof command.goalRollback === "object" && command.goalRollback !== null) {
-        decodeGoalRollbackResult(core.call("rollbackGoalCommand", [{ snapshot: command.goalRollback, ctx }]));
+      if (typeof command.planRollback === "object" && command.planRollback !== null) {
+        decodePlanRollbackResult(core.call("rollbackPlanCommand", [{ snapshot: command.planRollback, ctx }]));
       }
       throw error;
     }
     return;
   }
-  if (command.goalInspection === true) {
-    await showGoalInspection(command, ctx);
+  if (command.planInspection === true) {
+    await showPlanInspection(command, ctx);
     return;
   }
-  if (command.goalFollowup === true) {
-    await sendGoalContinuation(pi, core, ctx, true, {
+  if (command.planFollowup === true) {
+    await sendPlanContinuation(pi, core, ctx, true, {
       hostIdle: true,
       hasPendingMessages: false,
       retrying: false,
@@ -439,7 +435,7 @@ export async function executeGatewayCommand(
       childSessions,
       result,
     );
-    await executeGoalCommandSideEffects(pi, core, name, result, ctx);
+    await executePlanCommandSideEffects(pi, core, name, result, ctx);
     if (name === "permissions" || name === "sandbox" || name === "approval" || name === "network") {
       refreshOwnedChildPermissions(childSessions, ctx, core);
     }
@@ -545,12 +541,12 @@ export function registerGatewayCommands(
         }
         const notify = ui?.notify;
         const currentResult = commandResult(result);
-        const suppressGoalNotification = name === "goal" && (
-          typeof currentResult?.goalStartObjective === "string"
-          || currentResult?.goalFollowup === true
-          || currentResult?.goalInspection === true
+        const suppressPlanNotification = name === "plan" && (
+          typeof currentResult?.planSubmitUserMessage === "string"
+          || currentResult?.planFollowup === true
+          || currentResult?.planInspection === true
         );
-        if (suppressGoalNotification) return result;
+        if (suppressPlanNotification) return result;
         const notification = decodeCommandNotificationPlan(core.call("planCommandNotification", [{
           commandName: name,
           ok: currentResult?.ok === true,
@@ -571,7 +567,7 @@ export function registerGatewayCommands(
   }
 }
 
-export function installGoalContinuationLoop(pi: PiLike, core: CoreBridge): void {
+export function installPlanContinuationLoop(pi: PiLike, core: CoreBridge): void {
   let retrying = false;
   let compacting = false;
 
@@ -603,7 +599,7 @@ export function installGoalContinuationLoop(pi: PiLike, core: CoreBridge): void 
     const source = typeof event === "object" && event !== null
       ? (event as InputEvent).source
       : undefined;
-    if (source !== "extension") core.call("clearInterruptedGoalAutomation", [ctx]);
+    if (source !== "extension") core.call("clearInterruptedPlanAutomation", [ctx]);
   });
 
   pi.on("agent_end", async (event, ctx) => {
@@ -612,7 +608,7 @@ export function installGoalContinuationLoop(pi: PiLike, core: CoreBridge): void 
       if (!extensionRuntimeIsLive(pi) || !contextIsLive(ctx)) return;
       const stopReason = latestAssistantStopReason(event);
       if (stopReason === "aborted") {
-        core.call("interruptGoalAutomation", [ctx]);
+        core.call("interruptPlanAutomation", [ctx]);
       }
       if (
         stopReason === "error"
@@ -620,14 +616,11 @@ export function installGoalContinuationLoop(pi: PiLike, core: CoreBridge): void 
         && event !== null
         && (event as SessionLifecycleEvent).willRetry === false
       ) {
-        const status = isUsageLimitedError(latestAssistantErrorMessage(event))
-          ? "usage_limited"
-          : "blocked";
-        core.call("finalizeGoalError", [{ status, ctx }]);
+        core.call("finalizePlanError", [{ status: "blocked", ctx }]);
       }
-      await sendGoalContinuation(pi, core, ctx, false, {
+      await sendPlanContinuation(pi, core, ctx, false, {
         // Pi emits agent_end before some host surfaces report idle; this event is
-        // Taumel's idle boundary for goal continuation gating.
+        // Taumel's idle boundary for plan continuation gating.
         hostIdle: true,
         hasPendingMessages: hasPendingMessages(ctx),
         retrying: retrying || (typeof event === "object" && event !== null && (event as SessionLifecycleEvent).willRetry === true),

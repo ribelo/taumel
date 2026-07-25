@@ -8,7 +8,7 @@ import type { ChildSessionBridge, CoreBootstrap, CoreBridge, PiLike, TaumelGloba
 import { createComposerController, installSkillAutocomplete } from "./composer.ts";
 import { makeHost } from "./host.ts";
 import { registerGatewayTools } from "./tool-executor.ts";
-import { installGoalContinuationLoop, registerGatewayCommands } from "./command-executor.ts";
+import { installPlanContinuationLoop, registerGatewayCommands } from "./command-executor.ts";
 import { installCompactionModelHook } from "./compaction-model.ts";
 import { installCronLoop } from "./cron.ts";
 import { installSkillResolver } from "./skills.ts";
@@ -179,7 +179,7 @@ export default async function taumel(pi: PiLike) {
     pi.registerMessageRenderer("taumel.cron.fire", cronFireMessageRenderer());
   }
   registerGatewayCommands(pi, core, childSessions, composer, registerChildGateway);
-  installGoalContinuationLoop(pi, core);
+  installPlanContinuationLoop(pi, core);
   installCronLoop(pi, core);
   installSandboxToolActivation(pi, core);
   installExecPolicyLoader(pi, core);

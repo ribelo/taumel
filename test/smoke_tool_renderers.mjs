@@ -1,5 +1,5 @@
 import { toolNames } from "../src/tool-contracts.ts";
-import { cronFireMessageRenderer, goalContinuationMessageRenderer, notificationMessageRenderer, renderersForTool, skillMessageRenderer } from "../src/tool-renderer.ts";
+import { cronFireMessageRenderer, planContinuationMessageRenderer, notificationMessageRenderer, renderersForTool, skillMessageRenderer } from "../src/tool-renderer.ts";
 import { Box, visibleWidth } from "@earendil-works/pi-tui";
 
 const assert = (condition, message) => {
@@ -54,9 +54,11 @@ function argsFor(name) {
     case "write":
     case "edit":
       return { path: "src/example.txt", edits: [{ oldText: "a", newText: "b" }] };
-    case "create_goal":
-      return { objective: "ship renderer coverage" };
-    case "update_goal":
+    case "create_task":
+      return { tasks: [{ title: "ship renderer coverage" }] };
+    case "update_task":
+      return { taskId: "task-1", status: "completed" };
+    case "update_plan":
       return { status: "complete" };
     case "query_threads":
       return { query: "renderer" };
@@ -118,8 +120,8 @@ function resultFor(name) {
   if (name === "view_media") {
     return { content: [{ type: "text", text: "Image loaded." }], details: { ok: true, path: "/tmp/pi-clipboard-6e6a501780841a8c.png", mimeType: "image/png", originalWidth: 4096, originalHeight: 1536, width: 2048, height: 768, wasResized: true, payloadBytes: 12345 } };
   }
-  if (name === "get_goal" || name === "create_goal" || name === "update_goal") {
-    return { content: [{ type: "text", text: "Goal updated." }], details: { ok: true, goal: { objective: "ship renderer coverage", status: "active", tokensUsed: 10, timeUsedSeconds: 2 } } };
+  if (name === "get_plan" || name === "create_task" || name === "update_task" || name === "update_plan") {
+    return { content: [{ type: "text", text: "Plan updated." }], details: { ok: true, plan: { status: "active", completedTasks: 0, totalTasks: 1, tasks: [{ taskId: "task-1", title: "ship renderer coverage", status: "pending", origin: "agent", depends_on: [] }], tokensUsed: 10, timeUsedSeconds: 2 } } };
   }
   if (name === "query_threads") {
     return { content: [{ type: "text", text: "threads" }], details: { ok: true, threads: threadSummaries } };
@@ -620,24 +622,26 @@ assert(!queryCompact.includes("\n") && !queryCompact.includes("Thread 1"), `quer
 assert(queryExpanded.includes("Thread 4") && queryExpanded.includes("message/assistant: renderer hit 1"), `query_threads expanded should include more threads and hit snippets: ${queryExpanded}`);
 
 // Single-entity — header + dim facts line.
-const goalCompact = renderText(renderersForTool("create_goal").renderResult(resultFor("create_goal"), { expanded: false, isPartial: false }, theme, { args: argsFor("create_goal") }));
-assert(/• create_goal · ship renderer coverage/.test(goalCompact), `create_goal subject should be the objective: ${goalCompact}`);
-assert(!goalCompact.includes("\n"), `create_goal compact should be a single line: ${goalCompact}`);
-const pendingGoalCompact = renderText(renderersForTool("update_goal").renderResult({
-  content: [{ type: "text", text: "Goal updated." }],
+const planCompact = renderText(renderersForTool("create_task").renderResult(resultFor("create_task"), { expanded: false, isPartial: false }, theme, { args: argsFor("create_task") }));
+assert(/• create_task · ship renderer coverage/.test(planCompact), `create_task subject should be the task title: ${planCompact}`);
+assert(!planCompact.includes("\n"), `create_task compact should be a single line: ${planCompact}`);
+const pendingPlanCompact = renderText(renderersForTool("update_plan").renderResult({
+  content: [{ type: "text", text: "Plan updated." }],
   details: {
     ok: true,
     accountingPending: true,
-    goal: {
-      objective: "ship renderer coverage",
+    plan: {
       status: "complete",
+      completedTasks: 1,
+      totalTasks: 1,
+      tasks: [{ taskId: "task-1", title: "ship renderer coverage", status: "completed", origin: "agent", depends_on: [] }],
       tokensUsed: 0,
       timeUsedSeconds: 0,
     },
   },
-}, { expanded: false, isPartial: false }, theme, { args: argsFor("update_goal") }));
-assert(pendingGoalCompact.includes("(complete)") && !pendingGoalCompact.includes("\n"), `update_goal compact should carry status in one line: ${pendingGoalCompact}`);
-assert(!pendingGoalCompact.includes("0 tokens · 0s"), `update_goal pending accounting should suppress zero counters: ${pendingGoalCompact}`);
+}, { expanded: false, isPartial: false }, theme, { args: argsFor("update_plan") }));
+assert(pendingPlanCompact.includes("(complete)") && !pendingPlanCompact.includes("\n"), `update_plan compact should carry status in one line: ${pendingPlanCompact}`);
+assert(!pendingPlanCompact.includes("0 tokens · 0s"), `update_plan pending accounting should suppress zero counters: ${pendingPlanCompact}`);
 
 const cronCreateCompact = renderText(renderersForTool("cron_create").renderResult(resultFor("cron_create"), { expanded: false, isPartial: false }, theme, { args: argsFor("cron_create") }));
 const cronListCompact = renderText(renderersForTool("cron_list").renderResult(resultFor("cron_list"), { expanded: false, isPartial: false }, theme, { args: argsFor("cron_list") }));
@@ -672,17 +676,17 @@ const listRunsCompact = renderText(renderersForTool("exa_agent_list_runs").rende
 assert(/• exa_agent_list_runs · recent runs \(12\)/.test(listRunsCompact) && !listRunsCompact.includes("Result 1"), `exa_agent_list_runs compact should be one-line count: ${listRunsCompact}`);
 
 // notification — opaque exec_completion + agent_completion ready signals.
-const renderGoalContinuation = goalContinuationMessageRenderer();
-const goalContinuationMessage = {
-  customType: "taumel.goal.continue",
-  content: "Continue working toward the active goal.\n\nFull exact prompt.",
-  details: { goal: { objective: "ship renderer coverage", status: "active" }, automation: { continuation: "enabled" } },
+const renderPlanContinuation = planContinuationMessageRenderer();
+const planContinuationMessage = {
+  customType: "taumel.plan.continue",
+  content: "Continue working toward the active plan.\n\nFull exact prompt.",
+  details: { plan: { statusLabel: "active", completedTasks: 1, totalTasks: 3, timeUsage: "2m" }, automation: { continuation: "enabled" } },
 };
-const compactGoalContinuation = renderText(renderGoalContinuation(goalContinuationMessage, { expanded: false }, theme));
-const expandedGoalContinuation = renderText(renderGoalContinuation(goalContinuationMessage, { expanded: true }, theme));
-assert(compactGoalContinuation.includes("goal.continue") && compactGoalContinuation.includes("ship renderer coverage"), `goal continuation compact rendering wrong: ${compactGoalContinuation}`);
-assert(!compactGoalContinuation.includes("Full exact prompt"), `goal continuation compact rendering leaked prompt: ${compactGoalContinuation}`);
-assert(expandedGoalContinuation.includes("Full exact prompt"), `goal continuation expanded rendering omitted exact prompt: ${expandedGoalContinuation}`);
+const compactPlanContinuation = renderText(renderPlanContinuation(planContinuationMessage, { expanded: false }, theme));
+const expandedPlanContinuation = renderText(renderPlanContinuation(planContinuationMessage, { expanded: true }, theme));
+assert(compactPlanContinuation.includes("plan.continue") && compactPlanContinuation.includes("1/3 tasks"), `plan continuation compact rendering wrong: ${compactPlanContinuation}`);
+assert(!compactPlanContinuation.includes("Full exact prompt"), `plan continuation compact rendering leaked prompt: ${compactPlanContinuation}`);
+assert(expandedPlanContinuation.includes("Full exact prompt"), `plan continuation expanded rendering omitted exact prompt: ${expandedPlanContinuation}`);
 
 const renderNotification = notificationMessageRenderer();
 const execNote = 'Command session 3 has finished. To read and consume the result, call write_stdin with session_id=3, chars="", yield_time_ms=5000.';

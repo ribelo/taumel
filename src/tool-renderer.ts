@@ -132,9 +132,13 @@ function subjectFromArgs(name: string, args: ToolRenderFields): string {
       return stringFieldOrUndefined(args, "path") ?? "";
     case "apply_patch":
       return oneLine(stringFieldOrUndefined(args, "input") ?? stringFieldOrUndefined(args, "patch") ?? "patch");
-    case "create_goal":
-      return oneLine(stringFieldOrUndefined(args, "objective") ?? "");
-    case "update_goal":
+    case "create_task": {
+      const tasks = recordArrayFieldOrEmpty<ToolRenderFields>(args, "tasks");
+      return oneLine(tasks.map((task) => stringFieldOrUndefined(task, "title") ?? "").filter(Boolean).join(", "));
+    }
+    case "update_task":
+      return stringFieldOrUndefined(args, "taskId") ?? "";
+    case "update_plan":
       return stringFieldOrUndefined(args, "status") ?? "";
     case "query_threads":
     case "web_search_exa":
@@ -661,17 +665,22 @@ export function notificationMessageRenderer() {
   };
 }
 
-export function goalContinuationMessageRenderer() {
+export function planContinuationMessageRenderer() {
   return (message: unknown, options: unknown, theme: unknown) => {
     if (!isToolRenderFields(message)) return undefined;
     const details = detailsRecord(message);
-    const goal = recordFieldOrUndefined<ToolRenderFields>(details, "goal");
-    const objective = goal === undefined ? "" : stringFieldOrUndefined(goal, "objective") ?? "";
+    const plan = recordFieldOrUndefined<ToolRenderFields>(details, "plan");
     const content = stringFieldOrUndefined(message, "content") ?? "";
-    if (objective === "" || content === "") return undefined;
+    if (plan === undefined || content === "") return undefined;
+    const status = stringFieldOrUndefined(plan, "statusLabel") ?? stringFieldOrUndefined(plan, "status") ?? "";
+    const completed = numberFieldOrUndefined(plan, "completedTasks");
+    const total = numberFieldOrUndefined(plan, "totalTasks");
+    const time = stringFieldOrUndefined(plan, "timeUsage") ?? "";
+    const progress = completed === undefined || total === undefined ? "" : `${completed}/${total} tasks`;
+    const summary = [status, progress, time].filter((part) => part !== "").join(" · ");
     const expanded = expandedFromOptions(options);
     const block: Block = {
-      header: headerSpec("goal.continue", objective, "muted", theme),
+      header: headerSpec("plan.continue", summary, "muted", theme),
       body: expanded
         ? { mode: "rail", entries: fullTextEntries(content, theme) }
         : undefined,

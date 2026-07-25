@@ -166,7 +166,7 @@ let js_summary (summary : Taumel.Thread_tools.thread_summary) =
       ("workspace", js_option_string summary.workspace);
       ("messageCount", js_number (float_of_int summary.message_count));
       ("sourcePath", js_option_string summary.source_path);
-      ("goalSummary", js_option_string summary.goal_summary);
+      ("planSummary", js_option_string summary.plan_summary);
       ("branchSummary", js_option_string summary.branch_summary);
       ("compactionSummary", js_option_string summary.compaction_summary);
       ("hits", js_array (List.map js_hit summary.hits));

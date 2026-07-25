@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { constants, existsSync, readdirSync, realpathSync } from "node:fs";
-import { lstat, mkdir, open, readFile, readdir, realpath, rename, unlink } from "node:fs/promises";
+import { lstat, mkdir, open, realpath, rename, unlink } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
@@ -29,13 +29,10 @@ import type {
   SessionInfo,
 } from "./types.ts";
 import {
-  decodeThreadCatalogScansResult,
   decodeChildSessionStartPlan,
   decodeSandboxHostPathPlan,
   decodeWorkspaceMutationValidation,
   decodeToolNamesResult,
-  type ThreadCatalogFacts,
-  type ThreadCatalogScan,
   type ChildSessionStartPlan,
   type ChildSessionMetadata,
   type SandboxHostPathPlan,
@@ -49,9 +46,6 @@ type ExecHostFacts = {
   readonly homeMount: string; readonly workspaceRoots: string[]; readonly authorizationCwd: string;
   readonly workspaceMetadataListings: WorkspaceMetadataListing[];
 };
-type ThreadSource =
-  | { readonly kind: "sessionFile"; readonly path: string; readonly text: string }
-  | { readonly kind: "diagnostic"; readonly path: string; readonly error: string };
 type NodeError = { readonly code?: unknown };
 
 function objectValue(value: unknown): object | undefined {
@@ -399,76 +393,6 @@ export function applyChildActiveTools(ctx: unknown, toolNames: readonly string[]
   const context = objectValue(ctx);
   if (context !== undefined && setActiveToolsOn(property(context, "sessionManager"), toolNames)) return true;
   return false;
-}
-
-export async function discoverCatalogFiles(scan: ThreadCatalogScan): Promise<string[]> {
-  const { root, maxDepth, maxFiles, suffix } = scan;
-  const files: string[] = [];
-  async function visit(dir: string, depth: number): Promise<void> {
-    if (files.length >= maxFiles || depth < 0) return;
-    let entries;
-    try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      if (files.length >= maxFiles) return;
-      const path = `${dir}/${entry.name}`;
-      if (entry.isDirectory()) {
-        await visit(path, depth - 1);
-      } else if (entry.isFile() && entry.name.endsWith(suffix)) {
-        files.push(path);
-      }
-    }
-  }
-  await visit(root, maxDepth);
-  return files;
-}
-
-export function threadCatalogFacts(ctx: unknown): ThreadCatalogFacts {
-  const context = objectValue(ctx);
-  const cwd = context === undefined ? undefined : property(context, "cwd");
-  const sessionManager = context === undefined ? undefined : objectValue(property(context, "sessionManager"));
-  const getSessionDir = sessionManager === undefined ? undefined : property(sessionManager, "getSessionDir");
-  const sessionDir = typeof getSessionDir === "function" ? getSessionDir.call(sessionManager) : undefined;
-  return {
-    cwd: typeof cwd === "string" ? cwd : "",
-    home: homedir(),
-    ...(typeof sessionDir === "string" && sessionDir !== "" ? { override: sessionDir } : {}),
-  };
-}
-
-export function sessionCatalogScans(core: CoreBridge, ctx: unknown): ThreadCatalogScan[] {
-  return [...decodeThreadCatalogScansResult(
-    core.call("planThreadCatalogScans", [threadCatalogFacts(ctx)]),
-  ).scans];
-}
-
-export async function fileThreadSources(core: CoreBridge, ctx: unknown): Promise<ThreadSource[]> {
-  const sources: ThreadSource[] = [];
-  for (const scan of sessionCatalogScans(core, ctx)) {
-    for (const file of await discoverCatalogFiles(scan)) {
-      try {
-        sources.push({
-          kind: "sessionFile",
-          path: file,
-          text: await readFile(file, "utf8"),
-        });
-      } catch (error) {
-        sources.push({
-          kind: "diagnostic",
-          path: file,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-  }
-  return sources;
-}
-
-export async function threadSources(core: CoreBridge, ctx: unknown): Promise<ThreadSource[]> {
-  return fileThreadSources(core, ctx);
 }
 
 export type MutationPathAuthorization = Readonly<{

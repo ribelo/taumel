@@ -70,8 +70,8 @@ if (rendererOptions.get("notification") !== undefined) {
 for (const [name, tool] of registeredTools) {
   if (tool.renderShell !== "self") throw new Error(`${name} did not register renderShell \"self\"`);
 }
-if (!renderers.includes("taumel.goal.continue")) {
-  throw new Error("goal continuation renderer was not registered");
+if (!renderers.includes("taumel.plan.continue")) {
+  throw new Error("plan continuation renderer was not registered");
 }
 for (const event of ["session_start", "session_resume", "session_switch", "session_shutdown", "turn_end", "agent_end"]) {
   if ((handlers.get(event) ?? []).length === 0) throw new Error(`missing gateway lifecycle handler: ${event}`);
@@ -159,7 +159,7 @@ const ownershipCore = {
       content: [{ type: "text", text: args[0].error ?? "result" }],
       details: args[0].details ?? {},
     };
-    if (method === "goalClockPauseStart" || method === "goalClockPauseEnd") return null;
+    if (method === "planClockPauseStart" || method === "planClockPauseEnd") return null;
     throw new Error(`unexpected ownership core call: ${method}`);
   },
 };
@@ -279,7 +279,7 @@ const queueCore = {
     if (method === "toolResultEnvelope") return {
       content: [{ type: "text", text: args[0].error ?? "result" }], details: args[0].details ?? {},
     };
-    if (method === "goalClockPauseStart" || method === "goalClockPauseEnd") return null;
+    if (method === "planClockPauseStart" || method === "planClockPauseEnd") return null;
     throw new Error(`unexpected queue core call: ${method}`);
   },
 };
@@ -423,7 +423,7 @@ const crossToolCore = {
     if (method === "planExecApprovalPrompt") return {
       kind: "confirm", title: args[0].approvalTitle, prompt: args[0].approvalPrompt,
     };
-    if (method === "goalClockPauseStart" || method === "goalClockPauseEnd") return null;
+    if (method === "planClockPauseStart" || method === "planClockPauseEnd") return null;
     if (method === "discardAuthorityPlan") return { ok: true };
     if (method === "toolResultEnvelope") return {
       content: [{ type: "text", text: args[0].error ?? "ok" }], details: args[0].details ?? {},
@@ -523,7 +523,7 @@ const allowAlwaysCore = {
       discardedAllowPlans += 1;
       return { ok: true };
     }
-    if (method === "goalClockPauseStart" || method === "goalClockPauseEnd") return null;
+    if (method === "planClockPauseStart" || method === "planClockPauseEnd") return null;
     throw new Error(`unexpected allow-always core call: ${method}`);
   },
 };
@@ -590,7 +590,7 @@ const retryCore = {
     };
     if (method === "sandboxMetadataDirNames") return { names: [".git"] };
     if (method === "discardAuthorityPlan") return { ok: true };
-    if (method === "goalClockPauseStart" || method === "goalClockPauseEnd") return null;
+    if (method === "planClockPauseStart" || method === "planClockPauseEnd") return null;
     throw new Error(`unexpected retry core call: ${method}`);
   },
 };

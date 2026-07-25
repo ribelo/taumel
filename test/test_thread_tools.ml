@@ -217,6 +217,14 @@ let test_session_name_is_title () =
   let window = Threads.plan_read ~id:request.thread_id request catalog in
   assert_bool "metadata hit locator opens a window" window.ok
 
+let test_source_path_is_searchable () =
+  let result = query "sessions/thread-1.jsonl" in
+  assert_int "source path thread found" 1 (List.length result.threads);
+  assert_bool "source path hit identified"
+    (List.exists
+       (fun hit -> hit.Threads.hit_field = "source_path")
+       (List.hd result.threads).hits)
+
 let test_request_preparation () =
   (match Threads.prepare_query_request "  needle  " with
   | Ok request -> assert_equal "query request query" "needle" request.query
@@ -324,5 +332,6 @@ let () =
   test_hidden_reasoning_not_searched ();
   test_read_modes ();
   test_session_name_is_title ();
+  test_source_path_is_searchable ();
   test_request_preparation ();
   test_cursor_validation ()

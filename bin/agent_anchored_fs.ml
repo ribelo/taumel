@@ -146,7 +146,7 @@ let rec unlink_tree_entries fd =
             else unlink_entry_path path
           with error ->
             (* A concurrently vanished entry already satisfies the deletion
-               goal; keep traversing the remaining entries. *)
+               plan; keep traversing the remaining entries. *)
             if not (is_enoent error) then raise error))
     entries
 
