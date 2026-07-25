@@ -349,23 +349,19 @@ let refresh_permissions_entry ~host_sandbox_preset ~host_network_mode
       | Ok permissions -> Permissions.codec.encode permissions
       | Error _ -> fail_closed_child_permissions_entry ())
 
-let initial_goal_entries fields =
-  match string_field "initialGoalObjective" fields with
+let initial_plan_entries fields =
+  match string_field "initialPlanTask" fields with
   | None -> []
   | Some objective -> (
       let worker_id = string_field "agentId" fields |> Option.value ~default:"agent" in
       let thread_id = "agent:" ^ worker_id in
-      match Goal.create ~thread_id ~now:0 objective None with
+      match Plan.add_user_task ~session_id:thread_id ~now:0 objective None with
       | Error _ -> []
-      | Ok goal ->
+      | Ok plan ->
           [
             {
-              custom_type = "taumel.goal";
-              data = Goal.codec.encode (Some goal);
-            };
-            {
-              custom_type = "taumel.goal_automation";
-              data = Goal.automation_codec.encode Goal.Automation_enabled;
+              custom_type = Plan.plan_entry_key;
+              data = Plan.codec.encode (Some plan);
             };
           ])
 
@@ -377,7 +373,7 @@ let setup_entries ~metadata ~parent_session_id ~parent_session_file =
     | None -> [ child ]
     | Some permissions -> [ child; permissions ]
   in
-  base @ initial_goal_entries fields
+  base @ initial_plan_entries fields
 
 let start_plan ~metadata ~parent_session_id ~parent_session_file =
   let fields = object_fields metadata in

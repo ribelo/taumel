@@ -71,8 +71,8 @@
  (libraries taumel))
 
 (test
- (name test_goal_prd)
- (modules test_goal_prd)
+ (name test_plan_prd)
+ (modules test_plan_prd)
  (package taumel)
  (libraries taumel))
 

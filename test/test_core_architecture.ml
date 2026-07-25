@@ -1,7 +1,7 @@
 module Capability = Taumel.Capability_profile
 module Child_session = Taumel.Child_session
 module Gateway = Taumel.Tool_gateway
-module Goal = Taumel.Goal
+module Plan = Taumel.Plan
 module Permissions = Taumel.Permissions
 module Ralph = Taumel.Ralph_loop
 module Sandbox = Taumel.Sandbox
@@ -413,20 +413,22 @@ let test_child_session_setup_entries () =
         = Some (Shared.String "no initial prompt"))
   | _ -> fail "empty child dispatch result" "expected object")
 
-let test_goal_state_machine () =
-  let goal = expect_ok "create goal" (Goal.create ~time_limit_seconds:5 ~thread_id:"t1" ~now:1 " ship " None) in
-  assert_equal "objective trimmed" "ship" goal.objective;
-  expect_error "unfinished create denied"
-    (Goal.create ~thread_id:"t1" ~now:2 "second" (Some goal));
-  let goal =
-    Goal.account_usage ~now:3 ~time_delta_seconds:5
-      { input_tokens = 12; cached_input_tokens = 4; output_tokens = 3 }
-      goal
+let test_plan_state_machine () =
+  let plan =
+    expect_ok "create plan"
+      (Plan.add_user_task ~time_limit_seconds:5 ~session_id:"t1" ~now:1
+         " ship " None)
   in
-  assert_int "tokens accounted" 11 goal.tokens_used;
-  assert_bool "time limited" (goal.status = Goal.Time_limited);
-  expect_error "inactive goal cannot be completed"
-    (Goal.update_status ~now:4 Goal.Complete (Some goal))
+  assert_bool "task title trimmed" ((List.hd plan.tasks).title = "ship");
+  let plan =
+    Plan.account_usage ~now:3 ~time_delta_seconds:5
+      { input_tokens = 12; cached_input_tokens = 4; output_tokens = 3 }
+      plan
+  in
+  assert_int "tokens accounted" 11 plan.tokens_used;
+  assert_bool "time limited" (plan.status = Plan.Time_limited);
+  expect_error "inactive plan cannot be completed"
+    (Plan.update_plan ~now:4 Plan.Complete (Some plan))
 
 let test_ralph_ownership () =
   let task =
@@ -482,7 +484,7 @@ let test_thread_tools () =
         title = "Local build";
         workspace = Some "/repo";
         messages = [ { role = "user"; content = "fix sandbox" } ];
-        goal_summary = Some "Goal: ship sandbox";
+        plan_summary = Some "Plan: ship sandbox";
         branch_summary = Some "Branch summary";
         compaction_summary = None;
         source_path = Some "/repo/.pi/agent/sessions/abc-local.jsonl";
@@ -496,7 +498,7 @@ let test_thread_tools () =
         title = "Other build";
         workspace = Some "/other";
         messages = [ { role = "user"; content = "fix sandbox" } ];
-        goal_summary = None;
+        plan_summary = None;
         branch_summary = None;
         compaction_summary = None;
         source_path = Some "/other/.pi/agent/sessions/abc-global.jsonl";
@@ -524,8 +526,8 @@ let test_thread_tools () =
   | _ -> fail "ambiguous read" "expected ambiguous prefix");
   (match Threads.read ~id:"abc-local" thread_catalog with
   | Threads.Found thread ->
-      assert_equal "goal transcript" "Goal: ship sandbox"
-        (Threads.transcript ~goal_only:true thread)
+      assert_equal "plan transcript" "Plan: ship sandbox"
+        (Threads.transcript ~plan_only:true thread)
   | _ -> fail "exact read" "expected exact thread")
 
 let test_usage_openai_rendering () =
@@ -685,9 +687,10 @@ let test_tool_catalog_scope () =
       "exec_command";
       "write_stdin";
       "apply_patch";
-      "get_goal";
-      "create_goal";
-      "update_goal";
+      "get_plan";
+      "create_task";
+      "update_task";
+      "update_plan";
       "ralph_continue";
       "ralph_finish";
       "query_threads";
@@ -741,7 +744,7 @@ let test_tool_catalog_scope () =
   in
   assert_bool "active tool sync skips stable list" (not stable.changed);
   assert_bool "permissions command" (Tool_catalog.has_command "permissions");
-  assert_bool "goal command" (Tool_catalog.has_command "goal");
+  assert_bool "plan command" (Tool_catalog.has_command "plan");
   assert_bool "usage command" (Tool_catalog.has_command "usage");
   assert_bool "usage tool omitted" (not (Tool_catalog.has_tool "usage"));
   assert_bool "approval command omitted" (not (Tool_catalog.has_command "approval"));
@@ -994,7 +997,7 @@ let () =
   test_sandbox_workspace_metadata_protection ();
   test_child_session_setup_entries ();
   test_child_session_persisted_metadata ();
-  test_goal_state_machine ();
+  test_plan_state_machine ();
   test_ralph_ownership ();
   test_thread_tools ();
   test_usage_openai_rendering ();

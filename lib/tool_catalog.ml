@@ -31,12 +31,12 @@ let agent_tool_specs =
 let agent_tool_names =
   List.map (fun (spec : Tool_gateway.spec) -> spec.name) agent_tool_specs
 
-let goal_tool_names =
-  List.map (fun (spec : Tool_gateway.spec) -> spec.name) Goal.tool_specs
+let plan_tool_names =
+  List.map (fun (spec : Tool_gateway.spec) -> spec.name) Plan.tool_specs
 
 let tool_specs =
   Sandbox.canonical_tool_specs
-  @ Goal.tool_specs @ Ralph_loop.tool_specs
+  @ Plan.tool_specs @ Ralph_loop.tool_specs
   @ [
       { Tool_gateway.name = "cron_create"; effect_kind = Tool_gateway.Mutate };
       { name = "cron_list"; effect_kind = Pure };
@@ -55,7 +55,7 @@ let command_specs =
     { name = "composer"; description = "Configure the Taumel composer UI." };
     { name = "ralph"; description = "Start, pause, resume, finish, and list Ralph tasks." };
     { name = "usage"; description = "Show OpenAI Codex and Kimi Code account usage." };
-    { name = "goal"; description = "Show or update the thread goal." };
+    { name = "plan"; description = "Inspect or update the thread plan." };
     { name = "cron"; description = "List, enable, disable, or cancel cron tasks." };
     { name = "tools"; description = "List, enable, disable, or save Taumel tool visibility." };
     { name = "skills"; description = "List, enable, disable, or save Taumel skill visibility." };
@@ -133,8 +133,7 @@ let ensure_tool_names required tool_names =
 
 let ralph_control_tool_names = [ "ralph_continue"; "ralph_finish" ]
 let ambient_hidden_tool_names = [ "usage"; "user_detection_tool" ]
-let child_goal_removed_tool_names = [ "create_goal" ]
-let child_goal_required_tool_names = [ "get_goal"; "update_goal" ]
+let child_plan_tool_names = plan_tool_names
 
 let rewrite_shell_tool_names tool_names =
   let push name values = if List.mem name values then values else values @ [ name ] in
@@ -160,7 +159,7 @@ let rewrite_active_tools ?provider ?(ralph_child = false) ?(agent_child = false)
     else remove_tool_names ralph_control_tool_names tool_names
   in
   if agent_child then
-    remove_tool_names (agent_tool_names @ goal_tool_names) tool_names
+    remove_tool_names (agent_tool_names @ child_plan_tool_names) tool_names
   else tool_names
 
 let plan_active_tools_sync ?provider ?(ralph_child = false) ?(agent_child = false)

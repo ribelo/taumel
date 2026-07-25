@@ -28,7 +28,7 @@ let json_number name = function
 let test_execution_plan () =
   (match
      Command.plan_execution ~controller_session_id:"controller"
-       ~ralph_start_denial:None "goal" "show"
+       ~ralph_start_denial:None "plan" "show"
    with
   | Ok Command.Command_direct -> ()
   | Ok _ -> fail "command direct" "expected direct"
