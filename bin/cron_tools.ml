@@ -154,10 +154,6 @@ let command_result ?(ok=true) message details =
     ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details)) ()
   |> Tool_contracts.CronCommandResult.t_to_js |> inject
 
-let starts_with ~prefix value =
-  String.length value >= String.length prefix
-  && String.sub value 0 (String.length prefix) = prefix
-
 let set_task_enabled_command enabled id ctx =
   let id = String.trim id in
   let exists = List.exists (fun (task : Taumel.Cron.task) -> task.id = id) !cron_state.tasks in
@@ -238,9 +234,9 @@ let handle_command args ctx =
       command_result
         (if List.length !cron_state.tasks < before then "Cancelled cron task " ^ id ^ "." else "No cron task matched " ^ id ^ ".")
         (Unsafe.obj [| ("id", js_string id) |])
-  | command when starts_with ~prefix:"enable " command ->
+  | command when String.starts_with ~prefix:"enable " command ->
       set_task_enabled_command true (String.sub command 7 (String.length command - 7)) ctx
-  | command when starts_with ~prefix:"disable " command ->
+  | command when String.starts_with ~prefix:"disable " command ->
       set_task_enabled_command false (String.sub command 8 (String.length command - 8)) ctx
   | "enable" ->
       cron_state := Taumel.Cron.set_enabled true !cron_state;

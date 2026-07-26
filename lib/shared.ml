@@ -298,6 +298,21 @@ let model_name model_id =
   | name :: _ when name <> "" -> name
   | _ -> model_id
 
+let split_command input =
+  let input = String.trim input in
+  if input = "" then ("", "")
+  else
+    match String.index_opt input ' ' with
+    | None -> (input, "")
+    | Some index ->
+        ( String.sub input 0 index,
+          String.sub input (index + 1) (String.length input - index - 1)
+          |> String.trim )
+
+let split_words input =
+  input |> String.split_on_char ' ' |> List.map String.trim
+  |> List.filter (fun word -> word <> "")
+
 let session_ref ?branch_id ?turn_id thread_id = { thread_id; branch_id; turn_id }
 
 let decoded_tool_helper ~name ~arguments =

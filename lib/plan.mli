@@ -270,5 +270,4 @@ val update_task_prompt_snippet : string
 val update_plan_description : string
 val update_plan_status_description : string
 val update_plan_prompt_snippet : string
-val decode_entry : custom_type:string -> Shared.json -> (store, string) result
 val tool_specs : Tool_gateway.spec list

@@ -394,12 +394,8 @@ let persisted_of_json json =
 
 let codec = { Shared.encode = persisted_to_json; decode = persisted_of_json }
 
-let parse_words input =
-  input |> String.split_on_char ' ' |> List.map String.trim
-  |> List.filter (fun part -> part <> "")
-
 let parse input =
-  match parse_words input with
+  match Shared.split_words input with
   | [] | [ "show" ] -> Ok None
   | [ "sandbox"; value ] -> (
       match Capability_profile.sandbox_of_string value with
@@ -430,12 +426,12 @@ let parse input =
    the dedicated /network command. The permissive [parse] above still accepts a
    [network ...] selection so the shared menu-finish path can apply it. *)
 let parse_permissions input =
-  match parse_words input with
+  match Shared.split_words input with
   | "network" :: _ -> Error "network access is configured with /network"
   | _ -> parse input
 
 let parse_network input =
-  match parse_words input with
+  match Shared.split_words input with
   | [] | [ "show" ] -> Ok None
   | [ value ] | [ "network"; value ] -> (
       match network_of_string value with

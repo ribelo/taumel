@@ -1,14 +1,6 @@
 open Jsoo_bridge
 open App_state
 
-let node_require name =
-  let process = Unsafe.get Unsafe.global "process" in
-  match function_field process "getBuiltinModule" with
-  | Some get_builtin -> Unsafe.fun_call get_builtin [| js_string name |]
-  | None ->
-      let require = Unsafe.get Unsafe.global "require" in
-      Unsafe.fun_call require [| js_string name |]
-
 let pi_agent_dir = Agent_worktree_host.pi_agent_dir
 
 let read_settings_json path =
@@ -57,11 +49,6 @@ let load_routing_catalog () =
   in
   Taumel.Agent_routing.merge ~base:global ~override:project
 
-let string_starts_with ~prefix value =
-  let prefix_length = String.length prefix in
-  String.length value >= prefix_length
-  && String.sub value 0 prefix_length = prefix
-
 let routing_key kind effort =
   match (kind, effort) with
   | Taumel.Agents.Generic, Some value ->
@@ -81,13 +68,13 @@ let resolve_routing ~kind ?effort () =
   let relevant_diagnostic =
     List.find_opt
       (fun message ->
-        string_starts_with ~prefix:key message
-        || string_starts_with ~prefix:"taumel.agents must" message
-        || not (string_starts_with ~prefix:"taumel." message)
+        String.starts_with ~prefix:key message
+        || String.starts_with ~prefix:"taumel.agents must" message
+        || not (String.starts_with ~prefix:"taumel." message)
         ||
         match kind with
         | Taumel.Agents.Generic ->
-            string_starts_with ~prefix:"taumel.agents.generic must" message
+            String.starts_with ~prefix:"taumel.agents.generic must" message
         | Taumel.Agents.Finder | Taumel.Agents.Oracle -> false)
       catalog.diagnostics
   in

@@ -427,9 +427,6 @@ let test_persistence () =
                        persisted_task ~depends_on:[ "a" ] "b" "B";
                      ]))
              ())));
-  ignore
-    (expect_error "legacy key"
-       (Plan.decode_entry ~custom_type:"taumel.goal" (persisted_plan ())));
   let legacy =
     match persisted_plan () with
     | Shared.Object fields -> Shared.Object (("tokenBudget", Shared.Number 1.) :: fields)

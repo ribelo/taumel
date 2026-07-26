@@ -2,6 +2,7 @@ import { constants } from "node:fs";
 import { lstat, mkdir, open } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { join } from "node:path";
+import { nodeErrorCode } from "./util.ts";
 
 /**
  * Descriptor-anchored mutation primitives.
@@ -38,12 +39,6 @@ export type BigintStatsLike = Readonly<{
   dev: bigint; ino: bigint; size: bigint; mtimeNs: bigint; ctimeNs: bigint;
 }>;
 
-type NodeError = { readonly code?: unknown };
-
-function errorCode(error: unknown): unknown {
-  return typeof error === "object" && error !== null ? (error as NodeError).code : undefined;
-}
-
 export function identityMatches(left: FileIdentity, right: FileIdentity): boolean {
   return left.dev === right.dev && left.ino === right.ino;
 }
@@ -69,7 +64,7 @@ export async function optionalPathIdentity(path: string): Promise<FileIdentity |
   try {
     return await pathIdentity(path);
   } catch (error) {
-    if (errorCode(error) !== "ENOENT") throw error;
+    if (nodeErrorCode(error) !== "ENOENT") throw error;
   }
   return undefined;
 }
@@ -187,7 +182,7 @@ export async function walkPathnameMutationParent(request: {
     try {
       await mkdir(nextPath);
     } catch (error) {
-      if (errorCode(error) !== "EEXIST") throw error;
+      if (nodeErrorCode(error) !== "EEXIST") throw error;
     }
     const stats = await lstat(nextPath, { bigint: true });
     if (!stats.isDirectory()) {

@@ -99,8 +99,6 @@ export const bridgeDtsSchemas = [
   ["ChildDispatchCompletion", schemas.ChildDispatchCompletionSchema],
   ["ChildDispatchResult", schemas.ChildDispatchResultSchema],
   ["ChildDispatchPlan", schemas.ChildDispatchPlanSchema],
-  ["SandboxHostPathFacts", schemas.SandboxHostPathFactsSchema],
-  ["SandboxHostPathPlan", schemas.SandboxHostPathPlanSchema],
   ["ResolvedMutationPath", schemas.ResolvedMutationPathSchema],
   ["WorkspaceMutationFacts", schemas.WorkspaceMutationFactsSchema],
   ["WorkspaceMutationValid", schemas.WorkspaceMutationValidSchema],

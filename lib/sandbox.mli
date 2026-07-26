@@ -255,7 +255,6 @@ type edit_match = {
   replacement : string;
 }
 val utf8_bom : string
-val starts_with : prefix:string -> string -> bool
 val normalize_to_lf : string -> string
 val contains_crlf : string -> bool
 val restore_line_endings : string -> string -> string

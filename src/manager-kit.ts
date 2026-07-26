@@ -1,3 +1,4 @@
+import { objectLikeValue } from "./util.ts";
 import { type KeyId, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 export type ThemeLike = {
@@ -22,12 +23,8 @@ type CommandResult = {
   readonly error?: string; readonly details: unknown;
 };
 
-function objectAdapter<T extends object>(value: unknown): Partial<T> | undefined {
-  return typeof value === "object" && value !== null ? value as Partial<T> : undefined;
-}
-
 export function uiFromContext(ctx: unknown): UiLike | undefined {
-  const ui = objectAdapter<UiContext>(ctx)?.ui;
+  const ui = objectLikeValue<UiContext>(ctx)?.ui;
   return typeof ui === "object" && ui !== null ? ui as UiLike : undefined;
 }
 
@@ -57,7 +54,7 @@ export function column(text: string, width: number): string {
 }
 
 export function keybindingMatches(keybindings: unknown, data: string, id: string): boolean {
-  const matches = objectAdapter<KeybindingsLike>(keybindings)?.matches;
+  const matches = objectLikeValue<KeybindingsLike>(keybindings)?.matches;
   if (typeof matches !== "function") return false;
   try {
     return matches.call(keybindings, data, id) === true;
@@ -84,7 +81,7 @@ export function mutationOk(result: ResultLike): boolean {
 
 export function requestRenderFromTui(tui: unknown): () => void {
   return () => {
-    const requestRender = objectAdapter<{ requestRender?: () => unknown }>(tui)?.requestRender;
+    const requestRender = objectLikeValue<{ requestRender?: () => unknown }>(tui)?.requestRender;
     if (typeof requestRender === "function") requestRender.call(tui);
   };
 }

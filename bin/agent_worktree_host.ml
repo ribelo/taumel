@@ -1,11 +1,4 @@
 open Jsoo_bridge
-let node_require name =
-  let process = Unsafe.get Unsafe.global "process" in
-  match function_field process "getBuiltinModule" with
-  | Some get_builtin -> Unsafe.fun_call get_builtin [| js_string name |]
-  | None ->
-      let require = Unsafe.get Unsafe.global "require" in
-      Unsafe.fun_call require [| js_string name |]
 let fs_mod = lazy (node_require "fs")
 let path_mod = lazy (node_require "path")
 let child_process_mod = lazy (node_require "child_process")

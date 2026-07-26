@@ -601,10 +601,6 @@ type edit_match = {
 
 let utf8_bom = "\239\187\191"
 
-let starts_with ~prefix text =
-  let prefix_len = String.length prefix in
-  String.length text >= prefix_len && String.sub text 0 prefix_len = prefix
-
 let normalize_to_lf text =
   let length = String.length text in
   let buffer = Buffer.create length in
@@ -661,7 +657,7 @@ let apply_edits ~display_path content edits =
   | [] -> Error "Edit tool input is invalid. edits must contain at least one replacement."
   | _ ->
       let bom, text =
-        if starts_with ~prefix:utf8_bom content then
+        if String.starts_with ~prefix:utf8_bom content then
           (utf8_bom, String.sub content (String.length utf8_bom) (String.length content - String.length utf8_bom))
         else ("", content)
       in

@@ -20,9 +20,7 @@ export type CoreMethodArgs = {
   readonly planSessionBeforeCompact: readonly [Static<typeof Core.CompactionSettingsSchema>];
   readonly refreshExecPolicy: readonly [Static<typeof Core.RefreshExecPolicyFactsSchema>];
   readonly appendExecPolicyAllowRule: readonly [Static<typeof Core.ExecPolicyAllowRuleFactsSchema>];
-  readonly sandboxMetadataDirNames: readonly [];
   readonly validateWorkspaceMutationPaths: readonly [Static<typeof Core.WorkspaceMutationFactsSchema>];
-  readonly sandboxHostPathPlan: readonly [Static<typeof Core.SandboxHostPathFactsSchema>];
   readonly planChildSessionStart: readonly [Static<typeof Core.ChildSessionStartFactsSchema>, HostContext];
   readonly planChildDispatch: readonly [Static<typeof Core.ChildDispatchFactsSchema>];
   readonly planChildPermissionRefresh: readonly [PersistedPermissionsEntry, ChildMetadataHostValue, HostContext];

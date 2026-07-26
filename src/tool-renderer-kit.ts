@@ -1,10 +1,10 @@
 import type { Entry, HeaderSpec } from "./render-layout.ts";
-import { boolFieldOrUndefined, numberFieldOrUndefined, stringFieldOrUndefined } from "./util.ts";
+import { boolFieldOrUndefined, numberFieldOrUndefined, objectValue, stringFieldOrUndefined } from "./util.ts";
 
 export type ToolRenderFields = { readonly [key: string]: unknown };
 
 export function isToolRenderFields(value: unknown): value is ToolRenderFields {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return objectValue(value) !== undefined;
 }
 
 export function themeFg(theme: unknown, color: string, value: string): string {

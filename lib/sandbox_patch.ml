@@ -25,10 +25,6 @@
 
   module String_map = Shared.String_map
 
-  let starts_with ~prefix value =
-    let prefix_len = String.length prefix in
-    String.length value >= prefix_len && String.sub value 0 prefix_len = prefix
-
   let drop_prefix prefix value =
     String.sub value (String.length prefix) (String.length value - String.length prefix)
 
@@ -117,7 +113,7 @@
 
   let normalize_patch_path path =
     let path = String.trim path in
-    if starts_with ~prefix:"a/" path || starts_with ~prefix:"b/" path then
+    if String.starts_with ~prefix:"a/" path || String.starts_with ~prefix:"b/" path then
       String.sub path 2 (String.length path - 2)
     else path
 
@@ -139,9 +135,9 @@
       if index >= stop then (List.rev acc, index)
       else
         let line = lines.(index) in
-        if starts_with ~prefix:"***" line || starts_with ~prefix:"diff --git " line
+        if String.starts_with ~prefix:"***" line || String.starts_with ~prefix:"diff --git " line
         then (List.rev acc, index)
-        else if not (starts_with ~prefix:"@@" line) then outer acc (index + 1)
+        else if not (String.starts_with ~prefix:"@@" line) then outer acc (index + 1)
         else
           let context = parse_chunk_header line in
           let rec inner old_lines new_lines eof index =
@@ -158,8 +154,8 @@
               if line = "*** End of File" then
                 inner old_lines new_lines true (index + 1)
               else if
-                starts_with ~prefix:"@@" line || starts_with ~prefix:"***" line
-                || starts_with ~prefix:"diff --git " line
+                String.starts_with ~prefix:"@@" line || String.starts_with ~prefix:"***" line
+                || String.starts_with ~prefix:"diff --git " line
               then
                 ( {
                     change_context = context;
@@ -168,12 +164,12 @@
                     is_end_of_file = eof;
                   },
                   index )
-              else if starts_with ~prefix:" " line then
+              else if String.starts_with ~prefix:" " line then
                 let text = drop_prefix " " line in
                 inner (text :: old_lines) (text :: new_lines) eof (index + 1)
-              else if starts_with ~prefix:"-" line then
+              else if String.starts_with ~prefix:"-" line then
                 inner (drop_prefix "-" line :: old_lines) new_lines eof (index + 1)
-              else if starts_with ~prefix:"+" line then
+              else if String.starts_with ~prefix:"+" line then
                 inner old_lines (drop_prefix "+" line :: new_lines) eof (index + 1)
               else if line = "\\ No newline at end of file" then
                 inner old_lines new_lines eof (index + 1)
@@ -191,9 +187,9 @@
       if index >= stop then (String.concat "\n" (List.rev acc), index)
       else
         let line = lines.(index) in
-        if starts_with ~prefix:"***" line then
+        if String.starts_with ~prefix:"***" line then
           (String.concat "\n" (List.rev acc), index)
-        else if starts_with ~prefix:"+" line then
+        else if String.starts_with ~prefix:"+" line then
           loop (drop_prefix "+" line :: acc) (index + 1)
         else loop acc (index + 1)
     in
@@ -360,9 +356,9 @@
   let has_diff_headers lines =
     List.exists
       (fun line ->
-        starts_with ~prefix:"diff --git " line || starts_with ~prefix:"--- " line
-        || starts_with ~prefix:"rename from " line
-        || starts_with ~prefix:"rename to " line)
+        String.starts_with ~prefix:"diff --git " line || String.starts_with ~prefix:"--- " line
+        || String.starts_with ~prefix:"rename from " line
+        || String.starts_with ~prefix:"rename to " line)
       lines
 
   let parse_git_patch text =
@@ -383,7 +379,7 @@
         let rename_from = ref None in
         let rename_to = ref None in
         let index =
-          if starts_with ~prefix:"diff --git " (line index) then (
+          if String.starts_with ~prefix:"diff --git " (line index) then (
             match parse_diff_git_paths (line index) with
             | Some (old_p, new_p) ->
                 old_path := Some old_p;
@@ -394,20 +390,20 @@
         in
         let rec read_headers index =
           if index >= length then index
-          else if starts_with ~prefix:"diff --git " (line index) then index
-          else if starts_with ~prefix:"@@" (line index) then index
-          else if starts_with ~prefix:"rename from " (line index) then (
+          else if String.starts_with ~prefix:"diff --git " (line index) then index
+          else if String.starts_with ~prefix:"@@" (line index) then index
+          else if String.starts_with ~prefix:"rename from " (line index) then (
             rename_from :=
               Some
                 (line index |> drop_prefix "rename from " |> normalize_patch_path);
             read_headers (index + 1))
-          else if starts_with ~prefix:"rename to " (line index) then (
+          else if String.starts_with ~prefix:"rename to " (line index) then (
             rename_to :=
               Some (line index |> drop_prefix "rename to " |> normalize_patch_path);
             read_headers (index + 1))
-          else if starts_with ~prefix:"--- " (line index) then (
+          else if String.starts_with ~prefix:"--- " (line index) then (
             old_path := Some (parse_diff_header_path "--- " (line index));
-            if index + 1 < length && starts_with ~prefix:"+++ " (line (index + 1))
+            if index + 1 < length && String.starts_with ~prefix:"+++ " (line (index + 1))
             then (
               new_path := Some (parse_diff_header_path "+++ " (line (index + 1)));
               index + 2)
@@ -461,24 +457,24 @@
       if index >= stop then
         match List.rev acc with [] -> Error "no hunks found" | hunks -> Ok hunks
       else if String.trim (line index) = "" then parse_hunks acc (index + 1)
-      else if starts_with ~prefix:"*** Add File: " (line index) then
+      else if String.starts_with ~prefix:"*** Add File: " (line index) then
         let path =
           line index |> drop_prefix "*** Add File: " |> normalize_patch_path
         in
         let contents, next = parse_add_content lines (index + 1) stop in
         parse_hunks (Add_file { path; contents } :: acc) next
-      else if starts_with ~prefix:"*** Delete File: " (line index) then
+      else if String.starts_with ~prefix:"*** Delete File: " (line index) then
         let path =
           line index |> drop_prefix "*** Delete File: " |> normalize_patch_path
         in
         parse_hunks (Delete_file path :: acc) (index + 1)
-      else if starts_with ~prefix:"*** Update File: " (line index) then
+      else if String.starts_with ~prefix:"*** Update File: " (line index) then
         let path =
           line index |> drop_prefix "*** Update File: " |> normalize_patch_path
         in
         let index = index + 1 in
         let move_to, index =
-          if index < stop && starts_with ~prefix:"*** Move to: " (line index) then
+          if index < stop && String.starts_with ~prefix:"*** Move to: " (line index) then
             ( Some (line index |> drop_prefix "*** Move to: " |> normalize_patch_path),
               index + 1 )
           else (None, index)

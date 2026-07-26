@@ -14,6 +14,8 @@ import {
 import { toolContracts } from "./tool-contract-catalog.ts";
 
 import {
+  objectLikeValue,
+  objectValue,
   cwdFromContext,
   sessionInfoFromContext,
   authorizeCanonicalMutationPaths,
@@ -63,16 +65,10 @@ const invalidChildSafeToolNames = new Set([
   "ralph_continue", "ralph_finish", "cron_list", "agent_wait", "agent_list",
 ]);
 
-function settingsObject(value: unknown): SettingsObject | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as SettingsObject : undefined;
-}
-function toolContext(value: unknown): Partial<ToolContext> | undefined {
-  return typeof value === "object" && value !== null ? value as Partial<ToolContext> : undefined;
-}
 function agentFailureText(name: string, result: GatewayToolResult): string | undefined {
   if (!agentToolNames.has(name)) return undefined;
-  const details = settingsObject(result.details);
-  const error = settingsObject(details?.["error"]);
+  const details = objectValue<SettingsObject>(result.details);
+  const error = objectValue<SettingsObject>(details?.["error"]);
   if (details?.["ok"] !== false || typeof error?.["code"] !== "string" || typeof error["message"] !== "string") {
     return undefined;
   }
@@ -119,9 +115,9 @@ function approvalOutcomeMessage(action: string, outcome: ApprovalOutcome): strin
 async function appendExecPolicyAllowRule(core: CoreBridge, tokens: readonly string[]): Promise<void> {
   const settingsPath = join(getAgentDir(), "settings.json");
   const { settings: root, authorization } = await readJsonObjectForAtomicUpdate(settingsPath, true);
-  const existingTaumel = root["taumel"], taumel = existingTaumel === undefined ? {} : settingsObject(existingTaumel);
+  const existingTaumel = root["taumel"], taumel = existingTaumel === undefined ? {} : objectValue<SettingsObject>(existingTaumel);
   if (taumel === undefined) throw new Error(`${settingsPath}: taumel must be a JSON object`);
-  const existingExecPolicy = taumel["execPolicy"], execPolicy = existingExecPolicy === undefined ? {} : settingsObject(existingExecPolicy);
+  const existingExecPolicy = taumel["execPolicy"], execPolicy = existingExecPolicy === undefined ? {} : objectValue<SettingsObject>(existingExecPolicy);
   if (execPolicy === undefined) throw new Error(`${settingsPath}: taumel.execPolicy must be a JSON object`);
   const existingRules = execPolicy["rules"];
   if (existingRules !== undefined && !Array.isArray(existingRules)) throw new Error(`${settingsPath}: taumel.execPolicy.rules must be an array`);
@@ -146,7 +142,7 @@ function mutationApprovalDenied(core: CoreBridge, action: string, outcome: Appro
 
 function childSessionMarkerFromContext(ctx: unknown) {
   return latestTaumelCustomEntry(
-    toolContext(ctx)?.sessionManager,
+    objectLikeValue<ToolContext>(ctx)?.sessionManager,
     "taumel.childSession",
   );
 }
@@ -195,7 +191,7 @@ function installIsolatedChildOwnershipLifecycle(
   const loadParent = (ctx: unknown) => {
     if (childSessionMarkerFromContext(ctx).kind !== "absent") return;
     loadedMainSessionId = sessionInfoFromContext(ctx).sessionId;
-    bindHarnessApprovalUi(loadedMainSessionId, toolContext(ctx)?.hasUI === true, toolContext(ctx)?.ui);
+    bindHarnessApprovalUi(loadedMainSessionId, objectLikeValue<ToolContext>(ctx)?.hasUI === true, objectLikeValue<ToolContext>(ctx)?.ui);
     refreshOwnedChildPermissions(childSessions, ctx, core);
   };
   // A newly spawned child starts while its parent is still loaded, so its
@@ -385,7 +381,7 @@ async function runPreparedViewMedia(
 }
 
 function contextModelSupportsImages(ctx: unknown): boolean {
-  const rawModel = toolContext(ctx)?.model;
+  const rawModel = objectLikeValue<ToolContext>(ctx)?.model;
   if (typeof rawModel !== "object" || rawModel === null) return false;
   const input = (rawModel as ImageModel).input;
   return Array.isArray(input) && input.includes("image");

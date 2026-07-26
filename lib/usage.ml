@@ -349,19 +349,13 @@ let json_array_field name json =
   | Some (Shared.Array values) -> Some values
   | _ -> None
 
-let ends_with ~suffix value =
-  let suffix_len = String.length suffix in
-  let value_len = String.length value in
-  value_len >= suffix_len
-  && String.sub value (value_len - suffix_len) suffix_len = suffix
-
 let parse_iso_timestamp raw =
   let normalized =
-    if String.contains raw '.' && ends_with ~suffix:"Z" raw then
+    if String.contains raw '.' && String.ends_with ~suffix:"Z" raw then
       match String.split_on_char '.' raw with
       | base :: frac_and_z :: _ ->
           let frac =
-            if ends_with ~suffix:"Z" frac_and_z then
+            if String.ends_with ~suffix:"Z" frac_and_z then
               String.sub frac_and_z 0 (String.length frac_and_z - 1)
             else frac_and_z
           in

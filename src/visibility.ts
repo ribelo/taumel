@@ -4,7 +4,7 @@ import { type SettingItem, SettingsList, truncateToWidth } from "@earendil-works
 
 import type { CoreBridge, PiLike } from "./types.ts";
 import { taumelGlobalSettingsPath } from "./global-settings.ts";
-import { cwdFromContext, isProjectTrusted, liveToolNames, projectSettingsPath, readJsonObjectForAtomicUpdate, writeFileAtomically, type MutationPathAuthorization } from "./util.ts";
+import { objectValue, cwdFromContext, isProjectTrusted, liveToolNames, projectSettingsPath, readJsonObjectForAtomicUpdate, writeFileAtomically, type MutationPathAuthorization } from "./util.ts";
 import { decodeSkillListResult } from "./bridge-contracts.ts";
 import { decodeVisibilityListResult, decodeVisibilityRowsResult, decodeVisibilitySavePlan, decodeVisibilityToggleResult, decodeVisibilityWarningsResult, type VisibilityPrompt, type VisibilityRowsResult } from "./bridge-contracts.ts";
 import { toolNames } from "./tool-contracts.ts";
@@ -47,18 +47,6 @@ type VisibilitySessionManager = {
 };
 type VisibilitySettings = { [key: string]: unknown };
 
-function objectAdapter<T extends object>(value: unknown): Partial<T> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as Partial<T>
-    : undefined;
-}
-
-function settingsObject(value: unknown): VisibilitySettings | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as VisibilitySettings
-    : undefined;
-}
-
 type MutationOutcome = {
   readonly ok: boolean;
   readonly message: string;
@@ -72,16 +60,15 @@ type ManagerCallbacks = {
   readonly requestRender: () => void;
 };
 
-
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item !== "") : [];
 }
 
 function visibilityFromSettings(settings: unknown): Partial<{ tools: string[]; skills: string[] }> {
-  const root = settingsObject(settings);
-  const taumel = settingsObject(root?.["taumel"]);
+  const root = objectValue<VisibilitySettings>(settings);
+  const taumel = objectValue<VisibilitySettings>(root?.["taumel"]);
   const category = (name: Category): string[] | undefined => {
-    const block = settingsObject(taumel?.[name]);
+    const block = objectValue<VisibilitySettings>(taumel?.[name]);
     if (block?.["disabled"] === undefined) return undefined;
     return stringArray(block["disabled"]);
   };
@@ -107,13 +94,13 @@ function readConfigVisibilityDefaults(ctx: unknown): { tools: string[]; skills: 
 }
 
 function hasSessionVisibilityEntry(ctx: unknown): boolean {
-  const sessionManager = objectAdapter<VisibilitySessionManager>(objectAdapter<VisibilityContext>(ctx)?.sessionManager);
+  const sessionManager = objectValue<VisibilitySessionManager>(objectValue<VisibilityContext>(ctx)?.sessionManager);
   return latestTaumelCustomEntry(sessionManager, "taumel.visibility").kind
     !== "absent";
 }
 
 function appendSessionVisibilityEntry(ctx: unknown, disabled: { tools: string[]; skills: string[] }): void {
-  const sessionManager = objectAdapter<VisibilitySessionManager>(objectAdapter<VisibilityContext>(ctx)?.sessionManager);
+  const sessionManager = objectValue<VisibilitySessionManager>(objectValue<VisibilityContext>(ctx)?.sessionManager);
   appendTaumelCustomEntry(sessionManager, "taumel.visibility", {
     version: 1,
     tools: { disabled: disabled.tools },
@@ -299,12 +286,12 @@ export async function saveProjectVisibility(
     return commandResult(false, `Cannot save ${category} visibility: ${message}`, { ...state, category, path });
   }
   const existingTaumel = root["taumel"];
-  const taumel = existingTaumel === undefined ? {} : settingsObject(existingTaumel);
+  const taumel = existingTaumel === undefined ? {} : objectValue<VisibilitySettings>(existingTaumel);
   if (taumel === undefined) {
     return commandResult(false, `Cannot save ${category} visibility: taumel must be a JSON object.`, { ...state, category, path });
   }
   const existingBlock = taumel[category];
-  const block = existingBlock === undefined ? {} : settingsObject(existingBlock);
+  const block = existingBlock === undefined ? {} : objectValue<VisibilitySettings>(existingBlock);
   if (block === undefined) {
     return commandResult(false, `Cannot save ${category} visibility: taumel.${category} must be a JSON object.`, { ...state, category, path });
   }

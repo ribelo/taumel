@@ -71,13 +71,6 @@ let provider_of_model_id model =
   match String.index_opt model '/' with
   | Some index when index > 0 -> Some (String.sub model 0 index)
   | _ -> None
-let node_require name =
-  let process = Unsafe.get Unsafe.global "process" in
-  match function_field process "getBuiltinModule" with
-  | Some get_builtin -> Unsafe.fun_call get_builtin [| js_string name |]
-  | None ->
-      let require = Unsafe.get Unsafe.global "require" in
-      Unsafe.fun_call require [| js_string name |]
 let pi_agent_dir = Agent_worktree_host.pi_agent_dir
 let resolve_routing = Agent_routing_host.resolve_routing
 let routing_diagnostics = Agent_routing_host.routing_diagnostics

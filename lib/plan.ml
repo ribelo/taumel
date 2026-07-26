@@ -664,16 +664,7 @@ let parse_time_limit_args args =
   in
   loop [] None words
 
-let split_command input =
-  let input = String.trim input in
-  if input = "" then ("", "")
-  else
-    match String.index_opt input ' ' with
-    | None -> (input, "")
-    | Some index ->
-        ( String.sub input 0 index |> String.trim,
-          String.sub input (index + 1) (String.length input - index - 1)
-          |> String.trim )
+let split_command = Shared.split_command
 
 let apply_command_text ~session_id ~now input (store : store) =
   match parse_time_limit_args input with
@@ -977,12 +968,6 @@ let update_plan_status_description =
 
 let update_plan_prompt_snippet =
   "Activate the plan, or mark it complete or genuinely blocked."
-
-let decode_entry ~custom_type data =
-  if custom_type = "taumel.goal" || custom_type = "taumel.goal_automation" then
-    Error ("incompatible legacy Taumel session entry: " ^ custom_type)
-  else if custom_type = plan_entry_key then codec.decode data
-  else Error ("unexpected plan session entry: " ^ custom_type)
 
 let tool_specs =
   [

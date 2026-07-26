@@ -585,10 +585,6 @@ const retryCore = {
         suppressedBytes: 0, exitCode: 1, code: 1, sandboxed: true, escalated: false,
       },
     };
-    if (method === "sandboxHostPathPlan") return {
-      tempRootCandidates: ["/tmp"], systemRoPathCandidates: ["/usr", "/bin"],
-    };
-    if (method === "sandboxMetadataDirNames") return { names: [".git"] };
     if (method === "discardAuthorityPlan") return { ok: true };
     if (method === "planClockPauseStart" || method === "planClockPauseEnd") return null;
     throw new Error(`unexpected retry core call: ${method}`);

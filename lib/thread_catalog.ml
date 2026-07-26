@@ -201,11 +201,6 @@ let contains haystack needle =
   in
   loop 0
 
-let starts_with value prefix =
-  let value_len = String.length value in
-  let prefix_len = String.length prefix in
-  prefix_len <= value_len && String.sub value 0 prefix_len = prefix
-
 let basename path =
   let trimmed =
     let rec trim_end index =

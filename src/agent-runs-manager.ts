@@ -1,4 +1,5 @@
 import type { CoreBridge, PiLike } from "./types.ts";
+import { isObjectLike } from "./util.ts";
 import { executeAgentPrepared, pendingAgentWaits } from "./agent-orchestration.ts";
 import {
   commandResult,
@@ -22,10 +23,6 @@ type UnknownFields = { readonly [key: string]: unknown };
 
 type AgentListItem = AgentManagerSnapshot["agents"][number];
 type AgentRunItem = AgentManagerSnapshot["runs"][number];
-
-function isObject(value: unknown): value is UnknownFields {
-  return typeof value === "object" && value !== null;
-}
 
 function loadSnapshot(core: CoreBridge, ctx: unknown): AgentManagerSnapshot {
   return decodeAgentManagerSnapshot(core.call("agentManagerSnapshot", [{ ctx }]));
@@ -62,12 +59,12 @@ async function applyChildUpdates(
   result: unknown,
   ctx: unknown,
 ): Promise<void> {
-  if (!isObject(result)) return;
-  const details = isObject(result.details) ? result.details : {};
+  if (!isObjectLike<UnknownFields>(result)) return;
+  const details = isObjectLike<UnknownFields>(result.details) ? result.details : {};
   const updates = Array.isArray(details.childSessionUpdates) ? details.childSessionUpdates : [];
   const keyScope = childSessionCacheKeyScopeFromContext(ctx);
   for (const update of updates) {
-    if (isObject(update)) {
+    if (isObjectLike<UnknownFields>(update)) {
       await applyChildSessionUpdate(childSessions, update, undefined, keyScope);
     }
   }
@@ -89,10 +86,10 @@ async function closeAgent(
   const result = await executeAgentPrepared(
     pi, core, childSessions, pendingAgentWaits, prepared, ctx,
   );
-  const details = isObject(result.details) ? result.details : {};
+  const details = isObjectLike<UnknownFields>(result.details) ? result.details : {};
   const error = typeof details.error === "string"
     ? details.error
-    : isObject(details.error) && typeof details.error.message === "string"
+    : isObjectLike<UnknownFields>(details.error) && typeof details.error.message === "string"
       ? details.error.message
       : undefined;
   return error === undefined

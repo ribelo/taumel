@@ -2,6 +2,7 @@ import type { ChildSessionBridge, CoreBridge, PiLike } from "./types.ts";
 import {
   contextIsLive,
   isStaleContextError,
+  isObjectLike,
   sessionInfoFromContext,
 } from "./util.ts";
 import {
@@ -46,11 +47,8 @@ type AgentActivityEvent = "agent_start" | "turn_start" | "turn_end" | "tool_exec
 type PendingAgentWaits = Map<string, Set<AbortController>>;
 export const pendingAgentWaits: PendingAgentWaits = new Map();
 const activeNoninteractiveDrains = new Set<string>();
-function isObject(value: unknown): value is UnknownFields {
-  return typeof value === "object" && value !== null;
-}
 function isChildSessionContext(ctx: unknown): boolean {
-  const marker = latestTaumelCustomEntry(isObject(ctx) ? ctx.sessionManager : undefined, "taumel.childSession");
+  const marker = latestTaumelCustomEntry(isObjectLike<UnknownFields>(ctx) ? ctx.sessionManager : undefined, "taumel.childSession");
   return marker.kind === "contract_valid" || marker.kind === "invalid";
 }
 function stringField(value: UnknownFields, key: string): string {
@@ -71,12 +69,12 @@ function pendingAgentWaitKey(ctx: unknown, runId: string): string {
 }
 
 function parentIsIdle(ctx: unknown): boolean {
-  if (!isObject(ctx) || typeof ctx.isIdle !== "function") return false;
+  if (!isObjectLike<UnknownFields>(ctx) || typeof ctx.isIdle !== "function") return false;
   return ctx.isIdle.call(ctx) === true;
 }
 
 function reconcilePersistedAgentNotifications(core: CoreBridge, ctx: unknown): void {
-  if (!isObject(ctx) || !isObject(ctx.sessionManager)) return;
+  if (!isObjectLike<UnknownFields>(ctx) || !isObjectLike<UnknownFields>(ctx.sessionManager)) return;
   const getEntries = ctx.sessionManager.getEntries;
   if (typeof getEntries !== "function") return;
   const entries = getEntries.call(ctx.sessionManager);
@@ -84,9 +82,9 @@ function reconcilePersistedAgentNotifications(core: CoreBridge, ctx: unknown): v
   const childMarker = latestTaumelCustomEntry(ctx.sessionManager, "taumel.childSession");
   if (childMarker.kind !== "absent") return;
   for (const entry of entries) {
-    if (!isObject(entry) || entry.type !== "message" || !isObject(entry.message)) continue;
+    if (!isObjectLike<UnknownFields>(entry) || entry.type !== "message" || !isObjectLike<UnknownFields>(entry.message)) continue;
     const message = entry.message;
-    if (message.role !== "custom" || !isObject(message.details)) continue;
+    if (message.role !== "custom" || !isObjectLike<UnknownFields>(message.details)) continue;
     const notificationId = stringField(message.details, "notificationId");
     if (!notificationId.startsWith("agent_completion:")) continue;
     const runId = notificationId.slice("agent_completion:".length);
@@ -131,7 +129,7 @@ export async function flushPendingAgentNotifications(
   const result = decodePendingAgentNotificationsResult(core.call("pendingAgentNotifications", [{ ctx }]));
   let sentCount = 0;
   for (const notification of result.notifications) {
-    if (!isObject(notification)) continue;
+    if (!isObjectLike<UnknownFields>(notification)) continue;
     const runId = notification.runId;
     if (runId !== "" && pendingAgentWaits.has(pendingAgentWaitKey(ctx, runId))) {
       decodeCoreAck(core.call("releaseAgentBackgroundNotification", [{ run_id: runId }]));
@@ -197,7 +195,7 @@ function recordDispatchCompletionInBackground(
 
 function recordDispatchActivity(core: CoreBridge, prepared: PreparedDispatchAction, ctx: unknown) {
   return (event: unknown) => {
-    if (!isObject(event) || typeof event.type !== "string") return;
+    if (!isObjectLike<UnknownFields>(event) || typeof event.type !== "string") return;
     const observed = new Set<AgentActivityEvent>([
       "agent_start", "turn_start", "turn_end", "tool_execution_start",
       "tool_execution_update", "tool_execution_end",
@@ -278,7 +276,7 @@ async function createAgentChildSession(
   childExtensionFactory?: (pi: PiLike) => void,
 ): Promise<ChildSessionBridge | undefined> {
   const metadata = prepared.metadata;
-  if (!isObject(metadata)) return { error: "missing agent metadata" };
+  if (!isObjectLike<UnknownFields>(metadata)) return { error: "missing agent metadata" };
   let typedMetadata;
   try {
     typedMetadata = decodeChildSessionMetadata(metadata);
@@ -368,7 +366,7 @@ export async function executeAgentPrepared(
     const prompt = stringField(prepared, "prompt");
     const runId = stringField(prepared, "runId");
     const submissionId = stringField(prepared, "submissionId");
-    const details = isObject(prepared.details) ? prepared.details : {};
+    const details = isObjectLike<UnknownFields>(prepared.details) ? prepared.details : {};
     const allowedOutcomes = dispatch
       ? ["message_sent", "interrupted_and_sent", "resumed", "started"]
       : ["suspended", "already_suspended", "no_active_run"];
@@ -399,7 +397,7 @@ export async function executeAgentPrepared(
     }
   }
   if (action === "agent_close") {
-    const details = isObject(prepared.details) ? prepared.details : {};
+    const details = isObjectLike<UnknownFields>(prepared.details) ? prepared.details : {};
     const agentId = stringField(prepared, "agentId");
     const runIds = Array.isArray(prepared.runIds) ? prepared.runIds : [];
     const snapshot = decodeAgentManagerSnapshot(core.call("agentManagerSnapshot", [{ ctx }]));
@@ -568,7 +566,7 @@ export async function executeAgentPrepared(
           details: prepared.details,
         });
       }
-      const metadata = isObject(prepared.metadata) ? prepared.metadata : undefined;
+      const metadata = isObjectLike<UnknownFields>(prepared.metadata) ? prepared.metadata : undefined;
       const workspace = metadata === undefined ? "" : stringField(metadata, "workspaceDirectory");
       if (workspace === "") {
         rollbackAgentSendPreflight(core, prepared, ctx, authorizeCapabilityCleanup);
@@ -877,7 +875,7 @@ async function noninteractiveTurnDrain(
   ctx: unknown,
   pendingAgentWaits: PendingAgentWaits,
 ): Promise<void> {
-  if (!isObject(ctx)) return;
+  if (!isObjectLike<UnknownFields>(ctx)) return;
   if (ctx.mode !== "print" && ctx.mode !== "json") return;
   if (typeof pi.sendMessage !== "function") return;
   const drainKey = sessionInfoFromContext(ctx).sessionId ?? "current";
@@ -913,7 +911,7 @@ export function installAgentLifecycle(
         /* best-effort provisional worktree reclaim */
       }
       reconcilePersistedAgentNotifications(core, ctx);
-      if (!isObject(ctx) || ctx.hasUI !== true || !isObject(ctx.ui)) return;
+      if (!isObjectLike<UnknownFields>(ctx) || ctx.hasUI !== true || !isObjectLike<UnknownFields>(ctx.ui)) return;
       const notify = ctx.ui.notify;
       if (typeof notify !== "function") return;
       const diagnostics = decodeAgentRoutingDiagnosticsResult(

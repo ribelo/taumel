@@ -48,10 +48,8 @@ let core_call name_js args_js =
   | "refreshExecPolicy" -> Exec_policy_bridge.compile_settings (arg 0)
    | "appendExecPolicyAllowRule" ->
        Exec_policy_bridge.append_allow_rule (arg 0)
-  | "sandboxMetadataDirNames" -> Sandbox_bridge.sandbox_metadata_dir_names ()
   | "validateWorkspaceMutationPaths" ->
       Sandbox_bridge.validate_workspace_mutation_paths (arg 0)
-  | "sandboxHostPathPlan" -> Sandbox_bridge.sandbox_host_path_plan (arg 0)
    | "planChildSessionStart" ->
        Child_session_bridge.plan_child_session_start (arg 0) (arg 1)
   | "planChildDispatch" -> Child_session_bridge.plan_child_dispatch (arg 0)

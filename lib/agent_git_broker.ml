@@ -101,11 +101,6 @@ let validate_pathspecs = function
 let option_has_value token =
   match String.index_opt token '=' with Some _ -> true | None -> false
 
-let starts_with ~prefix value =
-  let prefix_length = String.length prefix in
-  String.length value >= prefix_length
-  && String.sub value 0 prefix_length = prefix
-
 let parse_status tokens =
   let ( let* ) = Result.bind in
   let options, pathspecs = take_after_separator tokens in
@@ -166,7 +161,7 @@ let parse_diff tokens =
   let* pathspecs = validate_pathspecs pathspecs in
   let rec loop staged output_mode exit_code no_renames unified revs = function
     | [] -> Ok (staged, output_mode, exit_code, no_renames, unified, List.rev revs)
-    | token :: _ when revs <> [] && starts_with ~prefix:"-" token ->
+    | token :: _ when revs <> [] && String.starts_with ~prefix:"-" token ->
         Error (Invalid_arguments "git diff options must precede revision operands")
     | ("--cached" | "--staged") :: rest when not staged && revs = [] ->
         loop true output_mode exit_code no_renames unified revs rest
@@ -174,7 +169,7 @@ let parse_diff tokens =
         loop staged output_mode true no_renames unified revs rest
     | "--no-renames" :: rest when not no_renames && revs = [] ->
         loop staged output_mode exit_code true unified revs rest
-    | token :: rest when starts_with ~prefix:"--unified=" token && revs = [] -> (
+    | token :: rest when String.starts_with ~prefix:"--unified=" token && revs = [] -> (
         match int_of_string_opt (String.sub token 10 (String.length token - 10)) with
         | Some n when n >= 0 && n <= 1000 && unified = None && output_mode = None
           ->
@@ -254,9 +249,9 @@ let parse_diff tokens =
           }
 
 let parse_count_token token =
-  if starts_with ~prefix:"-n" token && String.length token > 2 then
+  if String.starts_with ~prefix:"-n" token && String.length token > 2 then
     int_of_string_opt (String.sub token 2 (String.length token - 2))
-  else if starts_with ~prefix:"--max-count=" token then
+  else if String.starts_with ~prefix:"--max-count=" token then
     int_of_string_opt (String.sub token 12 (String.length token - 12))
   else if
     String.length token > 1
@@ -283,7 +278,7 @@ let parse_log tokens =
             first_parent,
             reverse,
             rev )
-    | token :: _ when rev <> None && starts_with ~prefix:"-" token ->
+    | token :: _ when rev <> None && String.starts_with ~prefix:"-" token ->
         Error (Invalid_arguments "git log options must precede revision operands")
     | "--oneline" :: rest when not oneline && rev = None ->
         loop count detail true graph decorate first_parent reverse rev rest
@@ -357,7 +352,7 @@ let parse_show tokens =
   let* pathspecs = validate_pathspecs pathspecs in
   let rec loop oneline detail object_selector = function
     | [] -> Ok (oneline, detail, object_selector)
-    | token :: _ when object_selector <> None && starts_with ~prefix:"-" token ->
+    | token :: _ when object_selector <> None && String.starts_with ~prefix:"-" token ->
         Error (Invalid_arguments "git show options must precede object operands")
     | "--oneline" :: rest when not oneline && object_selector = None ->
         loop true detail object_selector rest
@@ -463,7 +458,7 @@ let parse_commit tokens =
     match tokens with
     | "-m" :: message :: [] -> Some message
     | "--message" :: message :: [] -> Some message
-    | token :: [] when starts_with ~prefix:"--message=" token ->
+    | token :: [] when String.starts_with ~prefix:"--message=" token ->
         Some (String.sub token 10 (String.length token - 10))
     | _ -> None
   in

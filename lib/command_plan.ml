@@ -30,20 +30,6 @@ type child_dispatch_plan =
   | Command_return
   | Command_child_dispatch of child_dispatch
 
-let split_command input =
-  let input = String.trim input in
-  if input = "" then ("", "")
-  else
-    match String.index_opt input ' ' with
-    | None -> (input, "")
-    | Some index ->
-        let command = String.sub input 0 index |> String.trim in
-        let rest =
-          String.sub input (index + 1) (String.length input - index - 1)
-          |> String.trim
-        in
-        (command, rest)
-
 let ralph_metadata ~controller_session_id (parsed : Ralph_loop.start_args) =
   Shared.Object
     [
@@ -57,7 +43,7 @@ let ralph_metadata ~controller_session_id (parsed : Ralph_loop.start_args) =
 let plan_execution ~controller_session_id ~ralph_start_denial name args =
   match name with
   | "ralph" ->
-      let command, rest = split_command args in
+      let command, rest = Shared.split_command args in
       if command = "start" && String.trim rest <> "" then
         match ralph_start_denial with
         | Some message -> Error message

@@ -79,7 +79,7 @@ let start_details (details : Taumel.Ralph_loop.start_details) =
     |]
 
 let handle_command args ctx =
-  let command, _ = Taumel.Ralph_loop.split_command args in
+  let command, _ = Taumel.Shared.split_command args in
   let start_denied =
     if command <> "start" then None
     else match authorize_ralph_start () with Ok () -> None | Error message -> Some message

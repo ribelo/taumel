@@ -94,6 +94,12 @@ let optional_field obj name =
 
 let function_field obj name = Option.bind (property_value obj name) function_value
 
+let node_require name =
+  let process = Unsafe.get Unsafe.global "process" in
+  match function_field process "getBuiltinModule" with
+  | Some get_builtin -> Unsafe.fun_call get_builtin [| js_string name |]
+  | None -> Unsafe.fun_call (Unsafe.get Unsafe.global "require") [| js_string name |]
+
 let invalid_field name expected =
   invalid_arg
     (Printf.sprintf "Invalid Taumel field %s: expected %s" name expected)

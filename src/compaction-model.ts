@@ -8,7 +8,7 @@ import {
 
 import type { CoreBridge, PiLike } from "./types.ts";
 import { taumelGlobalSettingsPath } from "./global-settings.ts";
-import { cwdFromContext, isProjectTrusted, modelRegistryFrom, projectSettingsPath, readJsonObjectForAtomicUpdate, sessionInfoFromContext, splitProviderModelId, writeFileAtomically } from "./util.ts";
+import { objectLikeValue, objectValue, cwdFromContext, isProjectTrusted, modelRegistryFrom, projectSettingsPath, readJsonObjectForAtomicUpdate, sessionInfoFromContext, splitProviderModelId, writeFileAtomically } from "./util.ts";
 import { decodeCompactionCommandPlan, decodeCompactionSessionPlan } from "./bridge-contracts.ts";
 
 type SettingsObject = { [key: string]: unknown };
@@ -25,19 +25,12 @@ type TreePreparation = { readonly userWantsSummary?: unknown; readonly entriesTo
 type TreeEvent = { readonly preparation?: unknown; readonly signal?: unknown };
 type CompactionCommandResult = { readonly ok: boolean; readonly action: "command_result"; readonly message: string; readonly error?: string };
 
-function settingsObject(value: unknown): SettingsObject | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as SettingsObject : undefined;
-}
-function compactionContext(value: unknown): Partial<CompactionContext> | undefined {
-  return typeof value === "object" && value !== null ? value as Partial<CompactionContext> : undefined;
-}
-
 function stringFromUnknown(value: unknown): string | undefined {
   return typeof value === "string" && value !== "" ? value : undefined;
 }
 
 function stringRecordFromUnknown(value: unknown): Record<string, string> | undefined {
-  const object = settingsObject(value);
+  const object = objectValue<SettingsObject>(value);
   if (object === undefined) return undefined;
   const result: Record<string, string> = {};
   for (const key of Object.keys(object)) {
@@ -60,15 +53,15 @@ function sessionKey(ctx: unknown): string {
 async function readSettingsJson(path: string): Promise<SettingsObject> {
   try {
     const raw = JSON.parse(await readFile(path, "utf8")) as unknown;
-    return settingsObject(raw) ?? {};
+    return objectValue<SettingsObject>(raw) ?? {};
   } catch {
     return {};
   }
 }
 
 function readCompactionModelFromSettings(settings: SettingsObject): string | undefined {
-  const taumel = settingsObject(settings["taumel"]) ?? {};
-  const compaction = settingsObject(taumel["compaction"]) ?? {};
+  const taumel = objectValue<SettingsObject>(settings["taumel"]) ?? {};
+  const compaction = objectValue<SettingsObject>(taumel["compaction"]) ?? {};
   return stringFromUnknown(compaction["model"]);
 }
 
@@ -84,10 +77,10 @@ async function writeProjectCompactionModel(cwd: string, model: string | undefine
   const path = projectSettingsPath(cwd);
   const { settings, authorization } = await readJsonObjectForAtomicUpdate(path, true);
   const existingTaumel = settings["taumel"];
-  const taumel = existingTaumel === undefined ? {} : settingsObject(existingTaumel);
+  const taumel = existingTaumel === undefined ? {} : objectValue<SettingsObject>(existingTaumel);
   if (taumel === undefined) throw new Error(`${path}: taumel must be a JSON object`);
   const existingCompaction = taumel["compaction"];
-  const compaction = existingCompaction === undefined ? {} : settingsObject(existingCompaction);
+  const compaction = existingCompaction === undefined ? {} : objectValue<SettingsObject>(existingCompaction);
   if (compaction === undefined) throw new Error(`${path}: taumel.compaction must be a JSON object`);
   if (model === undefined) {
     delete compaction["model"];
@@ -108,7 +101,7 @@ async function writeProjectCompactionModel(cwd: string, model: string | undefine
 }
 
 function notifyWarning(ctx: unknown, message: string): void {
-  const rawUi = compactionContext(ctx)?.ui;
+  const rawUi = objectLikeValue<CompactionContext>(ctx)?.ui;
   const ui = typeof rawUi === "object" && rawUi !== null ? rawUi as CompactionUi : undefined;
   const notify = ui?.notify;
   if (typeof notify === "function") {
@@ -122,7 +115,7 @@ function cancelWithWarning(ctx: unknown, message: string): { readonly cancel: tr
 }
 
 function currentThinkingLevelFromContext(ctx: unknown): string | undefined {
-  const context = compactionContext(ctx);
+  const context = objectLikeValue<CompactionContext>(ctx);
   if (typeof context?.thinkingLevel === "string" && context.thinkingLevel !== "") return context.thinkingLevel;
   const rawSessionManager = context?.sessionManager;
   if (typeof rawSessionManager !== "object" || rawSessionManager === null) return undefined;
@@ -328,7 +321,7 @@ async function openCompactionModelPicker(
   currentModelId: string,
   ctx: unknown,
 ): Promise<CompactionCommandResult> {
-  const rawUi = compactionContext(ctx)?.ui;
+  const rawUi = objectLikeValue<CompactionContext>(ctx)?.ui;
   const ui = typeof rawUi === "object" && rawUi !== null ? rawUi as CompactionUi : undefined;
   const custom = ui?.custom;
   if (typeof custom !== "function") {

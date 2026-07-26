@@ -5,7 +5,6 @@ import {
   decodeChildSessionStartPlan,
   decodeChildSessionMetadata,
   decodeChildDispatchPlan,
-  decodeSandboxHostPathPlan,
   decodeWorkspaceMutationValidation,
   decodeExecPolicyAllowRuleResult,
   decodeExecApprovalPromptPlan,
@@ -402,20 +401,6 @@ for (const invalid of [
   let rejected = false;
   try { decodeChildDispatchPlan(invalid); } catch { rejected = true; }
   if (!rejected) throw new Error(`child-dispatch bridge decoder accepted ${JSON.stringify(invalid)}`);
-}
-
-const hostPaths = decodeSandboxHostPathPlan({
-  tempRootCandidates: ["/tmp"], systemRoPathCandidates: ["/usr"],
-});
-if (hostPaths.tempRootCandidates[0] !== "/tmp") throw new Error("sandbox host paths did not decode");
-for (const invalid of [
-  { tempRootCandidates: [""], systemRoPathCandidates: ["/usr"] },
-  { tempRootCandidates: ["/tmp"], systemRoPathCandidates: [1] },
-  { tempRootCandidates: [], systemRoPathCandidates: [], extra: true },
-]) {
-  let rejected = false;
-  try { decodeSandboxHostPathPlan(invalid); } catch { rejected = true; }
-  if (!rejected) throw new Error(`sandbox-host-path bridge decoder accepted ${JSON.stringify(invalid)}`);
 }
 
 if (decodeWorkspaceMutationValidation({ kind: "valid" }).kind !== "valid") {

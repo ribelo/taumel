@@ -59,12 +59,6 @@ type agent_action_entry = {
   mutable agent_action_state : agent_action_state;
 }
 
-let node_require name =
-  let process = Unsafe.get Unsafe.global "process" in
-  match function_field process "getBuiltinModule" with
-  | Some get_builtin -> Unsafe.fun_call get_builtin [| js_string name |]
-  | None -> Unsafe.fun_call (Unsafe.get Unsafe.global "require") [| js_string name |]
-
 let crypto = lazy (node_require "crypto")
 let exec_entries : (string, exec_entry) Hashtbl.t = Hashtbl.create 32
 let exa_entries : (string, exa_entry) Hashtbl.t = Hashtbl.create 32

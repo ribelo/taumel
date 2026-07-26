@@ -1,8 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { constants, existsSync, readdirSync, realpathSync } from "node:fs";
+import { constants, realpathSync } from "node:fs";
 import { lstat, mkdir, open, realpath, rename, unlink } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 
 import {
@@ -30,30 +29,35 @@ import type {
 } from "./types.ts";
 import {
   decodeChildSessionStartPlan,
-  decodeSandboxHostPathPlan,
   decodeWorkspaceMutationValidation,
-  decodeToolNamesResult,
   type ChildSessionStartPlan,
   type ChildSessionMetadata,
-  type SandboxHostPathPlan,
-  type PreparedToolAction,
   type WorkspaceMutationFacts,
 } from "./bridge-contracts.ts";
 
-type WorkspaceMetadataListing = { readonly metadataDir: string; readonly path: string; readonly children?: string[] };
-type ExecHostFacts = {
-  readonly platform: string; readonly tempRoots: string[]; readonly systemRoPaths: string[];
-  readonly homeMount: string; readonly workspaceRoots: string[]; readonly authorizationCwd: string;
-  readonly workspaceMetadataListings: WorkspaceMetadataListing[];
-};
-type NodeError = { readonly code?: unknown };
-
-function objectValue(value: unknown): object | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ? value : undefined;
+export function objectValue<T extends object = object>(value: unknown): T | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as T : undefined;
 }
 
-function property(source: object, name: string): unknown {
+export function recordValue<T extends object>(value: unknown): value is T {
+  return objectValue(value) !== undefined;
+}
+
+export function objectLikeValue<T extends object = object>(value: unknown): T | undefined {
+  return typeof value === "object" && value !== null ? value as T : undefined;
+}
+
+export function isObjectLike<T extends object>(value: unknown): value is T {
+  return objectLikeValue(value) !== undefined;
+}
+
+export function property(source: object, name: string): unknown {
   return Reflect.get(source, name);
+}
+
+export function nodeErrorCode(error: unknown): unknown {
+  const value = objectLikeValue(error);
+  return value === undefined ? undefined : property(value, "code");
 }
 
 export function stringFieldOrUndefined(source: object, name: string): string | undefined {
@@ -274,94 +278,12 @@ export function resolveAuthorizationPath(path: string): string {
   try {
     return realpathSync(path);
   } catch (error) {
-    const code = typeof error === "object" && error !== null ? (error as NodeError).code : undefined;
+    const code = nodeErrorCode(error);
     if (code !== "ENOENT") throw error;
     const parent = dirname(path);
     if (parent === path) return path;
     return join(resolveAuthorizationPath(parent), basename(path));
   }
-}
-
-export function existingPaths(paths: readonly string[]): string[] {
-  return paths.filter((path) => {
-    try {
-      return existsSync(path);
-    } catch {
-      return false;
-    }
-  });
-}
-
-function existingRealPaths(paths: readonly string[]): string[] {
-  const result: string[] = [];
-  for (const path of paths) {
-    const resolved = realpathOrSelf(path);
-    try {
-      if (existsSync(resolved)) result.push(resolved);
-    } catch {
-      // Ignore invalid or inaccessible host paths, matching existingPaths.
-    }
-  }
-  return result;
-}
-
-export function sandboxStringArrayField(sandbox: unknown, name: string): string[] {
-  const config = objectValue(sandbox);
-  if (config === undefined) throw new Error("Invalid Taumel sandbox config");
-  return stringArrayField(config, name).filter((value) => value !== "");
-}
-
-export function sandboxMetadataDirNames(core: CoreBridge): string[] {
-  return [...decodeToolNamesResult(core.call("sandboxMetadataDirNames", [])).names];
-}
-
-export function sandboxHostPathPlan(core: CoreBridge): SandboxHostPathPlan {
-  return decodeSandboxHostPathPlan(core.call("sandboxHostPathPlan", [{
-    tmpDir: tmpdir(),
-    envTmpDir: process.env["TMPDIR"] ?? "",
-  }]));
-}
-
-export function workspaceMetadataListings(
-  core: CoreBridge,
-  workspaceRoots: readonly string[],
-): WorkspaceMetadataListing[] {
-  const metadataDirNames = sandboxMetadataDirNames(core);
-  const listings: WorkspaceMetadataListing[] = [];
-  for (const root of workspaceRoots) {
-    const normalizedRoot = root.replace(/\/+$/, "");
-    for (const metadataDir of metadataDirNames) {
-      const path = `${normalizedRoot}/${metadataDir}`;
-      if (!existsSync(path)) continue;
-      try {
-        listings.push({ metadataDir, path, children: readdirSync(path) });
-      } catch {
-        listings.push({ metadataDir, path });
-      }
-    }
-  }
-  return listings;
-}
-
-export function execHostFacts(
-  core: CoreBridge,
-  prepared: Extract<PreparedToolAction, { action: "exec_command" }>,
-): ExecHostFacts {
-  const sandbox = prepared.sandbox;
-  const hostPathPlan = sandboxHostPathPlan(core);
-  const workspaceRoots = existingRealPaths(sandboxStringArrayField(sandbox, "workspaceRoots"));
-  const home = realpathOrSelf(homedir());
-  const homeParent = dirname(home);
-  const homeMount = homeParent !== "/" && existsSync(homeParent) ? homeParent : home;
-  return {
-    platform: process.platform,
-    tempRoots: existingRealPaths(hostPathPlan.tempRootCandidates),
-    systemRoPaths: existingPaths(hostPathPlan.systemRoPathCandidates),
-    homeMount,
-    workspaceRoots,
-    authorizationCwd: resolveAuthorizationPath(prepared.workdir),
-    workspaceMetadataListings: workspaceMetadataListings(core, workspaceRoots),
-  };
 }
 
 export function childSessionStartPlan(
@@ -413,7 +335,7 @@ async function optionalFileState(path: string): Promise<FileState | undefined> {
     if (!stats.isFile()) throw new Error(`Mutation target is not a regular file: ${path}`);
     return fileStateFromStats(stats);
   } catch (error) {
-    const code = typeof error === "object" && error !== null ? (error as NodeError).code : undefined;
+    const code = nodeErrorCode(error);
     if (code === "ENOENT") return undefined;
     throw error;
   }
@@ -493,7 +415,7 @@ async function optionalAnchoredFileState(
     if (!stats.isFile()) throw new Error(`Mutation target is not a regular file: ${displayPath}`);
     return fileStateFromStats(stats);
   } catch (error) {
-    const code = typeof error === "object" && error !== null ? (error as NodeError).code : undefined;
+    const code = nodeErrorCode(error);
     if (code === "ENOENT") return undefined;
     throw error;
   }
@@ -540,13 +462,12 @@ async function anchorMutationParent(
         try {
           next = await openPinnedChildDirectory(handle, component);
         } catch (error) {
-          const code = typeof error === "object" && error !== null ? (error as NodeError).code : undefined;
+          const code = nodeErrorCode(error);
           if (code !== "ENOENT") throw error;
           try {
             await mkdir(descriptorPath(handle, component));
           } catch (mkdirError) {
-            const mkdirCode = typeof mkdirError === "object" && mkdirError !== null
-              ? (mkdirError as NodeError).code : undefined;
+            const mkdirCode = nodeErrorCode(mkdirError);
             if (mkdirCode !== "EEXIST") throw mkdirError;
           }
           next = await openPinnedChildDirectory(handle, component);
@@ -875,7 +796,7 @@ async function resolveRealPath(path: string): Promise<string> {
   try {
     return await realpath(path);
   } catch (error) {
-    const code = typeof error === "object" && error !== null ? (error as NodeError).code : undefined;
+    const code = nodeErrorCode(error);
     if (code !== "ENOENT") throw error;
     const parent = dirname(path);
     if (parent === path) return path;

@@ -1,3 +1,5 @@
+import { objectValue } from "./util.ts";
+
 export type ToolContract = {
   readonly name: string;
   readonly label: string;
@@ -17,12 +19,6 @@ type JsonSchemaObject = {
   enum?: unknown;
   anyOf?: unknown;
 };
-
-function schemaObject(value: unknown): JsonSchemaObject | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as JsonSchemaObject)
-    : undefined;
-}
 
 const schemaMetaKeys = new Set([
   "$schema",
@@ -53,7 +49,7 @@ function collapseAnyOfEnum(anyOf: unknown): { type: string; enum: unknown[] } | 
   const values: unknown[] = [];
   const types = new Set<string>();
   for (const item of anyOf) {
-    const schema = schemaObject(item);
+    const schema = objectValue<JsonSchemaObject>(item);
     if (schema === undefined || !Array.isArray(schema.enum) || schema.enum.length !== 1) {
       return undefined;
     }
@@ -71,7 +67,7 @@ function modelToolSchema(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map((item) => modelToolSchema(item));
   }
-  const schema = schemaObject(value);
+  const schema = objectValue<JsonSchemaObject>(value);
   if (schema !== undefined) {
     const result: JsonSchemaObject = {};
     const constValue = schema["const"];

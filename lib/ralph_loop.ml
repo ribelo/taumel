@@ -128,20 +128,6 @@ type command_plan = {
   changed : bool;
 }
 
-let split_command input =
-  let input = String.trim input in
-  if input = "" then ("", "")
-  else
-    match String.index_opt input ' ' with
-    | None -> (input, "")
-    | Some index ->
-        let command = String.sub input 0 index |> String.trim in
-        let rest =
-          String.sub input (index + 1) (String.length input - index - 1)
-          |> String.trim
-        in
-        (command, rest)
-
 let words value =
   value |> String.split_on_char ' ' |> List.filter (fun item -> item <> "")
 
@@ -265,7 +251,7 @@ let command_usage =
 
 let apply_command ~now ~controller_session ~child_session_for_id ~start_denied
     tasks args =
-  let command, rest = split_command args in
+  let command, rest = Shared.split_command args in
   match command with
   | "" | "list" -> Ok (list_plan tasks)
   | "start" ->

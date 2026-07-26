@@ -1,5 +1,5 @@
 import type { ExtensionHost, PiLike } from "./types.ts";
-import { resolveAuthorizationPath, stringFlag } from "./util.ts";
+import { objectLikeValue, resolveAuthorizationPath, stringFlag } from "./util.ts";
 
 type HostUi = { setFooter?: (factory: unknown) => unknown };
 type HostModel = { provider?: unknown; id?: unknown };
@@ -14,10 +14,6 @@ type FooterData = {
 };
 type RenderTarget = { requestRender?: () => unknown };
 type HostTheme = { fg?: (color: string, value: string) => unknown };
-
-function hostObject<T extends object>(value: unknown): Partial<T> | undefined {
-  return typeof value === "object" && value !== null ? value as Partial<T> : undefined;
-}
 
 export function makeHost(pi: PiLike): ExtensionHost {
   return {
@@ -39,19 +35,19 @@ export function makeHost(pi: PiLike): ExtensionHost {
     },
     exec: (command, args, options) => pi.exec(command, args, options),
     setFooter: (ctx, factory) => {
-      const context = hostObject<HostContext>(ctx);
-      const ui = hostObject<HostUi>(context?.ui);
+      const context = objectLikeValue<HostContext>(ctx);
+      const ui = objectLikeValue<HostUi>(context?.ui);
       const setFooter = ui?.setFooter;
       if (typeof setFooter !== "function") return;
       setFooter.call(ui, factory);
     },
     sessionSnapshot: (ctx) => {
-      const context = hostObject<HostContext>(ctx);
-      const model = hostObject<HostModel>(context?.model);
+      const context = objectLikeValue<HostContext>(ctx);
+      const model = objectLikeValue<HostModel>(context?.model);
       const getContextUsage = context?.getContextUsage;
       const usage =
         typeof getContextUsage === "function" ? getContextUsage.call(ctx) : undefined;
-      const usageRecord = hostObject<ContextUsage>(usage);
+      const usageRecord = objectLikeValue<ContextUsage>(usage);
       const noSandboxFlag = typeof pi.getFlag === "function" ? pi.getFlag("no-sandbox") : undefined;
       const thinking = pi.getThinkingLevel?.();
       return {
@@ -68,23 +64,23 @@ export function makeHost(pi: PiLike): ExtensionHost {
       };
     },
     getGitBranch: (footerData) => {
-      const getGitBranch = hostObject<FooterData>(footerData)?.getGitBranch;
+      const getGitBranch = objectLikeValue<FooterData>(footerData)?.getGitBranch;
       if (typeof getGitBranch !== "function") return "";
       const branch = getGitBranch.call(footerData);
       return typeof branch === "string" ? branch : "";
     },
     onBranchChange: (footerData, handler) => {
-      const onBranchChange = hostObject<FooterData>(footerData)?.onBranchChange;
+      const onBranchChange = objectLikeValue<FooterData>(footerData)?.onBranchChange;
       if (typeof onBranchChange !== "function") return () => undefined;
       const unsubscribe = onBranchChange.call(footerData, handler);
       return typeof unsubscribe === "function" ? () => { unsubscribe(); } : () => undefined;
     },
     requestRender: (tui) => {
-      const requestRender = hostObject<RenderTarget>(tui)?.requestRender;
+      const requestRender = objectLikeValue<RenderTarget>(tui)?.requestRender;
       if (typeof requestRender === "function") requestRender.call(tui);
     },
     themeFg: (theme, color, value) => {
-      const fg = hostObject<HostTheme>(theme)?.fg;
+      const fg = objectLikeValue<HostTheme>(theme)?.fg;
       if (typeof fg !== "function") return value;
       const rendered = fg.call(theme, color, value);
       return typeof rendered === "string" ? rendered : value;

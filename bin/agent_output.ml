@@ -3,12 +3,6 @@ open Jsoo_bridge
 let max_lines = 2000
 let max_bytes = 50 * 1024
 
-let node_require name =
-  let process = Unsafe.get Unsafe.global "process" in
-  match function_field process "getBuiltinModule" with
-  | Some get_builtin -> Unsafe.fun_call get_builtin [| js_string name |]
-  | None -> Unsafe.fun_call (Unsafe.get Unsafe.global "require") [| js_string name |]
-
 let owner_token value =
   let crypto = node_require "crypto" in
   let hash = Unsafe.fun_call (Unsafe.get crypto "createHash") [| js_string "sha256" |] in

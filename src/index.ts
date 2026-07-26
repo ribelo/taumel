@@ -15,7 +15,7 @@ import { installSkillResolver } from "./skills.ts";
 import { installThinkingFooterRefresh, registerThinkingShortcuts } from "./thinking-shortcuts.ts";
 import { cronFireMessageRenderer, skillMessageRenderer } from "./tool-renderer.ts";
 import { installVisibilityLifecycle } from "./visibility.ts";
-import { isProjectTrusted } from "./util.ts";
+import { isProjectTrusted, objectValue } from "./util.ts";
 import { decodeActiveToolsPlan } from "./bridge-contracts.ts";
 import {
   decodeEnvironmentContextPlan,
@@ -33,12 +33,6 @@ type EnvironmentMessage = {
   readonly role: "custom"; readonly customType: string;
   readonly content: string; readonly display: boolean;
 };
-
-function objectAdapter<T extends object>(value: unknown): Partial<T> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as Partial<T>
-    : undefined;
-}
 
 function requireCoreBootstrap(bootstrap: CoreBootstrap | undefined): CoreBootstrap {
   if (!bootstrap) {
@@ -77,8 +71,8 @@ function installSandboxToolActivation(pi: PiLike, core: CoreBridge): void {
 }
 
 function execPolicyBlockFromSettings(settings: unknown): unknown {
-  const root = objectAdapter<SettingsRoot>(settings);
-  return objectAdapter<TaumelSettingsBlock>(root?.taumel)?.execPolicy;
+  const root = objectValue<SettingsRoot>(settings);
+  return objectValue<TaumelSettingsBlock>(root?.taumel)?.execPolicy;
 }
 
 function readExecPolicyScope(scope: string, path: string): ExecPolicyScope | undefined {
@@ -94,7 +88,7 @@ function readExecPolicyScope(scope: string, path: string): ExecPolicyScope | und
 
 function notifyExecPolicyErrors(errors: readonly string[], ctx?: unknown): void {
   if (errors.length === 0) return;
-  const ui = objectAdapter<WarningUi>(objectAdapter<ExtensionContext>(ctx)?.ui);
+  const ui = objectValue<WarningUi>(objectValue<ExtensionContext>(ctx)?.ui);
   const notify = ui?.notify;
   if (typeof notify !== "function") return;
   notify.call(ui, `Taumel exec policy has validation errors:\n${errors.join("\n")}`, "warning");
@@ -105,7 +99,7 @@ function refreshExecPolicy(core: CoreBridge, ctx?: unknown): void {
   const globalScope = readExecPolicyScope("global", join(getAgentDir(), "settings.json"));
   if (globalScope !== undefined) scopes.push(globalScope);
   if (isProjectTrusted(ctx)) {
-    const candidate = objectAdapter<ExtensionContext>(ctx)?.cwd;
+    const candidate = objectValue<ExtensionContext>(ctx)?.cwd;
     const cwd = typeof candidate === "string" && candidate !== "" ? candidate : process.cwd();
     const projectScope = readExecPolicyScope("project", join(cwd, ".pi", "settings.json"));
     if (projectScope !== undefined) scopes.push(projectScope);
@@ -126,7 +120,7 @@ function insertBeforeCurrentUserMessage(
 ): unknown[] {
   const lastIndex = messages.length - 1;
   const last = messages[lastIndex];
-  if (objectAdapter<ChatMessage>(last)?.role === "user") {
+  if (objectValue<ChatMessage>(last)?.role === "user") {
     return [...messages.slice(0, lastIndex), message, last];
   }
   return [...messages, message];
@@ -134,7 +128,7 @@ function insertBeforeCurrentUserMessage(
 
 function installEnvironmentContext(pi: PiLike, core: CoreBridge): void {
   pi.on("context", async (event, ctx) => {
-    const messages = objectAdapter<ContextEvent>(event)?.messages;
+    const messages = objectValue<ContextEvent>(event)?.messages;
     if (!Array.isArray(messages)) return undefined;
     const plan = decodeEnvironmentContextPlan(core.call("planEnvironmentContext", [
       ctx,

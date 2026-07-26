@@ -269,19 +269,15 @@ let command_name command =
   | [] -> None
   | first :: _ -> Some (executable_name_lookup_key first)
 
-let arg_starts_with prefix arg =
-  String.length arg >= String.length prefix
-  && String.sub arg 0 (String.length prefix) = prefix
-
 let git_global_option_with_value = function
   | "-C" | "-c" | "--config-env" | "--exec-path" | "--git-dir"
   | "--namespace" | "--super-prefix" | "--work-tree" -> true
   | _ -> false
 
 let git_global_option_with_inline_value arg =
-  List.exists (fun prefix -> arg_starts_with prefix arg)
+  List.exists (fun prefix -> String.starts_with ~prefix arg)
     [ "--config-env="; "--exec-path="; "--git-dir="; "--namespace="; "--super-prefix="; "--work-tree=" ]
-  || ((arg_starts_with "-C" arg || arg_starts_with "-c" arg) && String.length arg > 2)
+  || ((String.starts_with ~prefix:"-C" arg || String.starts_with ~prefix:"-c" arg) && String.length arg > 2)
 
 let find_git_subcommand command subcommands =
   match command_name command with
@@ -293,7 +289,7 @@ let find_git_subcommand command subcommands =
         | arg :: rest ->
             if git_global_option_with_inline_value arg then loop (index + 1) false rest
             else if git_global_option_with_value arg then loop (index + 1) true rest
-            else if arg = "--" || arg_starts_with "-" arg then loop (index + 1) false rest
+            else if arg = "--" || String.starts_with ~prefix:"-" arg then loop (index + 1) false rest
             else if List.mem arg subcommands then Some (index, arg)
             else None
       in
@@ -304,8 +300,8 @@ let git_has_config_override_global_option command =
   List.exists
     (fun arg ->
       arg = "-c" || arg = "--config-env"
-      || (arg_starts_with "-c" arg && String.length arg > 2)
-      || arg_starts_with "--config-env=" arg)
+      || (String.starts_with ~prefix:"-c" arg && String.length arg > 2)
+      || String.starts_with ~prefix:"--config-env=" arg)
     command
 
 let git_subcommand_args_are_read_only args =
@@ -313,8 +309,8 @@ let git_subcommand_args_are_read_only args =
   not
     (List.exists
        (fun arg ->
-         List.mem arg unsafe_flags || arg_starts_with "--output=" arg
-         || arg_starts_with "--exec=" arg)
+         List.mem arg unsafe_flags || String.starts_with ~prefix:"--output=" arg
+         || String.starts_with ~prefix:"--exec=" arg)
        args)
 
 let git_branch_is_read_only args =
@@ -329,7 +325,7 @@ let git_branch_is_read_only args =
           | "--remotes" | "-v" | "-vv" | "--verbose" ->
               saw_read_only := true;
               true
-          | _ when arg_starts_with "--format=" arg ->
+          | _ when String.starts_with ~prefix:"--format=" arg ->
               saw_read_only := true;
               true
           | _ -> false)
@@ -361,8 +357,8 @@ let is_safe_to_call_with_exec command =
       not
         (List.exists
            (fun arg ->
-             arg = "-o" || arg = "--output" || arg_starts_with "--output=" arg
-             || (arg_starts_with "-o" arg && arg <> "-o"))
+             arg = "-o" || arg = "--output" || String.starts_with ~prefix:"--output=" arg
+             || (String.starts_with ~prefix:"-o" arg && arg <> "-o"))
            (List.tl command))
   | Some "find" ->
       let unsafe_options =
@@ -377,7 +373,7 @@ let is_safe_to_call_with_exec command =
            (fun arg ->
              List.mem arg unsafe_without_args
              || List.exists
-                  (fun opt -> arg = opt || arg_starts_with (opt ^ "=") arg)
+                  (fun opt -> arg = opt || String.starts_with ~prefix:(opt ^ "=") arg)
                   unsafe_with_args)
            command)
   | Some "git" -> (

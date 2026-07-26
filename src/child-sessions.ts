@@ -32,6 +32,7 @@ import {
   childSessionStartPlan,
   cwdFromContext,
   modelRegistryFrom,
+  objectLikeValue,
   sessionInfoFromContext,
   sessionInfoFromManager,
   splitProviderModelId,
@@ -70,8 +71,6 @@ type HostCompletion = {
   readonly reason?: unknown; readonly errorMessage?: unknown; readonly error?: unknown;
 };
 type ChildSessionUpdate = { readonly action?: unknown; readonly key?: unknown; readonly reason?: unknown };
-type ChildUpdatesResult = { readonly details?: unknown };
-type ChildUpdatesDetails = { readonly childSessionUpdates?: unknown };
 
 const sdkStopReasons = new Set(["stop", "length", "toolUse", "error", "aborted"]);
 const hostCompletionStatuses = new Set(["completed", "failed", "cancelled", "aborted", "timed_out"]);
@@ -79,10 +78,6 @@ const hostStopReasons = new Set([...sdkStopReasons, "cancelled", "timed_out"]);
 
 function boundedCompletionReason(value: string): string {
   return value.slice(0, 4096);
-}
-
-function hostObject<T extends object>(value: unknown): Partial<T> | undefined {
-  return typeof value === "object" && value !== null ? value as Partial<T> : undefined;
 }
 
 function loadSpecialistPrompt(kind: string): string | undefined {
@@ -182,7 +177,7 @@ function validateAgentSessionMarker(
 }
 
 async function callOptionalAsync(receiver: unknown, names: readonly string[], args: readonly unknown[] = []): Promise<string | undefined> {
-  const host = hostObject<HostMethods>(receiver);
+  const host = objectLikeValue<HostMethods>(receiver);
   if (host === undefined) return undefined;
   for (const name of names) {
     const method = host[name];
@@ -194,7 +189,7 @@ async function callOptionalAsync(receiver: unknown, names: readonly string[], ar
 }
 
 function currentModelFromContext(ctx: unknown): unknown {
-  const context = hostObject<ChildContext>(ctx);
+  const context = objectLikeValue<ChildContext>(ctx);
   if (context === undefined) return undefined;
   const getModel = context.getModel;
   if (typeof getModel === "function") {
@@ -209,7 +204,7 @@ function currentModelFromContext(ctx: unknown): unknown {
 }
 
 function modelIdOf(model: unknown): string | undefined {
-  const descriptor = hostObject<ModelDescriptor>(model);
+  const descriptor = objectLikeValue<ModelDescriptor>(model);
   if (descriptor === undefined) return undefined;
   const provider = typeof descriptor.provider === "string" ? descriptor.provider.trim() : "";
   const id = typeof descriptor.id === "string" ? descriptor.id.trim() : "";
@@ -225,7 +220,7 @@ function resolveChildModel(pi: PiLike, ctx: unknown, modelId: string | undefined
   modelId = normalizeChildModelId(modelId);
   const registry = modelRegistryFrom(pi, ctx);
   const requested = splitProviderModelId(modelId);
-  const find = hostObject<ModelRegistry>(registry)?.find;
+  const find = objectLikeValue<ModelRegistry>(registry)?.find;
   if (requested !== undefined && typeof find === "function") {
     const model = find.call(registry, requested.provider, requested.model);
     if (model !== undefined && model !== null) {
@@ -247,7 +242,7 @@ export function refreshOwnedChildPermissions(
   core: CoreBridge,
   revalidateAuthority?: () => void,
 ): void {
-  const parentManager = hostObject<ChildContext>(parentCtx)?.sessionManager;
+  const parentManager = objectLikeValue<ChildContext>(parentCtx)?.sessionManager;
   const parentLookup = latestTaumelCustomEntry(parentManager, "taumel.permissions");
   const parentPermissions = parentLookup.kind === "absent"
     ? null
@@ -285,7 +280,7 @@ function appendSetupEntries(sessionManager: unknown, entries: readonly ChildSess
 }
 
 function assistantTextFromMessage(message: unknown): string | undefined {
-  const assistant = hostObject<AgentMessage>(message);
+  const assistant = objectLikeValue<AgentMessage>(message);
   if (assistant === undefined) return undefined;
   const content = assistant.content;
   if (typeof content === "string") return content;
@@ -293,13 +288,13 @@ function assistantTextFromMessage(message: unknown): string | undefined {
 }
 
 export function latestAssistantEntryId(sessionManager: unknown): string | undefined {
-  const manager = hostObject<SessionManagerHost>(sessionManager);
+  const manager = objectLikeValue<SessionManagerHost>(sessionManager);
   if (typeof manager?.getEntries !== "function") return undefined;
   const entries = manager.getEntries.call(sessionManager);
   if (!Array.isArray(entries)) return undefined;
   for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const entry = hostObject<MessageEntry>(entries[index]);
-    const message = hostObject<AgentMessage>(entry?.message);
+    const entry = objectLikeValue<MessageEntry>(entries[index]);
+    const message = objectLikeValue<AgentMessage>(entry?.message);
     if (entry?.type === "message" && message?.role === "assistant") {
       return typeof entry.id === "string" && entry.id !== "" ? entry.id : undefined;
     }
@@ -312,14 +307,14 @@ function completionFromMessages(messages: unknown, startIndex = 0): ChildDispatc
   let assistant: unknown;
   for (let index = messages.length - 1; index >= startIndex; index -= 1) {
     const message = messages[index];
-    if (hostObject<AgentMessage>(message)?.role === "assistant") {
+    if (objectLikeValue<AgentMessage>(message)?.role === "assistant") {
       assistant = message;
       break;
     }
   }
   if (assistant === undefined) return undefined;
   const finalOutput = assistantTextFromMessage(assistant);
-  const assistantMessage = hostObject<AgentMessage>(assistant);
+  const assistantMessage = objectLikeValue<AgentMessage>(assistant);
   const stopReason = assistantMessage?.stopReason;
   const hasErrorMessage = Object.prototype.hasOwnProperty.call(assistantMessage, "errorMessage");
   const malformedErrorMessage = hasErrorMessage && typeof assistantMessage?.errorMessage !== "string";
@@ -347,7 +342,7 @@ function completionFromMessages(messages: unknown, startIndex = 0): ChildDispatc
 }
 
 async function sendToSdkAgentSession(session: unknown, prompt: string, options: MessageDeliveryOptions): Promise<unknown> {
-  const sdk = hostObject<SdkSession>(session);
+  const sdk = objectLikeValue<SdkSession>(session);
   if (sdk === undefined) {
     return undefined;
   }
@@ -372,7 +367,7 @@ async function sendToSdkAgentSession(session: unknown, prompt: string, options: 
     typeof subscribe === "function"
       ? subscribe.call(session, (event: unknown) => {
         options.onEvent?.(event);
-        const lifecycle = hostObject<{ readonly type?: unknown; readonly willRetry?: unknown }>(event);
+        const lifecycle = objectLikeValue<{ readonly type?: unknown; readonly willRetry?: unknown }>(event);
         if (lifecycle?.type === "agent_end" && lifecycle.willRetry !== true) {
           void settleWhenIdle(event);
         }
@@ -413,7 +408,7 @@ async function stopChildSession(
     return;
   }
   const ctx = child?.ctx;
-  const manager = hostObject<ChildContext>(ctx)?.sessionManager;
+  const manager = objectLikeValue<ChildContext>(ctx)?.sessionManager;
   try {
     authorize?.();
     const stopped = await callOptionalAsync(ctx, ["abort", "cancel", "stop"], [reason]);
@@ -435,7 +430,7 @@ async function closeChildSession(
     return;
   }
   const ctx = child?.ctx;
-  const manager = hostObject<ChildContext>(ctx)?.sessionManager;
+  const manager = objectLikeValue<ChildContext>(ctx)?.sessionManager;
   await stopChildSession(child, reason, authorize);
   try {
     authorize?.();
@@ -482,7 +477,7 @@ export async function createChildSession(
     return { error: "model_unavailable" };
   }
   const registry = modelRegistryFrom(pi, ctx);
-  const hasConfiguredAuth = hostObject<ModelRegistry>(registry)?.hasConfiguredAuth;
+  const hasConfiguredAuth = objectLikeValue<ModelRegistry>(registry)?.hasConfiguredAuth;
   if (
     normalizedModelId !== undefined &&
     typeof hasConfiguredAuth === "function" &&
@@ -500,7 +495,7 @@ export async function createChildSession(
         liveNames.add(tool);
         continue;
       }
-      const name = hostObject<NamedTool>(tool)?.name;
+      const name = objectLikeValue<NamedTool>(tool)?.name;
       if (typeof name === "string") liveNames.add(name);
     }
     const missing = activeTools.filter((name) => !liveNames.has(name));
@@ -508,7 +503,7 @@ export async function createChildSession(
       return { error: `tool_surface_unavailable: ${missing.join(", ")}` };
     }
   }
-  const metadataRecord = hostObject<{
+  const metadataRecord = objectLikeValue<{
     readonly kind?: unknown;
     readonly agentKind?: unknown;
     readonly agentId?: unknown;
@@ -635,7 +630,7 @@ export async function createChildSession(
       typeof pi.createAgentSession === "function"
         ? await pi.createAgentSession(options)
         : await createPiAgentSession(options as Parameters<typeof createPiAgentSession>[0]);
-    const session = hostObject<SdkSession>(hostObject<CreatedSession>(result)?.session);
+    const session = objectLikeValue<SdkSession>(objectLikeValue<CreatedSession>(result)?.session);
     createdSession = session;
     revalidateAuthority?.();
     if (session === undefined) {
@@ -751,7 +746,7 @@ export async function sendToChildSession(
   } = {},
 ): Promise<ChildDispatchResult> {
   const childCtx = child?.ctx;
-  const sendContext = hostObject<ChildSendContext>(childCtx);
+  const sendContext = objectLikeValue<ChildSendContext>(childCtx);
   const childSendAvailable =
     typeof child?.sendUserMessage === "function" ||
     typeof sendContext?.sendUserMessage === "function";
@@ -839,7 +834,7 @@ function completionTextFromContent(content: unknown): string | undefined {
   if (!Array.isArray(content)) return undefined;
   const parts: string[] = [];
   for (const item of content) {
-    const text = hostObject<TextPart>(item)?.text;
+    const text = objectLikeValue<TextPart>(item)?.text;
     if (typeof text === "string") parts.push(text);
   }
   return parts.length === 0 ? "" : parts.join("\n");
@@ -849,7 +844,7 @@ function dispatchCompletionFromHostResult(hostResult: unknown): ChildDispatchCom
   if (typeof hostResult === "string" && hostResult.trim() !== "") {
     return { status: "completed", finalOutput: hostResult };
   }
-  const completion = hostObject<HostCompletion>(hostResult);
+  const completion = objectLikeValue<HostCompletion>(hostResult);
   if (completion === undefined) return undefined;
   const finalOutput =
     typeof completion.finalOutput === "string" ? completion.finalOutput :
@@ -912,7 +907,7 @@ function dispatchResultWithHostCompletion(
 }
 
 export function childSessionCacheKeyScopeFromContext(ctx: unknown): string {
-  const taumelSessionId = hostObject<ChildContext>(ctx)?.taumelSessionId;
+  const taumelSessionId = objectLikeValue<ChildContext>(ctx)?.taumelSessionId;
   if (typeof taumelSessionId === "string") {
     const value = taumelSessionId.trim();
     if (value !== "") return value;
@@ -931,7 +926,7 @@ export async function applyChildSessionUpdate(
   keyScope?: string,
   authorizeEffect?: () => void,
 ): Promise<void> {
-  const childUpdate = hostObject<ChildSessionUpdate>(update);
+  const childUpdate = objectLikeValue<ChildSessionUpdate>(update);
   if (childUpdate === undefined) throw new Error("Invalid Taumel child session update");
   switch (childUpdate.action) {
     case "none":
@@ -967,20 +962,4 @@ export async function applyChildSessionUpdate(
     default:
       throw new Error("Invalid Taumel child session update");
   }
-}
-
-export async function applyChildSessionUpdatesFromDetails(
-  childSessions: Map<string, ChildSessionBridge>,
-  result: unknown,
-  keyScope?: string,
-): Promise<boolean> {
-  const rawDetails = hostObject<ChildUpdatesResult>(result)?.details;
-  const details = hostObject<ChildUpdatesDetails>(rawDetails);
-  const updates = Array.isArray(details?.childSessionUpdates)
-    ? details.childSessionUpdates
-    : [];
-  for (const update of updates) {
-    if (typeof update === "object" && update !== null) await applyChildSessionUpdate(childSessions, update, undefined, keyScope);
-  }
-  return updates.length > 0;
 }

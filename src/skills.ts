@@ -1,5 +1,6 @@
 import type { CoreBridge, PiLike } from "./types.ts";
 import { decodeSkillResolveResult, type SkillResolveResult } from "./bridge-contracts.ts";
+import { objectValue } from "./util.ts";
 
 type PromptEvent = {
   text?: unknown; prompt?: unknown; content?: unknown; message?: unknown; input?: unknown;
@@ -8,12 +9,6 @@ type PromptEvent = {
 type PromptMessage = { role?: unknown; content?: unknown };
 type SkillContext = { cwd?: unknown; ui?: unknown };
 type NotificationUi = { notify: (message: string, level: "warning") => unknown };
-
-function objectValue<T extends object>(value: unknown): Partial<T> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as Partial<T>
-    : undefined;
-}
 
 function notificationUi(value: unknown): NotificationUi | undefined {
   const candidate = objectValue<NotificationUi>(value);

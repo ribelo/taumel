@@ -34,35 +34,6 @@ let sandbox_config_from_js sandbox =
     ~isolated_child:(Tool_contracts.SandboxConfig.get_isolatedChild sandbox)
   |> Result.fold ~ok:(fun config -> config) ~error:invalid_arg
 
-let exec_workspace_metadata_listing_from_js obj =
-  {
-    Taumel.Sandbox.metadata_dir = get_string obj "metadataDir";
-    path = get_string obj "path";
-    children =
-      (if has_property obj "children" then Some (get_string_array obj "children")
-       else None);
-  }
-
-let exec_host_facts_from_js obj =
-  {
-    Taumel.Sandbox.platform = get_string obj "platform";
-    temp_roots = get_string_array obj "tempRoots";
-    system_ro_paths = get_string_array obj "systemRoPaths";
-    home_mount = get_string obj "homeMount";
-    workspace_roots = get_string_array obj "workspaceRoots";
-    authorization_cwd = get_string obj "authorizationCwd";
-    workspace_metadata_listings =
-      get_object_array obj "workspaceMetadataListings"
-      |> List.map exec_workspace_metadata_listing_from_js;
-  }
-
-let sandbox_metadata_dir_names () =
-  let result =
-    Tool_contracts.ToolNamesResult.create
-      ~names:Taumel.Sandbox.protected_workspace_dir_names ()
-  in
-  Tool_contracts.ToolNamesResult.t_to_js result |> inject
-
 let resolved_mutation_path_from_js obj =
   {
     Taumel.Sandbox.requested_path = Tool_contracts.ResolvedMutationPath.get_path obj;
@@ -83,17 +54,6 @@ let validate_workspace_mutation_paths raw_facts =
   | Error message ->
       Boundary_contracts.WorkspaceMutationInvalid.create ~message ()
       |> Tool_contracts.WorkspaceMutationInvalid.t_to_js |> inject
-
-let sandbox_host_path_plan facts =
-  let facts = decode_ojs_contract Tool_contracts.SandboxHostPathFacts.t_of_js (ojs_of_js facts) in
-  let tempRootCandidates =
-    Taumel.Sandbox.temp_root_candidates
-      ~tmp_dir:(Tool_contracts.SandboxHostPathFacts.get_tmpDir facts)
-      ~env_tmp_dir:(Tool_contracts.SandboxHostPathFacts.get_envTmpDir facts)
-  in
-  Tool_contracts.SandboxHostPathPlan.create ~tempRootCandidates
-    ~systemRoPathCandidates:Taumel.Sandbox.system_ro_path_candidates ()
-  |> Tool_contracts.SandboxHostPathPlan.t_to_js |> inject
 
 let positive_float_option obj name =
   match float_field obj name with

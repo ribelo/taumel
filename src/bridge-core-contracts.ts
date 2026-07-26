@@ -339,19 +339,6 @@ export type ChildDispatchPlan = Static<typeof ChildDispatchPlanSchema>;
 export type ChildDispatchResult = Static<typeof ChildDispatchResultSchema>;
 export type ChildDispatchCompletion = Static<typeof ChildDispatchCompletionSchema>;
 
-export const SandboxHostPathFactsSchema = Type.Object(
-  { tmpDir: Type.String(), envTmpDir: Type.String() },
-  { $id: "SandboxHostPathFacts", additionalProperties: false },
-);
-export const SandboxHostPathPlanSchema = Type.Object(
-  {
-    tempRootCandidates: Type.Array(Type.String({ minLength: 1 })),
-    systemRoPathCandidates: Type.Array(Type.String({ minLength: 1 })),
-  },
-  { $id: "SandboxHostPathPlan", additionalProperties: false },
-);
-export type SandboxHostPathPlan = Static<typeof SandboxHostPathPlanSchema>;
-
 export const ResolvedMutationPathSchema = Type.Object(
   { path: Type.String({ minLength: 1 }), resolvedPath: Type.String({ minLength: 1 }) },
   { $id: "ResolvedMutationPath", additionalProperties: false },

@@ -18,12 +18,8 @@ type composer_command =
 let default =
   { taumel = { composer = { enabled = true } } }
 
-let parse_words input =
-  input |> String.split_on_char ' ' |> List.map String.trim
-  |> List.filter (fun part -> part <> "")
-
 let parse_composer_command input =
-  match parse_words input with
+  match Shared.split_words input with
   | [] | [ "show" ] -> Ok Show
   | [ "on" ] | [ "enabled" ] -> Ok (Set_enabled true)
   | [ "off" ] | [ "disabled" ] -> Ok (Set_enabled false)

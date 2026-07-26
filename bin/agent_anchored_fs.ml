@@ -9,12 +9,6 @@ open Jsoo_bridge
    canonicalized first so legitimate symlinks above the target keep working.
    Requires Linux with procfs; any other platform fails closed. *)
 
-let node_require name =
-  let process = Unsafe.get Unsafe.global "process" in
-  match function_field process "getBuiltinModule" with
-  | Some get_builtin -> Unsafe.fun_call get_builtin [| js_string name |]
-  | None -> Unsafe.fun_call (Unsafe.get Unsafe.global "require") [| js_string name |]
-
 let fs = lazy (node_require "fs")
 let path_module = lazy (node_require "path")
 

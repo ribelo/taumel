@@ -103,7 +103,7 @@ let thread_in_scope ~workspace scope (thread : thread) =
   | Some cwd -> cwd = workspace
   | None -> (
       match thread.source_path with
-      | Some path when workspace <> "" -> starts_with path workspace
+      | Some path when workspace <> "" -> String.starts_with ~prefix:workspace path
       | _ -> false)
 
 let locator_of_entry (thread : thread) (entry : visible_entry) =
@@ -222,7 +222,7 @@ let query_hits ~include_tools query (thread : thread) =
 let score_thread ~workspace query hits (thread : thread) =
   let score = ref 0 in
   if thread.id = query then score := !score + 10_000;
-  if starts_with thread.id query then score := !score + 4_000;
+  if String.starts_with ~prefix:query thread.id then score := !score + 4_000;
   if contains thread.title query then score := !score + 1_000;
   if List.exists (fun hit -> contains hit.hit_field "summary") hits then
     score := !score + 500;
@@ -295,7 +295,7 @@ let read ~id (catalog : catalog) =
   | _ :: _ -> Ambiguous [ id ]
   | [] -> (
       let matches =
-        List.filter (fun (thread : thread) -> starts_with thread.id id) catalog.threads
+        List.filter (fun (thread : thread) -> String.starts_with ~prefix:id thread.id) catalog.threads
       in
       match matches with
       | [] -> Not_found
@@ -386,7 +386,7 @@ let encode_cursor thread_id index =
   cursor_prefix ^ hex_encode (payload ^ "\000" ^ checksum)
 
 let decode_cursor cursor =
-  if not (starts_with cursor cursor_prefix) then None
+  if not (String.starts_with ~prefix:cursor_prefix cursor) then None
   else
     let rest =
       String.sub cursor (String.length cursor_prefix)

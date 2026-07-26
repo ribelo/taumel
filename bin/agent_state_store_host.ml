@@ -6,12 +6,6 @@ open Jsoo_bridge
 
 module Store = Taumel.Agent_state_store
 
-let node_require name =
-  let process = Unsafe.get Unsafe.global "process" in
-  match function_field process "getBuiltinModule" with
-  | Some get_builtin -> Unsafe.fun_call get_builtin [| js_string name |]
-  | None -> Unsafe.fun_call (Unsafe.get Unsafe.global "require") [| js_string name |]
-
 let fs = lazy (node_require "fs")
 let path = lazy (node_require "path")
 let crypto = lazy (node_require "crypto")
