@@ -1,4 +1,5 @@
 import { Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
+import { formatLocalTime, formatRelativeDuration } from "./util.ts";
 
 type Theme = {
   readonly fg: (color: string, text: string) => string;
@@ -91,33 +92,8 @@ export function decodeUsageInspection(value: unknown): UsageInspection {
   };
 }
 
-function relativeDuration(seconds: number): string {
-  const totalMinutes = Math.max(0, Math.floor(seconds / 60));
-  if (totalMinutes < 1) return "under 1m";
-  const days = Math.floor(totalMinutes / 1440);
-  const hours = Math.floor((totalMinutes % 1440) / 60);
-  const minutes = totalMinutes % 60;
-  if (days > 0) return `${days}d${hours > 0 ? ` ${hours}h` : ""}`;
-  if (hours > 0) return `${hours}h${minutes > 0 ? ` ${minutes}m` : ""}`;
-  return `${minutes}m`;
-}
-
-function localTime(targetSeconds: number, nowMs: number): string {
-  const target = new Date(targetSeconds * 1000);
-  const now = new Date(nowMs);
-  const time = target.toLocaleTimeString("en", { hour: "2-digit", minute: "2-digit", hour12: false });
-  const sameDay = target.getFullYear() === now.getFullYear()
-    && target.getMonth() === now.getMonth()
-    && target.getDate() === now.getDate();
-  if (sameDay) return time;
-  if ((target.getTime() - nowMs) <= 7 * 86400 * 1000) {
-    return `${target.toLocaleDateString("en", { weekday: "short" })} ${time}`;
-  }
-  return `${target.toLocaleDateString("en", { day: "2-digit", month: "short" })} ${time}`;
-}
-
 function timedEvent(prefix: string, targetSeconds: number, nowMs: number): string {
-  return `${prefix} in ${relativeDuration((targetSeconds * 1000 - nowMs) / 1000)} · ${localTime(targetSeconds, nowMs)}`;
+  return `${prefix} in ${formatRelativeDuration((targetSeconds * 1000 - nowMs) / 1000)} · ${formatLocalTime(targetSeconds, nowMs)}`;
 }
 
 function quotaColor(percentLeft: number | undefined): string {

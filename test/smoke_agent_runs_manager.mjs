@@ -2,11 +2,21 @@ import assert from "node:assert/strict";
 import { executeAgentRunsManager } from "../src/agent-runs-manager.ts";
 
 const selections = [];
+const rendered = [];
 const ctx = {
   ui: {
     select: async (_title, labels) => {
       selections.push(labels);
       return selections.length === 1 ? labels[0] : "Inspect";
+    },
+    custom: async (factory) => {
+      const component = factory(
+        { requestRender: () => undefined },
+        { fg: (_color, text) => text },
+        {},
+        () => undefined,
+      );
+      rendered.push(...component.render(100));
     },
   },
 };
@@ -23,23 +33,77 @@ const snapshot = {
     submissionId: "agent-abcd-run-1-submission-1", announcement: "pending",
   }],
 };
+const coreCalls = [];
 const core = {
-  call(name) {
+  call(name, args) {
+    coreCalls.push([name, args]);
     if (name === "reconcileLiveAgentDispatches") return { ok: true };
     if (name === "agentManagerSnapshot") return snapshot;
+    if (name === "handleCommand") {
+      return {
+        ok: true,
+        action: "command_result",
+        message: "Refactor the compiler.",
+        details: { agent_id: "agent-abcd", available: true },
+      };
+    }
     throw new Error(`unexpected core call: ${name}`);
   },
 };
 
-// agent-ui07/agent-ui08: rows are compact; Inspect contains exact private diagnostics.
+// agent-ui07/agent-ui08: rows are compact; the Inspect modal carries exact private diagnostics.
 const result = await executeAgentRunsManager({}, core, new Map(), "", ctx);
 assert.match(selections[0][0], /agent-abcd · generic · completed · Inspect agent lifecycle · 3 turns/);
 assert.equal(selections[0][0].includes("inactive"), false);
-assert.match(result.message, /child_session_file=\/private\/agent-abcd\/session.jsonl/);
-assert.match(result.message, /tier=high/);
-assert.match(result.message, /model=provider\/model/);
-assert.match(result.message, /recommendation=call_agent_wait/);
-assert.match(result.message, /description=Inspect agent lifecycle/);
+// agent-gas8/agent-qjn0: Inspect opens as a modal and the command result stays silent.
+assert.equal(result.inspection, true);
+assert.ok(rendered.length > 0);
+// agent-91jh/agent-byg8: labeled identity, run, and instruction sections.
+assert.ok(rendered.some((line) => line.includes("/private/agent-abcd/session.jsonl")));
+assert.ok(rendered.some((line) => line.includes("provider/model")));
+assert.ok(rendered.some((line) => /Thinking\s+high/.test(line)));
+assert.ok(rendered.some((line) => line.includes("call_agent_wait")));
+assert.ok(rendered.some((line) => line.includes("Inspect agent lifecycle")));
+assert.ok(rendered.some((line) => line.includes("Refactor the compiler.")));
+// agent-9jof/agent-lpbp: the instruction is recovered on demand through the gateway.
+assert.deepEqual(
+  coreCalls.find(([name]) => name === "handleCommand")?.[1],
+  [{ name: "agent-runs", args: "instruction agent-abcd", ctx }],
+);
+
+// agent-oy3p: an unavailable instruction renders as a placeholder, not an error.
+const unavailableRendered = [];
+const unavailableCtx = {
+  ui: {
+    select: async (_title, labels) => labels[0],
+    custom: async (factory) => {
+      const component = factory(
+        { requestRender: () => undefined },
+        { fg: (_color, text) => text },
+        {},
+        () => undefined,
+      );
+      unavailableRendered.push(...component.render(100));
+    },
+  },
+};
+const unavailableCore = {
+  call(name) {
+    if (name === "reconcileLiveAgentDispatches") return { ok: true };
+    if (name === "agentManagerSnapshot") return snapshot;
+    if (name === "handleCommand") {
+      return {
+        ok: true,
+        action: "command_result",
+        message: "",
+        details: { agent_id: "agent-abcd", available: false },
+      };
+    }
+    throw new Error(`unexpected unavailable core call: ${name}`);
+  },
+};
+await executeAgentRunsManager({}, unavailableCore, new Map(), "", unavailableCtx);
+assert.ok(unavailableRendered.some((line) => line.includes("Instruction unavailable.")));
 
 const closeCalls = [];
 const closeCore = {

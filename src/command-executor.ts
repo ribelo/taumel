@@ -52,6 +52,7 @@ type CommandResultLike = {
   readonly details?: unknown; readonly planSubmitUserMessage?: unknown; readonly planRollback?: unknown;
   readonly planFollowup?: unknown;
   readonly planInspection?: unknown;
+  readonly inspection?: unknown;
 };
 type VisibilityCommandDetails = { readonly visibilityChanged?: unknown; readonly category?: unknown; readonly enabledName?: unknown };
 type ChildUpdateDetails = { readonly childSessionUpdates?: unknown };
@@ -546,7 +547,8 @@ export function registerGatewayCommands(
           || currentResult?.planFollowup === true
           || currentResult?.planInspection === true
         );
-        if (suppressPlanNotification) return result;
+        const suppressInspectionNotification = name === "agent-runs" && currentResult?.inspection === true;
+        if (suppressPlanNotification || suppressInspectionNotification) return result;
         const notification = decodeCommandNotificationPlan(core.call("planCommandNotification", [{
           commandName: name,
           ok: currentResult?.ok === true,

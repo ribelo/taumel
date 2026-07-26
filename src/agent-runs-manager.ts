@@ -17,7 +17,10 @@ import {
   decodeGatewayCommandOutput,
   decodePreparedToolAction,
   type AgentManagerSnapshot,
+  type GatewayCommandOutput,
 } from "./bridge-contracts.ts";
+import { showAgentInspection } from "./agent-inspection.ts";
+import { confirmSelection } from "./modal.ts";
 
 type UnknownFields = { readonly [key: string]: unknown };
 
@@ -46,11 +49,23 @@ function identityRunSummary(run: AgentRunItem): string {
   return `${run.status}${activity} · ${run.description} · ${run.turnCount} turns · ${age}s`;
 }
 
+async function fetchLatestInstruction(
+  core: CoreBridge,
+  ctx: unknown,
+  agentId: string,
+): Promise<string | undefined> {
+  const result = await runAgentRunsCommand(core, ctx, `instruction ${agentId}`);
+  if (!("action" in result) || result.action !== "command_result" || result.ok !== true) return undefined;
+  const details = isObjectLike<{ readonly available?: unknown }>(result.details) ? result.details : undefined;
+  if (details?.available !== true) return undefined;
+  return result.message.trim() === "" ? undefined : result.message;
+}
+
 async function runAgentRunsCommand(
   core: CoreBridge,
   ctx: unknown,
   args: string,
-): Promise<unknown> {
+): Promise<GatewayCommandOutput> {
   return decodeGatewayCommandOutput(core.call("handleCommand", [{ name: "agent-runs", args, ctx }]));
 }
 
@@ -110,14 +125,12 @@ export async function executeAgentRunsManager(
       const agentId = trimmed.slice("close ".length).trim();
       if (agentId !== "") {
         const ui = uiFromContext(ctx);
-        const select = (ui as { select?: (title: string, labels: string[]) => Promise<string | undefined> } | undefined)?.select;
-        if (typeof select !== "function") {
+        if (typeof (ui as { select?: unknown } | undefined)?.select !== "function") {
           return commandResult(false, "Closing an agent requires interactive confirmation.", {
             agent_id: agentId,
           });
         }
-        const confirmed = await select.call(ui, `Close ${agentId}?`, ["Confirm close", "Cancel"]);
-        if (confirmed !== "Confirm close") {
+        if (!await confirmSelection(ui, `Close ${agentId}?`, "Confirm close")) {
           return commandResult(true, "Agent close cancelled.", { cancelled: true, agent_id: agentId });
         }
         return closeAgent(pi, core, childSessions, agentId, ctx);
@@ -175,10 +188,9 @@ export async function executeAgentRunsManager(
       : undefined;
   if (action === "Inspect") {
     const latest = agentRuns[0];
-    return commandResult(true, `${agentLabel(agent)}\ntier=${agent.tier ?? ""}\nmodel=${agent.model}\nthinking=${agent.thinking}\nisolation=${agent.isolation ?? "none"}\nworkspace=${agent.workspace}\neffective_workspace=${agent.effectiveWorkspace ?? agent.workspace}\ncreated_at=${agent.createdAt}\nchild_session_file=${agent.childSessionFile ?? ""}\nlatest_run_id=${latest?.runId ?? ""}\nlatest_status=${latest?.status ?? ""}\nactivity_state=${latest?.activityState ?? ""}\nrecommendation=${latest?.recommendation ?? ""}\nstarted_at=${latest?.startedAt ?? ""}\nlast_activity_at=${latest?.lastActivityAt ?? ""}\nended_at=${latest?.endedAt ?? ""}\nsuspended_at=${latest?.suspendedAt ?? ""}\nturn_count=${latest?.turnCount ?? 0}\ndescription=${latest?.description ?? ""}\nreason=${latest?.reasonCode ?? ""}\nerror=${latest?.error ?? ""}\nnotification=${latest?.announcement ?? ""}`, {
-      agent,
-      runs: agentRuns,
-    });
+    const instruction = await fetchLatestInstruction(core, ctx, agentId);
+    await showAgentInspection(ui, agent, latest, instruction);
+    return { ...commandResult(true, `Inspected ${agentId}.`, { agent_id: agentId }), inspection: true };
   }
   if (action === "Runs") {
     if (agentRuns.length === 0) return commandResult(true, `No runs for ${agentId}.`, { agent_id: agentId });
@@ -207,14 +219,7 @@ export async function executeAgentRunsManager(
     return result;
   }
   if (action === "Close") {
-    const confirm =
-      typeof (ui as { select?: (title: string, labels: string[]) => unknown }).select === "function"
-        ? await (ui as { select: (title: string, labels: string[]) => Promise<string | undefined> }).select(
-          `Close ${agentId}?`,
-          ["Confirm close", "Cancel"],
-        )
-        : undefined;
-    if (confirm !== "Confirm close") {
+    if (!await confirmSelection(ui, `Close ${agentId}?`, "Confirm close")) {
       return commandResult(true, "Agent close cancelled.", { cancelled: true, agent_id: agentId });
     }
     const result = await closeAgent(pi, core, childSessions, agentId, ctx);

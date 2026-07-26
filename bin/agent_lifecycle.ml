@@ -837,6 +837,31 @@ let handle_agent_runs_command args ctx =
                 |]
             in
             command_result ~details text)
+  | "instruction" -> (
+      let target = String.trim rest in
+      if target = "" then error_obj "usage: /agent-runs instruction <agent-id>"
+      else
+        match
+          Taumel.Agents.owned_identity !agent_state ~owner_session_id:owner target
+        with
+        | Error message -> error_obj message
+        | Ok identity ->
+            let text =
+              match identity.Taumel.Agents.identity_child_session_file with
+              | Some path -> (
+                  match recover_latest_user_message ~path with
+                  | Some text when String.trim text <> "" -> text
+                  | _ -> "")
+              | None -> ""
+            in
+            let details =
+              Unsafe.obj
+                [|
+                  ("agent_id", js_string target);
+                  ("available", js_bool (text <> ""));
+                |]
+            in
+            command_result ~details text)
   | _ ->
       error_obj
-        "usage: /agent-runs [list|stop <agent-id>|close <agent-id>|output <agent-id|run-id>]"
+        "usage: /agent-runs [list|stop <agent-id>|close <agent-id>|output <agent-id|run-id>|instruction <agent-id>]"

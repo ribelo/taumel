@@ -837,3 +837,28 @@ export async function validateWorkspaceMutationPaths(
   if (result.kind === "invalid") throw new Error(result.message);
   return resolved.authorizations;
 }
+
+export function formatRelativeDuration(seconds: number): string {
+  const totalMinutes = Math.max(0, Math.floor(seconds / 60));
+  if (totalMinutes < 1) return "under 1m";
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  if (days > 0) return `${days}d${hours > 0 ? ` ${hours}h` : ""}`;
+  if (hours > 0) return `${hours}h${minutes > 0 ? ` ${minutes}m` : ""}`;
+  return `${minutes}m`;
+}
+
+export function formatLocalTime(targetSeconds: number, nowMs: number): string {
+  const target = new Date(targetSeconds * 1000);
+  const now = new Date(nowMs);
+  const time = target.toLocaleTimeString("en", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const sameDay = target.getFullYear() === now.getFullYear()
+    && target.getMonth() === now.getMonth()
+    && target.getDate() === now.getDate();
+  if (sameDay) return time;
+  if ((target.getTime() - nowMs) <= 7 * 86400 * 1000) {
+    return `${target.toLocaleDateString("en", { weekday: "short" })} ${time}`;
+  }
+  return `${target.toLocaleDateString("en", { day: "2-digit", month: "short" })} ${time}`;
+}

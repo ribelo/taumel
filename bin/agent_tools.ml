@@ -482,7 +482,7 @@ let prepare_send params ctx =
                     (contract_send_outcome delivery.delivery_outcome))
                   ~capabilityId:capability_id ~metadata ()
                 |> Tool_contracts.PreparedAgentSend.t_to_js |> inject)
-let assistant_text_from_entry_json = function
+let message_text_from_entry_json ~role = function
   | Taumel.Shared.Object fields -> (
       match
         (List.assoc_opt "type" fields, List.assoc_opt "message" fields)
@@ -490,7 +490,7 @@ let assistant_text_from_entry_json = function
       | Some (Taumel.Shared.String "message"),
         Some (Taumel.Shared.Object message_fields) -> (
           match List.assoc_opt "role" message_fields with
-          | Some (Taumel.Shared.String "assistant") -> (
+          | Some (Taumel.Shared.String found) when found = role -> (
               match List.assoc_opt "content" message_fields with
               | Some (Taumel.Shared.String text) -> Some text
               | Some (Taumel.Shared.Array parts) ->
@@ -509,6 +509,8 @@ let assistant_text_from_entry_json = function
           | _ -> None)
       | _ -> None)
   | _ -> None
+let assistant_text_from_entry_json = message_text_from_entry_json ~role:"assistant"
+let user_text_from_entry_json = message_text_from_entry_json ~role:"user"
 let recover_output_from_file ~path ~entry_id =
   try
     let fs = node_require "fs" in
@@ -526,6 +528,25 @@ let recover_output_from_file ~path ~entry_id =
                    assistant_text_from_entry_json json
                | _ -> None)
            | _ -> None)
+  with _ -> None
+let recover_latest_user_message ~path =
+  try
+    let fs = node_require "fs" in
+    let raw =
+      Js.to_string
+        (Unsafe.meth_call fs "readFileSync"
+           [| js_string path; js_string "utf8" |])
+    in
+    raw |> String.split_on_char '\n'
+    |> List.fold_left
+         (fun latest line ->
+           match Taumel.Shared.decode_json_string line with
+           | Ok json -> (
+               match user_text_from_entry_json json with
+               | Some _ as text -> text
+               | None -> latest)
+           | Error _ -> latest)
+         None
   with _ -> None
 let recover_selected_outputs state run_ids =
   List.fold_left
