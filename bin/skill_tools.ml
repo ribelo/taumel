@@ -83,12 +83,9 @@ let strip_frontmatter text =
   let lines = String.split_on_char '\n' text in
   match lines with
   | first :: rest when String.trim first = "---" ->
-      let rec drop = function
-        | [] -> text
-        | line :: rest when String.trim line = "---" -> String.concat "\n" rest
-        | _ :: rest -> drop rest
-      in
-      drop rest
+      (match List.find_index (fun line -> String.trim line = "---") rest with
+       | None -> text
+       | Some index -> String.concat "\n" (List.drop (index + 1) rest))
   | _ -> text
 
 let readdir path =

@@ -297,23 +297,24 @@ let encode state =
 
 let decode json =
   let open Shared in
-  Result.bind (json_object_fields "taumel.cron" json) (fun fields ->
-      Result.bind
-        (json_exact_fields "taumel.cron" [ "version"; "enabled"; "tasks" ] fields)
-        (fun () ->
-      Result.bind (json_required_int "taumel.cron" fields "version") (fun version ->
-          if version <> 1 then Error "unsupported cron state version"
-          else
-      Result.bind (json_required_bool "taumel.cron" fields "enabled") (fun enabled ->
-          Result.bind (json_required_field "taumel.cron" fields "tasks") (fun tasks_json ->
-              Result.bind (json_array "taumel.cron.tasks" tasks_json) (fun values ->
-                  let rec loop seen acc = function
-                    | [] -> Ok { enabled; tasks = List.rev acc }
-                    | value :: rest -> (
-                        match task_of_json value with
-                        | Ok task when List.mem task.id seen ->
-                            Error "taumel.cron.tasks must not contain duplicate ids"
-                        | Ok task -> loop (task.id :: seen) (task :: acc) rest
-                        | Error _ as error -> error)
-                  in
-                  loop [] [] values))))))
+  let ( let* ) = Result.bind in
+  let* fields = json_object_fields "taumel.cron" json in
+  let* () =
+    json_exact_fields "taumel.cron" [ "version"; "enabled"; "tasks" ] fields
+  in
+  let* version = json_required_int "taumel.cron" fields "version" in
+  if version <> 1 then Error "unsupported cron state version"
+  else
+    let* enabled = json_required_bool "taumel.cron" fields "enabled" in
+    let* tasks_json = json_required_field "taumel.cron" fields "tasks" in
+    let* values = json_array "taumel.cron.tasks" tasks_json in
+    let rec loop seen acc = function
+      | [] -> Ok { enabled; tasks = List.rev acc }
+      | value :: rest -> (
+          match task_of_json value with
+          | Ok task when List.mem task.id seen ->
+              Error "taumel.cron.tasks must not contain duplicate ids"
+          | Ok task -> loop (task.id :: seen) (task :: acc) rest
+          | Error _ as error -> error)
+    in
+    loop [] [] values

@@ -22,4 +22,7 @@ independent of any single feature.
 - When configuration, persisted state, input, or an artifact conforms only to a superseded contract, the system shall leave it inert and shall not migrate, interpret, resurrect, or expose it through the current model-facing or user-facing contract. ^eng-ce02
 - A compatibility or migration exception shall exist only when the user explicitly requires it; design and implementation shall not infer, solicit, or add such an exception by default. ^eng-ce03
 - The project shall express behavioral, interface, persistence, and architecture contracts as uniquely identified EARS requirements in `docs/requirements/*.md` and shall treat those requirements as the authoritative design source. ^eng-rq01
+- OCaml code shall express a `Result` or `Option` bind chain nested three or more levels deep with a monadic binding operator such as `let*`; shallower chains may use direct `bind` calls. ^eng-cb01
+- OCaml code shall use standard-library functions such as `List.take` and `List.drop` instead of local reimplementations when the standard-library shape matches. ^eng-cb02
+- A helper needed by more than one module shall be defined once in the appropriate shared module rather than duplicated per module. ^eng-cb03
 - The project shall not create ADRs or use ADRs as an authoritative source for new decisions; it shall capture each new decision by adding or updating the applicable EARS requirements. ^eng-rq02

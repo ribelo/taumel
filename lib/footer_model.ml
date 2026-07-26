@@ -99,12 +99,8 @@ let take_suffix_width width text =
   if width <= 0 then ""
   else
     let chars = utf8_chars text in
-    let rec drop n xs =
-      if n <= 0 then xs
-      else match xs with [] -> [] | _ :: rest -> drop (n - 1) rest
-    in
     let length = List.length chars in
-    String.concat "" (drop (max 0 (length - width)) chars)
+    String.concat "" (List.drop (max 0 (length - width)) chars)
 
 let truncate_middle text width =
   if width <= 0 then ""

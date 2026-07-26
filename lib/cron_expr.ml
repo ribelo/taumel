@@ -64,16 +64,15 @@ let parse_field label min_v max_v text =
   loop [] parts
 
 let parse expression =
+  let ( let* ) = Result.bind in
   match String.split_on_char ' ' (String.trim expression) |> List.filter (( <> ) "") with
   | [ minute; hour; dom; month; dow ] ->
-      Result.bind (parse_field "minute" 0 59 minute) (fun minutes ->
-          Result.bind (parse_field "hour" 0 23 hour) (fun hours ->
-              Result.bind (parse_field "day-of-month" 1 31 dom) (fun days_of_month ->
-                  Result.bind (parse_field "month" 1 12 month) (fun months ->
-                      Result.map
-                        (fun days_of_week ->
-                          { minutes; hours; days_of_month; months; days_of_week })
-                        (parse_field "day-of-week" 0 7 dow)))))
+      let* minutes = parse_field "minute" 0 59 minute in
+      let* hours = parse_field "hour" 0 23 hour in
+      let* days_of_month = parse_field "day-of-month" 1 31 dom in
+      let* months = parse_field "month" 1 12 month in
+      let* days_of_week = parse_field "day-of-week" 0 7 dow in
+      Ok { minutes; hours; days_of_month; months; days_of_week }
   | _ -> Error "cron expression must contain exactly 5 fields"
 
 let field_matches value field = List.mem value field.values
