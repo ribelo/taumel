@@ -2,10 +2,6 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
-const grandfatheredMaximum = new Map([
-  ["bin/exec_session.ml", 1162],
-]);
-
 function lineCount(path) {
   return readFileSync(path, "utf8").split(/\r?\n/).length - 1;
 }
@@ -17,7 +13,7 @@ const files = execFileSync("find", ["lib", "bin", "src", "-type", "f"], {
 );
 
 for (const path of files) {
-  const maximum = grandfatheredMaximum.get(path) ?? 1000;
+  const maximum = 1000;
   const actual = lineCount(path);
   assert.ok(actual <= maximum, `eng-fs01: ${path} has ${actual} lines (maximum ${maximum})`);
 }
