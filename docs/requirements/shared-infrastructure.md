@@ -64,3 +64,4 @@ lives in the capability profile and tool gateway, never in active-tool mutation.
 - Worktree mutation authority shall remain confined to the verified host adapter rather than a caller-constructible record or trust boolean, and agent-action capabilities shall use closed variants that prohibit attaching run/submission authority to an incompatible action. ^shared-v8ra
 - If a canonical `taumel.childSession` entry is malformed or its session entries cannot be scanned, then authority-sensitive callers shall retain child confinement and shall not treat the session as top-level. ^shared-o11w
 - The system shall register `/taumel` as a visible local command for Taumel status and initialization. ^shared-2hck
+- Where a user-facing terminal modal is added or revised, the system shall build it on a shared modal kit that supplies scrolling, close-key handling, theme fallback, and confirmation prompts. ^shared-zetx

@@ -342,6 +342,14 @@ agents, plan-mode continuation, Librarian, Review, and Painter.
 - Identity rows shall show handle, kind, latest lifecycle status, activity state only while running, latest task description, turn count, and derived activity age; run rows shall show the corresponding run ID, status, running activity state, description, turn count, and age, without exact timestamps or recommendations. ^agent-ui07
 - The Inspect submenu shall show identity ID, kind, isolation mode, applicable tier, resolved model and thinking, source workspace, effective workspace, creation time, and private child-session path, plus run ID, lifecycle status, activity state and recommendation, start time, exact last-activity time, applicable end or suspension time, turn count, task description, bounded reason or error, and notification state. ^agent-91jh
 - A terminal or suspended row shall omit the redundant `inactive` activity label, while a running row shall expose `starting`, `reasoning`, `using_tool`, or `orphaned` beside its lifecycle status. ^agent-ui09
+- When the user opens an identity's Inspect view in `/agent-runs`, the system shall present the inspection in a terminal modal. ^agent-gas8
+- When the user closes the Inspect modal, the system shall not add a transcript entry and shall not emit a transient notification. ^agent-qjn0
+- The Inspect modal shall present the fields required by **agent-91jh** as human-readable labeled fields grouped into identity, run, and current-instruction sections, with timestamps rendered as local time. ^agent-byg8
+- The Inspect modal shall display the latest user message from the identity's private child session as the agent's current instruction, wrapped to the available viewport width. ^agent-lpbp
+- If the identity's private child session is unreadable or contains no user message, then the Inspect modal shall display an unavailable placeholder for the current instruction. ^agent-oy3p
+- The system shall recover the current instruction on demand from the identity's private child session and shall not record instruction text in parent run metadata. ^agent-9jof
+- The Inspect modal shall scroll with the arrow keys and shall close on Esc, q, or Enter. ^agent-qaiy
+- The Inspect modal shall convey run status through colored text rather than a status-dot glyph. ^agent-vaxh
 
 ### Non-interactive draining
 
