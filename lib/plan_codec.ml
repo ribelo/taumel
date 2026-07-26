@@ -10,10 +10,6 @@ type decoded = {
   updated_at : int;
 }
 
-let option_int_to_json = function
-  | None -> Shared.Null
-  | Some value -> Shared.Number (float_of_int value)
-
 let encode ~plan_id ~session_id ~status ~tasks ~tokens_used ~time_used_seconds
     ~time_limit_seconds ~created_at ~updated_at =
   Shared.Object
@@ -24,7 +20,7 @@ let encode ~plan_id ~session_id ~status ~tasks ~tokens_used ~time_used_seconds
       ("tasks", Shared.Array (List.map Plan_task.to_json tasks));
       ("tokensUsed", Shared.Number (float_of_int tokens_used));
       ("timeUsedSeconds", Shared.Number (float_of_int time_used_seconds));
-      ("timeLimitSeconds", option_int_to_json time_limit_seconds);
+      ("timeLimitSeconds", Shared.option_int_to_json time_limit_seconds);
       ("createdAt", Shared.Number (float_of_int created_at));
       ("updatedAt", Shared.Number (float_of_int updated_at));
     ]

@@ -304,3 +304,12 @@ let decoded_tool_helper ~name ~arguments =
   Object [ ("name", String name); ("arguments", arguments) ]
 
 let inject_message ~source ~content = { source; content }
+
+
+let option_int_to_json = function
+  | None -> Null
+  | Some value -> Number (float_of_int value)
+
+let option_string_to_json = function
+  | None -> Null
+  | Some value -> String value

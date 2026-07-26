@@ -232,58 +232,60 @@ let task_json task =
 
 let task_of_json json =
   let open Shared in
-  Result.bind (json_object_fields "taumel.cron.task" json) (fun fields ->
-      let expected =
-        [ "id"; "cron"; "prompt"; "recurring"; "mode"; "enabled";
-          "createdAt"; "nextDue" ]
-        @ if List.mem_assoc "pendingSince" fields then [ "pendingSince" ] else []
-      in
-      Result.bind (json_exact_fields "taumel.cron.task" expected fields) (fun () ->
-      Result.bind (json_required_string "taumel.cron.task" fields "id") (fun id ->
-          Result.bind (json_required_string "taumel.cron.task" fields "cron") (fun cron ->
-              Result.bind (json_required_string "taumel.cron.task" fields "prompt") (fun prompt ->
-                  Result.bind (json_required_bool "taumel.cron.task" fields "recurring") (fun recurring ->
-                      Result.bind (json_required_string "taumel.cron.task" fields "mode") (fun mode_s ->
-                          match mode_of_string mode_s with
-                          | None -> Error "taumel.cron.task.mode is invalid"
-                          | Some mode ->
-                              Result.bind (json_required_bool "taumel.cron.task" fields "enabled") (fun enabled ->
-                              Result.bind (json_required_int "taumel.cron.task" fields "createdAt") (fun created_at ->
-	                                  Result.bind (json_required_int "taumel.cron.task" fields "nextDue") (fun next_due ->
-                                      Result.bind
-                                        (match List.assoc_opt "pendingSince" fields with
-                                        | None -> Ok None
-                                        | Some Null -> Error "taumel.cron.task.pendingSince must be an integer"
-                                        | Some value ->
-                                            Result.map Option.some
-                                              (json_int "taumel.cron.task.pendingSince" value))
-                                        (fun pending_since ->
-                                          Result.bind (validate_prompt prompt) (fun prompt ->
-                                          Result.bind (Cron_expr.parse cron) (fun expr ->
-                                          if not (valid_task_id id) then
-                                            Error "taumel.cron.task.id must be eight lowercase hexadecimal characters"
-                                          else if created_at < 0 || next_due <= created_at then
-                                            Error "taumel.cron.task timestamps are invalid"
-                                          else if not (scheduled_at expr next_due) then
-                                            Error "taumel.cron.task.nextDue is not a scheduled occurrence"
-                                          else if
-                                            match pending_since with
-                                            | Some value -> value <> next_due
-                                            | None -> false
-                                          then
-                                            Error "taumel.cron.task.pendingSince must equal nextDue"
-                                          else Ok
-                                            {
-                                              id;
-                                              cron;
-                                              prompt;
-	                                              recurring;
-	                                              mode;
-	                                              enabled;
-	                                              created_at;
-	                                              next_due;
-	                                              pending_since;
-	                                            })))))))))))))
+  let ( let* ) = Result.bind in
+  let* fields = json_object_fields "taumel.cron.task" json in
+  let expected =
+    [ "id"; "cron"; "prompt"; "recurring"; "mode"; "enabled"; "createdAt";
+      "nextDue" ]
+    @ if List.mem_assoc "pendingSince" fields then [ "pendingSince" ] else []
+  in
+  let* () = json_exact_fields "taumel.cron.task" expected fields in
+  let* id = json_required_string "taumel.cron.task" fields "id" in
+  let* cron = json_required_string "taumel.cron.task" fields "cron" in
+  let* prompt = json_required_string "taumel.cron.task" fields "prompt" in
+  let* recurring = json_required_bool "taumel.cron.task" fields "recurring" in
+  let* mode_s = json_required_string "taumel.cron.task" fields "mode" in
+  let* mode =
+    match mode_of_string mode_s with
+    | None -> Error "taumel.cron.task.mode is invalid"
+    | Some mode -> Ok mode
+  in
+  let* enabled = json_required_bool "taumel.cron.task" fields "enabled" in
+  let* created_at = json_required_int "taumel.cron.task" fields "createdAt" in
+  let* next_due = json_required_int "taumel.cron.task" fields "nextDue" in
+  let* pending_since =
+    match List.assoc_opt "pendingSince" fields with
+    | None -> Ok None
+    | Some Null -> Error "taumel.cron.task.pendingSince must be an integer"
+    | Some value ->
+        Result.map Option.some (json_int "taumel.cron.task.pendingSince" value)
+  in
+  let* prompt = validate_prompt prompt in
+  let* expr = Cron_expr.parse cron in
+  if not (valid_task_id id) then
+    Error "taumel.cron.task.id must be eight lowercase hexadecimal characters"
+  else if created_at < 0 || next_due <= created_at then
+    Error "taumel.cron.task timestamps are invalid"
+  else if not (scheduled_at expr next_due) then
+    Error "taumel.cron.task.nextDue is not a scheduled occurrence"
+  else if
+    match pending_since with
+    | Some value -> value <> next_due
+    | None -> false
+  then Error "taumel.cron.task.pendingSince must equal nextDue"
+  else
+    Ok
+      {
+        id;
+        cron;
+        prompt;
+        recurring;
+        mode;
+        enabled;
+        created_at;
+        next_due;
+        pending_since;
+      }
 
 let encode state =
   Shared.Object

@@ -249,7 +249,6 @@ type persisted_session_snapshot = {
   child_session : Unsafe.any option;
   plan : Unsafe.any option;
   plan_automation_entry : Unsafe.any option;
-  legacy_plan_entry : bool;
   permissions : Unsafe.any option;
   ralph : Unsafe.any option;
   visibility : Unsafe.any option;
@@ -265,10 +264,6 @@ let persisted_session_snapshot ctx =
     plan = Session_store.custom_entry_data ctx "taumel.plan";
     plan_automation_entry =
       Session_store.custom_entry_data ctx "taumel.plan_automation";
-    legacy_plan_entry =
-      Option.is_some (Session_store.custom_entry_data ctx "taumel.goal")
-      || Option.is_some
-           (Session_store.custom_entry_data ctx "taumel.goal_automation");
     permissions = Session_store.custom_entry_data ctx "taumel.permissions";
     ralph = Session_store.custom_entry_data ctx "taumel.ralph";
     visibility = Session_store.custom_entry_data ctx "taumel.visibility";
@@ -315,17 +310,6 @@ let load_plan_automation_state_data = function
           report_session_sync_error "plan automation load"
             (Failure ("Ignoring incompatible saved Taumel plan automation entry: " ^ message));
           plan_automation := Taumel.Plan.Automation_enabled)
-
-let note_legacy_plan_entry snapshot =
-  if
-    snapshot.legacy_plan_entry
-    && not (List.mem snapshot.session_id !legacy_plan_warned_sessions)
-  then (
-    legacy_plan_warned_sessions :=
-      snapshot.session_id :: !legacy_plan_warned_sessions;
-    pending_plan_load_warning :=
-      Some
-        "Ignoring incompatible legacy Taumel plan session entries (taumel.goal/taumel.goal_automation); migration is not supported.")
 
 let apply_active_permissions (resolved : Taumel.Permissions.active) =
   if
@@ -660,7 +644,6 @@ let load_agent_state_data ~ctx ~session_id ~recover_running ~presence
           | Taumel.Agent_state_store.Fail_closed message -> fail_agent_load message))
 let load_session_state ctx =
   let snapshot = persisted_session_snapshot ctx in
-  note_legacy_plan_entry snapshot;
   let forked = load_plan_state_data ~session_id:snapshot.session_id snapshot.plan in
   if forked then plan_automation := Taumel.Plan.Automation_interrupted
   else load_plan_automation_state_data snapshot.plan_automation_entry;
@@ -687,7 +670,6 @@ let load_session_state ctx =
 let has_persisted_component_entry snapshot =
   snapshot.plan <> None
   || snapshot.plan_automation_entry <> None
-  || snapshot.legacy_plan_entry
   || snapshot.permissions <> None
   || snapshot.ralph <> None
   || snapshot.visibility <> None
@@ -701,7 +683,6 @@ let sync_persisted_session_snapshot ?(reset_missing = true)
     !loaded_session_id <> Some session_id
     && (reset_missing || has_persisted_component_entry snapshot)
   then (
-    note_legacy_plan_entry snapshot;
     let load_if_present loader value =
       if reset_missing || Option.is_some value then loader value
     in

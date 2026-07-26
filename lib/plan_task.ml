@@ -137,16 +137,12 @@ let blockers_error blockers =
   "cannot set plan task to in_progress while dependencies are unfinished: "
   ^ payload ^ "; complete or cancel the blocking tasks first"
 
-let option_string_to_json = function
-  | None -> Shared.Null
-  | Some value -> Shared.String value
-
 let to_json (task : t) =
   Shared.Object
     [
       ("taskId", Shared.String task.task_id);
       ("title", Shared.String task.title);
-      ("description", option_string_to_json task.description);
+      ("description", Shared.option_string_to_json task.description);
       ("status", Shared.String (status_to_string task.status));
       ( "depends_on",
         Shared.Array (List.map (fun id -> Shared.String id) task.depends_on) );

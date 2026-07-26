@@ -275,24 +275,16 @@ let apply_command ~now ~controller_session ~child_session_for_id ~start_denied
       update_plan ~controller_session action rest tasks
   | _ -> Error command_usage
 
-let option_string_to_json = function
-  | None -> Shared.Null
-  | Some value -> Shared.String value
-
-let option_int_to_json = function
-  | None -> Shared.Null
-  | Some value -> Shared.Number (float_of_int value)
-
 let task_to_json task =
   Shared.Object
     [
       ("id", Shared.String task.id);
       ("objective", Shared.String task.objective);
       ("controllerSession", Shared.String task.controller_session);
-      ("childSession", option_string_to_json task.child_session);
+      ("childSession", Shared.option_string_to_json task.child_session);
       ("iteration", Shared.Number (float_of_int task.iteration));
-      ("maxIterations", option_int_to_json task.max_iterations);
-      ("reflectionEvery", option_int_to_json task.reflection_every);
+      ("maxIterations", Shared.option_int_to_json task.max_iterations);
+      ("reflectionEvery", Shared.option_int_to_json task.reflection_every);
       ("status", Shared.String (status_to_string task.status));
     ]
 

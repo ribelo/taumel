@@ -155,7 +155,6 @@ let owner_session_epoch = ref 0
 let permission_state_epoch = ref 0
 let last_plan_accounting_key : string option ref = ref None
 let pending_plan_load_warning : string option ref = ref None
-let legacy_plan_warned_sessions : string list ref = ref []
 let footer_event = "taumel:footer:changed"
 
 let active_host_or_empty () =

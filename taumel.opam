@@ -9,7 +9,7 @@ license: "MIT"
 homepage: "https://github.com/ribelo/taumel"
 bug-reports: "https://github.com/ribelo/taumel/issues"
 depends: [
-  "ocaml" {>= "5.2.0"}
+  "ocaml" {>= "5.4.1"}
   "dune" {>= "3.21" & >= "3.21"}
   "eta"
   "eta_http"

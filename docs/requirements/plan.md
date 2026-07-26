@@ -182,7 +182,7 @@ plan lifecycle. See docs/adr/0004-plans.md.
 ### Persistence
 
 - The system shall persist `taumel.plan` always and `taumel.plan_automation` only when interrupted, and when automation returns to enabled shall remove the entry or append a `null` tombstone that decodes to enabled. ^plan-ps01
-- If a saved entry carries the legacy `taumel.goal` key or legacy fields such as `tokenBudget` or `budget_limited`, then the system shall reject it, surface a non-fatal diagnostic when a UI is available, and decline to migrate. ^plan-ps02
+- The system shall not read, migrate, or emit diagnostics for legacy `taumel.goal` and `taumel.goal_automation` session entries; a saved `taumel.plan` entry carrying legacy fields such as `tokenBudget` or `budget_limited` shall be rejected per plan-ps07. ^plan-ps02
 - Persisted plan decoding shall reject negative token telemetry, active time, or timestamps, and shall reject non-positive configured time limits; it shall not silently clamp or repair invalid numeric state. ^plan-ps03
 - Persisted plan decoding shall reject a plan whose `updatedAt` precedes its `createdAt`. ^plan-ps04
 - When a Pi session is forked, the fork shall receive an independent plan copy with a new owning `sessionId` and `planId` while preserving tasks, lifecycle status, token telemetry, active time, time limit, and timestamps, and shall set automation to interrupted even if the parent had automation enabled; later mutations in either session shall not affect the other, and the fork requires explicit `/plan resume` before automated work continues. ^plan-ps05

@@ -243,21 +243,8 @@
     |> replace_all ~pattern:" " ~replacement:" "
     |> replace_all ~pattern:"　" ~replacement:" "
 
-  let take n xs =
-    let rec loop acc n xs =
-      if n <= 0 then List.rev acc
-      else match xs with [] -> List.rev acc | x :: rest -> loop (x :: acc) (n - 1) rest
-    in
-    loop [] n xs
-
-  let drop n xs =
-    let rec loop n xs =
-      if n <= 0 then xs else match xs with [] -> [] | _ :: rest -> loop (n - 1) rest
-    in
-    loop n xs
-
   let replace_subsequence lines ~index ~old_length ~replacement =
-    take index lines @ replacement @ drop (index + old_length) lines
+    List.take index lines @ replacement @ List.drop (index + old_length) lines
 
   let find_subsequence ?(eof = false) ~from pattern lines =
     let pattern_len = List.length pattern in

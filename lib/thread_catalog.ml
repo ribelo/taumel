@@ -348,18 +348,10 @@ let safe_prefix max_bytes value =
     in
     String.sub value 0 (boundary max_bytes)
 
-let take n values =
-  let rec loop acc remaining = function
-    | [] -> List.rev acc
-    | _ when remaining <= 0 -> List.rev acc
-    | value :: rest -> loop (value :: acc) (remaining - 1) rest
-  in
-  loop [] n values
-
 let bounded_text ~max_lines ~max_bytes text =
   let lines = String.split_on_char '\n' text in
   let clipped_by_lines = List.length lines > max_lines in
-  let text = lines |> take max_lines |> String.concat "\n" in
+  let text = lines |> List.take max_lines |> String.concat "\n" in
   let clipped_by_bytes = String.length text > max_bytes in
   let text = if clipped_by_bytes then safe_prefix max_bytes text else text in
   let omitted = clipped_by_lines || clipped_by_bytes in

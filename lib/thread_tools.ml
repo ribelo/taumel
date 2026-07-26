@@ -253,12 +253,12 @@ let plan_query ~workspace (request : query_request) (catalog : catalog) =
            let hits = query_hits ~include_tools:request.include_tools request.query thread in
            if hits = [] then None
            else
-             let top_hits = take 3 hits in
+             let top_hits = List.take 3 hits in
              Some (score_thread ~workspace request.query hits thread, thread, top_hits))
     |> List.sort (fun (left_score, (left : thread), _) (right_score, (right : thread), _) ->
            let by_score = compare right_score left_score in
            if by_score <> 0 then by_score else compare left.id right.id)
-    |> take request.limit
+    |> List.take request.limit
   in
   let threads =
     List.map (fun (_, thread, hits) -> summarize ~hits thread) ranked
@@ -474,7 +474,7 @@ let plan_read ~id (request : read_request) (catalog : catalog) =
       match request.mode with
       | Overview ->
           let entries =
-            thread.entries |> List.rev |> take 10 |> List.rev
+            thread.entries |> List.rev |> List.take 10 |> List.rev
           in
           {
             text = overview_text thread entries;

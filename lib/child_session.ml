@@ -56,10 +56,6 @@ type dispatch_plan = {
 let missing_session_identifier_error =
   "createAgentSession did not expose a child session id"
 
-let option_string_to_json = function
-  | None -> Shared.Null
-  | Some value -> Shared.String value
-
 let option_string_list_to_json = function
   | None -> Shared.Null
   | Some values -> Shared.Array (List.map (fun value -> Shared.String value) values)
@@ -241,8 +237,8 @@ let enrich_command_child_metadata ~parent_profile ~current_active_tools_availabl
 let child_entry ~metadata ~parent_session_id ~parent_session_file =
   let fields =
     metadata |> object_fields
-    |> replace_field "parentSessionId" (option_string_to_json parent_session_id)
-    |> replace_field "parentSessionFile" (option_string_to_json parent_session_file)
+    |> replace_field "parentSessionId" (Shared.option_string_to_json parent_session_id)
+    |> replace_field "parentSessionFile" (Shared.option_string_to_json parent_session_file)
   in
   { custom_type = "taumel.childSession"; data = Shared.Object fields }
 
@@ -412,14 +408,14 @@ let bridge_details = function
               [
                 ("created", Shared.Bool created);
                 ("cancelled", Shared.Bool bridge.cancelled);
-                ("sessionId", option_string_to_json bridge.session_id);
-                ("sessionFile", option_string_to_json bridge.session_file);
-                ("error", option_string_to_json bridge.error);
+                ("sessionId", Shared.option_string_to_json bridge.session_id);
+                ("sessionFile", Shared.option_string_to_json bridge.session_file);
+                ("error", Shared.option_string_to_json bridge.error);
                 ("activeTools", option_string_list_to_json bridge.active_tools);
                 ("activeToolsApplied", Shared.Bool bridge.active_tools_applied);
-                ("modelId", option_string_to_json bridge.model_id);
+                ("modelId", Shared.option_string_to_json bridge.model_id);
                 ("modelApplied", Shared.Bool bridge.model_applied);
-                ("thinkingLevel", option_string_to_json bridge.thinking_level);
+                ("thinkingLevel", Shared.option_string_to_json bridge.thinking_level);
                 ("thinkingApplied", Shared.Bool bridge.thinking_applied);
               ] );
         ]

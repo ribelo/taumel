@@ -14,7 +14,7 @@
  (description
   "Taumel is a standalone OCaml/js_of_ocaml rewrite experiment for the tau pi extension.")
  (depends
-  (ocaml (>= 5.2.0))
+  (ocaml (>= 5.4.1))
   (dune (>= 3.21))
   eta
   eta_http

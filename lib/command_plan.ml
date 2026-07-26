@@ -44,18 +44,14 @@ let split_command input =
         in
         (command, rest)
 
-let option_int_to_json = function
-  | None -> Shared.Null
-  | Some value -> Shared.Number (float_of_int value)
-
 let ralph_metadata ~controller_session_id (parsed : Ralph_loop.start_args) =
   Shared.Object
     [
       ("kind", Shared.String "ralph");
       ("objective", Shared.String parsed.objective);
       ("controllerSessionId", Shared.String controller_session_id);
-      ("maxIterations", option_int_to_json parsed.max_iterations);
-      ("reflectionEvery", option_int_to_json parsed.reflection_every);
+      ("maxIterations", Shared.option_int_to_json parsed.max_iterations);
+      ("reflectionEvery", Shared.option_int_to_json parsed.reflection_every);
     ]
 
 let plan_execution ~controller_session_id ~ralph_start_denial name args =
