@@ -76,7 +76,7 @@ and user-facing rendering remains Taumel-owned.
 
 - When escalation needs approval, the system shall use the shared command approval prompt titled "Command requires approval", with a body of the justification and command and a 120000 ms timeout. ^exec-ap01
 - The system shall treat UI-unavailable, timeout, denial, and interruption as distinct model-visible outcomes with normalized denial messages. ^exec-ap02
-- The system shall pause goal active-time accounting during approval waits and identify the requesting agent or profile in child-agent prompts. ^exec-ap03
+- The system shall pause plan active-time accounting during approval waits and identify the requesting agent or profile in child-agent prompts. ^exec-ap03
 
 ### Runtime and sessions
 

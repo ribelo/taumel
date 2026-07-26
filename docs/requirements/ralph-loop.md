@@ -1,7 +1,7 @@
 ---
 kind: requirement
 tags: [ralph-loop, automation]
-depends_on: ["[[docs/requirements/capability-profile]]", "[[docs/requirements/sandbox]]", "[[docs/requirements/goal]]"]
+depends_on: ["[[docs/requirements/capability-profile]]", "[[docs/requirements/sandbox]]", "[[docs/requirements/plan]]"]
 ---
 # Ralph loop
 
@@ -11,7 +11,7 @@ The Ralph loop is an autonomous iteration workflow: start a task, dispatch
 iteration prompts, track iteration state, pause/resume/finish, and control the
 child session lifecycle. It uses a Ralph-specific loop engine with Ralph-only
 persisted state. Autoresearch stays out of scope. Ralph shares only generic
-infrastructure with goal and reaches goal only through goal's public API.
+infrastructure with plan and reaches plan only through plan's public API.
 
 ## Requirements
 
@@ -25,6 +25,6 @@ infrastructure with goal and reaches goal only through goal's public API.
 - When decoding persisted Ralph state, the system shall accept only schema version `1`, non-negative integral iteration counts, and positive integral maximum-iteration and reflection values when present. ^ralph-zn6r
 - The system shall track iteration count, max-iteration controls, reflection checkpoints, and user-facing metrics. ^ralph-it01
 - The system shall resolve tools, agents, model, thinking, and sandbox through the capability profile and route all execution and mutation through the sandbox. ^ralph-cp01
-- The system shall share no domain engine with goal, share only generic infrastructure, and affect a goal only through goal's public API. ^ralph-gl01
+- The system shall share no domain engine with plan, share only generic infrastructure, and affect a plan only through plan's public API. ^ralph-gl01
 - The system shall omit Autoresearch loop state, phase snapshots, benchmark metadata, pending-run recovery, and Tau loop-file migration. ^ralph-om01
 - The system shall make the core loop model testable without Pi and keep Pi integration behind a narrow adapter. ^ralph-ts01

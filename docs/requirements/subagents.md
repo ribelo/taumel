@@ -29,7 +29,7 @@ the parent conversation.
 
 This design deliberately exceeds Amp's one-shot `Task`: Taumel agents are
 steerable, reusable, and resumable. It deliberately omits profiles, user-defined
-agents, goal-mode continuation, Librarian, Review, and Painter.
+agents, plan-mode continuation, Librarian, Review, and Painter.
 
 ## Requirements
 
@@ -144,7 +144,7 @@ agents, goal-mode continuation, Librarian, Review, and Painter.
 - After resolving the child provider, the system shall apply the existing provider-aware `Tool_catalog` normalization to the child's selected tools. ^agent-tl05
 - When an OpenAI or OpenAI-Codex child inherits mutation capability, normalization shall replace `edit` and `write` with `apply_patch`; for another provider it shall replace an inherited `apply_patch` capability with the corresponding `edit` and `write` selection. ^agent-tl06
 - Capability normalization shall also preserve the existing shell-tool rewrite and shall not duplicate provider-specific tool logic inside the agent subsystem. ^agent-tl07
-- Agent children shall receive neither goal lifecycle tools automatically nor goal-mode continuation behavior. ^agent-tl08
+- Agent children shall receive neither plan lifecycle tools automatically nor plan-mode continuation behavior. ^agent-tl08
 
 ### Permissions and ownership
 

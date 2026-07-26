@@ -1,7 +1,7 @@
 ---
 kind: requirement
-tags: [cron, scheduling, session, goal]
-depends_on: ["[[docs/requirements/goal]]"]
+tags: [cron, scheduling, session, plan]
+depends_on: ["[[docs/requirements/plan]]"]
 traces_to: ["kimi-code (packages/agent-core/src/tools/cron + agent/cron/manager.ts)"]
 ---
 # Cron
@@ -10,11 +10,11 @@ traces_to: ["kimi-code (packages/agent-core/src/tools/cron + agent/cron/manager.
 
 Cron lets the model schedule prompts to run later, on a recurring or one-shot
 schedule, within the current Pi session. A fire injects the scheduled prompt
-into the main session agent — either as a plain message or as a goal — so the
+into the main session agent — either as a plain message or as a plan — so the
 work is visible, interactive, and accumulates context across fires. The OCaml
 core owns the schedule math, the task state machine, coalescing, and the
 deliverability predicate as pure functions; TypeScript owns the periodic poll,
-delivery via `pi.sendMessage`, goal creation, session-entry persistence, and the
+delivery via `pi.sendMessage`, plan creation, session-entry persistence, and the
 `/cron` picker.
 
 kimi-code is the architectural reference, with three deliberate divergences for
@@ -59,11 +59,11 @@ holds.
 
 ### Delivery and gating
 
-- The system shall keep a pending fire out of Pi's message queue and hold it as task state until it is deliverable, so a pending fire never preempts a goal continuation through `hasPendingMessages`. ^cron-dl01
-- The system shall decide deliverability with a pure predicate that is true when the task is pending, the host is idle, and no goal-automation loop is driving. ^cron-dl02
-- While a goal-automation loop is driving, the system shall hold every pending fire and deliver none, letting the goal continuation proceed until the goal stops driving. ^cron-dl03
-- When the predicate holds at an idle poll, the system shall deliver by waking a turn (`triggerTurn`); when it holds at `agent_end` after the goal continuation declines, the system shall deliver by steering. ^cron-dl04
-- The system shall never drop a pending fire for being busy; a fire that comes due during a turn or goal is delivered once the host next becomes deliverable, however late. ^cron-dl05
+- The system shall keep a pending fire out of Pi's message queue and hold it as task state until it is deliverable, so a pending fire never preempts a plan continuation through `hasPendingMessages`. ^cron-dl01
+- The system shall decide deliverability with a pure predicate that is true when the task is pending, the host is idle, and no plan-automation loop is driving. ^cron-dl02
+- While a plan-automation loop is driving, the system shall hold every pending fire and deliver none, letting the plan continuation proceed until the plan stops driving. ^cron-dl03
+- When the predicate holds at an idle poll, the system shall deliver by waking a turn (`triggerTurn`); when it holds at `agent_end` after the plan continuation declines, the system shall deliver by steering. ^cron-dl04
+- The system shall never drop a pending fire for being busy; a fire that comes due during a turn or a plan continuation is delivered once the host next becomes deliverable, however late. ^cron-dl05
 - The system shall persist and display every delivered cron fire as a distinct system-originated transcript message rather than presenting it as a user-authored message or hiding it from the transcript. ^cron-dl06
 - When a live or replayed transcript contains a cron fire, the system shall preserve its cron provenance and render it through the same cron-fire message type. ^cron-dl07
 - A delivered cron-fire message shall carry structured task id, raw cron expression, human-readable schedule, coalesced occurrence count, and full scheduled prompt metadata sufficient for rendering and replay. ^cron-dl08
@@ -82,8 +82,8 @@ holds.
 ### Modes
 
 - When a `message`-mode task is delivered, the system shall inject its prompt as a message into the main session. ^cron-md02
-- When a `goal`-mode task is delivered and the main goal slot is free (no goal, or a complete goal), the system shall create the main-session goal from the task prompt and arm automation. ^cron-md03
-- While the main goal slot holds a non-complete goal, the system shall keep a `goal`-mode fire pending and create no goal, which also prevents a recurring `goal`-mode task from starting a second goal while its prior goal still runs. ^cron-md04
+- When a `plan`-mode task is delivered and the main plan slot is free (no plan, or a complete plan), the system shall create the main-session plan from the task prompt as an active plan with that prompt as a user-authored task, and arm automation. ^cron-md03
+- While the main plan slot holds a non-complete plan, the system shall keep a `plan`-mode fire pending and create no plan, which also prevents a recurring `plan`-mode task from starting a second plan while its prior plan still runs. ^cron-md04
 
 ### Master switch and resume
 
@@ -95,15 +95,15 @@ holds.
 
 ### Model tools
 
-- When the model calls `cron_create` with a cron expression, a prompt, optional `recurring` (default true), and optional `goal` mode (default false), the system shall create the task and return its `id`, a human-readable schedule, `recurring`, `mode`, and `nextDue`. ^cron-tl01
+- When the model calls `cron_create` with a cron expression, a prompt, optional `recurring` (default true), and optional `plan` mode (default false), the system shall create the task and return its `id`, a human-readable schedule, `recurring`, `mode`, and `nextDue`. ^cron-tl01
 - When the model calls `cron_list`, the system shall return the cron master switch state and each task's `id`, schedule, `mode`, per-task enabled flag, recurring flag, raw `nextDue`, and human-readable next-due time, and shall make disabled stored tasks explicit so the model tells the user to run `/cron enable` rather than treating tasks as gone. ^cron-tl02
 - When the model calls `cron_delete` with an `id`, the system shall remove that task. ^cron-tl03
 - The system shall instruct the model, on create, to tell the user the task `id` and that the user manages crons through `/cron`. ^cron-tl04
 - The system shall describe `cron_create` to the model as `Schedule a prompt in this Pi session with a standard 5-field cron expression evaluated in the host’s local timezone. Tasks run only while the session is open.` ^cron-tl05
 - The system shall describe `cron_create.cron` to the model as `Standard 5-field cron expression: minute, hour, day of month, month, and day of week. Evaluated in the host’s local timezone.` ^cron-tl06
-- The system shall describe `cron_create.prompt` to the model as `Prompt delivered to the main session when the task fires. With goal = true, it becomes the goal objective.` ^cron-tl07
+- The system shall describe `cron_create.prompt` to the model as `Prompt delivered to the main session when the task fires. With plan = true, it becomes the text of the new plan's user-authored task.` ^cron-tl07
 - The system shall describe `cron_create.recurring` to the model as `Whether the task repeats. Defaults to true; false fires once and deletes the task after delivery.` ^cron-tl08
-- The system shall describe `cron_create.goal` to the model as `Whether to deliver the prompt as a goal instead of a message. Defaults to false; a goal-mode fire waits while the session’s goal slot is occupied.` ^cron-tl09
+- The system shall describe `cron_create.plan` to the model as `Whether to deliver the prompt as a plan instead of a message. Defaults to false; a plan-mode fire waits while the session’s plan slot is occupied.` ^cron-tl09
 - The system shall present `cron_create` in the system tool catalog with the prompt snippet `Create a recurring or one-shot cron task. Tell the user the returned task id and that /cron manages crons.` ^cron-tl10
 - The system shall describe `cron_list` to the model as `List this Pi session’s cron tasks and scheduling state.` and present it in the system tool catalog with the prompt snippet `List cron tasks.` ^cron-tl11
 - The system shall describe `cron_delete` to the model as `Delete a scheduled cron task by ID.` ^cron-tl12
@@ -123,6 +123,6 @@ holds.
 ### Architecture
 
 - The system shall own cron-expression parsing, next-due computation, the deliverability predicate, coalescing, and task-state transitions in the OCaml core as pure functions. ^cron-ar01
-- The system shall own the periodic poll, delivery via `pi.sendMessage`, goal creation through the existing goal path, session-entry persistence, and the `/cron` picker in the TypeScript host. ^cron-ar02
-- The system shall keep cron pending state in its own task records, separate from agent-run and exec-completion records, gated by its own predicate that adds the no-goal-driving clause. ^cron-ar03
+- The system shall own the periodic poll, delivery via `pi.sendMessage`, plan creation through the existing plan path, session-entry persistence, and the `/cron` picker in the TypeScript host. ^cron-ar02
+- The system shall keep cron pending state in its own task records, separate from agent-run and exec-completion records, gated by its own predicate that adds the no-plan-driving clause. ^cron-ar03
 - The system shall place the cron-expression parser in its own source file so every file stays within the repository's size limit. ^cron-ar04

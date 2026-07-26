@@ -46,7 +46,7 @@ lives in the capability profile and tool gateway, never in active-tool mutation.
 - When updating an existing JSON settings document, the system shall reject malformed JSON or incompatible object containers and shall leave the original file unchanged rather than replace malformed content with an empty document. ^shared-r544
 - `/taumel init` shall not create optional behavioral settings with no safe universal default, such as `taumel.compaction.model`. ^shared-cf14
 - The system shall treat Pi active-tool helpers as exposure hints and enforce authorization through the capability profile and tool gateway. ^shared-au01
-- The system shall keep shared helpers free of knowledge of goal, Ralph, sandbox, memory, and backlog, and shall prefer explicit component dependencies over a global service graph. ^shared-dp01
+- The system shall keep shared helpers free of knowledge of plan, Ralph, sandbox, memory, and backlog, and shall prefer explicit component dependencies over a global service graph. ^shared-dp01
 - The system shall let a component persist state without importing unrelated component types. ^shared-ts01
 - Every OCaml-to-TypeScript bridge response shall use a TypeBox transport schema that generates its OCaml builder through `ts2ocaml` and `gen_js_api` and its TypeScript static type and runtime decoder; production TypeScript shall not consume bridge responses as generic records or inspect them with `isRecord`. ^shared-ts02
 - Every TypeScript-to-OCaml bridge input described by a TypeBox transport schema shall pass through a generated, `Result`-returning runtime decoder before application logic; the generated public contract type shall hide its JavaScript representation and expose no assertion-based or unchecked decoder. ^shared-qaqr

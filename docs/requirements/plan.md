@@ -14,7 +14,20 @@ former goal model called an objective-only goal is now simply a plan with a
 single task; a task's text is that task's objective. Plan state and the
 continuation predicate live in the OCaml core; TypeScript is the smallest
 possible Pi bridge. Pi owns retry and compaction. Interrupt does not pause the
-plan lifecycle. See docs/adr/0004-plans.md.
+plan lifecycle.
+
+Rationale: every surveyed harness ships task tools disconnected from its
+continuation machinery — cosmetic checklists nothing enforces. Coupling the
+task list to the continuation loop is what makes tasks real: the loop pursues
+unfinished tasks, and completion is gated on them. The earlier objective-centric
+goal was unified into the plan because the two concepts overlapped — an
+objective-only goal is a plan with one task — and the unification dissolved a
+class of special cases (objective immutability, late-fill, birth-with-tasks).
+Because the agent edits the very list the loop pursues, editability is a pure
+mapping of lifecycle status: editable in draft, frozen elsewhere, and only the
+user returns a running plan to draft. User-authored task text and cancellation
+are reserved to the user in every status, so the contract the agent is policed
+against cannot be renegotiated by the agent.
 
 ## Requirements
 

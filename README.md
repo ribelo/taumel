@@ -1,7 +1,7 @@
 # Taumel
 
 Taumel is a Pi extension suite for controlled command execution, durable child
-agents, goals, scheduled work, thread inspection, and external research tools.
+agents, plans, scheduled work, thread inspection, and external research tools.
 It runs inside Pi and leaves provider interaction, the agent loop, retry,
 compaction, and session lifecycle to the Pi host.
 
@@ -28,7 +28,7 @@ This split keeps policy testable without replacing or patching Pi's agent loop.
 | --- | --- |
 | Commands | PTY execution, stdin polling, sandbox policy, approvals, and path authorization |
 | Agents | Durable generic agents plus read-only Finder and Oracle specialists |
-| Automation | Goals, continuations, cron tasks, and Ralph loops |
+| Automation | Plans, continuations, cron tasks, and Ralph loops |
 | Inspection | Persisted thread search/read, system-prompt inspection, and OpenAI/Kimi usage |
 | Research | Exa search, crawling, code context, and asynchronous Exa Agent runs |
 | Pi controls | Tool and skill visibility, composer settings, permissions, and compaction-model selection |
@@ -84,7 +84,7 @@ Use slash commands for local inspection and configuration.
 | `/permissions` | Configure sandbox, approval, and agent/tool access |
 | `/network` | Enable or disable sandbox network access |
 | `/composer` | Configure the Taumel composer UI |
-| `/goal` | Inspect or update the current thread goal |
+| `/plan` | Inspect or update the current thread plan |
 | `/cron` | List and manage scheduled tasks |
 | `/agent-runs` | Inspect, stop, or close child agents and runs |
 | `/tools` | Inspect and configure Taumel tool visibility |
@@ -158,7 +158,7 @@ These variables affect development setup, not runtime configuration.
 
 ## Data and storage
 
-Taumel keeps session-scoped state in Pi session entries. This includes goals,
+Taumel keeps session-scoped state in Pi session entries. This includes plans,
 cron state, visibility state, and durable agent metadata.
 
 Child agents use private Pi child sessions. Parent and child conversations stay

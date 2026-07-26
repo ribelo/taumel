@@ -312,10 +312,10 @@ One delivered occurrence of a scheduled Taumel cron task, including a single
 delivery that represents multiple coalesced scheduled occurrences.
 _Avoid_: User message, reminder message, cron run
 
-**Goal inspection**:
-A user-requested view of the current goal that does not contact the agent or
-advance goal work.
-_Avoid_: Goal prompt, goal continuation
+**Plan inspection**:
+A user-requested view of the current plan that does not contact the agent or
+advance plan work.
+_Avoid_: Plan prompt, plan continuation
 
 **System prompt inspection**:
 A user-requested view of Pi's current effective system prompt that does not
@@ -327,21 +327,23 @@ A user-requested, transient view of the fixed OpenAI Codex and Kimi Code account
 quota pair that does not contact the agent or become part of the conversation.
 _Avoid_: Usage message, provider status, generic provider registry
 
-**Goal objective submission**:
-The visible user-authored message that starts work on a newly created goal.
-_Avoid_: Goal notification, goal summary
+**Plan task submission**:
+The visible user-authored message that submits task text through `/plan <text>`,
+starting or extending the plan's work.
+_Avoid_: Plan notification, plan summary
 
-**Goal acknowledgement**:
-A transient confirmation of a goal lifecycle command that does not become part
+**Plan acknowledgement**:
+A transient confirmation of a plan lifecycle command that does not become part
 of the conversation.
-_Avoid_: Goal message, goal inspection
+_Avoid_: Plan message, plan inspection
 
-**Goal continuation**:
-A system-authored follow-up that advances an active goal across turns and is
+**Plan continuation**:
+A system-authored follow-up that advances an active plan across turns and is
 visible to both the agent and user without appearing user-authored.
-_Avoid_: User message, goal acknowledgement, hidden prompt
+_Avoid_: User message, plan acknowledgement, hidden prompt
 
-**Completed goal**:
-A goal the agent considers finished, which stops automated continuation but
-remains recorded and may be reopened or replaced only by the user.
-_Avoid_: Deleted goal, immutable goal, free goal slot
+**Complete plan**:
+A plan the agent has marked complete through `update_plan`, which stops
+automated continuation but remains recorded and may be resumed, returned to
+draft, or cleared only by the user.
+_Avoid_: Deleted plan, immutable plan, free plan slot

@@ -101,4 +101,4 @@ The module is a deep fixed pair, not a generic provider registry.
 - The system shall separate provider fetching and parsing from terminal rendering
   and keep Pi command wiring at the edge. ^usage-ar01
 - The system shall scope `/usage` output to account and quota information and
-  exclude sandbox, goal, model, and footer state. ^usage-sc01
+  exclude sandbox, plan, model, and footer state. ^usage-sc01
