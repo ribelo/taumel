@@ -59,14 +59,6 @@ let parse_entry path = function
       else Ok { model; thinking })
   | _ -> Error (path ^ " must be an object with model and thinking")
 
-let parse_optional path fields name catalog_set =
-  match List.assoc_opt name fields with
-  | None | Some Shared.Null -> catalog_set None
-  | Some value -> (
-      match parse_entry path value with
-      | Ok entry -> catalog_set (Some entry)
-      | Error message -> Error message)
-
 let parse_agents_object path = function
   | Shared.Object fields ->
       let ( let* ) = Result.bind in

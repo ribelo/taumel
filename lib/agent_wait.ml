@@ -83,11 +83,3 @@ let wait_for_run_ids state ~owner_session_id run_ids =
           wait_items = items;
           wait_pending_run_ids = pending;
         }
-
-let timeout_wait_result state run_ids =
-  {
-    wait_state = state;
-    wait_timed_out = true;
-    wait_items = [];
-    wait_pending_run_ids = List.map String.trim run_ids;
-  }

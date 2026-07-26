@@ -424,19 +424,6 @@ let update_plan ~now status (store : store) =
       | (Complete | Blocked), _ ->
           Error "update_plan can complete or block only an active plan")
 
-let user_set_status ~now status (store : store) =
-  match store with
-  | None -> Error "cannot update plan because this session has no plan"
-  | Some plan -> Ok { plan with status; updated_at = now }
-
-let update_time_limit ~now time_limit_seconds (store : store) =
-  match store with
-  | None -> Error "cannot update plan because this session has no plan"
-  | Some plan ->
-      Result.map
-        (fun () -> { plan with time_limit_seconds; updated_at = now })
-        (validate_time_limit time_limit_seconds)
-
 let final_unrecoverable_error ~now (store : store) =
   match store with
   | Some plan when plan.status = Active ->

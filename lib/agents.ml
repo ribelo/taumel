@@ -259,16 +259,6 @@ let send_outcome_to_string = function
   | Started -> "started"
   | No_active_run -> "no_active_run"
 
-let send_outcome_of_string = function
-  | "message_sent" -> Ok Message_sent
-  | "interrupted_and_sent" -> Ok Interrupted_and_sent
-  | "suspended" -> Ok Suspended_outcome
-  | "already_suspended" -> Ok Already_suspended
-  | "resumed" -> Ok Resumed
-  | "started" -> Ok Started
-  | "no_active_run" -> Ok No_active_run
-  | value -> Error ("invalid agent send outcome: " ^ value)
-
 let terminal_run_status = function
   | Completed | Failed | Cancelled | Lost -> true
   | Running | Suspended -> false

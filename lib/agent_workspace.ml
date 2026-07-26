@@ -253,11 +253,3 @@ let binding_of_json = function
                  ~main_repository_id)
       | Ok value -> Error ("unknown workspace binding variant: " ^ value))
   | _ -> Error "workspace binding must be an object"
-
-let resolved_root = function
-  | Resolved_shared { root } -> root
-  | Resolved_worktree { worktree_path; _ } -> worktree_path
-
-let resolved_isolation = function
-  | Resolved_shared _ -> None
-  | Resolved_worktree _ -> Worktree

@@ -173,10 +173,6 @@ let token_state_from_fields ?(default_error = token_lookup_error_default) fields
   | _ when Shared.trim_non_empty fields.token = None -> Token_missing
   | _ -> Token_present
 
-let token_value_of_lookup = function
-  | Token_lookup_present token -> Some token
-  | Token_lookup_missing | Token_lookup_error _ -> None
-
 let fetch_state_from_fields ?(default_error = "OpenAI usage fetch failed")
     ?(missing_payload = "OpenAI usage response did not include JSON payload")
     fields =

@@ -1,17 +1,6 @@
 module String_set = Set.Make (String)
 module String_map = Map.Make (String)
 
-type session_ref = {
-  thread_id : string;
-  branch_id : string option;
-  turn_id : string option;
-}
-
-type message_injection = {
-  source : string;
-  content : string;
-}
-
 type json =
   | Null
   | Bool of bool
@@ -171,26 +160,6 @@ let json_required_string path fields name =
   Result.bind (json_required_field path fields name)
     (json_string (json_path path name))
 
-let json_optional_string path fields name =
-  Result.bind (json_optional_field fields name) (function
-    | None -> Ok None
-    | Some value -> Result.map Option.some (json_string (json_path path name) value))
-
-let json_string_default path fields name default =
-  Result.map (Option.value ~default) (json_optional_string path fields name)
-
-let json_required_number path fields name =
-  Result.bind (json_required_field path fields name)
-    (json_number (json_path path name))
-
-let json_optional_number path fields name =
-  Result.bind (json_optional_field fields name) (function
-    | None -> Ok None
-    | Some value -> Result.map Option.some (json_number (json_path path name) value))
-
-let json_number_default path fields name default =
-  Result.map (Option.value ~default) (json_optional_number path fields name)
-
 let json_int path value =
   Result.bind (json_number path value) (fun number ->
       if persisted_int_float number then
@@ -215,11 +184,6 @@ let json_required_bool path fields name =
   Result.bind (json_required_field path fields name)
     (json_bool (json_path path name))
 
-let json_bool_default path fields name default =
-  Result.bind (json_optional_field fields name) (function
-    | None -> Ok default
-    | Some value -> json_bool (json_path path name) value)
-
 let json_string_list path = function
   | Array values ->
       let rec loop acc index = function
@@ -232,71 +196,10 @@ let json_string_list path = function
       loop [] 0 values
   | value -> Error (path ^ " must be an array, got " ^ json_kind value)
 
-let json_optional_string_list path fields name =
-  Result.bind (json_optional_field fields name) (function
-    | None -> Ok None
-    | Some value ->
-        Result.map Option.some (json_string_list (json_path path name) value))
-
-let json_required_object_list path fields name =
-  Result.bind (json_required_field path fields name) (fun value ->
-      match json_array (json_path path name) value with
-      | Error _ as error -> error
-      | Ok values ->
-          let rec loop acc index = function
-            | [] -> Ok (List.rev acc)
-            | value :: rest -> (
-                match
-                  json_object_fields
-                    (Printf.sprintf "%s.%s[%d]" path name index)
-                    value
-                with
-                | Ok fields -> loop (fields :: acc) (index + 1) rest
-                | Error _ as error -> error)
-          in
-          loop [] 0 values)
-
-type persistence_error =
-  | Read_failed of string
-  | Write_failed of string
-  | Decode_failed of string
-
 type 'a codec = {
   encode : 'a -> json;
   decode : json -> ('a, string) result;
 }
-
-type 'a persisted_state = {
-  path : string;
-  codec : 'a codec;
-}
-
-type atomic_writer = {
-  write_atomic : path:string -> contents:string -> (unit, string) result;
-}
-
-let write_persisted writer state value =
-  writer.write_atomic ~path:state.path ~contents:(encode_json (state.codec.encode value))
-  |> Result.map_error (fun message -> Write_failed message)
-
-type lock = { release : unit -> unit }
-
-type lock_manager = {
-  with_lock : 'a. string -> (unit -> ('a, string) result) -> ('a, string) result;
-}
-
-let without_lock =
-  { with_lock = (fun _path action -> action ()) }
-
-let model_provider model_id =
-  match String.split_on_char '/' model_id with
-  | provider :: _model :: _ when provider <> "" -> Some provider
-  | _ -> None
-
-let model_name model_id =
-  match List.rev (String.split_on_char '/' model_id) with
-  | name :: _ when name <> "" -> name
-  | _ -> model_id
 
 let split_command input =
   let input = String.trim input in
@@ -312,14 +215,6 @@ let split_command input =
 let split_words input =
   input |> String.split_on_char ' ' |> List.map String.trim
   |> List.filter (fun word -> word <> "")
-
-let session_ref ?branch_id ?turn_id thread_id = { thread_id; branch_id; turn_id }
-
-let decoded_tool_helper ~name ~arguments =
-  Object [ ("name", String name); ("arguments", arguments) ]
-
-let inject_message ~source ~content = { source; content }
-
 
 let option_int_to_json = function
   | None -> Null

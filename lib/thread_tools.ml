@@ -607,22 +607,6 @@ let current_source_json ~cwd ~session_id ~branch ~entries =
       ("entries", entries);
     ]
 
-let unique_by_id threads =
-  let catalog = unique_catalog (List.map (fun thread -> Ok thread) threads) in
-  catalog.threads
-
-let message_content (thread : thread) =
-  [
-    thread.plan_summary;
-    thread.branch_summary;
-    thread.compaction_summary;
-  ]
-  |> List.filter_map Fun.id
-  |> fun summaries ->
-  summaries
-  @ List.map (fun message -> message.content) thread.messages
-  |> String.concat "\n"
-
 let find ~workspace ~query threads =
   let catalog = { threads; diagnostics = [] } in
   match prepare_query_request ~scope:"all" query with
@@ -651,28 +635,6 @@ let transcript ?(plan_only = false) (thread : thread) =
         thread.messages
   in
   String.concat "\n" (summaries @ messages)
-
-let plan_find ~workspace ~query threads =
-  let catalog = { threads; diagnostics = [] } in
-  match prepare_query_request query with
-  | Error message ->
-      { text = message; ok = false; query; scope = "current_workspace"; threads = []; diagnostics = [] }
-  | Ok request -> plan_query ~workspace request catalog
-
-let plan_read_legacy ~id ~plan_only:_ threads =
-  let catalog = { threads; diagnostics = [] } in
-  let request =
-    {
-      thread_id = id;
-      locator = None;
-      entry_id = None;
-      line = None;
-      mode = Full;
-      around = 3;
-      cursor = None;
-    }
-  in
-  plan_read ~id request catalog
 
 let tool_specs =
   [

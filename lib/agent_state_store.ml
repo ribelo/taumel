@@ -444,6 +444,3 @@ let memory_backend () : memory_backend * registry_backend =
 let write_current_registry backend ~owner_session_id state =
   backend.write_registry ~owner_session_id
     ~contents:(registry_contents ~owner_session_id state)
-
-let read_current_registry backend ~owner_session_id =
-  backend.read_registry ~owner_session_id

@@ -31,14 +31,6 @@ let effect_requires_sandbox = function
   | Execute | Mutate | Network | Spawn_agent -> true
   | Pure | Ask_user -> false
 
-let effect_to_string = function
-  | Pure -> "pure"
-  | Execute -> "execute"
-  | Mutate -> "mutate"
-  | Network -> "network"
-  | Spawn_agent -> "spawn_agent"
-  | Ask_user -> "ask_user"
-
 let text_result_json ?(details = Shared.Null) text =
   Shared.Object
     [

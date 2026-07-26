@@ -98,9 +98,6 @@ let validate_pathspecs = function
       else if List.for_all is_pathspec pathspecs then Ok pathspecs
       else Error (Invalid_arguments "invalid pathspec for brokered agent Git")
 
-let option_has_value token =
-  match String.index_opt token '=' with Some _ -> true | None -> false
-
 let parse_status tokens =
   let ( let* ) = Result.bind in
   let options, pathspecs = take_after_separator tokens in

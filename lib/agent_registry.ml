@@ -155,23 +155,6 @@ let suspend_running_for_agent state ~now ~owner_session_id ~agent_id ~reason_cod
       in
       Ok { state with runs }
 
-let close_all_for_owner state ~owner_session_id =
-  let closing = owned_identities state ~owner_session_id in
-  let closing_ids = List.map (fun identity -> identity.identity_agent_id) closing in
-  ( {
-      identities =
-        List.filter
-          (fun identity -> not (List.mem identity.identity_agent_id closing_ids))
-          state.identities;
-      runs =
-        List.filter
-          (fun run -> not (List.mem run.run_agent_id closing_ids))
-          state.runs;
-      issued_identity_counts = state.issued_identity_counts;
-      cleanup_pending = state.cleanup_pending;
-    },
-    closing )
-
 let list_for_owner state ~owner_session_id =
   owned_identities state ~owner_session_id
   |> List.map (fun identity -> (identity, latest_run state identity.identity_agent_id))
