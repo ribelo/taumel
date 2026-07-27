@@ -145,6 +145,11 @@ against cannot be renegotiated by the agent.
 - The modal shall display but shall not edit `depends_on` references. ^plan-md05
 - Modal mutations shall apply through the same core task operations and validation as tool calls; user-initiated edits shall not be restricted by the editability mapping, and tasks created through the modal shall carry `origin` `user`. ^plan-md06
 - The modal shall consume the shared typed plan presentation model. ^plan-md07
+- The modal shall let the user move a selection cursor over the task list with the arrow keys and shall act on the selected task with single keys: `a` add, `e` edit, `s` advance status, `x` cancel, and `d` delete, closing on Esc or `q`; the modal shall display the available keys in a footer. ^plan-vn86
+- The modal's advance action shall move a task forward through `pending`, `in_progress`, and `completed` only, and shall not offer status changes for `completed` or `cancelled` tasks. ^plan-yzfw
+- The modal shall collect task titles and descriptions through Pi text-input prompts and shall reopen with refreshed plan state after each prompt flow. ^plan-kz4n
+- When the user runs `/tasks` while no plan exists, the modal shall present an empty state inviting the user to add the first task, and adding that task shall create a draft plan containing it. ^plan-t0cc
+- If a core operation rejects a modal mutation, then the modal shall surface the rejection reason and remain open. ^plan-fent
 
 ### Continuation
 
