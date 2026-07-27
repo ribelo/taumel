@@ -506,6 +506,83 @@ let test_accounting_and_time () =
   in
   assert_bool "exactly once" (not duplicate.changed)
 
+let test_task_manager_commands () =
+  let created =
+    expect_ok "task add creates draft"
+      (Plan.apply_command ~session_id:"tasks-modal" ~now:1
+         "task add {\"title\":\"first\",\"description\":\"body\"}" None)
+  in
+  let plan = Option.get created.plan in
+  assert_bool "modal birth is draft" (plan.status = Plan.Draft);
+  assert_bool "modal task is user" ((List.hd plan.tasks).origin = Plan.User);
+  assert_bool "modal add has no agent submit" (created.submit_user_message = None);
+  let task_id = (List.hd plan.tasks).task_id in
+  let edited =
+    expect_ok "task edit"
+      (Plan.apply_command ~session_id:"tasks-modal" ~now:2
+         ("task edit " ^ task_id ^ " {\"title\":\"renamed\"}")
+         created.plan)
+  in
+  assert_bool "edited title"
+    ((List.hd (Option.get edited.plan).tasks).title = "renamed");
+  let advanced =
+    expect_ok "task advance"
+      (Plan.apply_command ~session_id:"tasks-modal" ~now:3
+         ("task advance " ^ task_id) edited.plan)
+  in
+  assert_bool "advanced in progress"
+    ((List.hd (Option.get advanced.plan).tasks).status = Plan.In_progress);
+  let completed =
+    expect_ok "task advance complete"
+      (Plan.apply_command ~session_id:"tasks-modal" ~now:4
+         ("task advance " ^ task_id) advanced.plan)
+  in
+  assert_bool "advanced completed"
+    ((List.hd (Option.get completed.plan).tasks).status = Plan.Completed);
+  ignore
+    (expect_error "terminal advance rejected"
+       (Plan.apply_command ~session_id:"tasks-modal" ~now:5
+          ("task advance " ^ task_id) completed.plan));
+  let second =
+    expect_ok "task add second"
+      (Plan.apply_command ~session_id:"tasks-modal" ~now:6
+         "task add {\"title\":\"second\"}" completed.plan)
+  in
+  let second_id = (List.nth (Option.get second.plan).tasks 1).task_id in
+  let cancelled =
+    expect_ok "task cancel"
+      (Plan.apply_command ~session_id:"tasks-modal" ~now:7
+         ("task cancel " ^ second_id) second.plan)
+  in
+  assert_bool "cancelled"
+    ((List.nth (Option.get cancelled.plan).tasks 1).status = Plan.Cancelled);
+  let deleted =
+    expect_ok "task delete"
+      (Plan.apply_command ~session_id:"tasks-modal" ~now:8
+         ("task delete " ^ second_id) cancelled.plan)
+  in
+  assert_bool "deleted leaves one"
+    (List.length (Option.get deleted.plan).tasks = 1);
+  ignore
+    (expect_error "last task delete rejected"
+       (Plan.apply_command ~session_id:"tasks-modal" ~now:9
+          ("task delete " ^ task_id) deleted.plan));
+  let blocked =
+    expect_ok "dep pair"
+      (Plan.create_tasks ~session_id:"tasks-dep" ~now:10
+         [
+           creation ~id:"task-dep-a" "A";
+           creation ~id:"task-dep-b" ~depends_on:[ "task-dep-a" ] "B";
+         ]
+         None)
+  in
+  let dep_error =
+    expect_error "advance dependency gate"
+      (Plan.apply_command ~session_id:"tasks-dep" ~now:11
+         "task advance task-dep-b" (Some blocked))
+  in
+  assert_bool "dep gate names blocker" (contains dep_error "task-dep-a")
+
 let () =
   test_birth_and_identity ();
   test_lifecycle_and_editability ();
@@ -513,6 +590,7 @@ let () =
   test_dependencies_and_atomic_batch ();
   test_completion_gate ();
   test_commands ();
+  test_task_manager_commands ();
   test_continuation ();
   test_persistence ();
   test_accounting_and_time ()

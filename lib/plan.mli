@@ -120,6 +120,7 @@ val add_user_task :
   ?description:string ->
   ?depends_on:string list ->
   ?time_limit_seconds:int ->
+  ?create_status:status ->
   session_id:string ->
   now:int ->
   string ->
@@ -134,6 +135,15 @@ val user_update_task :
 
 val update_task_status :
   now:int -> task_id:string -> task_status -> store -> (t, string) result
+
+val user_advance_task :
+  now:int -> task_id:string -> store -> (t, string) result
+
+val user_cancel_task :
+  now:int -> task_id:string -> store -> (t, string) result
+
+val user_delete_task :
+  now:int -> task_id:string -> store -> (t, string) result
 
 val unfinished_tasks : t -> task list
 val completion_gate : t -> (unit, task list) result

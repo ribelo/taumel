@@ -56,6 +56,7 @@ let command_specs =
     { name = "ralph"; description = "Start, pause, resume, finish, and list Ralph tasks." };
     { name = "usage"; description = "Show OpenAI Codex and Kimi Code account usage." };
     { name = "plan"; description = "Inspect or update the thread plan." };
+    { name = "tasks"; description = "Open the interactive plan task manager." };
     { name = "cron"; description = "List, enable, disable, or cancel cron tasks." };
     { name = "tools"; description = "List, enable, disable, or save Taumel tool visibility." };
     { name = "skills"; description = "List, enable, disable, or save Taumel skill visibility." };

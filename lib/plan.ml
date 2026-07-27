@@ -5,15 +5,12 @@ type status = Plan_status.t =
   | Blocked
   | Time_limited
   | Complete
-
 type task_status = Plan_task.status =
   | Pending
   | In_progress
   | Completed
   | Cancelled
-
 type task_origin = Plan_task.origin = User | Agent
-
 type task = Plan_task.t = {
   task_id : string;
   title : string;
@@ -22,26 +19,22 @@ type task = Plan_task.t = {
   depends_on : string list;
   origin : task_origin;
 }
-
 type task_creation = Plan_task.creation = {
   id : string option;
   title : string;
   description : string option;
   depends_on : string list;
 }
-
 type description_update = Plan_task.description_update =
   | Keep_description
   | Set_description of string
   | Clear_description
-
 type task_update = Plan_task.update = {
   title : string option;
   description : description_update;
   status : task_status option;
   depends_on : string list option;
 }
-
 type t = {
   plan_id : string;
   session_id : string;
@@ -53,24 +46,19 @@ type t = {
   created_at : int;
   updated_at : int;
 }
-
 type store = t option
-
 type automation = Automation_enabled | Automation_interrupted
-
 type token_usage = Plan_accounting.token_usage = {
   input_tokens : int;
   cached_input_tokens : int;
   output_tokens : int;
 }
-
 type turn_clock = Plan_accounting.turn_clock = {
   turn_started_at_ms : int option;
   pause_depth : int;
   current_pause_started_at_ms : int option;
   paused_accumulated_ms : int;
 }
-
 type presentation = {
   status : status;
   automation : automation;
@@ -83,7 +71,6 @@ type presentation = {
   plan_id : string;
   session_id : string;
 }
-
 let status_to_string = Plan_status.to_string
 let status_label = Plan_status.label
 let status_of_string = Plan_status.of_string
@@ -96,13 +83,11 @@ let task_status_of_string = Plan_task.status_of_string
 let task_origin_to_string = Plan_task.origin_to_string
 let task_origin_of_string = Plan_task.origin_of_string
 let no_task_update = Plan_task.no_update
-
 let completed_task_count (tasks : task list) =
   List.filter
     (fun (task : task) -> task.status = Completed || task.status = Cancelled)
     tasks
   |> List.length
-
 let present automation (plan : t) =
   {
     status = plan.status;
@@ -116,35 +101,27 @@ let present automation (plan : t) =
     plan_id = plan.plan_id;
     session_id = plan.session_id;
   }
-
 let validate_time_limit = function
   | Some limit when limit <= 0 ->
       Error "plan time limits must be positive when provided"
   | _ -> Ok ()
-
 let plan_id_sequence = ref 0
 let plan_id_rng = Random.State.make_self_init ()
-
 let next_plan_id session_id now =
   incr plan_id_sequence;
   Printf.sprintf "plan-%s:%d:%d:%08x%08x" session_id now !plan_id_sequence
     (Random.State.bits plan_id_rng) (Random.State.bits plan_id_rng)
-
 module String_set = Set.Make (String)
-
 let issued_task_ids : (string, String_set.t) Hashtbl.t = Hashtbl.create 17
 let task_id_rng = Random.State.make_self_init ()
-
 let issued_ids session_id =
   Hashtbl.find_opt issued_task_ids session_id
   |> Option.value ~default:String_set.empty
-
 let remember_task_ids session_id ids =
   let updated =
     List.fold_left (fun set id -> String_set.add id set) (issued_ids session_id) ids
   in
   Hashtbl.replace issued_task_ids session_id updated
-
 (* ^plan-tk03: task-<nano-id>, collision retry, never lengthen on exhaustion. *)
 let next_task_id reserved =
   let rec attempt remaining =
@@ -157,7 +134,6 @@ let next_task_id reserved =
       if String_set.mem id reserved then attempt (remaining - 1) else Ok id
   in
   attempt Shared.nano_id_namespace_size
-
 let create_record ?time_limit_seconds ~session_id ~now ~status tasks =
   {
     plan_id = next_plan_id session_id now;
@@ -170,11 +146,9 @@ let create_record ?time_limit_seconds ~session_id ~now ~status tasks =
     created_at = now;
     updated_at = now;
   }
-
 let ensure_owner session_id (plan : t) =
   if plan.session_id = session_id then Ok ()
   else Error "cannot access a plan owned by a different session"
-
 let make_tasks ~session_id ~now:_ ~origin ~(existing : task list)
     (creations : task_creation list) =
   if creations = [] then Error "create_task requires at least one task"
@@ -235,7 +209,6 @@ let make_tasks ~session_id ~now:_ ~origin ~(existing : task list)
           loop (task :: acc) rest
     in
     loop [] creations
-
 let create_tasks ~session_id ~now creations (store : store) =
   match store with
   | Some plan ->
@@ -258,14 +231,12 @@ let create_tasks ~session_id ~now creations (store : store) =
             (List.map (fun task -> task.task_id) tasks);
           create_record ~session_id ~now ~status:Draft tasks)
         (make_tasks ~session_id ~now ~origin:Agent ~existing:[] creations)
-
 let create_task ?id ?description ?(depends_on = []) ~session_id ~now title store =
   create_tasks ~session_id ~now
     [ { id; title; description; depends_on } ]
     store
-
 let add_user_task ?id ?description ?(depends_on = []) ?time_limit_seconds
-    ~session_id ~now title (store : store) =
+    ?(create_status = Active) ~session_id ~now title (store : store) =
   let ( let* ) = Result.bind in
   let* () = validate_time_limit time_limit_seconds in
   let* () =
@@ -282,7 +253,8 @@ let add_user_task ?id ?description ?(depends_on = []) ?time_limit_seconds
   | None ->
       remember_task_ids session_id (List.map (fun task -> task.task_id) tasks);
       Ok
-        (create_record ?time_limit_seconds ~session_id ~now ~status:Active tasks)
+        (create_record ?time_limit_seconds ~session_id ~now ~status:create_status
+           tasks)
   | Some plan ->
       let time_limit_seconds =
         match time_limit_seconds with
@@ -309,10 +281,8 @@ let add_user_task ?id ?description ?(depends_on = []) ?time_limit_seconds
             time_limit_seconds;
             updated_at = now;
           }
-
 let find_task task_id (tasks : task list) =
   List.find_opt (fun (task : task) -> task.task_id = task_id) tasks
-
 let apply_task_patch (task : task) patch =
   let ( let* ) = Result.bind in
   let* title =
@@ -334,7 +304,6 @@ let apply_task_patch (task : task) patch =
       status = Option.value patch.status ~default:task.status;
       depends_on = Option.value patch.depends_on ~default:task.depends_on;
     }
-
 let update_task_for ~user ~now ~task_id patch (store : store) =
   match store with
   | None -> Error "cannot update a plan task because this session has no plan"
@@ -388,28 +357,78 @@ let update_task_for ~user ~now ~task_id patch (store : store) =
                   | blockers -> Error (Plan_task.blockers_error blockers)
               in
               Ok { plan with tasks = candidate_tasks; updated_at = now }))
-
 let update_task ~now ~task_id patch store =
   update_task_for ~user:false ~now ~task_id patch store
-
 let user_update_task ~now ~task_id patch store =
   update_task_for ~user:true ~now ~task_id patch store
-
 let update_task_status ~now ~task_id status store =
   update_task ~now ~task_id { no_task_update with status = Some status } store
-
+let next_advance_status = function
+  | Pending -> Some In_progress
+  | In_progress -> Some Completed
+  | Completed | Cancelled -> None
+let require_task ~action ~task_id (store : store) : (t * task, string) result =
+  match store with
+  | None ->
+      Error
+        ("cannot " ^ action ^ " a plan task because this session has no plan")
+  | Some plan -> (
+      match find_task task_id plan.tasks with
+      | None -> Error ("unknown plan task: " ^ task_id)
+      | Some task -> Ok (plan, task))
+let user_advance_task ~now ~task_id (store : store) =
+  match require_task ~action:"advance" ~task_id store with
+  | Error _ as error -> error
+  | Ok (_plan, task) -> (
+      match next_advance_status task.status with
+      | None ->
+          Error
+            ("cannot advance a " ^ task_status_to_string task.status ^ " task")
+      | Some next_status ->
+          user_update_task ~now ~task_id
+            { no_task_update with status = Some next_status }
+            store)
+let user_cancel_task ~now ~task_id (store : store) =
+  match require_task ~action:"cancel" ~task_id store with
+  | Error _ as error -> error
+  | Ok (_plan, task) -> (
+      match task.status with
+      | Completed | Cancelled ->
+          Error
+            ("cannot cancel a " ^ task_status_to_string task.status ^ " task")
+      | Pending | In_progress ->
+          user_update_task ~now ~task_id
+            { no_task_update with status = Some Cancelled }
+            store)
+(* ^plan-tk04: keep >=1 task; strip inbound depends_on (^plan-md05 read-only). *)
+let user_delete_task ~now ~task_id (store : store) =
+  match require_task ~action:"delete" ~task_id store with
+  | Error _ as error -> error
+  | Ok (plan, _task) ->
+      let remaining =
+        plan.tasks
+        |> List.filter (fun (task : task) -> task.task_id <> task_id)
+        |> List.map (fun (task : task) ->
+               {
+                 task with
+                 depends_on = List.filter (( <> ) task_id) task.depends_on;
+               })
+      in
+      if remaining = [] then
+        Error "cannot delete the last task of a plan; clear the plan instead"
+      else (
+        match Plan_task.validate_graph remaining with
+        | Error _ as error -> error
+        | Ok () -> Ok { plan with tasks = remaining; updated_at = now })
 let unfinished_tasks (plan : t) = List.filter Plan_task.unfinished plan.tasks
-
 let completion_gate (plan : t) =
   match unfinished_tasks plan with [] -> Ok () | tasks -> Error tasks
-
 let unfinished_tasks_error tasks =
   let payload =
     Shared.encode_json
       (Shared.Array (List.map Plan_task.blocker_to_json tasks))
   in
   "cannot complete plan while tasks remain unfinished: " ^ payload
-
 let update_plan ~now status (store : store) =
   match store with
   | None -> Error "cannot update plan because this session has no plan"
@@ -430,17 +449,13 @@ let update_plan ~now status (store : store) =
       | Active, _ -> Error "update_plan can activate only a draft plan"
       | (Complete | Blocked), _ ->
           Error "update_plan can complete or block only an active plan")
-
 let final_unrecoverable_error ~now (store : store) =
   match store with
   | Some plan when plan.status = Active ->
       Some { plan with status = Blocked; updated_at = now }
   | _ -> store
-
 let get store = store
-
 type forked = { plan : t; automation : automation }
-
 let rebind_for_fork ~session_id (plan : t) =
   remember_task_ids session_id (List.map (fun task -> task.task_id) plan.tasks);
   {
@@ -448,10 +463,8 @@ let rebind_for_fork ~session_id (plan : t) =
     plan_id = next_plan_id session_id plan.created_at;
     session_id;
   }
-
 let fork ~session_id (plan : t) =
   { plan = rebind_for_fork ~session_id plan; automation = Automation_interrupted }
-
 let token_delta = Plan_accounting.token_delta
 let token_usage_of_json = Plan_accounting.token_usage_of_json
 let message_usage = Plan_accounting.message_usage
@@ -462,12 +475,10 @@ let start_turn_clock = Plan_accounting.start_turn_clock
 let pause_clock_start = Plan_accounting.pause_clock_start
 let pause_clock_end = Plan_accounting.pause_clock_end
 let finish_turn_clock = Plan_accounting.finish_turn_clock
-
 let time_limit_reached (plan : t) time_used_seconds =
   match plan.time_limit_seconds with
   | Some limit -> time_used_seconds >= limit
   | None -> false
-
 let account_usage ~now ~time_delta_seconds usage (plan : t) =
   if plan.status <> Active then plan
   else
@@ -478,19 +489,15 @@ let account_usage ~now ~time_delta_seconds usage (plan : t) =
       else plan.status
     in
     { plan with tokens_used; time_used_seconds; status; updated_at = now }
-
 type turn_accounting_result = {
   plan : store;
   accounting_key : string option;
   changed : bool;
 }
-
 type pending_terminal_status = Pending_complete | Pending_blocked
-
 let status_of_pending_terminal = function
   | Pending_complete -> Complete
   | Pending_blocked -> Blocked
-
 let account_turn_end ?pending_terminal_status ~session_id ~now
     ~active_time_seconds ~last_accounting_key ~latest_usage (store : store) =
   let accounting_store =
@@ -519,20 +526,16 @@ let account_turn_end ?pending_terminal_status ~session_id ~now
       { result with plan = Some { plan with status; updated_at = now }; changed = true }
   | Some _, None -> { result with changed = true }
   | None, _ -> result
-
 let automation_to_string = function
   | Automation_enabled -> "enabled"
   | Automation_interrupted -> "interrupted"
-
 let automation_of_string = function
   | "enabled" -> Some Automation_enabled
   | "interrupted" -> Some Automation_interrupted
   | _ -> None
-
 let automation_requires_user_input = function
   | Automation_enabled -> false
   | Automation_interrupted -> true
-
 let automation_to_json = function
   | Automation_enabled -> Shared.Null
   | Automation_interrupted ->
@@ -541,7 +544,6 @@ let automation_to_json = function
           ("continuation", Shared.String "interrupted");
           ("requiresUserInput", Shared.Bool true);
         ]
-
 let automation_of_json = function
   | Shared.Null -> Ok Automation_enabled
   | Shared.Object fields ->
@@ -558,10 +560,8 @@ let automation_of_json = function
         Error
           "plan automation must be interrupted and require user input, or be null"
   | _ -> Error "plan automation must be an object or null"
-
 let automation_codec =
   { Shared.encode = automation_to_json; decode = automation_of_json }
-
 let format_duration seconds =
   let seconds = max 0 seconds in
   if seconds mod 3600 = 0 && seconds >= 3600 then
@@ -569,13 +569,11 @@ let format_duration seconds =
   else if seconds mod 60 = 0 && seconds >= 60 then
     Printf.sprintf "%dm" (seconds / 60)
   else Printf.sprintf "%ds" seconds
-
 let time_usage (plan : t) =
   match plan.time_limit_seconds with
   | None -> format_duration plan.time_used_seconds
   | Some limit ->
       format_duration plan.time_used_seconds ^ "/" ^ format_duration limit
-
 let summary (store : store) =
   match store with
   | None -> "No plan."
@@ -584,7 +582,6 @@ let summary (store : store) =
         (status_to_string plan.status)
         (completed_task_count plan.tasks)
         (List.length plan.tasks) (time_usage plan)
-
 type command_plan = {
   plan : store;
   automation : automation option;
@@ -593,7 +590,6 @@ type command_plan = {
   submit_user_message : string option;
   changed : bool;
 }
-
 let command_result ?automation ?(followup = false) ?submit_user_message
     ?(changed = false) ?message plan =
   {
@@ -604,62 +600,66 @@ let command_result ?automation ?(followup = false) ?submit_user_message
     submit_user_message;
     changed;
   }
-
 let command_usage =
-  "usage: /plan [pause|resume [--time-limit 30m|--no-time-limit]|draft|clear|<text> [--time-limit 30m]]"
-
-let parse_duration value =
-  let value = String.trim value in
-  if value = "" then Error "time limit must not be empty"
-  else
-    let last = value.[String.length value - 1] in
-    let multiplier =
-      match last with 's' -> Some 1 | 'm' -> Some 60 | 'h' -> Some 3600 | _ -> None
-    in
-    match multiplier with
-    | None -> Error "time limit must use s, m, or h"
-    | Some multiplier ->
-        let number = String.sub value 0 (String.length value - 1) in
-        (try
-           let parsed = int_of_string number in
-           if parsed <= 0 then Error "time limit must be positive"
-           else if parsed > 2_147_483_647 / multiplier then
-             Error "time limit is too large"
-           else Ok (parsed * multiplier)
-         with Failure _ ->
-           Error "time limit must be a duration like 90s, 30m, or 2h")
-
-let parse_time_limit_args args =
-  let words =
-    args |> String.split_on_char ' ' |> List.map String.trim
-    |> List.filter (fun word -> word <> "")
-  in
-  let rec loop text_parts setting = function
-    | [] -> Ok (String.concat " " (List.rev text_parts), setting)
-    | "--time-limit" :: _ when Option.is_some setting ->
-        Error "time limit may be specified only once"
-    | "--time-limit" :: value :: rest ->
-        Result.bind (parse_duration value) (fun seconds ->
-            loop text_parts (Some (Some seconds)) rest)
-    | [ "--time-limit" ] ->
-        Error "time limit must be a duration like 90s, 30m, or 2h"
-    | "--no-time-limit" :: _ when Option.is_some setting ->
-        Error "time limit may be specified only once"
-    | "--no-time-limit" :: rest -> loop text_parts (Some None) rest
-    | flag :: _
-      when String.starts_with ~prefix:"--time-limit=" flag
-           && Option.is_some setting ->
-        Error "time limit may be specified only once"
-    | flag :: rest when String.starts_with ~prefix:"--time-limit=" flag ->
-        let value = String.sub flag 13 (String.length flag - 13) in
-        Result.bind (parse_duration value) (fun seconds ->
-            loop text_parts (Some (Some seconds)) rest)
-    | word :: rest -> loop (word :: text_parts) setting rest
-  in
-  loop [] None words
-
+  "usage: /plan [pause|resume [--time-limit 30m|--no-time-limit]|draft|clear|task add <json>|task edit <id> <json>|task advance <id>|task cancel <id>|task delete <id>|<text> [--time-limit 30m]]"
+let parse_duration = Plan_command.parse_duration
+let parse_time_limit_args = Plan_command.parse_time_limit_args
 let split_command = Shared.split_command
-
+let task_command_ok message plan =
+  command_result ~changed:true ~message (Some plan)
+let require_lone_task_id ~usage rest =
+  let task_id, extra = split_command rest in
+  if task_id = "" || extra <> "" then Error usage else Ok task_id
+let apply_command_task ~session_id ~now args store =
+  let action, rest = split_command args in
+  match action with
+  | "add" -> (
+      match Plan_command.parse_task_payload rest with
+      | Error _ as error -> error
+      | Ok (None, _) -> Error "task title is required"
+      | Ok (Some title, description_opt) ->
+          Result.map (task_command_ok "Task added.")
+            (add_user_task ?description:(Option.join description_opt)
+               ~create_status:Draft ~session_id ~now title store))
+  | "edit" ->
+      let task_id, payload = split_command rest in
+      if task_id = "" then Error "task edit requires a task id"
+      else (
+        match Plan_command.parse_task_payload payload with
+        | Error _ as error -> error
+        | Ok (title, description_opt) ->
+            let description =
+              match description_opt with
+              | None -> Keep_description
+              | Some None -> Clear_description
+              | Some (Some value) -> Set_description value
+            in
+            if Option.is_none title && description = Keep_description then
+              Error "task edit requires a title or description change"
+            else
+              Result.map (task_command_ok "Task updated.")
+                (user_update_task ~now ~task_id
+                   { no_task_update with title; description }
+                   store))
+  | "advance" ->
+      Result.bind
+        (require_lone_task_id ~usage:"usage: /plan task advance <task-id>" rest)
+        (fun task_id ->
+          Result.map (task_command_ok "Task advanced.")
+            (user_advance_task ~now ~task_id store))
+  | "cancel" ->
+      Result.bind
+        (require_lone_task_id ~usage:"usage: /plan task cancel <task-id>" rest)
+        (fun task_id ->
+          Result.map (task_command_ok "Task cancelled.")
+            (user_cancel_task ~now ~task_id store))
+  | "delete" ->
+      Result.bind
+        (require_lone_task_id ~usage:"usage: /plan task delete <task-id>" rest)
+        (fun task_id ->
+          Result.map (task_command_ok "Task deleted.")
+            (user_delete_task ~now ~task_id store))
+  | _ -> Error "usage: /plan task <add|edit|advance|cancel|delete> ..."
 let apply_command_text ~session_id ~now input (store : store) =
   match parse_time_limit_args input with
   | Error _ as error -> error
@@ -686,7 +686,6 @@ let apply_command_text ~session_id ~now input (store : store) =
                   ~submit_user_message:text (Some plan))
               (add_user_task ?time_limit_seconds:requested_limit ~session_id ~now
                  text store))
-
 let apply_command_pause ~now (store : store) =
   match store with
   | None -> Error "cannot pause plan because this session has no plan"
@@ -700,7 +699,6 @@ let apply_command_pause ~now (store : store) =
         (command_result ~automation:Automation_enabled ~changed:true
            ~message:"Plan paused."
            (Some { plan with status = Paused; updated_at = now }))
-
 let apply_command_draft ~now (store : store) =
   match store with
   | None -> Error "cannot draft plan because this session has no plan"
@@ -710,12 +708,10 @@ let apply_command_draft ~now (store : store) =
       Ok
         (command_result ~changed:true ~message:"Plan moved to draft."
            (Some { plan with status = Draft; updated_at = now }))
-
 let apply_command_clear (store : store) =
   let message = if store = None then "No plan to clear." else "Plan cleared." in
   Ok
     (command_result ~automation:Automation_enabled ~changed:true ~message None)
-
 let apply_command_resume ~now ~automation args (store : store) =
   match parse_time_limit_args args with
   | Error _ as error -> error
@@ -751,7 +747,6 @@ let apply_command_resume ~now ~automation args (store : store) =
                           time_limit_seconds;
                           updated_at = now;
                         }))))
-
 let apply_command ?(automation = Automation_enabled) ~session_id ~now args store =
   let input = String.trim args in
   if input = "" then Ok (command_result store)
@@ -760,14 +755,14 @@ let apply_command ?(automation = Automation_enabled) ~session_id ~now args store
   else if input = "clear" then apply_command_clear store
   else
     let command, rest = split_command input in
-    if command = "resume" then
+    if command = "task" then apply_command_task ~session_id ~now rest store
+    else if command = "resume" then
       match parse_time_limit_args rest with
       | Ok (extra, _) when String.trim extra = "" ->
           apply_command_resume ~now ~automation rest store
       | Error _ as error -> error
       | Ok _ -> apply_command_text ~session_id ~now input store
     else apply_command_text ~session_id ~now input store
-
 type continuation_facts = {
   plan : store;
   automation : automation;
@@ -777,7 +772,6 @@ type continuation_facts = {
   compacting : bool;
   latest_assistant_stop_reason : string option;
 }
-
 type continuation = {
   custom_type : string;
   content : string;
@@ -786,23 +780,18 @@ type continuation = {
   trigger_turn : bool;
   deliver_as : string;
 }
-
 type continuation_plan =
   | No_continuation
   | Send_continuation of continuation
-
 let continuation_followup_prompt (plan : t) =
   Plan_prompt.continuation_followup
     ~unfinished_tasks_json:(Plan_task.unfinished_json plan.tasks)
     ~tokens_used:plan.tokens_used ~time_used_seconds:plan.time_used_seconds
     ~time_limit_seconds:plan.time_limit_seconds
-
 let initial_followup_prompt = continuation_followup_prompt
-
 let latest_stop_reason_blocks = function
   | Some "error" | Some "aborted" -> true
   | _ -> false
-
 let should_continue facts =
   match facts.plan with
   | Some plan ->
@@ -814,7 +803,6 @@ let should_continue facts =
       && not facts.compacting
       && not (latest_stop_reason_blocks facts.latest_assistant_stop_reason)
   | None -> false
-
 let continuation_for_plan (plan : t) =
   {
     custom_type = "taumel.plan.continue";
@@ -824,21 +812,18 @@ let continuation_for_plan (plan : t) =
     trigger_turn = true;
     deliver_as = "followUp";
   }
-
 let plan_continuation ~initial:_ facts =
   match facts.plan with
   | Some plan when should_continue facts ->
       Send_continuation (continuation_for_plan plan)
   | _ -> No_continuation
-
 type child_finalize = { child_status : string; child_reason : string option }
-
 type child_continuation_plan =
   | Child_continue of continuation
   | Child_finalize of child_finalize
-
 let child_continuation_default_max = 25
-
+let child_done status reason =
+  Child_finalize { child_status = status; child_reason = reason }
 let plan_child_continuation ~plan ~automation ~iterations ~max_iterations
     ~latest_assistant_stop_reason =
   let facts =
@@ -853,49 +838,33 @@ let plan_child_continuation ~plan ~automation ~iterations ~max_iterations
     }
   in
   match plan with
-  | None -> Child_finalize { child_status = "completed"; child_reason = None }
+  | None -> child_done "completed" None
   | Some current -> (
       match current.status with
-      | Complete -> Child_finalize { child_status = "completed"; child_reason = None }
-      | Blocked ->
-          Child_finalize
-            { child_status = "failed"; child_reason = Some "plan_blocked" }
+      | Complete -> child_done "completed" None
+      | Blocked -> child_done "failed" (Some "plan_blocked")
       | _ when iterations >= max_iterations ->
-          Child_finalize
-            {
-              child_status = "failed";
-              child_reason = Some "plan_continuation_limit";
-            }
+          child_done "failed" (Some "plan_continuation_limit")
       | _ -> (
           match latest_assistant_stop_reason with
-          | Some "aborted" ->
-              Child_finalize
-                { child_status = "cancelled"; child_reason = Some "aborted" }
-          | Some "error" ->
-              Child_finalize
-                { child_status = "failed"; child_reason = Some "error" }
+          | Some "aborted" -> child_done "cancelled" (Some "aborted")
+          | Some "error" -> child_done "failed" (Some "error")
           | _ when should_continue facts ->
               Child_continue (continuation_for_plan current)
-          | _ ->
-              Child_finalize
-                { child_status = "suspended"; child_reason = Some "plan_paused" }))
-
+          | _ -> child_done "suspended" (Some "plan_paused")))
 let continuation_prompt (plan : t) =
   Plan_prompt.continuation_state ~status:(status_to_string plan.status)
     ~tokens_used:plan.tokens_used ~time_used_seconds:plan.time_used_seconds
     ~time_limit_seconds:plan.time_limit_seconds
-
 let time_limit_prompt (plan : t) =
   Plan_prompt.time_limit ~tokens_used:plan.tokens_used
     ~time_used_seconds:plan.time_used_seconds
-
 let to_json (plan : t) =
   Plan_codec.encode ~plan_id:plan.plan_id ~session_id:plan.session_id
     ~status:plan.status ~tasks:plan.tasks ~tokens_used:plan.tokens_used
     ~time_used_seconds:plan.time_used_seconds
     ~time_limit_seconds:plan.time_limit_seconds ~created_at:plan.created_at
     ~updated_at:plan.updated_at
-
 let of_json json =
   Result.map
     (Option.map (fun (decoded : Plan_codec.decoded) ->
@@ -913,56 +882,29 @@ let of_json json =
            updated_at = decoded.updated_at;
          }))
     (Plan_codec.decode json)
-
 let codec =
   {
     Shared.encode = (function None -> Shared.Null | Some plan -> to_json plan);
     decode = of_json;
   }
-
 let plan_entry_key = "taumel.plan"
 let automation_entry_key = "taumel.plan_automation"
 let continuation_custom_type = "taumel.plan.continue"
-
-let get_plan_description =
-  "Get the current plan for this thread, including status, automation state, tasks, token telemetry, elapsed active time, and optional time limit."
-
-let get_plan_prompt_snippet =
-  "Inspect the current plan, tasks, status, usage, and automation state."
-
-let create_task_description =
-  "Create one or more tasks for the current plan. Tasks are the living breakdown of the work: order, dependencies, and completion state drive continuation and gate plan completion. Creating a task while no plan exists creates a draft plan; activate it with update_plan to start continuation. Tasks may be created only while the plan is in draft."
-
-let create_task_id_description =
-  "Optional explicit task identity, unique within this plan. Omit to auto-generate a task- identity."
-
-let create_task_title_description =
-  "Short statement of the work. Trimmed; must not be empty."
-
+let get_plan_description = Plan_prompt.get_plan_description
+let get_plan_prompt_snippet = Plan_prompt.get_plan_prompt_snippet
+let create_task_description = Plan_prompt.create_task_description
+let create_task_id_description = Plan_prompt.create_task_id_description
+let create_task_title_description = Plan_prompt.create_task_title_description
 let create_task_description_description =
-  "Optional longer specification of this step."
-
+  Plan_prompt.create_task_description_description
 let create_task_depends_on_description =
-  "Task identities that must reach completed or cancelled before this task may enter in_progress. May reference identities supplied earlier in this call."
-
-let create_task_prompt_snippet =
-  "Create one or more plan tasks while the plan is in draft."
-
-let update_task_description =
-  "Update one task's status, title, description, or dependencies. Content edits require a draft plan; status changes require an active or draft plan. Setting in_progress requires every depended task to be completed or cancelled. Mark a task completed only when its work is verifiably done; cancel tasks that are no longer needed. User-authored task text and cancellation are reserved to the user."
-
-let update_task_prompt_snippet =
-  "Update one plan task's status or content within editability rules."
-
-let update_plan_description =
-  "Update the plan lifecycle: activate a draft plan to commit its task list and start continuation, or mark an active plan complete or genuinely blocked. Completion requires every task to be completed or cancelled first."
-
-let update_plan_status_description =
-  "Lifecycle status to set: active commits the task list and starts continuation; complete declares every required outcome satisfied; blocked marks a genuine impasse requiring user input or an external-state change."
-
-let update_plan_prompt_snippet =
-  "Activate the plan, or mark it complete or genuinely blocked."
-
+  Plan_prompt.create_task_depends_on_description
+let create_task_prompt_snippet = Plan_prompt.create_task_prompt_snippet
+let update_task_description = Plan_prompt.update_task_description
+let update_task_prompt_snippet = Plan_prompt.update_task_prompt_snippet
+let update_plan_description = Plan_prompt.update_plan_description
+let update_plan_status_description = Plan_prompt.update_plan_status_description
+let update_plan_prompt_snippet = Plan_prompt.update_plan_prompt_snippet
 let tool_specs =
   [
     { Tool_gateway.name = "get_plan"; effect_kind = Tool_gateway.Pure };
