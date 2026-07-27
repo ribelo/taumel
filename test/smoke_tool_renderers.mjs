@@ -1,5 +1,6 @@
 import { toolNames } from "../src/tool-contracts.ts";
 import { cronFireMessageRenderer, planContinuationMessageRenderer, notificationMessageRenderer, renderersForTool, skillMessageRenderer } from "../src/tool-renderer.ts";
+import { formatLocalTime } from "../src/util.ts";
 import { Box, visibleWidth } from "@earendil-works/pi-tui";
 
 const assert = (condition, message) => {
@@ -30,7 +31,7 @@ const exaResults = Array.from({ length: 12 }, (_, index) => ({
   summary: `Summary ${index + 1}`,
 }));
 const threadSummaries = Array.from({ length: 12 }, (_, index) => ({
-  id: `thread-${index + 1}`,
+  id: `aaaaaaaa-bbbb-cccc-dddd-${String(index + 1).padStart(12, "0")}`,
   title: `Thread ${index + 1}`,
   messageCount: index + 3,
   hits: [
@@ -38,10 +39,15 @@ const threadSummaries = Array.from({ length: 12 }, (_, index) => ({
       kind: "message",
       role: "assistant",
       snippet: `renderer hit ${index + 1}`,
-      locator: { threadID: `thread-${index + 1}`, entryID: `entry-${index + 1}` },
+      locator: { threadID: `aaaaaaaa-bbbb-cccc-dddd-${String(index + 1).padStart(12, "0")}`, entryID: `entry-${index + 1}` },
     },
   ],
 }));
+const agentWaitStartedAt = "2024-06-15T14:30:00+00:00";
+const agentWaitEndedAt = "2024-06-15T15:45:00+00:00";
+const exaRunCreatedAt = "2024-03-01T09:15:00.000Z";
+const exaRunUpdatedAt = "2024-03-01T10:20:00.000Z";
+const localTimeFor = (iso) => formatLocalTime(Date.parse(iso) / 1000, Date.now());
 
 function argsFor(name) {
   switch (name) {
@@ -159,10 +165,57 @@ function resultFor(name) {
     return { content: [{ type: "text", text: "agent message sent" }], details: { ok: true, agentId: "worker-1", outcome: "message_sent", runId: "worker-1-run-1", status: "running" } };
   }
   if (name === "agent_wait") {
-    return { content: [{ type: "text", text: "done" }], details: { ok: true, results: [{ agent_id: "worker-1", run_id: "worker-1-run-1", kind: "generic", model: "provider/model", thinking: "medium", status: "completed", output: "done", output_available: true }], pending_run_ids: [], timed_out: false } };
+    return {
+      content: [{ type: "text", text: "done" }],
+      details: {
+        ok: true,
+        results: [{
+          agent_id: "worker-1",
+          run_id: "worker-1-run-1",
+          kind: "generic",
+          model: "provider/model",
+          thinking: "medium",
+          status: "completed",
+          started_at: agentWaitStartedAt,
+          ended_at: agentWaitEndedAt,
+          output: "done",
+          output_available: true,
+        }],
+        pending_run_ids: [],
+        timed_out: false,
+      },
+    };
   }
   if (name === "agent_list") {
-    return { content: [{ type: "text", text: "worker-1" }], details: { ok: true, agents: [{ agent_id: "worker-1", kind: "generic", model: "provider/model", thinking: "medium", workspace: "/workspace", latest_run_id: "worker-1-run-1", latest_run_status: "running" }] } };
+    return {
+      content: [{ type: "text", text: "worker-1" }],
+      details: {
+        ok: true,
+        agents: [{
+          agent_id: "worker-1",
+          kind: "generic",
+          model: "provider/model",
+          thinking: "medium",
+          workspace: "/workspace",
+          run_id: "worker-1-run-1",
+          status: "running",
+          turn_count: 3,
+          description: "Inspect renderer coverage",
+          activity: { state: "reasoning", last_at: agentWaitStartedAt, recommendation: "wait" },
+        }, {
+          agent_id: "finder-2sk2",
+          kind: "finder",
+          model: "provider/model",
+          thinking: "low",
+          workspace: "/workspace",
+          run_id: "finder-2sk2-run-1",
+          status: "completed",
+          turn_count: 1,
+          description: "Locate renderer coverage",
+          activity: { state: "inactive", last_at: agentWaitEndedAt, recommendation: "call_agent_wait" },
+        }],
+      },
+    };
   }
   if (name === "agent_close") {
     return { content: [{ type: "text", text: "closed" }], details: { ok: true, agentId: "worker-1", status: "closed" } };
@@ -174,7 +227,18 @@ function resultFor(name) {
     return { content: [{ type: "text", text: "Deleted cron task cron-a." }], details: { ok: true, id: "cron-a", deleted: true } };
   }
   if (name === "ralph_continue" || name === "ralph_finish") {
-    return { content: [{ type: "text", text: `${name} accepted` }], details: { ok: true, taskId: "task-1", iteration: 2, status: "running", reflection: false } };
+    return {
+      content: [{ type: "text", text: `${name} accepted` }],
+      details: {
+        ok: true,
+        taskId: "task-1",
+        iteration: 2,
+        status: "running",
+        reflection: true,
+        maxIterations: 20,
+        reflectionEvery: 5,
+      },
+    };
   }
   if (name === "web_search_exa" || name === "crawling_exa") {
     return { content: [{ type: "text", text: "exa results" }], details: { ok: true, response: { results: exaResults } } };
@@ -183,9 +247,35 @@ function resultFor(name) {
     return { content: [{ type: "text", text: longLines }], details: { ok: true, response: { response: longLines } } };
   }
   if (name === "exa_agent_list_runs" || name === "exa_agent_list_events") {
-    return { content: [{ type: "text", text: "agent list" }], details: { ok: true, response: { data: exaResults.map((item, index) => ({ ...item, id: `run_${index + 1}`, status: "completed" })) } } };
+    return {
+      content: [{ type: "text", text: "agent list" }],
+      details: {
+        ok: true,
+        response: {
+          data: exaResults.map((item, index) => ({
+            ...item,
+            id: `run_${index + 1}`,
+            status: "completed",
+            createdAt: exaRunCreatedAt,
+            updatedAt: exaRunUpdatedAt,
+          })),
+        },
+      },
+    };
   }
-  return { content: [{ type: "text", text: "agent run" }], details: { ok: true, response: { id: "run_1", status: "completed", output: { text: longLines } } } };
+  return {
+    content: [{ type: "text", text: "agent run" }],
+    details: {
+      ok: true,
+      response: {
+        id: "run_1",
+        status: "completed",
+        createdAt: exaRunCreatedAt,
+        updatedAt: exaRunUpdatedAt,
+        output: { text: longLines },
+      },
+    },
+  };
 }
 
 // Structural invariants for every tool: yellow-dot in-flight call header, and a
@@ -321,10 +411,14 @@ for (const expected of [
   "Model: provider/model",
   "Thinking: medium",
   "Status: completed",
+  `Started: ${localTimeFor(agentWaitStartedAt)}`,
+  `Ended: ${localTimeFor(agentWaitEndedAt)}`,
   "Response: done",
 ]) {
   assert(expandedWait.includes(expected), `expanded agent_wait missing ${expected}: ${expandedWait}`);
 }
+assert(!expandedWait.includes(agentWaitStartedAt) && !expandedWait.includes(agentWaitEndedAt),
+  `expanded agent_wait must render local clock time, not raw ISO (^render-xafb): ${expandedWait}`);
 const compactWait = renderText(renderersForTool("agent_wait").renderResult(
   resultFor("agent_wait"),
   { expanded: false, isPartial: false },
@@ -333,6 +427,46 @@ const compactWait = renderText(renderersForTool("agent_wait").renderResult(
 ));
 // agentui-hdst: compact wait preserves ready and pending counts.
 assert(/^• agent_wait · 1 run \(1 ready, 0 pending\)$/.test(compactWait), `agent_wait compact slot wrong: ${compactWait}`);
+
+// agent-8xkn: expanded agent_list uses labeled identity fields, not a flat ·-joined line.
+const expandedAgentList = renderText(renderersForTool("agent_list").renderResult(
+  resultFor("agent_list"),
+  { expanded: true, isPartial: false },
+  theme,
+  { args: argsFor("agent_list") },
+));
+const compactAgentList = renderText(renderersForTool("agent_list").renderResult(
+  resultFor("agent_list"),
+  { expanded: false, isPartial: false },
+  theme,
+  { args: argsFor("agent_list") },
+));
+assert(/^• agent_list · 2 agents$/.test(compactAgentList), `agent_list compact should remain N agents: ${compactAgentList}`);
+assert(!compactAgentList.includes("\n"), `agent_list compact should be one line: ${compactAgentList}`);
+for (const expected of [
+  "Agent: worker-1",
+  "Kind: generic",
+  "Status: running",
+  "Activity: reasoning",
+  "Description: Inspect renderer coverage",
+  "Run ID: worker-1-run-1",
+  "Turns: 3",
+  "Model: provider/model",
+  "Thinking: medium",
+  "Workspace: /workspace",
+  "Agent: finder-2sk2",
+  "Kind: finder",
+  "Status: completed",
+  "Description: Locate renderer coverage",
+  "Run ID: finder-2sk2-run-1",
+  "Turns: 1",
+]) {
+  assert(expandedAgentList.includes(expected), `expanded agent_list missing ${expected}: ${expandedAgentList}`);
+}
+assert(!expandedAgentList.includes("Activity: inactive"),
+  `expanded agent_list should omit activity while not running: ${expandedAgentList}`);
+assert(/Agent: worker-1[\s\S]*\n\s*\n[\s\S]*Agent: finder-2sk2/.test(expandedAgentList),
+  `expanded agent_list should blank-separate identities: ${expandedAgentList}`);
 
 const longAgentText = "first agent presentation words must remain visible through the middle and finish with final words";
 const wrappedFinder = renderersForTool("finder").renderResult(
@@ -641,6 +775,12 @@ const queryExpanded = renderText(renderersForTool("query_threads").renderResult(
 assert(/• query_threads · "renderer" \(12 threads, 12 hits\)/.test(queryCompact), `query_threads subject should be "query" (N threads, M hits): ${queryCompact}`);
 assert(!queryCompact.includes("\n") && !queryCompact.includes("Thread 1"), `query_threads compact should be one line with no item rows: ${queryCompact}`);
 assert(queryExpanded.includes("Thread 4") && queryExpanded.includes("message/assistant: renderer hit 1"), `query_threads expanded should include more threads and hit snippets: ${queryExpanded}`);
+// Title-first groups: title is primary; full id is a dim labeled ID row (keep full locator).
+const queryThread4Line = queryExpanded.split("\n").find((line) => line.includes("Thread 4"));
+assert(queryThread4Line !== undefined && /· Thread 4 ·/.test(queryThread4Line) && !queryThread4Line.includes("aaaaaaaa-bbbb-cccc-dddd-000000000004"),
+  `query_threads expanded headline should lead with title, not the UUID: ${queryExpanded}`);
+assert(queryExpanded.includes("ID: aaaaaaaa-bbbb-cccc-dddd-000000000004"),
+  `query_threads expanded must keep full thread id on an ID row: ${queryExpanded}`);
 
 // Plan tools — compact subjects + affected-task expanded body (^render-go01 ^render-78m0 ^render-rffp).
 const planCompact = renderText(renderersForTool("create_task").renderResult(resultFor("create_task"), { expanded: false, isPartial: false }, theme, { args: argsFor("create_task") }));
@@ -703,8 +843,26 @@ const runCompact = renderText(renderersForTool("exa_agent_get_run").renderResult
 const runExpanded = renderText(renderersForTool("exa_agent_get_run").renderResult(resultFor("exa_agent_get_run"), { expanded: true, isPartial: false }, theme, { args: argsFor("exa_agent_get_run") }));
 assert(/• exa_agent_get_run · run_1 · completed/.test(runCompact), `exa_agent_get_run subject should be id · status: ${runCompact}`);
 assert(!runCompact.includes("line-1") && runExpanded.includes("line-1"), `exa_agent_get_run should only show output.text when expanded: ${runExpanded}`);
+assert(runExpanded.includes(`Created: ${localTimeFor(exaRunCreatedAt)}`) && runExpanded.includes(`Updated: ${localTimeFor(exaRunUpdatedAt)}`),
+  `exa_agent_get_run expanded timestamps should be local clock time (^render-xafb): ${runExpanded}`);
+assert(!runExpanded.includes(exaRunCreatedAt) && !runExpanded.includes(exaRunUpdatedAt),
+  `exa_agent_get_run expanded must not show raw ISO timestamps: ${runExpanded}`);
 const listRunsCompact = renderText(renderersForTool("exa_agent_list_runs").renderResult(resultFor("exa_agent_list_runs"), { expanded: false, isPartial: false }, theme, { args: argsFor("exa_agent_list_runs") }));
+const listRunsExpanded = renderText(renderersForTool("exa_agent_list_runs").renderResult(resultFor("exa_agent_list_runs"), { expanded: true, isPartial: false }, theme, { args: argsFor("exa_agent_list_runs") }));
 assert(/• exa_agent_list_runs · recent runs \(12\)/.test(listRunsCompact) && !listRunsCompact.includes("Result 1"), `exa_agent_list_runs compact should be one-line count: ${listRunsCompact}`);
+assert(listRunsExpanded.includes(localTimeFor(exaRunCreatedAt)) && !listRunsExpanded.includes(exaRunCreatedAt),
+  `exa_agent_list_runs expanded timestamps should be local clock time: ${listRunsExpanded}`);
+
+// ralph — header carries task id; expanded drops redundant Task ID body row (^render-ra01).
+const ralphCompact = renderText(renderersForTool("ralph_continue").renderResult(resultFor("ralph_continue"), { expanded: false, isPartial: false }, theme, { args: argsFor("ralph_continue") }));
+const ralphExpanded = renderText(renderersForTool("ralph_continue").renderResult(resultFor("ralph_continue"), { expanded: true, isPartial: false }, theme, { args: argsFor("ralph_continue") }));
+assert(/• ralph_continue · task-1 \(iteration 2 · running\)/.test(ralphCompact), `ralph_continue compact subject wrong: ${ralphCompact}`);
+assert(ralphExpanded.includes("Iteration: 2") && ralphExpanded.includes("Status: running") && ralphExpanded.includes("Reflection: true"),
+  `ralph expanded should keep iteration/status/reflection rows: ${ralphExpanded}`);
+assert(ralphExpanded.includes("Max iterations: 20") && ralphExpanded.includes("Reflection every: 5"),
+  `ralph expanded should show cadence when present: ${ralphExpanded}`);
+assert(!ralphExpanded.includes("Task ID:"),
+  `ralph expanded must omit redundant Task ID body row when header has it: ${ralphExpanded}`);
 
 // notification — opaque exec_completion + agent_completion ready signals.
 const renderPlanContinuation = planContinuationMessageRenderer();

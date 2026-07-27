@@ -1,6 +1,7 @@
 import type { Block, Entry } from "./render-layout.ts";
 import {
   boolFieldOrUndefined,
+  formatLocalTime,
   numberFieldOrUndefined,
   recordArrayFieldOrEmpty,
   recordFieldOrUndefined,
@@ -22,6 +23,31 @@ function domainOf(url: string): string {
 function labeled(label: string, value: string | undefined, theme: unknown): Entry[] {
   if (value === undefined || value.trim() === "") return [];
   return [{ text: `${themeFg(theme, "dim", `${label}:`)} ${themeFg(theme, "toolOutput", value)}` }];
+}
+
+/** Format epoch seconds, epoch ms, or parseable ISO/local timestamps as local clock time (^render-xafb). */
+function formatTimestampValue(value: unknown, nowMs = Date.now()): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const seconds = value > 1e12 ? value / 1000 : value;
+    return formatLocalTime(seconds, nowMs);
+  }
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (trimmed === "") return undefined;
+  if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+    const numeric = Number(trimmed);
+    if (!Number.isFinite(numeric)) return undefined;
+    const seconds = numeric > 1e12 ? numeric / 1000 : numeric;
+    return formatLocalTime(seconds, nowMs);
+  }
+  const ms = Date.parse(trimmed);
+  if (Number.isNaN(ms)) return undefined;
+  return formatLocalTime(ms / 1000, nowMs);
+}
+
+function labeledTimestamp(label: string, value: unknown, theme: unknown): Entry[] {
+  return labeled(label, formatTimestampValue(value), theme);
 }
 
 function labeledText(label: string, value: string | undefined, theme: unknown): Entry[] {
@@ -209,14 +235,16 @@ function buildQueryThreads(name: string, result: unknown, options: unknown, them
   const header = headerSpec(name, quotedQuery(args), dotFromDetails(details), theme, themeFg(theme, "dim", `(${threads.length} thread${threads.length === 1 ? "" : "s"}, ${hits} hit${hits === 1 ? "" : "s"})`));
   if (!expanded) return { header, body: undefined };
   const entries: Entry[] = [];
+  // Title-first groups (^render-th01 latitude): headline is title; full id stays on a dim labeled ID row.
   threads.slice(0, 30).forEach((thread, index) => {
     if (index > 0) entries.push({ text: "" });
     const title = stringFieldOrUndefined(thread, "title") ?? stringFieldOrUndefined(thread, "id") ?? `thread ${index + 1}`;
     const id = stringFieldOrUndefined(thread, "id");
     const workspace = stringFieldOrUndefined(thread, "workspace");
     const threadHits = recordArrayFieldOrEmpty<ToolRenderFields>(thread, "hits");
-    const meta = [id, workspace, `${threadHits.length} hit${threadHits.length === 1 ? "" : "s"}`].filter((part): part is string => part !== undefined && part !== "");
-    entries.push({ text: `${themeFg(theme, "accent", String(index + 1))} ${themeFg(theme, "dim", "·")} ${themeFg(theme, "toolOutput", title)} ${themeFg(theme, "dim", "·")} ${themeFg(theme, "dim", meta.join(" · "))}` });
+    const meta = [workspace, `${threadHits.length} hit${threadHits.length === 1 ? "" : "s"}`].filter((part): part is string => part !== undefined && part !== "");
+    entries.push({ text: `${themeFg(theme, "accent", String(index + 1))} ${themeFg(theme, "dim", "·")} ${themeFg(theme, "toolOutput", title)}${meta.length === 0 ? "" : ` ${themeFg(theme, "dim", "·")} ${themeFg(theme, "dim", meta.join(" · "))}`}` });
+    entries.push(...labeled("ID", id, theme));
     for (const hit of threadHits) {
       const label = [stringFieldOrUndefined(hit, "kind") ?? "", stringFieldOrUndefined(hit, "role"), stringFieldOrUndefined(hit, "toolName")].filter((part): part is string => part !== undefined && part !== "").join("/");
       entries.push({ text: themeFg(theme, "dim", `${label}: ${oneLine(stringFieldOrUndefined(hit, "snippet") ?? "")}`) });
@@ -257,11 +285,19 @@ function buildRalph(name: string, result: unknown, options: unknown, theme: unkn
   const details = detailsRecord(result);
   const taskId = stringFieldOrUndefined(details, "taskId") ?? stringFieldOrUndefined(args, "task_id") ?? "";
   const iteration = numberFieldOrUndefined(details, "iteration");
+  const maxIterations = numberFieldOrUndefined(details, "maxIterations") ?? numberFieldOrUndefined(details, "max_iterations");
+  const reflectionEvery = numberFieldOrUndefined(details, "reflectionEvery") ?? numberFieldOrUndefined(details, "reflection_every");
   const facts = [iteration !== undefined ? `iteration ${iteration}` : undefined, stringFieldOrUndefined(details, "status")].filter((part): part is string => part !== undefined && part !== "");
   const header = headerSpec(name, taskId, dotFromDetails(details), theme, facts.length > 0 ? themeFg(theme, "dim", `(${facts.join(" · ")})`) : "");
   if (!expanded) return { header, body: undefined };
-  const entries = [...labeled("Task ID", taskId, theme), ...labeled("Status", stringFieldOrUndefined(details, "status"), theme)];
+  // Header already carries task id (^render-ra01); omit the redundant body Task ID row.
+  const entries = [
+    ...labeled("Iteration", iteration === undefined ? undefined : String(iteration), theme),
+    ...labeled("Status", stringFieldOrUndefined(details, "status"), theme),
+  ];
   if (boolFieldOrUndefined(details, "reflection") === true) entries.push(...labeled("Reflection", "true", theme));
+  entries.push(...labeled("Max iterations", maxIterations === undefined ? undefined : String(maxIterations), theme));
+  entries.push(...labeled("Reflection every", reflectionEvery === undefined ? undefined : String(reflectionEvery), theme));
   entries.push(...fullTextEntries(textContent(result), theme));
   return { header, body: entries.length === 0 ? undefined : { mode: "rail", entries } };
 }
@@ -323,7 +359,8 @@ function buildExaAgent(name: string, result: unknown, options: unknown, theme: u
     items.forEach((item, index) => {
       if (index > 0) entries.push({ text: "" });
       const title = stringFieldOrUndefined(item, "title") ?? stringFieldOrUndefined(item, "type") ?? stringFieldOrUndefined(item, "id") ?? `item ${index + 1}`;
-      entries.push({ text: [themeFg(theme, "toolOutput", title), stringFieldOrUndefined(item, "status"), stringFieldOrUndefined(item, "createdAt") ?? stringFieldOrUndefined(item, "timestamp")].filter((part): part is string => part !== undefined && part !== "").join(` ${themeFg(theme, "dim", "·")} `) });
+      const when = formatTimestampValue(item["createdAt"] ?? item["updatedAt"] ?? item["timestamp"] ?? item["created_at"] ?? item["updated_at"]);
+      entries.push({ text: [themeFg(theme, "toolOutput", title), stringFieldOrUndefined(item, "status"), when].filter((part): part is string => part !== undefined && part !== "").join(` ${themeFg(theme, "dim", "·")} `) });
       entries.push(...labeled("Summary", resultDescription(item), theme));
     });
     if (entries.length === 0) entries.push({ text: themeFg(theme, "dim", "(none)"), exempt: true });
@@ -339,39 +376,34 @@ function buildExaAgent(name: string, result: unknown, options: unknown, theme: u
   const entries = [
     ...labeled("Run ID", id, theme),
     ...labeled("Status", status, theme),
-    ...labeled("Created", stringFieldOrUndefined(response, "createdAt"), theme),
-    ...labeled("Updated", stringFieldOrUndefined(response, "updatedAt"), theme),
+    ...labeledTimestamp("Created", response["createdAt"] ?? response["created_at"], theme),
+    ...labeledTimestamp("Updated", response["updatedAt"] ?? response["updated_at"], theme),
     ...labeled("Error", stringFieldOrUndefined(response, "error"), theme),
     ...fullTextEntries(text, theme),
   ];
   return { header, body: entries.length === 0 ? undefined : { mode: "rail", entries } };
 }
 
-function agentLine(item: ToolRenderFields, theme: unknown): string {
-  const id = stringFieldOrUndefined(item, "agent_id") ?? "agent";
-  const kind = stringFieldOrUndefined(item, "kind") ?? "generic";
+// ^agent-8xkn: expanded agent_list uses labeled fields per identity, not a flat ·-joined line.
+function agentListEntries(item: ToolRenderFields, theme: unknown): Entry[] {
   const status = stringFieldOrUndefined(item, "status")
-    ?? stringFieldOrUndefined(item, "latest_run_status")
-    ?? "idle";
-  const model = stringFieldOrUndefined(item, "model") ?? "";
-  const thinking = stringFieldOrUndefined(item, "thinking") ?? "";
+    ?? stringFieldOrUndefined(item, "latest_run_status");
   const activity = recordFieldOrUndefined<ToolRenderFields>(item, "activity");
-  const activitySummary = activity === undefined ? "" : [
-    stringFieldOrUndefined(activity, "state"),
-    stringFieldOrUndefined(activity, "last_at"),
-    stringFieldOrUndefined(activity, "recommendation"),
-  ].filter((part) => part !== undefined && part !== "").join("/");
-  const turns = typeof item.turn_count === "number" ? `${item.turn_count} turns` : "";
+  const activityState = activity === undefined ? undefined : stringFieldOrUndefined(activity, "state");
+  const showActivity = status === "running" && activityState !== undefined && activityState !== "" && activityState !== "inactive";
+  const turns = numberFieldOrUndefined(item, "turn_count") ?? numberFieldOrUndefined(item, "turnCount");
   return [
-    themeFg(theme, "toolOutput", id), kind, status,
-    stringFieldOrUndefined(item, "run_id") ?? "",
-    turns, activitySummary,
-    stringFieldOrUndefined(item, "workspace") ?? "",
-    stringFieldOrUndefined(item, "tier") ?? "",
-    model, thinking,
-  ]
-    .filter((part) => part !== "")
-    .join(` ${themeFg(theme, "dim", "·")} `);
+    ...labeled("Agent", stringFieldOrUndefined(item, "agent_id"), theme),
+    ...labeled("Kind", stringFieldOrUndefined(item, "kind"), theme),
+    ...labeled("Status", status, theme),
+    ...labeled("Activity", showActivity ? activityState : undefined, theme),
+    ...labeled("Description", stringFieldOrUndefined(item, "description"), theme),
+    ...labeled("Run ID", stringFieldOrUndefined(item, "run_id") ?? stringFieldOrUndefined(item, "latest_run_id"), theme),
+    ...labeled("Turns", turns === undefined ? undefined : String(turns), theme),
+    ...labeled("Model", stringFieldOrUndefined(item, "model"), theme),
+    ...labeled("Thinking", stringFieldOrUndefined(item, "thinking"), theme),
+    ...labeled("Workspace", stringFieldOrUndefined(item, "workspace"), theme),
+  ];
 }
 
 function agentResultEntries(item: ToolRenderFields, theme: unknown): Entry[] {
@@ -426,17 +458,21 @@ function buildAgent(name: string, result: unknown, options: unknown, theme: unkn
   if (!expanded) return { header, body: undefined };
   const entries: Entry[] = [];
   if (agents.length > 0) {
-    for (const agent of agents) entries.push({ text: agentLine(agent, theme) });
+    agents.forEach((agent, index) => {
+      if (index > 0) entries.push({ text: "" });
+      entries.push(...agentListEntries(agent, theme));
+    });
   } else if (results.length > 0) {
-    for (const run of results) {
+    results.forEach((run, index) => {
+      if (index > 0) entries.push({ text: "" });
       entries.push(...agentResultEntries(run, theme));
-      entries.push(...labeled("Started", stringFieldOrUndefined(run, "started_at"), theme));
-      entries.push(...labeled("Ended", stringFieldOrUndefined(run, "ended_at") ?? stringFieldOrUndefined(run, "suspended_at"), theme));
+      entries.push(...labeledTimestamp("Started", run["started_at"] ?? run["startedAt"], theme));
+      entries.push(...labeledTimestamp("Ended", run["ended_at"] ?? run["endedAt"] ?? run["suspended_at"] ?? run["suspendedAt"], theme));
       entries.push(...labeled("Reason", stringFieldOrUndefined(run, "reason"), theme));
       entries.push(...labeled("Error", stringFieldOrUndefined(run, "error"), theme));
       entries.push(...labeledText("Response", stringFieldOrUndefined(run, "output"), theme));
       entries.push(...labeledText("Partial response", stringFieldOrUndefined(run, "partial_output"), theme));
-    }
+    });
   } else if (name === "agent_close") {
     entries.push(...labeled("Agent", agentId, theme));
     entries.push(...labeled("Status", status, theme));
