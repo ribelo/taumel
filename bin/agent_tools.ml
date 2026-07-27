@@ -816,6 +816,9 @@ let prepare_list ctx =
                            ("started_at", js_timestamp run.run_started_at);
                            ("status", js_run_status run.run_status);
                            ("turn_count", js_number (float_of_int run.run_turn_count));
+                           (* User-facing details only; model-facing text stays
+                              description-free per ^agent-ls04. *)
+                           ("description", js_string run.run_description);
                            ("activity", Unsafe.obj (Array.of_list activity_fields));
                          ]
                  in
