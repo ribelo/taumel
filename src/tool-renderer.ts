@@ -10,7 +10,7 @@ import {
 import { buildDomainResult } from "./tool-renderer-domains.ts";
 import {
   detailsRecord, dotFromDetails, expandedFromOptions, fullTextEntries, headerSpec,
-  isToolRenderFields, oneLine, quotedQuery, textContent, themeFg, type ToolRenderFields,
+  isToolRenderFields, oneLine, planTaskRow, quotedQuery, textContent, themeFg, type ToolRenderFields,
 } from "./tool-renderer-kit.ts";
 export { fullTextEntries } from "./tool-renderer-kit.ts";
 import {
@@ -673,6 +673,18 @@ export function notificationMessageRenderer() {
   };
 }
 
+function planContinuationDot(status: string | undefined): string {
+  // ^plan-6qss / ^render-hd02: complete→success(green), blocked→error(red), else warning(yellow).
+  if (status === "complete") return "success";
+  if (status === "blocked") return "error";
+  return "warning";
+}
+
+function labeledPlanField(label: string, value: string | undefined, theme: unknown): Entry[] {
+  if (value === undefined || value.trim() === "") return [];
+  return [{ text: `${themeFg(theme, "dim", `${label}:`)} ${themeFg(theme, "toolOutput", value)}` }];
+}
+
 export function planContinuationMessageRenderer() {
   return (message: unknown, options: unknown, theme: unknown) => {
     if (!isToolRenderFields(message)) return undefined;
@@ -680,18 +692,41 @@ export function planContinuationMessageRenderer() {
     const plan = recordFieldOrUndefined<ToolRenderFields>(details, "plan");
     const content = stringFieldOrUndefined(message, "content") ?? "";
     if (plan === undefined || content === "") return undefined;
-    const status = stringFieldOrUndefined(plan, "statusLabel") ?? stringFieldOrUndefined(plan, "status") ?? "";
+    const lifecycleStatus = stringFieldOrUndefined(plan, "status");
+    const statusLabel = stringFieldOrUndefined(plan, "statusLabel") ?? lifecycleStatus ?? "";
     const completed = numberFieldOrUndefined(plan, "completedTasks");
     const total = numberFieldOrUndefined(plan, "totalTasks");
     const time = stringFieldOrUndefined(plan, "timeUsage") ?? "";
     const progress = completed === undefined || total === undefined ? "" : `${completed}/${total} tasks`;
-    const summary = [status, progress, time].filter((part) => part !== "").join(" · ");
+    // ^plan-6qss: progress-first compact subject (progress · status · time).
+    const summary = [progress, statusLabel, time].filter((part) => part !== "").join(" · ");
     const expanded = expandedFromOptions(options);
+    let body: Block["body"] = undefined;
+    if (expanded) {
+      // ^plan-afra: labeled metadata, unfinished tasks, divider, then exact agent content.
+      const entries: Entry[] = [];
+      entries.push(...labeledPlanField("Status", statusLabel === "" ? undefined : statusLabel, theme));
+      entries.push(...labeledPlanField("Progress", progress === "" ? undefined : progress, theme));
+      const automation = recordFieldOrUndefined<ToolRenderFields>(details, "automation");
+      const continuation = automation !== undefined ? stringFieldOrUndefined(automation, "continuation") : undefined;
+      entries.push(...labeledPlanField("Automation", continuation, theme));
+      entries.push(...labeledPlanField("Active time", time === "" ? undefined : time, theme));
+      const tasks = recordArrayFieldOrEmpty<ToolRenderFields>(plan, "tasks");
+      const unfinished = tasks.filter((task) => {
+        const taskStatus = stringFieldOrUndefined(task, "status");
+        return taskStatus === "pending" || taskStatus === "in_progress";
+      });
+      if (unfinished.length > 0) {
+        if (entries.length > 0) entries.push({ text: "" });
+        for (const task of unfinished) entries.push(...planTaskRow(task, theme));
+      }
+      entries.push({ text: themeFg(theme, "dim", "── sent to agent ──") });
+      entries.push(...fullTextEntries(content, theme));
+      body = { mode: "rail", entries };
+    }
     const block: Block = {
-      header: headerSpec("plan.continue", summary, "muted", theme),
-      body: expanded
-        ? { mode: "rail", entries: fullTextEntries(content, theme) }
-        : undefined,
+      header: headerSpec("plan.continue", summary, planContinuationDot(lifecycleStatus), theme),
+      body,
     };
     return renderBlock(block, expanded);
   };

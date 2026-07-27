@@ -61,3 +61,32 @@ export function fullTextEntries(text: string, theme: unknown): Entry[] {
 export function quotedQuery(args: ToolRenderFields): string {
   return `"${oneLine(stringFieldOrUndefined(args, "query") ?? "")}"`;
 }
+
+function planTaskStatusColor(status: string): string {
+  switch (status) {
+    case "completed": return "success";
+    case "in_progress": return "warning";
+    case "cancelled": return "error";
+    case "pending":
+    default: return "dim";
+  }
+}
+
+/** Shared plan task-row grammar: `task-x7aa [in_progress/agent]: Title` + indented Depends on. */
+export function planTaskRow(task: ToolRenderFields, theme: unknown): Entry[] {
+  const id = stringFieldOrUndefined(task, "taskId") ?? "task";
+  const title = stringFieldOrUndefined(task, "title") ?? "";
+  const taskStatus = stringFieldOrUndefined(task, "status") ?? "unknown";
+  const origin = stringFieldOrUndefined(task, "origin") ?? "unknown";
+  // ^render-rffp: status as colored text only — no status-dot glyph in task rows.
+  const statusText = themeFg(theme, planTaskStatusColor(taskStatus), taskStatus);
+  const entries: Entry[] = [{
+    text: `${themeFg(theme, "dim", id)} ${themeFg(theme, "dim", "[")}${statusText}${themeFg(theme, "dim", `/${origin}]:`)} ${themeFg(theme, "toolOutput", title)}`,
+  }];
+  const dependencies = task["depends_on"];
+  if (Array.isArray(dependencies) && dependencies.length > 0) {
+    const deps = dependencies.filter((value): value is string => typeof value === "string").join(", ");
+    if (deps !== "") entries.push({ text: `  ${themeFg(theme, "dim", "Depends on:")} ${themeFg(theme, "toolOutput", deps)}` });
+  }
+  return entries;
+}

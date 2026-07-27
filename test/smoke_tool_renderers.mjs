@@ -864,18 +864,112 @@ assert(ralphExpanded.includes("Max iterations: 20") && ralphExpanded.includes("R
 assert(!ralphExpanded.includes("Task ID:"),
   `ralph expanded must omit redundant Task ID body row when header has it: ${ralphExpanded}`);
 
-// notification — opaque exec_completion + agent_completion ready signals.
+// plan.continue — compact progress-first subject, semantic header dots, expanded summary (^plan-afra, ^plan-6qss).
 const renderPlanContinuation = planContinuationMessageRenderer();
+const planContinuationContent = "Continue working toward the active plan.\n\nFull exact prompt.";
 const planContinuationMessage = {
   customType: "taumel.plan.continue",
-  content: "Continue working toward the active plan.\n\nFull exact prompt.",
-  details: { plan: { statusLabel: "active", completedTasks: 1, totalTasks: 3, timeUsage: "2m" }, automation: { continuation: "enabled" } },
+  content: planContinuationContent,
+  details: {
+    plan: {
+      status: "active",
+      statusLabel: "active",
+      completedTasks: 2,
+      totalTasks: 5,
+      timeUsage: "3m",
+      tasks: [
+        { taskId: "task-x7aa", title: "foundation", status: "completed", origin: "user", depends_on: [] },
+        { taskId: "task-ab12", title: "wire renderer", status: "in_progress", origin: "agent", depends_on: ["task-x7aa"] },
+        { taskId: "task-cd34", title: "cover edges", status: "pending", origin: "agent", depends_on: ["task-ab12"] },
+        { taskId: "task-ef56", title: "obsolete path", status: "cancelled", origin: "agent", depends_on: [] },
+        { taskId: "task-gh78", title: "ship", status: "pending", origin: "user", depends_on: ["task-cd34"] },
+      ],
+    },
+    automation: { continuation: "enabled" },
+  },
 };
 const compactPlanContinuation = renderText(renderPlanContinuation(planContinuationMessage, { expanded: false }, theme));
 const expandedPlanContinuation = renderText(renderPlanContinuation(planContinuationMessage, { expanded: true }, theme));
-assert(compactPlanContinuation.includes("plan.continue") && compactPlanContinuation.includes("1/3 tasks"), `plan continuation compact rendering wrong: ${compactPlanContinuation}`);
+// ^plan-6qss compact subject is progress-first: `2/5 tasks · active · 3m`
+assert(
+  /^• plan\.continue · 2\/5 tasks · active · 3m$/.test(compactPlanContinuation),
+  `plan continuation compact subject order wrong: ${compactPlanContinuation}`,
+);
 assert(!compactPlanContinuation.includes("Full exact prompt"), `plan continuation compact rendering leaked prompt: ${compactPlanContinuation}`);
-assert(expandedPlanContinuation.includes("Full exact prompt"), `plan continuation expanded rendering omitted exact prompt: ${expandedPlanContinuation}`);
+// Expanded labeled fields from typed metadata (^plan-afra).
+for (const expected of [
+  "Status: active",
+  "Progress: 2/5 tasks",
+  "Automation: enabled",
+  "Active time: 3m",
+]) {
+  assert(expandedPlanContinuation.includes(expected), `plan continuation expanded missing ${expected}: ${expandedPlanContinuation}`);
+}
+// Unfinished tasks only (pending + in_progress), shared task-row grammar.
+assert(
+  expandedPlanContinuation.includes("task-ab12 [in_progress/agent]: wire renderer"),
+  `plan continuation expanded missing in_progress task row: ${expandedPlanContinuation}`,
+);
+assert(
+  expandedPlanContinuation.includes("Depends on: task-x7aa"),
+  `plan continuation expanded missing Depends on for unfinished task: ${expandedPlanContinuation}`,
+);
+assert(
+  expandedPlanContinuation.includes("task-cd34 [pending/agent]: cover edges"),
+  `plan continuation expanded missing pending task row: ${expandedPlanContinuation}`,
+);
+assert(
+  expandedPlanContinuation.includes("task-gh78 [pending/user]: ship"),
+  `plan continuation expanded missing pending user task row: ${expandedPlanContinuation}`,
+);
+assert(
+  !expandedPlanContinuation.includes("task-x7aa [completed"),
+  `plan continuation expanded must omit completed tasks: ${expandedPlanContinuation}`,
+);
+assert(
+  !expandedPlanContinuation.includes("task-ef56 [cancelled"),
+  `plan continuation expanded must omit cancelled tasks: ${expandedPlanContinuation}`,
+);
+// Dim divider then exact agent-facing content verbatim (^plan-co11).
+assert(
+  expandedPlanContinuation.includes("── sent to agent ──"),
+  `plan continuation expanded missing sent-to-agent divider: ${expandedPlanContinuation}`,
+);
+const dividerIndex = expandedPlanContinuation.indexOf("── sent to agent ──");
+const afterDivider = expandedPlanContinuation.slice(dividerIndex);
+assert(afterDivider.includes("Continue working toward the active plan."), `plan continuation expanded omitted exact prompt start: ${expandedPlanContinuation}`);
+assert(afterDivider.includes("Full exact prompt."), `plan continuation expanded omitted exact prompt body: ${expandedPlanContinuation}`);
+// Header dots by lifecycle status (^plan-6qss / ^render-hd02 theme tokens).
+const planDotTheme = {
+  ...theme,
+  fg: (color, value) => `<${color}>${value}</${color}>`,
+};
+function compactContinuationForStatus(status) {
+  return renderText(renderPlanContinuation({
+    customType: "taumel.plan.continue",
+    content: "Continue.",
+    details: {
+      plan: { status, statusLabel: status === "time_limited" ? "time limited" : status, completedTasks: 1, totalTasks: 2, timeUsage: "1m" },
+      automation: { continuation: "enabled" },
+    },
+  }, { expanded: false }, planDotTheme));
+}
+assert(compactContinuationForStatus("complete").startsWith("<success>•</success>"), "complete plan continuation must use a success(green) dot");
+assert(compactContinuationForStatus("blocked").startsWith("<error>•</error>"), "blocked plan continuation must use an error(red) dot");
+assert(compactContinuationForStatus("active").startsWith("<warning>•</warning>"), "active plan continuation must use a warning(yellow) dot");
+assert(compactContinuationForStatus("draft").startsWith("<warning>•</warning>"), "draft plan continuation must use a warning(yellow) dot");
+assert(compactContinuationForStatus("paused").startsWith("<warning>•</warning>"), "paused plan continuation must use a warning(yellow) dot");
+assert(compactContinuationForStatus("time_limited").startsWith("<warning>•</warning>"), "time_limited plan continuation must use a warning(yellow) dot");
+// Interrupted automation surfaces in expanded labeled fields.
+const interruptedExpanded = renderText(renderPlanContinuation({
+  customType: "taumel.plan.continue",
+  content: "Continue.",
+  details: {
+    plan: { status: "active", statusLabel: "active", completedTasks: 0, totalTasks: 1, timeUsage: "10s", tasks: [{ taskId: "task-1", title: "only", status: "pending", origin: "user", depends_on: [] }] },
+    automation: { continuation: "interrupted" },
+  },
+}, { expanded: true }, theme));
+assert(interruptedExpanded.includes("Automation: interrupted"), `interrupted automation should render in expanded summary: ${interruptedExpanded}`);
 
 const renderNotification = notificationMessageRenderer();
 const execNote = 'Command session 3 has finished. To read and consume the result, call write_stdin with session_id=3, chars="", yield_time_ms=5000.';

@@ -9,7 +9,7 @@ import {
 } from "./util.ts";
 import {
   detailsRecord, dotFromDetails, expandedFromOptions, fullTextEntries, headerSpec,
-  oneLine, quotedQuery, textContent, themeFg, type ToolRenderFields,
+  oneLine, planTaskRow, quotedQuery, textContent, themeFg, type ToolRenderFields,
 } from "./tool-renderer-kit.ts";
 
 function domainOf(url: string): string {
@@ -69,35 +69,6 @@ function resultDescription(item: ToolRenderFields): string | undefined {
   if (summary !== undefined) return summary;
   const highlights = item["highlights"];
   return Array.isArray(highlights) ? highlights.find((part): part is string => typeof part === "string") : undefined;
-}
-
-function planTaskStatusColor(status: string): string {
-  switch (status) {
-    case "completed": return "success";
-    case "in_progress": return "warning";
-    case "cancelled": return "error";
-    case "pending":
-    default: return "dim";
-  }
-}
-
-function planTaskRow(task: ToolRenderFields, theme: unknown): Entry[] {
-  const id = stringFieldOrUndefined(task, "taskId") ?? "task";
-  const title = stringFieldOrUndefined(task, "title") ?? "";
-  const taskStatus = stringFieldOrUndefined(task, "status") ?? "unknown";
-  const origin = stringFieldOrUndefined(task, "origin") ?? "unknown";
-  // ^render-rffp: status as colored text only — no status-dot glyph in task rows.
-  // Mock shape: `task-jw2q [active/agent]: Grill the layout` with indented Depends on.
-  const statusText = themeFg(theme, planTaskStatusColor(taskStatus), taskStatus);
-  const entries: Entry[] = [{
-    text: `${themeFg(theme, "dim", id)} ${themeFg(theme, "dim", "[")}${statusText}${themeFg(theme, "dim", `/${origin}]:`)} ${themeFg(theme, "toolOutput", title)}`,
-  }];
-  const dependencies = task["depends_on"];
-  if (Array.isArray(dependencies) && dependencies.length > 0) {
-    const deps = dependencies.filter((value): value is string => typeof value === "string").join(", ");
-    if (deps !== "") entries.push({ text: `  ${themeFg(theme, "dim", "Depends on:")} ${themeFg(theme, "toolOutput", deps)}` });
-  }
-  return entries;
 }
 
 function buildPlan(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
