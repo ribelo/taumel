@@ -144,7 +144,8 @@ const closeResult = await executeAgentRunsManager(
 );
 assert.equal(closeResult.ok, true);
 const finishCall = closeCalls.find(([name]) => name === "finishAgentClose");
-assert.deepEqual(finishCall?.[1], [{ agent_id: "agent-abcd" }, closeCtx]);
+// finishAgentClose takes AgentIdFacts + AgentOwnerContextFacts ({ ctx }).
+assert.deepEqual(finishCall?.[1], [{ agent_id: "agent-abcd" }, { ctx: closeCtx }]);
 assert.equal(
   closeCalls.some(([name]) => name === "deleteAgentChildSession"),
   false,
