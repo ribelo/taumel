@@ -162,6 +162,8 @@ against cannot be renegotiated by the agent.
 - Each delivered plan continuation shall persist as a system-authored transcript entry and shall retain the same compact and expanded rendering after session reload. ^plan-co12
 - Each persisted continuation shall carry typed rendering metadata, including lifecycle status, automation state, tasks, and telemetry, separately from the exact opaque agent-facing continuation content; renderers shall not recover metadata by parsing the agent-facing text. ^plan-co13
 - The continuation message shall include an untrusted JSON payload listing every task with status `pending` or `in_progress` together with its `taskId`, `title`, `status`, `depends_on`, and `origin`, marking each listed task as runnable or waiting-on-dependency, delimited so that the payload cannot be mistaken for system instructions. ^plan-co14
+- When the user expands a plan continuation message, the system shall precede the exact agent-facing content with labeled fields for lifecycle status, task progress, automation state, and active time, followed by the plan's unfinished tasks rendered with the shared plan task-row grammar from typed rendering metadata, and shall delimit the exact agent-facing content visibly as the content sent to the agent. ^plan-afra
+- The plan continuation header dot shall be green when the plan is complete, red when the plan is blocked, and yellow for every other lifecycle status. ^plan-6qss
 
 ### Interrupt
 
