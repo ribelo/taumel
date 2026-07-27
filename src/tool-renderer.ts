@@ -10,7 +10,8 @@ import {
 import { buildDomainResult } from "./tool-renderer-domains.ts";
 import {
   detailsRecord, dotFromDetails, expandedFromOptions, fullTextEntries, headerSpec,
-  isToolRenderFields, oneLine, planTaskRow, quotedQuery, textContent, themeFg, type ToolRenderFields,
+  isToolRenderFields, labeled, oneLine, planTaskRow, quotedQuery, textContent, themeFg,
+  type ToolRenderFields,
 } from "./tool-renderer-kit.ts";
 export { fullTextEntries } from "./tool-renderer-kit.ts";
 import {
@@ -372,17 +373,21 @@ function buildViewMedia(name: string, result: unknown, options: unknown, theme: 
     numberFieldOrUndefined(details, "base64Bytes") ??
     numberFieldOrUndefined(details, "encodedBytes");
   const entries: Entry[] = [
-    { text: `${themeFg(theme, "dim", "Path:")} ${themeFg(theme, "toolOutput", path)}` },
+    ...labeled("Path", path, theme),
+    ...labeled("Type", mime, theme),
+    ...labeled(
+      "Original",
+      originalWidth !== undefined && originalHeight !== undefined ? `${originalWidth}x${originalHeight}` : undefined,
+      theme,
+    ),
+    ...labeled(
+      "Processed",
+      width !== undefined && height !== undefined ? `${width}x${height}` : undefined,
+      theme,
+    ),
+    ...labeled("Resized", wasResized ? "yes" : "no", theme),
+    ...labeled("Payload", payloadBytes !== undefined ? `${payloadBytes} bytes` : undefined, theme),
   ];
-  if (mime !== undefined) entries.push({ text: `${themeFg(theme, "dim", "Type:")} ${themeFg(theme, "toolOutput", mime)}` });
-  if (originalWidth !== undefined && originalHeight !== undefined) {
-    entries.push({ text: `${themeFg(theme, "dim", "Original:")} ${themeFg(theme, "toolOutput", `${originalWidth}x${originalHeight}`)}` });
-  }
-  if (width !== undefined && height !== undefined) {
-    entries.push({ text: `${themeFg(theme, "dim", "Processed:")} ${themeFg(theme, "toolOutput", `${width}x${height}`)}` });
-  }
-  entries.push({ text: `${themeFg(theme, "dim", "Resized:")} ${themeFg(theme, "toolOutput", wasResized ? "yes" : "no")}` });
-  if (payloadBytes !== undefined) entries.push({ text: `${themeFg(theme, "dim", "Payload:")} ${themeFg(theme, "toolOutput", `${payloadBytes} bytes`)}` });
   for (const entry of fullTextEntries(textContent(result), theme)) entries.push(entry);
   return { header, body: { mode: "rail", entries } };
 }
@@ -644,19 +649,17 @@ function buildNotificationBlock(message: unknown, options: unknown, theme: unkno
   const execEntries: Entry[] = execMatch === null
     ? []
     : [
-        { text: `${themeFg(theme, "dim", "Session:")} ${themeFg(theme, "toolOutput", execMatch[1])}` },
-        { text: `${themeFg(theme, "dim", "Status:")} ${themeFg(theme, "toolOutput", "finished")}` },
+        ...labeled("Session", execMatch[1], theme),
+        ...labeled("Status", "finished", theme),
       ];
   const agentEntries: Entry[] = agent === undefined
     ? []
     : [
-        ["Agent", stringFieldOrUndefined(agent, "agent_id")],
-        ["Run ID", stringFieldOrUndefined(agent, "run_id")],
-        ["Description", stringFieldOrUndefined(agent, "description")],
-        ["Status", status],
-      ].flatMap(([label, value]) => value === undefined || value === ""
-        ? []
-        : [{ text: `${themeFg(theme, "dim", `${label}:`)} ${themeFg(theme, "toolOutput", value)}` }]);
+        ...labeled("Agent", stringFieldOrUndefined(agent, "agent_id"), theme),
+        ...labeled("Run ID", stringFieldOrUndefined(agent, "run_id"), theme),
+        ...labeled("Description", stringFieldOrUndefined(agent, "description"), theme),
+        ...labeled("Status", status, theme),
+      ];
 
   return {
     header: headerSpec(name, subject, dot, theme, trailing),
@@ -680,11 +683,6 @@ function planContinuationDot(status: string | undefined): string {
   return "warning";
 }
 
-function labeledPlanField(label: string, value: string | undefined, theme: unknown): Entry[] {
-  if (value === undefined || value.trim() === "") return [];
-  return [{ text: `${themeFg(theme, "dim", `${label}:`)} ${themeFg(theme, "toolOutput", value)}` }];
-}
-
 export function planContinuationMessageRenderer() {
   return (message: unknown, options: unknown, theme: unknown) => {
     if (!isToolRenderFields(message)) return undefined;
@@ -705,12 +703,12 @@ export function planContinuationMessageRenderer() {
     if (expanded) {
       // ^plan-afra: labeled metadata, unfinished tasks, divider, then exact agent content.
       const entries: Entry[] = [];
-      entries.push(...labeledPlanField("Status", statusLabel === "" ? undefined : statusLabel, theme));
-      entries.push(...labeledPlanField("Progress", progress === "" ? undefined : progress, theme));
+      entries.push(...labeled("Status", statusLabel === "" ? undefined : statusLabel, theme));
+      entries.push(...labeled("Progress", progress === "" ? undefined : progress, theme));
       const automation = recordFieldOrUndefined<ToolRenderFields>(details, "automation");
       const continuation = automation !== undefined ? stringFieldOrUndefined(automation, "continuation") : undefined;
-      entries.push(...labeledPlanField("Automation", continuation, theme));
-      entries.push(...labeledPlanField("Active time", time === "" ? undefined : time, theme));
+      entries.push(...labeled("Automation", continuation, theme));
+      entries.push(...labeled("Active time", time === "" ? undefined : time, theme));
       const tasks = recordArrayFieldOrEmpty<ToolRenderFields>(plan, "tasks");
       const unfinished = tasks.filter((task) => {
         const taskStatus = stringFieldOrUndefined(task, "status");
@@ -756,13 +754,14 @@ function buildCronFireBlock(message: unknown, options: unknown, theme: unknown):
 
   const cronExpr = stringFieldOrUndefined(details, "cron");
   const entries: Entry[] = [
-    ...(id !== "" ? [{ text: `${themeFg(theme, "dim", "Task ID:")} ${themeFg(theme, "toolOutput", id)}` }] : []),
-    ...(cronExpr !== undefined ? [{ text: `${themeFg(theme, "dim", "Cron:")} ${themeFg(theme, "toolOutput", cronExpr)}` }] : []),
-    ...(schedule !== "" ? [{ text: `${themeFg(theme, "dim", "Schedule:")} ${themeFg(theme, "toolOutput", schedule)}` }] : []),
-    ...(coalesced > 1 ? [{ text: `${themeFg(theme, "dim", "Coalesced:")} ${themeFg(theme, "toolOutput", String(coalesced))}` }] : []),
+    ...labeled("Task ID", id === "" ? undefined : id, theme),
+    ...labeled("Cron", cronExpr, theme),
+    ...labeled("Schedule", schedule === "" ? undefined : schedule, theme),
+    ...labeled("Coalesced", coalesced > 1 ? String(coalesced) : undefined, theme),
   ];
   if (prompt !== "") {
     entries.push({ text: "" });
+    // Prompt is a section header (exempt) + full body lines, not a single-line labeled value.
     entries.push({ text: themeFg(theme, "dim", "Prompt:"), exempt: true });
     entries.push(...fullTextEntries(prompt, theme));
   }

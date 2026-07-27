@@ -1,15 +1,15 @@
 import type { Block, Entry } from "./render-layout.ts";
 import {
   boolFieldOrUndefined,
-  formatLocalTime,
   numberFieldOrUndefined,
   recordArrayFieldOrEmpty,
   recordFieldOrUndefined,
   stringFieldOrUndefined,
 } from "./util.ts";
 import {
-  detailsRecord, dotFromDetails, expandedFromOptions, fullTextEntries, headerSpec,
-  oneLine, planTaskRow, quotedQuery, textContent, themeFg, type ToolRenderFields,
+  detailsRecord, dotFromDetails, expandedFromOptions, formatTimestampValue, fullTextEntries, headerSpec,
+  labeled, labeledText, labeledTimestamp, oneLine, planTaskRow, quotedQuery, textContent, themeFg,
+  type ToolRenderFields,
 } from "./tool-renderer-kit.ts";
 
 function domainOf(url: string): string {
@@ -18,45 +18,6 @@ function domainOf(url: string): string {
   } catch {
     return url;
   }
-}
-
-function labeled(label: string, value: string | undefined, theme: unknown): Entry[] {
-  if (value === undefined || value.trim() === "") return [];
-  return [{ text: `${themeFg(theme, "dim", `${label}:`)} ${themeFg(theme, "toolOutput", value)}` }];
-}
-
-/** Format epoch seconds, epoch ms, or parseable ISO/local timestamps as local clock time (^render-xafb). */
-function formatTimestampValue(value: unknown, nowMs = Date.now()): string | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value === "number" && Number.isFinite(value)) {
-    const seconds = value > 1e12 ? value / 1000 : value;
-    return formatLocalTime(seconds, nowMs);
-  }
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  if (trimmed === "") return undefined;
-  if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
-    const numeric = Number(trimmed);
-    if (!Number.isFinite(numeric)) return undefined;
-    const seconds = numeric > 1e12 ? numeric / 1000 : numeric;
-    return formatLocalTime(seconds, nowMs);
-  }
-  const ms = Date.parse(trimmed);
-  if (Number.isNaN(ms)) return undefined;
-  return formatLocalTime(ms / 1000, nowMs);
-}
-
-function labeledTimestamp(label: string, value: unknown, theme: unknown): Entry[] {
-  return labeled(label, formatTimestampValue(value), theme);
-}
-
-function labeledText(label: string, value: string | undefined, theme: unknown): Entry[] {
-  if (value === undefined || value.trim() === "") return [];
-  const lines = value.trimEnd().split(/\r?\n/);
-  return [
-    { text: `${themeFg(theme, "dim", `${label}:`)} ${themeFg(theme, "toolOutput", lines[0])}` },
-    ...lines.slice(1).map((line) => ({ text: themeFg(theme, "toolOutput", line) })),
-  ];
 }
 
 function boolState(value: boolean | undefined, trueText: string, falseText: string): string | undefined {

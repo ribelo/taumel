@@ -1,5 +1,5 @@
 import type { Entry, HeaderSpec } from "./render-layout.ts";
-import { boolFieldOrUndefined, numberFieldOrUndefined, objectValue, stringFieldOrUndefined } from "./util.ts";
+import { boolFieldOrUndefined, formatLocalTime, numberFieldOrUndefined, objectValue, stringFieldOrUndefined } from "./util.ts";
 
 export type ToolRenderFields = { readonly [key: string]: unknown };
 
@@ -70,6 +70,47 @@ function planTaskStatusColor(status: string): string {
     case "pending":
     default: return "dim";
   }
+}
+
+/** Labeled dim/toolOutput row; omit when value is absent or blank. */
+export function labeled(label: string, value: string | undefined, theme: unknown): Entry[] {
+  if (value === undefined || value.trim() === "") return [];
+  return [{ text: `${themeFg(theme, "dim", `${label}:`)} ${themeFg(theme, "toolOutput", value)}` }];
+}
+
+/** Multi-line labeled body: first line after the label, remaining lines as plain toolOutput. */
+export function labeledText(label: string, value: string | undefined, theme: unknown): Entry[] {
+  if (value === undefined || value.trim() === "") return [];
+  const lines = value.trimEnd().split(/\r?\n/);
+  return [
+    { text: `${themeFg(theme, "dim", `${label}:`)} ${themeFg(theme, "toolOutput", lines[0])}` },
+    ...lines.slice(1).map((line) => ({ text: themeFg(theme, "toolOutput", line) })),
+  ];
+}
+
+/** Format epoch seconds, epoch ms, or parseable ISO/local timestamps as local clock time (^render-xafb). */
+export function formatTimestampValue(value: unknown, nowMs = Date.now()): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const seconds = value > 1e12 ? value / 1000 : value;
+    return formatLocalTime(seconds, nowMs);
+  }
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (trimmed === "") return undefined;
+  if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+    const numeric = Number(trimmed);
+    if (!Number.isFinite(numeric)) return undefined;
+    const seconds = numeric > 1e12 ? numeric / 1000 : numeric;
+    return formatLocalTime(seconds, nowMs);
+  }
+  const ms = Date.parse(trimmed);
+  if (Number.isNaN(ms)) return undefined;
+  return formatLocalTime(ms / 1000, nowMs);
+}
+
+export function labeledTimestamp(label: string, value: unknown, theme: unknown): Entry[] {
+  return labeled(label, formatTimestampValue(value), theme);
 }
 
 /** Shared plan task-row grammar: `task-x7aa [in_progress/agent]: Title` + indented Depends on. */
