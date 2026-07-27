@@ -243,7 +243,11 @@ export const AgentsStateV6Schema = Type.Object({
       finder: Type.Integer({ minimum: 0, maximum: 2147483647 }),
       oracle: Type.Integer({ minimum: 0, maximum: 2147483647 }),
       issued_ids: Type.Array(
-        Type.String({ pattern: "^(?:agent|finder|oracle)-[abcdefghjkmnpqrstuvwxyz23456789]{4}$" }),
+        Type.String({
+          // Tiered generic agent-<tier>-<nano4>, legacy agent-<nano4>, and specialist finder-/oracle-<nano4>.
+          pattern:
+            "^(?:agent(?:-(?:low|medium|high))?|finder|oracle)-[abcdefghjkmnpqrstuvwxyz23456789]{4}$",
+        }),
         { uniqueItems: true },
       ),
     },

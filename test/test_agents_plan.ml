@@ -15,12 +15,111 @@ let ceiling =
   Capability_profile.resolve ~approval_policy:Capability_profile.On_request
     Capability_profile.default
 
-let spawn ?(kind = Agents.Generic) ?(effort = Agents.Medium) state =
-  Agents.record_spawn state ~now:1 ~owner_session_id:"parent-1" ~kind ~effort
-    ~model:"anthropic/claude" ~thinking:"medium" ~description:"Investigate agent work"
-    ~active_tools:[ "read"; "bash"; "edit"; "agent_spawn" ]
-    ~permission_ceiling:ceiling
-    ~workspace_binding:(Agent_workspace.shared ~source_root:"/tmp/project") ()
+let spawn ?(kind = Agents.Generic) ?effort state =
+  match effort with
+  | None ->
+      Agents.record_spawn state ~now:1 ~owner_session_id:"parent-1" ~kind
+        ~model:"anthropic/claude" ~thinking:"medium" ~description:"Investigate agent work"
+        ~active_tools:[ "read"; "bash"; "edit"; "agent_spawn" ]
+        ~permission_ceiling:ceiling
+        ~workspace_binding:(Agent_workspace.shared ~source_root:"/tmp/project") ()
+  | Some effort ->
+      Agents.record_spawn state ~now:1 ~owner_session_id:"parent-1" ~kind ~effort
+        ~model:"anthropic/claude" ~thinking:"medium" ~description:"Investigate agent work"
+        ~active_tools:[ "read"; "bash"; "edit"; "agent_spawn" ]
+        ~permission_ceiling:ceiling
+        ~workspace_binding:(Agent_workspace.shared ~source_root:"/tmp/project") ()
+
+let starts_with ~prefix value =
+  let prefix_length = String.length prefix in
+  String.length value >= prefix_length
+  && String.sub value 0 prefix_length = prefix
+
+let assert_handle_shape label ~prefix agent_id =
+  assert_true (label ^ " has prefix " ^ prefix) (starts_with ~prefix agent_id);
+  assert_true (label ^ " is valid") (Agents.valid_agent_id Agents.Generic agent_id
+    || Agents.valid_agent_id Agents.Finder agent_id
+    || Agents.valid_agent_id Agents.Oracle agent_id)
+
+let test_tiered_generic_handles_and_specialist_unchanged () =
+  let mint ?effort ~kind expected_prefix =
+    match spawn ?effort ~kind Agents.empty_session_state with
+    | Error message -> failwith message
+    | Ok (_, identity, run) ->
+        assert_true expected_prefix
+          (starts_with ~prefix:expected_prefix identity.identity_agent_id);
+        assert_true (expected_prefix ^ " validates")
+          (Agents.valid_agent_id kind identity.identity_agent_id);
+        assert_equal (expected_prefix ^ " run id")
+          (identity.identity_agent_id ^ "-run-1") run.run_id;
+        identity
+  in
+  let low = mint ~effort:Agents.Low ~kind:Agents.Generic "agent-low-" in
+  let medium = mint ~effort:Agents.Medium ~kind:Agents.Generic "agent-medium-" in
+  let high = mint ~effort:Agents.High ~kind:Agents.Generic "agent-high-" in
+  let defaulted = mint ~kind:Agents.Generic "agent-medium-" in
+  assert_equal "omitted tier defaults effort" "medium"
+    (Agents.effort_to_string
+       (Option.value defaulted.identity_effort ~default:Agents.Low));
+  let finder = mint ~kind:Agents.Finder "finder-" in
+  let oracle = mint ~kind:Agents.Oracle "oracle-" in
+  assert_true "finder not tiered"
+    (not (starts_with ~prefix:"finder-low" finder.identity_agent_id));
+  assert_true "oracle not tiered"
+    (not (starts_with ~prefix:"oracle-high" oracle.identity_agent_id));
+  assert_true "low validates as generic"
+    (Agents.valid_agent_id Agents.Generic low.identity_agent_id);
+  assert_true "medium validates as generic"
+    (Agents.valid_agent_id Agents.Generic medium.identity_agent_id);
+  assert_true "high validates as generic"
+    (Agents.valid_agent_id Agents.Generic high.identity_agent_id);
+  (* Legacy untiered agent-<nano4> remains valid for persisted identities. *)
+  let legacy_id = "agent-abcd" in
+  assert_true "legacy handle validates"
+    (Agents.valid_agent_id Agents.Generic legacy_id);
+  assert_true "legacy run id derives"
+    (Agents.generate_run_id legacy_id 1 = "agent-abcd-run-1");
+  let legacy_identity =
+    {
+      low with
+      identity_agent_id = legacy_id;
+      identity_effort = Some Agents.Medium;
+      identity_kind = Agents.Generic;
+    }
+  in
+  let legacy_run =
+    Agents.create_run ~now:1 ~agent_id:legacy_id
+      ~run_id:(legacy_id ^ "-run-1") ~description:"legacy"
+  in
+  let legacy_state =
+    {
+      Agents.empty_session_state with
+      identities = [ legacy_identity ];
+      runs = [ legacy_run ];
+      issued_identity_counts =
+        { generic = 1; finder = 0; oracle = 0; issued_ids = [ legacy_id ] };
+    }
+  in
+  (match Agents_codec.decode (Agents_codec.encode legacy_state) with
+  | Error message -> failwith ("legacy identity must load: " ^ message)
+  | Ok decoded ->
+      assert_equal "legacy identity roundtrips" legacy_id
+        (List.hd decoded.identities).identity_agent_id;
+      assert_equal "legacy run roundtrips" (legacy_id ^ "-run-1")
+        (List.hd decoded.runs).run_id);
+  assert_true "bogus tier rejected"
+    (not (Agents.valid_agent_id Agents.Generic "agent-extreme-abcd"));
+  assert_true "too-short nano rejected"
+    (not (Agents.valid_agent_id Agents.Generic "agent-medium-ab"))
+
+let test_spawn_default_medium_handle () =
+  match spawn Agents.empty_session_state with
+  | Error message -> failwith message
+  | Ok (_, identity, run) ->
+      assert_handle_shape "default generic" ~prefix:"agent-medium-"
+        identity.identity_agent_id;
+      assert_equal "default run id"
+        (identity.identity_agent_id ^ "-run-1") run.run_id
 
 let test_spawn_strips_agent_tools_and_returns_running () =
   match spawn Agents.empty_session_state with
@@ -766,6 +865,50 @@ let current_to_v5_parent_snapshot state =
         :: List.remove_assoc "version" v4_fields)
   | _ -> failwith "expected encoded agents state"
 
+(* Pre-issued_ids parent snapshots only ever carried untiered agent-<nano4>
+   handles; reconstruct walks that legacy prefix. Fabricate such a state for
+   v4/v5 bootstrap coverage rather than stripping issued_ids from a tiered
+   current registry. *)
+let legacy_untiered_bootstrap_state () =
+  let owner = "parent-1" in
+  let prefix = Agents.kind_prefix Agents.Generic in
+  let offset =
+    Agents.stable_hash (owner ^ ":" ^ prefix) mod Agents.nano_id_namespace_size
+  in
+  let agent_id = prefix ^ "-" ^ Agents.nano_id offset in
+  let identity =
+    {
+      Agents.identity_agent_id = agent_id;
+      identity_owner_session_id = owner;
+      identity_issued_run_count = 1;
+      identity_kind = Agents.Generic;
+      identity_effort = Some Agents.Medium;
+      identity_model = "anthropic/claude";
+      identity_thinking = "medium";
+      identity_active_tools = [ "read"; "bash"; "edit" ];
+      identity_permission_ceiling = ceiling;
+      identity_network_allowed = false;
+      identity_workspace_binding =
+        Agent_workspace.shared ~source_root:"/tmp/project";
+      identity_child_session_file = None;
+      identity_child_session_id = None;
+      identity_created_at = 1;
+    }
+  in
+  let run =
+    Agents.create_run ~now:1 ~agent_id ~run_id:(agent_id ^ "-run-1")
+      ~description:"legacy bootstrap"
+  in
+  ( {
+      Agents.empty_session_state with
+      identities = [ identity ];
+      runs = [ run ];
+      issued_identity_counts =
+        { generic = 1; finder = 0; oracle = 0; issued_ids = [ agent_id ] };
+    },
+    identity,
+    run )
+
 let test_agent_state_store_memory_and_bootstrap () =
   let memory, backend = Agent_state_store.memory_backend () in
   match spawn Agents.empty_session_state with
@@ -819,17 +962,20 @@ let test_agent_state_store_memory_and_bootstrap () =
        with
       | Agent_state_store.Fail_closed _ -> ()
       | _ -> failwith "marker without sidecar must fail closed");
-      let v4 = current_to_v4_parent_snapshot state in
+      let legacy_state, legacy_identity, _legacy_run =
+        legacy_untiered_bootstrap_state ()
+      in
+      let v4 = current_to_v4_parent_snapshot legacy_state in
       (match
          Agent_state_store.resolve_load ~owner_session_id:"parent-1" ~marker:None
            ~allow_parent_snapshots:true
            ~sidecar_raw:None ~parent_snapshots:[ v4 ]
        with
       | Agent_state_store.Loaded restored ->
-          assert_equal "v4 bootstrap identity" identity.identity_agent_id
+          assert_equal "v4 bootstrap identity" legacy_identity.identity_agent_id
             (List.hd restored.state.identities).identity_agent_id;
           assert_true "v4 bootstrap reconstructs issued_ids"
-            (List.mem identity.identity_agent_id
+            (List.mem legacy_identity.identity_agent_id
                restored.state.issued_identity_counts.issued_ids);
           assert_equal "v4 bootstrap cleanup empty" "0"
             (string_of_int (List.length restored.state.cleanup_pending));
@@ -837,23 +983,23 @@ let test_agent_state_store_memory_and_bootstrap () =
             restored.materialize_current;
           assert_true "v4 bootstrap ensures marker" restored.ensure_marker
       | _ -> failwith "compatible v4 parent snapshot must bootstrap");
-      let v5 = current_to_v5_parent_snapshot state in
+      let v5 = current_to_v5_parent_snapshot legacy_state in
       (match
          Agent_state_store.resolve_load ~owner_session_id:"parent-1" ~marker:None
            ~allow_parent_snapshots:true
            ~sidecar_raw:None ~parent_snapshots:[ v5 ]
        with
       | Agent_state_store.Loaded restored ->
-          assert_equal "v5 bootstrap identity" identity.identity_agent_id
+          assert_equal "v5 bootstrap identity" legacy_identity.identity_agent_id
             (List.hd restored.state.identities).identity_agent_id;
           assert_true "v5 bootstrap reconstructs issued_ids"
-            (List.mem identity.identity_agent_id
+            (List.mem legacy_identity.identity_agent_id
                restored.state.issued_identity_counts.issued_ids)
       | _ -> failwith "compatible v5 parent snapshot must bootstrap");
       (* Closed handles remain in the reconstructed issued set. *)
       (match
-         Agent_registry.record_close state ~owner_session_id:"parent-1"
-           ~agent_id:identity.identity_agent_id
+         Agent_registry.record_close legacy_state ~owner_session_id:"parent-1"
+           ~agent_id:legacy_identity.identity_agent_id
        with
       | Error message -> failwith message
       | Ok (closed, _) ->
@@ -865,7 +1011,7 @@ let test_agent_state_store_memory_and_bootstrap () =
            with
           | Agent_state_store.Loaded restored ->
               assert_true "closed handle remains issued after v4 bootstrap"
-                (List.mem identity.identity_agent_id
+                (List.mem legacy_identity.identity_agent_id
                    restored.state.issued_identity_counts.issued_ids);
               assert_equal "closed identities empty" "0"
                 (string_of_int (List.length restored.state.identities))
@@ -927,6 +1073,8 @@ let test_agent_state_store_memory_and_bootstrap () =
 
 let () =
   test_spawn_strips_agent_tools_and_returns_running ();
+  test_tiered_generic_handles_and_specialist_unchanged ();
+  test_spawn_default_medium_handle ();
   test_unaccepted_spawn_rolls_back_identity_and_run ();
   test_closed_identity_id_is_never_reused ();
   test_agent_zwxp_pending_cleanup_handle_is_never_reused ();

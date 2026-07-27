@@ -420,6 +420,7 @@ let identity_count_for_owner state ~owner_session_id =
 let agent_id_used state agent_id = List.mem agent_id state.issued_identity_counts.issued_ids || find_identity state agent_id <> None || List.exists (fun pending -> pending.cleanup_agent_id = agent_id) state.cleanup_pending
 let run_id_used state run_id = find_run state run_id <> None
 
+(* Kind stem; generic mint uses a tiered prefix. Legacy reconstruction uses this. *)
 let kind_prefix = function
   | Generic -> "agent"
   | Finder -> "finder"
@@ -436,19 +437,38 @@ let with_issued_count counts kind value =
   | Finder -> { counts with finder = value }
   | Oracle -> { counts with oracle = value }
 
-let valid_agent_id kind value =
-  let prefix = kind_prefix kind in
+(* Generic: agent-<tier>-<nano4>; specialists: finder-/oracle-<nano4>. ^agent-id02 *)
+let mint_handle_prefix kind ~effort =
+  match kind with
+  | Generic ->
+      let tier = Option.value effort ~default:Medium in
+      "agent-" ^ effort_to_string tier
+  | Finder -> "finder"
+  | Oracle -> "oracle"
+
+let matches_handle_prefix prefix value =
   let prefix_length = String.length prefix in
   String.length value = prefix_length + 1 + nano_id_length
   && String.sub value 0 prefix_length = prefix
   && value.[prefix_length] = '-'
   && valid_nano_id (String.sub value (prefix_length + 1) nano_id_length)
 
-let generate_agent_id state kind ~owner_session_id =
+(* Tiered + legacy agent-<nano4> for Generic. ^agent-id02 / ^agent-zpfx *)
+let valid_agent_id kind value =
+  match kind with
+  | Finder | Oracle -> matches_handle_prefix (kind_prefix kind) value
+  | Generic ->
+      matches_handle_prefix "agent-low" value
+      || matches_handle_prefix "agent-medium" value
+      || matches_handle_prefix "agent-high" value
+      || matches_handle_prefix "agent" value
+
+let generate_agent_id state kind ~owner_session_id ~effort =
   let count = issued_count state.issued_identity_counts kind in
-  let prefix = kind_prefix kind in
+  let prefix = mint_handle_prefix kind ~effort in
   let offset = stable_hash (owner_session_id ^ ":" ^ prefix) mod nano_id_namespace_size in
   let step = 65537 in
+  (* Per-prefix walk from 0; kind counter tracks volume only, not walk start. *)
   let rec loop cursor =
     if cursor >= nano_id_namespace_size then
       Error (prefix ^ " handle namespace is exhausted")
@@ -456,9 +476,9 @@ let generate_agent_id state kind ~owner_session_id =
       let index = (offset + (cursor * step)) mod nano_id_namespace_size in
       let candidate = prefix ^ "-" ^ nano_id index in
       if agent_id_used state candidate then loop (cursor + 1)
-      else Ok (candidate, cursor + 1)
+      else Ok (candidate, count + 1)
   in
-  loop count
+  loop 0
 
 let generate_run_id agent_id count = agent_id ^ "-run-" ^ string_of_int count
 
@@ -536,7 +556,7 @@ let record_spawn state ~now ~owner_session_id ~kind ?effort ~model ~thinking
       | Generic -> Some (Option.value effort ~default:Medium)
       | Finder | Oracle -> None
     in
-    match generate_agent_id state kind ~owner_session_id with
+    match generate_agent_id state kind ~owner_session_id ~effort with
     | Error _ as error -> error
     | Ok (agent_id, next_issued_count) ->
     let run_id = generate_run_id agent_id 1 in

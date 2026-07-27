@@ -135,7 +135,7 @@ assert.deepEqual(JSON.parse(start.text), {
 });
 
 const { agentId: agentId, runId, submissionId } = start;
-assert.match(agentId, /^agent-[abcdefghjkmnpqrstuvwxyz23456789]{4}$/);
+assert.match(agentId, /^agent-high-[abcdefghjkmnpqrstuvwxyz23456789]{4}$/);
 assert.equal(runId, `${agentId}-run-1`);
 assert.equal(start.details.agentId, agentId);
 assert.equal(start.details.runId, runId);
@@ -546,7 +546,7 @@ const replacementCapabilityFacts = {
 };
 assert.equal(core.call("claimAgentAction", [replacementCapabilityFacts]).ok, true);
 assert.equal(core.call("releaseAgentAction", [replacementCapabilityFacts]).ok, true);
-assert.match(replacement.agentId, /^agent-[abcdefghjkmnpqrstuvwxyz23456789]{4}$/);
+assert.match(replacement.agentId, /^agent-low-[abcdefghjkmnpqrstuvwxyz23456789]{4}$/);
 assert.notEqual(replacement.agentId, agentId, "closed agent handles must remain retired");
 assert.equal(core.call("finishAgentClose", [{ agent_id: replacement.agentId }, { ctx }]).ok, true);
 
@@ -678,8 +678,9 @@ assert.equal(afterShutdownList.details.agents[0].agent_id, shutdownAgent.agentId
   "owner identity survives shutdown with a child projection loaded");
 
 // agent-7jhj: bootstrap from latest same-owner v4 parent snapshot when no
-// sidecar/marker exists. Keep the original owner so deterministic issued-handle
-// reconstruction matches the retained identity.
+// sidecar/marker exists. v4 reconstruction walks the pre-tier agent-<nano4>
+// sequence, so the fixture must be a true legacy-shaped identity (not a stripped
+// current tiered registry).
 const bootstrapOwner = "bootstrap-owner";
 const bootstrapHash = createHash("sha256").update(bootstrapOwner).digest("hex");
 const bootstrapRegistry = join(agentHome, "taumel", "agents", "owners", bootstrapHash, "registry.json");
@@ -696,6 +697,30 @@ const bootstrapCtx = {
     },
   },
 };
+// Discover the first reconstructed legacy handle for this owner by bootstrapping
+// a count-only v4 snapshot, then seed a retained identity under that handle.
+bootstrapEntries.push({
+  type: "custom",
+  customType: "taumel.agents.v4",
+  data: {
+    version: 4,
+    issued_identity_counts: { agent: 1, finder: 0, oracle: 0 },
+    identities: [],
+    runs: [],
+  },
+});
+core.call("agentManagerSnapshot", [{ ctx }]);
+assert.equal(
+  core.call("prepareTool", [{ name: "agent_list", params: {}, ctx: bootstrapCtx }]).details.agents.length,
+  0,
+  "count-only bootstrap has no identities",
+);
+assert.ok(existsSync(bootstrapRegistry), "count-only bootstrap materializes registry");
+const legacyHandle =
+  JSON.parse(readFileSync(bootstrapRegistry, "utf8")).registry.issued_identity_counts.issued_ids[0];
+assert.match(legacyHandle, /^agent-[abcdefghjkmnpqrstuvwxyz23456789]{4}$/);
+// Borrow a valid identity/run skeleton from a live spawn, then rewrite to the
+// reconstructed legacy handle for a second bootstrap pass.
 const seed = core.call("prepareTool", [{
   name: "agent_spawn",
   params: { message: "seed", description: "Seed bootstrap registry", tier: "low" },
@@ -709,28 +734,40 @@ const seedCapability = {
 };
 assert.equal(core.call("claimAgentAction", [seedCapability]).ok, true);
 assert.equal(core.call("releaseAgentAction", [seedCapability]).ok, true);
-const currentEnvelope = JSON.parse(readFileSync(bootstrapRegistry, "utf8"));
-const currentRegistry = currentEnvelope.registry;
-const { issued_ids: _issuedIds, ...issuedCounts } = currentRegistry.issued_identity_counts;
+const currentRegistry = JSON.parse(readFileSync(bootstrapRegistry, "utf8")).registry;
+const skeletonIdentity = currentRegistry.identities[0];
+const skeletonRun = currentRegistry.runs[0];
 const v4Snapshot = {
   version: 4,
-  issued_identity_counts: issuedCounts,
-  identities: currentRegistry.identities,
-  runs: currentRegistry.runs,
+  issued_identity_counts: { agent: 1, finder: 0, oracle: 0 },
+  identities: [{
+    ...skeletonIdentity,
+    agent_id: legacyHandle,
+    owner_session_id: bootstrapOwner,
+    effort: "medium",
+    kind: "generic",
+  }],
+  runs: [{
+    ...skeletonRun,
+    agent_id: legacyHandle,
+    run_id: `${legacyHandle}-run-1`,
+    submission_id: `${legacyHandle}-run-1-submission-1`,
+  }],
 };
-// Drop durable current registry and presence marker; leave only the v4 snapshot.
 rmSync(bootstrapRegistry, { force: true });
 for (let index = bootstrapEntries.length - 1; index >= 0; index -= 1) {
-  if (bootstrapEntries[index].customType === "taumel.agents.presence") {
+  if (
+    bootstrapEntries[index].customType === "taumel.agents.presence"
+    || bootstrapEntries[index].customType === "taumel.agents.v4"
+  ) {
     bootstrapEntries.splice(index, 1);
   }
 }
 bootstrapEntries.push({ type: "custom", customType: "taumel.agents.v4", data: v4Snapshot });
-// Force a different main-owner projection before reloading bootstrapOwner.
 core.call("agentManagerSnapshot", [{ ctx }]);
 const bootstrapped = core.call("prepareTool", [{ name: "agent_list", params: {}, ctx: bootstrapCtx }]);
 assert.equal(bootstrapped.details.agents.length, 1, "agent-7jhj: latest same-owner v4 snapshot bootstraps");
-assert.equal(bootstrapped.details.agents[0].agent_id, seed.agentId);
+assert.equal(bootstrapped.details.agents[0].agent_id, legacyHandle);
 assert.ok(existsSync(bootstrapRegistry), "bootstrap materializes the current registry sidecar");
 assert.ok(
   bootstrapEntries.some((entry) => entry.customType === "taumel.agents.presence"),
