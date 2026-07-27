@@ -223,3 +223,26 @@ let option_int_to_json = function
 let option_string_to_json = function
   | None -> Null
   | Some value -> String value
+
+(* Short random handles shared by agent identities (^agent-id02) and plan
+   tasks (^plan-tk03). Alphabet omits ambiguous characters (i/l/o/0/1). *)
+let nano_id_alphabet = "abcdefghjkmnpqrstuvwxyz23456789"
+let nano_id_length = 4
+let nano_id_radix = String.length nano_id_alphabet
+let nano_id_namespace_size =
+  nano_id_radix * nano_id_radix * nano_id_radix * nano_id_radix
+
+let nano_id index =
+  let value = ref index in
+  let result = Bytes.make nano_id_length nano_id_alphabet.[0] in
+  for position = nano_id_length - 1 downto 0 do
+    Bytes.set result position nano_id_alphabet.[!value mod nano_id_radix];
+    value := !value / nano_id_radix
+  done;
+  Bytes.to_string result
+
+let valid_nano_id value =
+  String.length value = nano_id_length
+  && String.for_all
+       (fun character -> String.contains nano_id_alphabet character)
+       value

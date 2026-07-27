@@ -5,10 +5,12 @@ module String_set = Shared.String_set
 let schema_version = 6
 let max_identities_per_owner = 64
 let max_error_chars = 4096
-let nano_id_alphabet = "abcdefghjkmnpqrstuvwxyz23456789"
-let nano_id_length = 4
-let nano_id_radix = String.length nano_id_alphabet
-let nano_id_namespace_size = nano_id_radix * nano_id_radix * nano_id_radix * nano_id_radix
+let nano_id_alphabet = Shared.nano_id_alphabet
+let nano_id_length = Shared.nano_id_length
+let nano_id_radix = Shared.nano_id_radix
+let nano_id_namespace_size = Shared.nano_id_namespace_size
+let nano_id = Shared.nano_id
+let valid_nano_id = Shared.valid_nano_id
 
 type agent_kind = Generic | Finder | Oracle
 
@@ -433,19 +435,6 @@ let with_issued_count counts kind value =
   | Generic -> { counts with generic = value }
   | Finder -> { counts with finder = value }
   | Oracle -> { counts with oracle = value }
-
-let nano_id index =
-  let value = ref index in
-  let result = Bytes.make nano_id_length nano_id_alphabet.[0] in
-  for position = nano_id_length - 1 downto 0 do
-    Bytes.set result position nano_id_alphabet.[!value mod nano_id_radix];
-    value := !value / nano_id_radix
-  done;
-  Bytes.to_string result
-
-let valid_nano_id value =
-  String.length value = nano_id_length
-  && String.for_all (fun character -> String.contains nano_id_alphabet character) value
 
 let valid_agent_id kind value =
   let prefix = kind_prefix kind in

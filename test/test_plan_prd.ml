@@ -42,6 +42,9 @@ let test_birth_and_identity () =
   assert_bool "title trimmed" (task.title = "first task");
   assert_bool "generated id prefixed"
     (String.starts_with ~prefix:"task-" task.task_id);
+  (* ^plan-tk03: task-<nano-id> with exactly four alphabet chars. *)
+  let nano = String.sub task.task_id 5 (String.length task.task_id - 5) in
+  assert_bool "generated id nano shape" (Shared.valid_nano_id nano);
   assert_bool "agent origin" (task.origin = Plan.Agent);
   let active = active_plan () in
   assert_bool "user births active" (active.status = Plan.Active);

@@ -133,7 +133,6 @@ let next_plan_id session_id now =
 module String_set = Set.Make (String)
 
 let issued_task_ids : (string, String_set.t) Hashtbl.t = Hashtbl.create 17
-let task_id_sequence = ref 0
 let task_id_rng = Random.State.make_self_init ()
 
 let issued_ids session_id =
@@ -146,16 +145,18 @@ let remember_task_ids session_id ids =
   in
   Hashtbl.replace issued_task_ids session_id updated
 
-let next_task_id session_id now reserved =
-  let rec generate () =
-    incr task_id_sequence;
-    let id =
-      Printf.sprintf "task-%s:%d:%d:%08x%08x" session_id now !task_id_sequence
-        (Random.State.bits task_id_rng) (Random.State.bits task_id_rng)
-    in
-    if String_set.mem id reserved then generate () else id
+(* ^plan-tk03: task-<nano-id>, collision retry, never lengthen on exhaustion. *)
+let next_task_id reserved =
+  let rec attempt remaining =
+    if remaining <= 0 then Error "task handle namespace is exhausted"
+    else
+      let index =
+        Random.State.full_int task_id_rng Shared.nano_id_namespace_size
+      in
+      let id = "task-" ^ Shared.nano_id index in
+      if String_set.mem id reserved then attempt (remaining - 1) else Ok id
   in
-  generate ()
+  attempt Shared.nano_id_namespace_size
 
 let create_record ?time_limit_seconds ~session_id ~now ~status tasks =
   {
@@ -174,13 +175,19 @@ let ensure_owner session_id (plan : t) =
   if plan.session_id = session_id then Ok ()
   else Error "cannot access a plan owned by a different session"
 
-let make_tasks ~session_id ~now ~origin ~(existing : task list)
+let make_tasks ~session_id ~now:_ ~origin ~(existing : task list)
     (creations : task_creation list) =
   if creations = [] then Error "create_task requires at least one task"
   else
     let existing_ids = List.map (fun task -> task.task_id) existing in
-    let previously_issued = issued_ids session_id in
-    let reserved = ref previously_issued in
+    (* Uniqueness spans the plan's lifetime: issued set may be empty after a
+       process restart, so also reserve every id already on the plan. *)
+    let reserved =
+      ref
+        (List.fold_left
+           (fun set id -> String_set.add id set)
+           (issued_ids session_id) existing_ids)
+    in
     let available_dependencies = ref (String_set.of_list existing_ids) in
     let rec loop acc = function
       | [] ->
@@ -196,7 +203,7 @@ let make_tasks ~session_id ~now ~origin ~(existing : task list)
             | Some id when String_set.mem id !reserved ->
                 Error ("plan task id has already been used in this session: " ^ id)
             | Some id -> Ok id
-            | None -> Ok (next_task_id session_id now !reserved)
+            | None -> next_task_id !reserved
           in
           let* () =
             match
