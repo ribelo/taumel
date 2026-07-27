@@ -60,6 +60,8 @@ unusable.
 - `includeTools = false` shall suppress only tool calls, tool results, and Taumel notifications. It shall not suppress visible user/assistant messages or branch, compaction, and goal summaries. ^threads-se21
 - The `query_threads` `limit` shall default to 10 and cap at 50. Each returned thread shall include at most 3 top hits by default. ^threads-se08
 - The v1 thread tools shall not expose configurable snippet or transcript byte/line budgets. The only query/read knobs shall be `limit`, `around`, `scope`, `includeTools`, `mode`, and `cursor`. ^threads-se24
+- When `query_threads` runs with `scope = current_workspace`, the system shall not materialize persisted sources from unrelated workspace session roots. ^threads-4dl6
+- If discovered thread sources exceed the fixed 32 MiB per-source, 64 MiB materialized-catalog, or 512 MiB streaming-scan safety bounds, then the thread tools shall continue with bounded partial results and bounded diagnostics rather than exhaust the Pi host heap. ^threads-wd7z
 - The thread tools shall use persisted thread sources as their data source. They shall not merge live in-memory session branch/entry state into `query_threads` or `read_thread`; a current thread is searchable only through its persisted JSONL/session representation. ^threads-se10
 - The thread tools shall discover sources only from configured/current workspace Pi/Taumel session roots and the user's Pi session roots. They shall not accept arbitrary filesystem paths or directories as query inputs. ^threads-se11
 - When `query_threads` runs with `scope = current_workspace`, the system shall include a persisted thread if its recorded `cwd`/workspace matches the current workspace, or if the source path is under the current workspace's configured session root when recorded workspace metadata is absent or incomplete. ^threads-se12
@@ -110,3 +112,4 @@ unusable.
 - Tests shall cover `read_thread` `overview`, `window`, and `full` modes, including budgets and no raw JSON output. ^threads-vf04
 - Tests shall verify a locator returned by `query_threads` can be passed directly to `read_thread`. ^threads-vf05
 - Tests shall verify invalid JSONL entries become bounded diagnostics and do not fail the whole query. ^threads-vf06
+- Tests shall verify query and exact-read source selection under a 96 MiB JavaScript heap with a persisted source set larger than that heap. ^threads-m323
