@@ -134,10 +134,18 @@ function subjectFromArgs(name: string, args: ToolRenderFields): string {
       return oneLine(stringFieldOrUndefined(args, "input") ?? stringFieldOrUndefined(args, "patch") ?? "patch");
     case "create_task": {
       const tasks = recordArrayFieldOrEmpty<ToolRenderFields>(args, "tasks");
-      return oneLine(tasks.map((task) => stringFieldOrUndefined(task, "title") ?? "").filter(Boolean).join(", "));
+      return oneLine(tasks.map((task) => {
+        const title = stringFieldOrUndefined(task, "title") ?? "";
+        const id = stringFieldOrUndefined(task, "id");
+        if (title === "") return id ?? "";
+        return id === undefined ? title : `${id} · ${title}`;
+      }).filter(Boolean).join(", "));
     }
-    case "update_task":
-      return stringFieldOrUndefined(args, "taskId") ?? "";
+    case "update_task": {
+      const taskId = stringFieldOrUndefined(args, "taskId") ?? "";
+      const title = stringFieldOrUndefined(args, "title");
+      return title === undefined || title === "" ? taskId : `${taskId} · ${title}`;
+    }
     case "update_plan":
       return stringFieldOrUndefined(args, "status") ?? "";
     case "query_threads":

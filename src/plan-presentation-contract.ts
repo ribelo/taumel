@@ -39,6 +39,8 @@ export const PlanPresentationDetailsSchema = Type.Object(
       },
       { additionalProperties: false },
     ),
+    // Identities of tasks created by this call (^render-go01 create_task affected set).
+    createdTaskIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
   },
   { $id: "PlanPresentationDetails", additionalProperties: false },
 );

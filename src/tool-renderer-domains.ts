@@ -45,10 +45,40 @@ function resultDescription(item: ToolRenderFields): string | undefined {
   return Array.isArray(highlights) ? highlights.find((part): part is string => typeof part === "string") : undefined;
 }
 
+function planTaskStatusColor(status: string): string {
+  switch (status) {
+    case "completed": return "success";
+    case "in_progress": return "warning";
+    case "cancelled": return "error";
+    case "pending":
+    default: return "dim";
+  }
+}
+
+function planTaskRow(task: ToolRenderFields, theme: unknown): Entry[] {
+  const id = stringFieldOrUndefined(task, "taskId") ?? "task";
+  const title = stringFieldOrUndefined(task, "title") ?? "";
+  const taskStatus = stringFieldOrUndefined(task, "status") ?? "unknown";
+  const origin = stringFieldOrUndefined(task, "origin") ?? "unknown";
+  // ^render-rffp: status as colored text only — no status-dot glyph in task rows.
+  // Mock shape: `task-jw2q [active/agent]: Grill the layout` with indented Depends on.
+  const statusText = themeFg(theme, planTaskStatusColor(taskStatus), taskStatus);
+  const entries: Entry[] = [{
+    text: `${themeFg(theme, "dim", id)} ${themeFg(theme, "dim", "[")}${statusText}${themeFg(theme, "dim", `/${origin}]:`)} ${themeFg(theme, "toolOutput", title)}`,
+  }];
+  const dependencies = task["depends_on"];
+  if (Array.isArray(dependencies) && dependencies.length > 0) {
+    const deps = dependencies.filter((value): value is string => typeof value === "string").join(", ");
+    if (deps !== "") entries.push({ text: `  ${themeFg(theme, "dim", "Depends on:")} ${themeFg(theme, "toolOutput", deps)}` });
+  }
+  return entries;
+}
+
 function buildPlan(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block {
   const expanded = expandedFromOptions(options);
   const details = detailsRecord(result);
   const plan = recordFieldOrUndefined<ToolRenderFields>(details, "plan");
+  const planTasks = plan !== undefined ? recordArrayFieldOrEmpty<ToolRenderFields>(plan, "tasks") : [];
   const status = plan !== undefined
     ? stringFieldOrUndefined(plan, "statusLabel") ?? stringFieldOrUndefined(plan, "status")
     : undefined;
@@ -57,8 +87,29 @@ function buildPlan(name: string, result: unknown, options: unknown, theme: unkno
   const completed = plan !== undefined ? numberFieldOrUndefined(plan, "completedTasks") : undefined;
   const total = plan !== undefined ? numberFieldOrUndefined(plan, "totalTasks") : undefined;
   const progress = completed === undefined || total === undefined ? undefined : `${completed}/${total} tasks`;
-  const createdTitles = argTasks.map((task) => stringFieldOrUndefined(task, "title") ?? "").filter(Boolean).join(", ");
-  const subject = oneLine(taskId ?? (createdTitles === "" ? undefined : createdTitles) ?? progress ?? stringFieldOrUndefined(args, "status") ?? name);
+  const createdTaskIds = Array.isArray(details["createdTaskIds"])
+    ? details["createdTaskIds"].filter((value): value is string => typeof value === "string" && value !== "")
+    : [];
+  const createdTaskIdSet = new Set(createdTaskIds);
+  // Compact subject: create_task keeps titles with short ids when available; update_task is id · title.
+  let subject: string;
+  if (name === "update_task" && taskId !== undefined) {
+    const touched = planTasks.find((task) => stringFieldOrUndefined(task, "taskId") === taskId);
+    const title = (touched !== undefined ? stringFieldOrUndefined(touched, "title") : undefined)
+      ?? stringFieldOrUndefined(args, "title");
+    subject = oneLine(title === undefined || title === "" ? taskId : `${taskId} · ${title}`);
+  } else if (name === "create_task") {
+    const createdParts = argTasks.map((task, index) => {
+      const title = stringFieldOrUndefined(task, "title") ?? "";
+      const explicitId = stringFieldOrUndefined(task, "id");
+      const id = explicitId ?? createdTaskIds[index];
+      if (title === "") return id ?? "";
+      return id === undefined ? title : `${id} · ${title}`;
+    }).filter(Boolean);
+    subject = oneLine(createdParts.join(", ") || progress || name);
+  } else {
+    subject = oneLine(progress ?? stringFieldOrUndefined(args, "status") ?? name);
+  }
   const header = headerSpec(name, subject, dotFromDetails(details), theme, status !== undefined ? themeFg(theme, "dim", `(${status})`) : "");
   if (!expanded) return { header, body: undefined };
   const entries: Entry[] = [];
@@ -75,21 +126,22 @@ function buildPlan(name: string, result: unknown, options: unknown, theme: unkno
   if (timeUsage !== undefined) entries.push(...labeled("Active time", timeUsage, theme));
   else if (seconds !== undefined) entries.push(...labeled("Active time", `${seconds}s`, theme));
   if (timeLimit !== undefined) entries.push(...labeled("Time limit", `${timeLimit}s`, theme));
-  if (plan !== undefined) {
-    for (const task of recordArrayFieldOrEmpty<ToolRenderFields>(plan, "tasks")) {
-      const id = stringFieldOrUndefined(task, "taskId") ?? "task";
-      const title = stringFieldOrUndefined(task, "title") ?? "";
-      const taskStatus = stringFieldOrUndefined(task, "status") ?? "unknown";
-      const origin = stringFieldOrUndefined(task, "origin") ?? "unknown";
-      entries.push({ text: `${themeFg(theme, "dim", `${id} [${taskStatus}/${origin}]:`)} ${themeFg(theme, "toolOutput", title)}` });
-      const dependencies = task["depends_on"];
-      if (Array.isArray(dependencies) && dependencies.length > 0) {
-        entries.push(...labeled("Depends on", dependencies.filter((value): value is string => typeof value === "string").join(", "), theme));
+  // ^render-go01 affected tasks only; ^render-78m0 no plan/session ids.
+  const affectedTasks = (() => {
+    if (name === "get_plan" || name === "update_plan") return planTasks;
+    if (name === "create_task") {
+      if (createdTaskIdSet.size > 0) {
+        return planTasks.filter((task) => createdTaskIdSet.has(stringFieldOrUndefined(task, "taskId") ?? ""));
       }
+      // Fallback when envelope lacks createdTaskIds: last N titles from args.
+      return planTasks.slice(Math.max(0, planTasks.length - argTasks.length));
     }
-    entries.push(...labeled("Plan ID", stringFieldOrUndefined(plan, "planId"), theme));
-    entries.push(...labeled("Session ID", stringFieldOrUndefined(plan, "sessionId"), theme));
-  }
+    if (name === "update_task" && taskId !== undefined) {
+      return planTasks.filter((task) => stringFieldOrUndefined(task, "taskId") === taskId);
+    }
+    return planTasks;
+  })();
+  for (const task of affectedTasks) entries.push(...planTaskRow(task, theme));
   entries.push(...fullTextEntries(textContent(result), theme));
   return { header, body: entries.length === 0 ? undefined : { mode: "rail", entries } };
 }

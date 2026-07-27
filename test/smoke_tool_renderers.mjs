@@ -57,7 +57,7 @@ function argsFor(name) {
     case "create_task":
       return { tasks: [{ title: "ship renderer coverage" }] };
     case "update_task":
-      return { taskId: "task-1", status: "completed" };
+      return { taskId: "task-jw2q", status: "completed" };
     case "update_plan":
       return { status: "complete" };
     case "query_threads":
@@ -121,7 +121,28 @@ function resultFor(name) {
     return { content: [{ type: "text", text: "Image loaded." }], details: { ok: true, path: "/tmp/pi-clipboard-6e6a501780841a8c.png", mimeType: "image/png", originalWidth: 4096, originalHeight: 1536, width: 2048, height: 768, wasResized: true, payloadBytes: 12345 } };
   }
   if (name === "get_plan" || name === "create_task" || name === "update_task" || name === "update_plan") {
-    return { content: [{ type: "text", text: "Plan updated." }], details: { ok: true, plan: { status: "active", completedTasks: 0, totalTasks: 1, tasks: [{ taskId: "task-1", title: "ship renderer coverage", status: "pending", origin: "agent", depends_on: [] }], tokensUsed: 10, timeUsedSeconds: 2 } } };
+    const tasks = [
+      { taskId: "task-x7aa", title: "foundation", status: "completed", origin: "user", depends_on: [] },
+      { taskId: "task-jw2q", title: "ship renderer coverage", status: name === "update_task" ? "completed" : "pending", origin: "agent", depends_on: ["task-x7aa"] },
+    ];
+    return {
+      content: [{ type: "text", text: "Plan updated." }],
+      details: {
+        ok: true,
+        ...(name === "create_task" ? { createdTaskIds: ["task-jw2q"] } : {}),
+        plan: {
+          status: "active",
+          statusLabel: "active",
+          completedTasks: 1,
+          totalTasks: 2,
+          tasks,
+          tokensUsed: 10,
+          timeUsedSeconds: 2,
+          planId: "plan-hidden",
+          sessionId: "session-hidden",
+        },
+      },
+    };
   }
   if (name === "query_threads") {
     return { content: [{ type: "text", text: "threads" }], details: { ok: true, threads: threadSummaries } };
@@ -621,10 +642,20 @@ assert(/• query_threads · "renderer" \(12 threads, 12 hits\)/.test(queryCompa
 assert(!queryCompact.includes("\n") && !queryCompact.includes("Thread 1"), `query_threads compact should be one line with no item rows: ${queryCompact}`);
 assert(queryExpanded.includes("Thread 4") && queryExpanded.includes("message/assistant: renderer hit 1"), `query_threads expanded should include more threads and hit snippets: ${queryExpanded}`);
 
-// Single-entity — header + dim facts line.
+// Plan tools — compact subjects + affected-task expanded body (^render-go01 ^render-78m0 ^render-rffp).
 const planCompact = renderText(renderersForTool("create_task").renderResult(resultFor("create_task"), { expanded: false, isPartial: false }, theme, { args: argsFor("create_task") }));
-assert(/• create_task · ship renderer coverage/.test(planCompact), `create_task subject should be the task title: ${planCompact}`);
+assert(/• create_task · task-jw2q · ship renderer coverage/.test(planCompact), `create_task subject should include short id and title: ${planCompact}`);
 assert(!planCompact.includes("\n"), `create_task compact should be a single line: ${planCompact}`);
+const updateTaskCompact = renderText(renderersForTool("update_task").renderResult(resultFor("update_task"), { expanded: false, isPartial: false }, theme, { args: argsFor("update_task") }));
+assert(/• update_task · task-jw2q · ship renderer coverage/.test(updateTaskCompact), `update_task subject should be taskId · title: ${updateTaskCompact}`);
+const createTaskExpanded = renderText(renderersForTool("create_task").renderResult(resultFor("create_task"), { expanded: true, isPartial: false }, theme, { args: argsFor("create_task") }));
+assert(createTaskExpanded.includes("task-jw2q [pending/agent]: ship renderer coverage"), `create_task expanded should show the created task row: ${createTaskExpanded}`);
+assert(createTaskExpanded.includes("Depends on: task-x7aa"), `create_task expanded should indent Depends on: ${createTaskExpanded}`);
+assert(!createTaskExpanded.includes("task-x7aa [completed"), `create_task expanded should not list unaffected tasks: ${createTaskExpanded}`);
+assert(!createTaskExpanded.includes("Plan ID") && !createTaskExpanded.includes("Session ID") && !createTaskExpanded.includes("plan-hidden") && !createTaskExpanded.includes("session-hidden"), `plan expanded must omit plan/session ids (^render-78m0): ${createTaskExpanded}`);
+assert(!/•\s*task-jw2q|• pending/.test(createTaskExpanded.split("\n").find((line) => line.includes("task-jw2q")) ?? ""), `task rows must not use a status-dot glyph (^render-rffp): ${createTaskExpanded}`);
+const getPlanExpanded = renderText(renderersForTool("get_plan").renderResult(resultFor("get_plan"), { expanded: true, isPartial: false }, theme, { args: {} }));
+assert(getPlanExpanded.includes("task-x7aa [completed/user]: foundation") && getPlanExpanded.includes("task-jw2q [pending/agent]: ship renderer coverage"), `get_plan expanded should list every plan task: ${getPlanExpanded}`);
 const pendingPlanCompact = renderText(renderersForTool("update_plan").renderResult({
   content: [{ type: "text", text: "Plan updated." }],
   details: {
@@ -634,7 +665,7 @@ const pendingPlanCompact = renderText(renderersForTool("update_plan").renderResu
       status: "complete",
       completedTasks: 1,
       totalTasks: 1,
-      tasks: [{ taskId: "task-1", title: "ship renderer coverage", status: "completed", origin: "agent", depends_on: [] }],
+      tasks: [{ taskId: "task-jw2q", title: "ship renderer coverage", status: "completed", origin: "agent", depends_on: [] }],
       tokensUsed: 0,
       timeUsedSeconds: 0,
     },

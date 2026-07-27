@@ -46,12 +46,19 @@ let js_automation automation =
       ("requiresUserInput", js_bool (Taumel.Plan.automation_requires_user_input automation));
     |]
 
-let details plan automation =
+let details ?created_task_ids plan automation =
   let plan_value =
     match plan with None -> Unsafe.inject Js.null | Some plan -> inject (js_plan plan)
   in
-  Unsafe.obj
+  let fields =
     [| ("plan", plan_value); ("automation", inject (js_automation automation)) |]
+  in
+  match created_task_ids with
+  | None | Some [] -> Unsafe.obj fields
+  | Some ids ->
+      Unsafe.obj
+        (Array.append fields
+           [| ("createdTaskIds", js_array (List.map js_string ids)) |])
 
 let model_state_text plan automation =
   let status, tokens_used, time_used_seconds, time_limit_seconds, tasks =
@@ -93,9 +100,12 @@ let model_state_text plan automation =
              ] );
        ])
 
-let tool_result plan text =
+let tool_result ?created_task_ids plan text =
   Boundary_contracts.BridgeToolResult.create ~text
-    ~details:(Ts2ocaml.unknown_of_js (ojs_of_js (details plan !plan_automation))) ()
+    ~details:
+      (Ts2ocaml.unknown_of_js
+         (ojs_of_js (details ?created_task_ids plan !plan_automation)))
+    ()
   |> Tool_contracts.BridgeToolResult.t_to_js |> inject
 
 let command_result ?(followup = false) ?(inspection = false) ?submit_user_message
@@ -209,13 +219,23 @@ let prepare_create_task params ctx =
   with_gateway_authorized "create_task" (fun _ ->
       let params = decode_ojs_contract Tool_contracts.CreateTaskParams.t_of_js (ojs_of_js params) in
       let tasks = List.map task_creation (Tool_contracts.CreateTaskParams.get_tasks params) in
+      let previous_count =
+        match !current_plan with
+        | None -> 0
+        | Some plan -> List.length plan.tasks
+      in
       match Taumel.Plan.create_tasks ~session_id:(session_id ctx) ~now:(now_seconds ()) tasks !current_plan with
       | Error message -> error_obj message
       | Ok plan ->
           current_plan := Some plan;
           pending_plan_terminal_status := None;
           Session_sync.save_plan_state ctx;
-          tool_result (Some plan)
+          let created_task_ids =
+            List.map
+              (fun (task : Taumel.Plan.task) -> task.task_id)
+              (List.drop previous_count plan.tasks)
+          in
+          tool_result ~created_task_ids (Some plan)
             (model_state_text (Some plan) !plan_automation))
 
 let task_status = function
