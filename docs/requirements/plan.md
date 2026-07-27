@@ -75,7 +75,7 @@ against cannot be renegotiated by the agent.
 
 - The system shall store plan tasks as an ordered list within the plan record; each task shall carry `taskId`, `title`, optional `description`, `status`, `depends_on`, and `origin`, and list order shall be preserved through persistence. ^plan-tk01
 - The system shall provide the task statuses `pending`, `in_progress`, `completed`, and `cancelled`. ^plan-tk02
-- Every task shall receive a `taskId` unique within the owning plan's lifetime that is never reused while that plan exists, including after cancellation; the model may supply an explicit `taskId` at creation, and the system shall generate one beginning with `task-` when none is supplied. ^plan-tk03
+- Every task shall receive a `taskId` unique within the owning plan's lifetime that is never reused while that plan exists, including after cancellation; the model may supply an explicit `taskId` at creation, and the system shall generate one shaped `task-<nano-id>`, where nano-id is exactly four characters from `abcdefghjkmnpqrstuvwxyz23456789`, retrying collisions and failing creation clearly on namespace exhaustion rather than lengthening the identity, when none is supplied. ^plan-tk03
 - A plan shall contain at least one task; every constructor shall reject, and persisted decoding shall reject, a plan with no tasks. ^plan-tk04
 - Tasks shall belong to the owning session only; the system shall not expose a session's tasks to spawned child sessions, and a forked session shall receive its own independent copy of the task list under the fork's plan identity. ^plan-tk05
 - Task creation and editing shall be model-autonomous within the editability mapping and shall not require an explicit user request. ^plan-tk06
