@@ -62,7 +62,8 @@ export function quotedQuery(args: ToolRenderFields): string {
   return `"${oneLine(stringFieldOrUndefined(args, "query") ?? "")}"`;
 }
 
-function planTaskStatusColor(status: string): string {
+/** ^render-rffp: status as colored text only — no status-dot glyph in task rows. */
+export function planTaskStatusColor(status: string): string {
   switch (status) {
     case "completed": return "success";
     case "in_progress": return "warning";

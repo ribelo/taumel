@@ -13,6 +13,7 @@ import { executeAgentRunsManager } from "./agent-runs-manager.ts";
 import { initializeTaumelGlobalConfig, taumelStatus } from "./global-settings.ts";
 import { executeVisibilityManager, saveProjectVisibility } from "./visibility.ts";
 import { showUsageInspection } from "./usage-inspection.ts";
+import { executeTasksModal } from "./tasks-modal.ts";
 import {
   applyChildSessionUpdate,
   createChildSession,
@@ -415,6 +416,9 @@ export async function executeGatewayCommand(
   if (name === "agent-runs") {
     return executeAgentRunsManager(pi, core, childSessions, args, ctx);
   }
+  if (name === "tasks") {
+    return executeTasksModal(core, ctx);
+  }
   if (name === "execpolicy") {
     const trimmed = args.trim();
     const valid = trimmed === "" || (trimmed.startsWith("check ") && trimmed.slice("check ".length).trim() !== "");
@@ -547,7 +551,8 @@ export function registerGatewayCommands(
           || currentResult?.planFollowup === true
           || currentResult?.planInspection === true
         );
-        const suppressInspectionNotification = name === "agent-runs" && currentResult?.inspection === true;
+        const suppressInspectionNotification =
+          (name === "agent-runs" || name === "tasks") && currentResult?.inspection === true;
         if (suppressPlanNotification || suppressInspectionNotification) return result;
         const notification = decodeCommandNotificationPlan(core.call("planCommandNotification", [{
           commandName: name,
