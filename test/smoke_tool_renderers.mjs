@@ -361,8 +361,9 @@ const spawnedAgent = renderText(renderersForTool("agent_spawn").renderResult(
   theme,
   { args: argsFor("agent_spawn") },
 ));
-// agentui-weo6: generic spawn compact presentation includes the selected tier.
-assert(/^• agent_spawn · agent-7k2m · medium · Inspect renderer coverage$/.test(spawnedAgent), `generic spawn compact slot wrong: ${spawnedAgent}`);
+// agentui-weo6: generic spawn compact is tool · handle · description (no tier segment;
+// the handle itself carries the effective tier, e.g. agent-medium-9a6p).
+assert(/^• agent_spawn · agent-7k2m · Inspect renderer coverage$/.test(spawnedAgent), `generic spawn compact slot wrong: ${spawnedAgent}`);
 const expandedSpawnedAgent = renderText(renderersForTool("agent_spawn").renderResult(
   resultFor("agent_spawn"),
   { expanded: true, isPartial: false },

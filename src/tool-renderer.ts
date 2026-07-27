@@ -175,10 +175,11 @@ function subjectFromArgs(name: string, args: ToolRenderFields): string {
     case "exa_agent_list_runs":
       return args["limit"] === undefined ? "recent runs" : `limit ${args["limit"]}`;
     case "agent_spawn": {
+      // agentui-weo6 / agent-rn05: handle already encodes tier (agent-medium-…),
+      // so compact pending/progress subject is handle · description only.
       const handle = stringFieldOrUndefined(args, "agent_id") ?? "";
-      const tier = stringFieldOrUndefined(args, "tier") ?? "medium";
       const description = stringFieldOrUndefined(args, "description") ?? "";
-      return [handle, tier, description].filter((part) => part !== "").join(" · ");
+      return [handle, description].filter((part) => part !== "").join(" · ");
     }
     case "finder":
     case "oracle":

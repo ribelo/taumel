@@ -371,11 +371,10 @@ function buildAgent(name: string, result: unknown, options: unknown, theme: unkn
     subject = `${total} run${total === 1 ? "" : "s"}`;
     trailing = themeFg(theme, "dim", `(${results.length} ready, ${pending} pending)`);
   } else if (name === "agent_spawn") {
-    subject = [
-      agentId,
-      stringFieldOrUndefined(args, "tier") ?? stringFieldOrUndefined(details, "tier") ?? "medium",
-      stringFieldOrUndefined(args, "description"),
-    ].filter((part) => part !== undefined && part !== "").join(" · ");
+    // agentui-weo6 / agent-rn05: handle already encodes tier (agent-medium-…),
+    // so compact subject is handle · description only.
+    subject = [agentId, stringFieldOrUndefined(args, "description")]
+      .filter((part) => part !== undefined && part !== "").join(" · ");
   } else if (name === "finder" || name === "oracle") {
     subject = [agentId, stringFieldOrUndefined(args, "description")].filter((part) => part !== undefined && part !== "").join(" · ");
   } else if (name === "agent_send") {
