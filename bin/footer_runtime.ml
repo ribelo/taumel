@@ -48,10 +48,9 @@ let install host ctx =
   ignore (call2 host "setFooter" (inject ctx) (inject factory))
 
 let refresh_active_host () =
-  Effect.sync (fun () ->
-      match !active_host with
-      | Some host -> Footer_bridge.refresh_footer_hygiene_now host
-      | None -> ())
+  match !active_host with
+  | Some host -> Footer_bridge.refresh_footer_hygiene host
+  | None -> Effect.unit
 
 let start_refresh_loop () =
   let rt = Runtime.create () in
@@ -67,7 +66,9 @@ let ensure_refresh_loop () =
 
 let refresh_git_now host =
   let rt = Runtime.create () in
-  Runtime.run rt (Footer_bridge.refresh_footer_hygiene host) ~on_result:(fun _ -> ())
+  Runtime.run rt
+    (Footer_bridge.refresh_footer_hygiene host)
+    ~on_result:(fun _ -> ())
 
 (* A session_shutdown event marks the active runtime dead even when its API
    object still answers probes; Pi's reload path rebuilds the runtime without

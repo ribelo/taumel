@@ -165,32 +165,18 @@ let js_options ~cwd ~timeout =
       ("timeout", js_number (float_of_int timeout));
     |]
 
-let js_error_to_string error =
-  match string_value error with
-  | Some value -> value
-  | None -> (
-      match object_field error "message" with
-      | Some message -> Option.value (string_value message) ~default:"JavaScript promise rejected"
-      | None -> "JavaScript promise rejected")
+let js_error_to_string = Eta_host_doors.js_error_to_string
 
 let js_exception_string_field error name =
   match Js.Js_error.of_exn error with
   | None -> None
   | Some js_error -> optional_string_field (Obj.magic js_error) name
 
-let await_js_result promise =
-  let eta_promise, resolver = Eta_jsoo.Private.create_promise () in
-  let resolve_ok =
-    Js.wrap_callback (fun value -> Eta_jsoo.Private.resolve resolver (Ok value))
-  in
-  let resolve_error =
-    Js.wrap_callback (fun error ->
-        Eta_jsoo.Private.resolve resolver (Error (js_error_to_string error)))
-  in
-  ignore
-    (Unsafe.meth_call promise "then"
-       [| inject resolve_ok; inject resolve_error |]);
-  Eta_jsoo.Private.await eta_promise
+(** JS promise → Eta effect. Prefer composing this as an [Effect.t] rather than
+    forcing it inside [Effect.sync]. *)
+let await_js_result promise = Eta_host_doors.await_js_result promise
+
+let await_abort_signal signal = Eta_host_doors.await_abort_signal signal
 
 let js_lines lines =
   lines |> List.map Js.string |> Array.of_list |> Js.array
@@ -230,24 +216,16 @@ let text_result_with_details text details =
 
 let async_error_obj cause =
   error_obj
-    ("Taumel async operation failed: "
-    ^ Format.asprintf "%a"
-        (Eta.Cause.pp (fun fmt () ->
-             Format.pp_print_string fmt "async failure"))
-        cause)
+    ("Taumel async operation failed: " ^ Eta_host_doors.cause_message cause)
 
+(** Resolve-semantics reverse door used by Exa/usage: failures resolve to a
+    bridge error object rather than rejecting. *)
 let js_promise_of_effect (eff : (Unsafe.any, unit) Effect.t) =
-  let promise_ctor = Unsafe.get Unsafe.global "Promise" in
-  let executor =
-    Js.wrap_callback (fun resolve _reject ->
-        let rt = Runtime.create () in
-        Runtime.run rt eff ~on_result:(function
-          | Eta.Exit.Ok value -> ignore (Unsafe.fun_call resolve [| inject value |])
-          | Eta.Exit.Error cause ->
-              ignore
-                (Unsafe.fun_call resolve [| inject (async_error_obj cause) |])))
-  in
-  Unsafe.new_obj promise_ctor [| inject executor |]
+  Eta_host_doors.js_promise_of_effect ~error_value:async_error_obj eff
+
+(** Rejecting reverse door: Eta failures reject the host promise. *)
+let js_promise_of_effect_rejecting (eff : (Unsafe.any, unit) Effect.t) =
+  Eta_host_doors.js_promise_of_effect_rejecting eff
 
 let optional_string_array obj name =
   Option.map

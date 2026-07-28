@@ -10,60 +10,72 @@ let contains text needle =
 
 let run_git host cwd args =
   match function_field host "exec" with
-  | Some _ -> (
+  | Some _ ->
       let promise =
         call3 host "exec" (js_string "git") (js_array_of_strings args)
           (js_options ~cwd ~timeout:15000)
       in
-      match await_js_result promise with
-      | Error _ -> Error "git execution failed"
-      | Ok result ->
-          if int_field_default result "code" 1 <> 0 then Error (get_string result "stderr")
-          else Ok (get_string result "stdout"))
-  | _ -> Error "git execution unavailable"
+      await_js_result promise
+      |> Effect.fold
+           ~ok:(fun result ->
+             if int_field_default result "code" 1 <> 0 then
+               Error (get_string result "stderr")
+             else Ok (get_string result "stdout"))
+           ~error:(fun _ -> Error "git execution failed")
+  | _ -> Effect.pure (Error "git execution unavailable")
 
 let run_numstat host cwd args =
-  Result.map Model.parse_git_numstat (run_git host cwd args)
+  run_git host cwd args
+  |> Effect.map (function
+       | Error _ as error -> error
+       | Ok output -> Ok (Model.parse_git_numstat output))
 
 let collect_git_line_delta host cwd =
-  match run_git host cwd [ "rev-parse"; "--is-inside-work-tree" ] with
-  | Ok output when String.trim output = "true" -> (
-      match
-        ( run_numstat host cwd [ "diff"; "--numstat"; "--no-ext-diff" ],
-          run_numstat host cwd [ "diff"; "--cached"; "--numstat"; "--no-ext-diff" ] )
-      with
-      | Ok unstaged, Ok staged ->
-          `Ready
-            {
-              Model.added = unstaged.added + staged.added;
-              removed = unstaged.removed + staged.removed;
-            }
-      | _ -> `Error)
-  | Ok _ -> `Not_repo
-  | Error message ->
-      if contains (String.lowercase_ascii message) "not a git repository" then `Not_repo
-      else `Error
-
-let refresh_footer_hygiene_now host =
-  if state.footer_cwd = "" then ()
-  else
-    let cwd = state.footer_cwd in
-    let next = collect_git_line_delta host cwd in
-    if state.footer_cwd = cwd then (
-      let delta, repo, error =
-        match next with
-        | `Ready delta -> (delta, true, false)
-        | `Not_repo -> (Model.empty_git_delta, false, false)
-        | `Error -> (Model.empty_git_delta, false, true)
-      in
-      if delta <> state.git_delta || repo <> state.git_repo || error <> state.git_error then (
-        state.git_delta <- delta;
-        state.git_repo <- repo;
-        state.git_error <- error;
-        emit_changed host))
+  run_git host cwd [ "rev-parse"; "--is-inside-work-tree" ]
+  |> Effect.bind (function
+       | Ok output when String.trim output = "true" ->
+           run_numstat host cwd [ "diff"; "--numstat"; "--no-ext-diff" ]
+           |> Effect.bind (fun unstaged_result ->
+                  run_numstat host cwd
+                    [ "diff"; "--cached"; "--numstat"; "--no-ext-diff" ]
+                  |> Effect.map (fun staged_result ->
+                         match (unstaged_result, staged_result) with
+                         | Ok unstaged, Ok staged ->
+                             let open Model in
+                             `Ready
+                               {
+                                 added = unstaged.added + staged.added;
+                                 removed = unstaged.removed + staged.removed;
+                               }
+                         | _ -> `Error))
+       | Ok _ -> Effect.pure `Not_repo
+       | Error message ->
+           Effect.pure
+             (if contains (String.lowercase_ascii message) "not a git repository"
+              then `Not_repo
+              else `Error))
 
 let refresh_footer_hygiene host =
-  Effect.sync (fun () -> refresh_footer_hygiene_now host)
+  if state.footer_cwd = "" then Effect.unit
+  else
+    let cwd = state.footer_cwd in
+    collect_git_line_delta host cwd
+    |> Effect.map (fun next ->
+           if state.footer_cwd = cwd then (
+             let delta, repo, error =
+               match next with
+               | `Ready delta -> (delta, true, false)
+               | `Not_repo -> (Model.empty_git_delta, false, false)
+               | `Error -> (Model.empty_git_delta, false, true)
+             in
+             if
+               delta <> state.git_delta || repo <> state.git_repo
+               || error <> state.git_error
+             then (
+               state.git_delta <- delta;
+               state.git_repo <- repo;
+               state.git_error <- error;
+               emit_changed host)))
 
 let colorize host theme color value =
   match function_field host "themeFg" with

@@ -129,3 +129,21 @@
  (modules test_cron)
  (package taumel)
  (libraries taumel unix))
+
+(copy_files# ../bin/eta_host_doors.ml)
+
+(executable
+ (name test_eta_host_doors)
+ (modules test_eta_host_doors eta_host_doors)
+ (modes js)
+ (libraries eta eta_js eta_jsoo js_of_ocaml)
+ (js_of_ocaml
+  (flags --effects=cps)))
+
+(rule
+ (alias runtest)
+ (deps test_eta_host_doors.bc.js)
+ (action
+  (progn
+   (copy test_eta_host_doors.bc.js test_eta_host_doors.bc.cjs)
+   (run node test_eta_host_doors.bc.cjs))))
