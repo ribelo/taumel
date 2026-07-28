@@ -69,15 +69,22 @@ let refresh_git_now host =
   let rt = Runtime.create () in
   Runtime.run rt (Footer_bridge.refresh_footer_hygiene host) ~on_result:(fun _ -> ())
 
+(* A session_shutdown event marks the active runtime dead even when its API
+   object still answers probes; Pi's reload path rebuilds the runtime without
+   invalidating the old ctx, so the exception probe alone is insufficient. *)
+let active_runtime_shutdown = ref false
+
 let active_extension_is_live () =
-  match !active_host with
-  | None -> false
-  | Some host -> (
-      match function_field host "isExtensionActive" with
-      | Some _ ->
-          let live = call0 host "isExtensionActive" in
-          if is_js_boolean live then Js.to_bool (Unsafe.coerce live) else true
-      | None -> true)
+  if !active_runtime_shutdown then false
+  else
+    match !active_host with
+    | None -> false
+    | Some host -> (
+        match function_field host "isExtensionActive" with
+        | Some _ ->
+            let live = call0 host "isExtensionActive" in
+            if is_js_boolean live then Js.to_bool (Unsafe.coerce live) else true
+        | None -> true)
 
 let ignore_stale scope run =
   try run () with error -> Session_sync.report_session_sync_error scope error
@@ -111,6 +118,11 @@ let register_handlers host =
                 emit_changed host))
   in
   ignore (call2 host "on" (js_string "session_start") (inject (update_handler true)));
+  ignore
+    (call2 host "on" (js_string "session_shutdown")
+       (inject
+          (Js.wrap_callback (fun _event _ctx ->
+               active_runtime_shutdown := true))));
   ignore (call2 host "on" (js_string "session_resume") (inject (update_handler true)));
   ignore (call2 host "on" (js_string "session_switch") (inject (update_handler true)));
   ignore (call2 host "on" (js_string "model_select") (inject (update_handler false)));
@@ -177,6 +189,7 @@ let register_handlers host =
                emit_changed host))))
 
 let init host =
+  active_runtime_shutdown := false;
   active_host := Some host;
   register_handlers host
 

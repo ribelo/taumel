@@ -40,6 +40,9 @@ function makePi() {
         return "medium";
       },
     },
+    emit: (event, payload) => {
+      for (const handler of handlers.get(event) ?? []) handler(payload, {});
+    },
   };
 }
 
@@ -56,7 +59,23 @@ await assert.rejects(
   "an active owning extension allowed recursive child initialization",
 );
 
-first.invalidate();
+first.emit("session_shutdown", { type: "session_shutdown", reason: "reload" });
+
+// /reload rebuilds the extension runtime without invalidating the old ctx, so
+// the old API still answers probes; the session_shutdown flag must unlock the
+// rebind where the exception probe cannot.
+const reloaded = makePi();
+await taumel(reloaded.pi);
+assert.deepEqual(reloaded.tools, first.tools, "reloaded session lost Taumel tools");
+assert.deepEqual(reloaded.commands, first.commands, "reloaded session lost Taumel commands");
+
+await assert.rejects(
+  () => taumel(makePi().pi),
+  /Taumel core is already initialized/,
+  "the init guard did not re-arm after a reload rebind",
+);
+
+reloaded.invalidate();
 
 const replacement = makePi();
 await taumel(replacement.pi);
