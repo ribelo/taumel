@@ -13,7 +13,10 @@ promises instead of touching JavaScript async APIs. TypeScript stays the
 thinnest pi adapter; its orchestration logic belongs in the core and moves
 there as modules are revised. The migration is gardener's-method: the target
 shape is declared here, and the codebase is pruned toward it continuously,
-module by module — never as a single rewrite.
+module by module — never as a single rewrite. Raw `Unsafe` should shrink
+where that genuinely simplifies interop, but JavaScript is unsafe by design:
+the project does not pursue total `Unsafe` elimination, and typed wrappers
+must never cost more complexity than the safety they buy.
 
 ## Requirements
 
