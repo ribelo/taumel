@@ -126,6 +126,7 @@ export type InteractiveListOptions<T> = {
   readonly items: readonly T[];
   readonly renderRow: (item: T, index: number, selected: boolean, theme: ModalTheme, width: number) => string[];
   readonly emptyLines?: (theme: ModalTheme, width: number) => string[];
+  readonly header?: string | ((theme: ModalTheme) => string);
   readonly footer?: string | ((theme: ModalTheme) => string);
   /** Single-character action keys. Selecting one resolves the modal. */
   readonly actionKeys?: readonly string[];
@@ -196,7 +197,15 @@ export async function showInteractiveList<T>(
           const footer = typeof options.footer === "function"
             ? options.footer(theme)
             : (options.footer ?? " ↑↓ move · q close");
-          return [...visible, theme.fg("dim", footer)];
+          const header = typeof options.header === "function"
+            ? options.header(theme)
+            : options.header;
+          return [
+            ...(header === undefined ? [] : [header]),
+            ...visible,
+            "",
+            theme.fg("dim", footer),
+          ];
         },
         invalidate: () => undefined,
         handleInput: (input: string) => {

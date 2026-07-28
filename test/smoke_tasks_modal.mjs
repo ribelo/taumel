@@ -93,10 +93,11 @@ function makeUi(handlers) {
   const { ui, renders } = makeUi({
     drive(component) {
       const first = component.render(120).join("\n");
-      assert.match(first, /\[dim\]task-aa11/);
+      assert.match(first, /\[accent\]Plan active/);
+      assert.match(first, /0\/2 tasks/);
+      assert.match(first, /task-aa11/);
       assert.match(first, /\[dim\]pending/);
-      assert.match(first, /depends on/);
-      assert.match(first, /task-zz99/);
+      assert.match(first, /after task-zz99/);
       assert.match(first, /\[warning\]in_progress/);
       assert.match(first, /\[accent\]›/);
       assert.match(first, /a add · e edit · s advance · x cancel · d delete · q close/);

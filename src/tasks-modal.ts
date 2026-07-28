@@ -46,6 +46,24 @@ type PlanDetails = {
 
 const footer = " ↑↓ move · a add · e edit · s advance · x cancel · d delete · q close";
 
+const statusPad = "in_progress".length;
+
+function planStatusColor(status: string): string {
+  switch (status) {
+    case "complete": return "success";
+    case "blocked": return "error";
+    case "time_limited": return "warning";
+    case "active": return "accent";
+    default: return "dim";
+  }
+}
+
+function planHeader(plan: PlanPresentation, theme: ModalTheme): string {
+  const label = theme.fg(planStatusColor(plan.status), `Plan ${plan.statusLabel}`);
+  const time = plan.timeUsage === "" ? "" : ` · ${plan.timeUsage}`;
+  return `${label} ${theme.fg("dim", `· ${plan.completedTasks}/${plan.totalTasks} tasks${time}`)}`;
+}
+
 function asPlanDetails(value: unknown): PlanDetails {
   if (!isObjectLike<{ readonly plan?: unknown }>(value)) {
     return { plan: null };
@@ -117,15 +135,39 @@ function renderTaskRow(
   theme: ModalTheme,
   width: number,
 ): string[] {
-  const statusText = theme.fg(planTaskStatusColor(task.status), task.status);
-  const marker = selected ? theme.fg("accent", "›") : " ";
-  const head = `${marker} ${theme.fg("dim", task.taskId)} ${theme.fg("dim", "[")}${statusText}${theme.fg("dim", `/${task.origin}]:`)} ${theme.fg("toolOutput", task.title)}`;
-  const lines = [head.length <= width ? head : `${head.slice(0, Math.max(0, width - 3))}...`];
-  if (task.depends_on.length > 0) {
-    const deps = `   ${theme.fg("dim", "depends on")} ${theme.fg("dim", task.depends_on.join(", "))}`;
-    lines.push(deps.length <= width ? deps : `${deps.slice(0, Math.max(0, width - 3))}...`);
+  // ^plan-2fnt: status leads in color and is never truncated; metadata degrades.
+  const deps = task.depends_on.length === 0 ? "" : ` · after ${task.depends_on.join(", ")}`;
+  const suffixes = [
+    ` · ${task.taskId} · ${task.origin}${deps}`,
+    ` · ${task.taskId}${deps}`,
+    ` · ${task.taskId}`,
+    "",
+  ];
+  const prefix = `  ${task.status.padEnd(statusPad)}  `;
+  const minTitle = 8;
+  let suffix: string | undefined;
+  for (const candidate of suffixes) {
+    if (width - prefix.length - candidate.length >= task.title.length) {
+      suffix = candidate;
+      break;
+    }
   }
-  return lines;
+  if (suffix === undefined) {
+    suffix = "";
+    for (const candidate of suffixes) {
+      if (width - prefix.length - candidate.length >= minTitle) {
+        suffix = candidate;
+        break;
+      }
+    }
+  }
+  const titleBudget = Math.max(1, width - prefix.length - suffix.length);
+  const title = task.title.length <= titleBudget
+    ? task.title
+    : `${task.title.slice(0, Math.max(1, titleBudget - 1))}…`;
+  const marker = selected ? theme.fg("accent", "›") : " ";
+  const statusText = theme.fg(planTaskStatusColor(task.status), task.status.padEnd(statusPad));
+  return [`${marker} ${statusText}  ${theme.fg("toolOutput", title)}${theme.fg("dim", suffix)}`];
 }
 
 function emptyLines(theme: ModalTheme, _width: number): string[] {
@@ -187,10 +229,12 @@ export async function executeTasksModal(
 
   while (true) {
     const tasks = details.plan?.tasks ?? [];
+    const plan = details.plan;
     const selection = await showInteractiveList(ui, {
       items: tasks,
       renderRow: renderTaskRow,
       emptyLines,
+      ...(plan === null ? {} : { header: (theme: ModalTheme) => planHeader(plan, theme) }),
       footer,
       actionKeys: ["a", "e", "s", "x", "d"],
       initialIndex: cursor,
