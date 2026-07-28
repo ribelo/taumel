@@ -14,6 +14,7 @@ import { initializeTaumelGlobalConfig, taumelStatus } from "./global-settings.ts
 import { executeVisibilityManager, saveProjectVisibility } from "./visibility.ts";
 import { showUsageInspection } from "./usage-inspection.ts";
 import { executeTasksModal } from "./tasks-modal.ts";
+import { executePsModal } from "./ps-modal.ts";
 import {
   applyChildSessionUpdate,
   createChildSession,
@@ -419,6 +420,9 @@ export async function executeGatewayCommand(
   if (name === "tasks") {
     return executeTasksModal(core, ctx);
   }
+  if (name === "ps") {
+    return executePsModal(core, ctx);
+  }
   if (name === "execpolicy") {
     const trimmed = args.trim();
     const valid = trimmed === "" || (trimmed.startsWith("check ") && trimmed.slice("check ".length).trim() !== "");
@@ -552,7 +556,8 @@ export function registerGatewayCommands(
           || currentResult?.planInspection === true
         );
         const suppressInspectionNotification =
-          (name === "agent-runs" || name === "tasks") && currentResult?.inspection === true;
+          (name === "agent-runs" || name === "tasks" || name === "ps")
+          && currentResult?.inspection === true;
         if (suppressPlanNotification || suppressInspectionNotification) return result;
         const notification = decodeCommandNotificationPlan(core.call("planCommandNotification", [{
           commandName: name,

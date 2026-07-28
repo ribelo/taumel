@@ -57,6 +57,7 @@ let command_specs =
     { name = "usage"; description = "Show OpenAI Codex and Kimi Code account usage." };
     { name = "plan"; description = "Inspect or update the thread plan." };
     { name = "tasks"; description = "Open the interactive plan task manager." };
+    { name = "ps"; description = "Open the interactive command process manager." };
     { name = "cron"; description = "List, enable, disable, or cancel cron tasks." };
     { name = "tools"; description = "List, enable, disable, or save Taumel tool visibility." };
     { name = "skills"; description = "List, enable, disable, or save Taumel skill visibility." };

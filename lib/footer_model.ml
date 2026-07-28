@@ -3,6 +3,14 @@ type git_delta = {
   removed : int;
 }
 
+type activity = {
+  running_agents : int;
+  orphaned_agents : int;
+  single_agent_description : string option;
+  live_execs : int;
+  single_exec_command : string option;
+}
+
 type snapshot = {
   cwd : string;
   branch : string;
@@ -20,7 +28,17 @@ type snapshot = {
   context_percent : float;
   context_window : float;
   plan : Plan.presentation option;
+  activity : activity;
 }
+
+let empty_activity =
+  {
+    running_agents = 0;
+    orphaned_agents = 0;
+    single_agent_description = None;
+    live_execs = 0;
+    single_exec_command = None;
+  }
 
 let empty_git_delta = { added = 0; removed = 0 }
 
@@ -256,7 +274,7 @@ let plan_status_label = function
   | Plan.Time_limited -> "Plan time limited"
   | Plan.Complete -> "Plan complete"
 
-let render_plan_line ~colorize ~width (plan : Plan.presentation) =
+let plan_line_raw (plan : Plan.presentation) =
   let status = plan_status_label plan.status in
   let automation =
     match plan.automation with
@@ -272,11 +290,89 @@ let render_plan_line ~colorize ~width (plan : Plan.presentation) =
   let progress =
     Printf.sprintf "%d/%d tasks" plan.completed_tasks plan.total_tasks
   in
-  let raw = status ^ automation ^ " · " ^ progress ^ " · " ^ time in
-  colorize "dim" (take_width width raw)
+  status ^ automation ^ " · " ^ progress ^ " · " ^ time
+
+let render_plan_line ~colorize ~width (plan : Plan.presentation) =
+  colorize "dim" (take_width width (plan_line_raw plan))
+
+let activity_has_content (activity : activity) =
+  activity.running_agents > 0
+  || activity.orphaned_agents > 0
+  || activity.live_execs > 0
+
+let agent_activity_label (activity : activity) =
+  match (activity.running_agents, activity.single_agent_description) with
+  | 1, Some description when String.trim description <> "" -> String.trim description
+  | n, _ when n > 0 -> Printf.sprintf "%d agents" n
+  | _ -> ""
+
+let exec_activity_label (activity : activity) =
+  match (activity.live_execs, activity.single_exec_command) with
+  | 1, Some command when String.trim command <> "" -> String.trim command
+  | n, _ when n > 0 -> Printf.sprintf "%d exec" n
+  | _ -> ""
+
+let orphaned_activity_label (activity : activity) =
+  if activity.orphaned_agents > 0 then
+    Printf.sprintf "%d orphaned" activity.orphaned_agents
+  else ""
+
+let render_activity_segment ~colorize ~width (activity : activity) =
+  if width <= 0 || not (activity_has_content activity) then ""
+  else
+    let parts =
+      [
+        (agent_activity_label activity, "dim");
+        (exec_activity_label activity, "dim");
+        (orphaned_activity_label activity, "error");
+      ]
+      |> List.filter (fun (label, _) -> label <> "")
+    in
+    let rec fit remaining acc = function
+      | [] -> List.rev acc
+      | (label, token) :: rest ->
+          let sep = if acc = [] then 0 else 3 in
+          let budget = remaining - sep in
+          if budget <= 0 then List.rev acc
+          else
+            let truncated = take_width budget label in
+            if truncated = "" then List.rev acc
+            else
+              fit
+                (remaining - sep - visible_width truncated)
+                ((truncated, token) :: acc) rest
+    in
+    fit width [] parts
+    |> List.mapi (fun index (label, token) ->
+           let colored = colorize token label in
+           if index = 0 then colored else colorize "dim" " · " ^ colored)
+    |> String.concat ""
+
+let render_second_line ~colorize ~width snapshot =
+  let activity = snapshot.activity in
+  let has_activity = activity_has_content activity in
+  match (snapshot.plan, has_activity) with
+  | None, false -> None
+  | Some plan, false -> Some (render_plan_line ~colorize ~width plan)
+  | None, true -> Some (render_activity_segment ~colorize ~width activity)
+  | Some plan, true ->
+      let sep = " │ " in
+      let sep_width = visible_width sep in
+      let plan_raw = plan_line_raw plan in
+      let plan_width = visible_width plan_raw in
+      if width <= 0 then Some ""
+      else if plan_width + sep_width >= width then
+        Some (colorize "dim" (take_width width plan_raw))
+      else
+        let activity_budget = width - plan_width - sep_width in
+        let activity_part =
+          render_activity_segment ~colorize ~width:activity_budget activity
+        in
+        Some
+          ( colorize "dim" plan_raw ^ colorize "dim" sep ^ activity_part )
 
 let render_lines ~colorize ~width snapshot =
   let primary = render_line ~colorize ~width snapshot in
-  match snapshot.plan with
+  match render_second_line ~colorize ~width snapshot with
   | None -> [ primary ]
-  | Some plan -> [ primary; render_plan_line ~colorize ~width plan ]
+  | Some second -> [ primary; second ]

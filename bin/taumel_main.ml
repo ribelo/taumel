@@ -89,6 +89,31 @@ let core_call name_js args_js =
       Exec_session.mark_exec_notification_delivered (int_arg args 0)
   | "awaitExecCompletion" ->
       Exec_session.await_exec_completion (int_arg args 0)
+  | "processManagerSnapshot" ->
+      let facts =
+        decode_ojs_contract Tool_contracts.ProcessManagerOwnerFacts.t_of_js
+          (ojs_of_js (arg 0))
+      in
+      Exec_session.process_manager_snapshot
+        (Tool_contracts.ProcessManagerOwnerFacts.get_ownerId facts)
+  | "processManagerOutput" ->
+      let facts =
+        decode_ojs_contract Tool_contracts.ProcessManagerSessionFacts.t_of_js
+          (ojs_of_js (arg 0))
+      in
+      Exec_session.process_manager_output
+        (Tool_contracts.ProcessManagerSessionFacts.get_ownerId facts)
+        (Tool_contracts.ProcessManagerSessionFacts.get_sessionId facts
+        |> int_of_float)
+  | "processManagerKill" ->
+      let facts =
+        decode_ojs_contract Tool_contracts.ProcessManagerSessionFacts.t_of_js
+          (ojs_of_js (arg 0))
+      in
+      Exec_session.process_manager_kill
+        (Tool_contracts.ProcessManagerSessionFacts.get_ownerId facts)
+        (Tool_contracts.ProcessManagerSessionFacts.get_sessionId facts
+        |> int_of_float)
    | "planCommandExecution" ->
        Command_bridge.plan_execution (arg 0)
    | "planPlanContinuation" ->

@@ -304,6 +304,53 @@ let display (output : t) =
             ~output_lines:selected_count ~output_bytes:selected_bytes ()
         in
         (output, truncation)
+let display_text source =
+  let total_bytes = String.length source in
+  let total_lines = line_count source in
+  if total_bytes = 0 then ""
+  else if total_bytes <= max_display_bytes && total_lines <= max_display_lines then source
+  else
+    let lines = split_display_lines source in
+    let rec take_tail selected selected_bytes selected_count = function
+      | [] -> List.rev selected
+      | line :: rest ->
+          if selected_count >= max_display_lines then List.rev selected
+          else
+            let separator = if selected_count = 0 then 0 else 1 in
+            let line_bytes = String.length line + separator in
+            if selected_bytes + line_bytes <= max_display_bytes then
+              take_tail (line :: selected) (selected_bytes + line_bytes)
+                (selected_count + 1) rest
+            else if selected_count = 0 then [ safe_suffix max_display_bytes line ]
+            else List.rev selected
+    in
+    let selected = take_tail [] 0 0 (List.rev lines) in
+    let payload = String.concat "\n" selected in
+    let footer =
+      Printf.sprintf
+        "\n\n[Showing last %d of %d lines (limited by max %d lines / %d bytes)]"
+        (List.length selected) total_lines max_display_lines max_display_bytes
+    in
+    if payload = "" then String.trim footer else payload ^ footer
+
+let collectable_display output =
+  let source =
+    match output.temp_path with
+    | Some path -> (
+        try
+          let fs = js_require "node:fs" in
+          match
+            string_value
+              (Unsafe.fun_call (Unsafe.get fs "readFileSync")
+                 [| js_string path; js_string "utf8" |])
+          with
+          | Some text -> text
+          | None -> Buffer.contents output.pending
+        with _ -> Buffer.contents output.pending)
+    | None -> Buffer.contents output.pending
+  in
+  if source = "" then None else Some (display_text source)
+
 let codex_display output max_output_tokens =
   let source = Buffer.contents output.pending in
   let total_bytes = String.length source in

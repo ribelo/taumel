@@ -3,6 +3,14 @@ type git_delta = {
   removed : int;
 }
 
+type activity = {
+  running_agents : int;
+  orphaned_agents : int;
+  single_agent_description : string option;
+  live_execs : int;
+  single_exec_command : string option;
+}
+
 type snapshot = {
   cwd : string;
   branch : string;
@@ -20,9 +28,11 @@ type snapshot = {
   context_percent : float;
   context_window : float;
   plan : Plan.presentation option;
+  activity : activity;
 }
 
 val empty_git_delta : git_delta
+val empty_activity : activity
 val parse_git_numstat : string -> git_delta
 val count_in_progress_issues : 'a list -> int
 val provider_label : string -> string

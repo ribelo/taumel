@@ -36,6 +36,7 @@ let base_snapshot =
     context_percent = 0.0;
     context_window = 0.0;
     plan = None;
+    activity = Footer.empty_activity;
   }
 
 let test_parse_git_numstat () =
@@ -72,6 +73,7 @@ let test_render_line () =
         context_percent = 12.0;
         context_window = 200000.0;
         plan = None;
+        activity = Footer.empty_activity;
       }
   in
   if not (String.contains line '$') then failwith "rendered line omits cost";
@@ -217,6 +219,121 @@ let test_render_plan_status () =
   else if contains_substring line "tokens" then
     failwith "rendered plan line includes token telemetry"
 
+let sample_plan =
+  {
+    Taumel.Plan.status = Taumel.Plan.Active;
+    automation = Taumel.Plan.Automation_enabled;
+    tasks = [];
+    completed_tasks = 0;
+    total_tasks = 1;
+    tokens_used = 0;
+    time_used_seconds = 30;
+    time_limit_seconds = None;
+    extension_unlocked = false;
+    plan_id = "g";
+    session_id = "s";
+  }
+
+let render_activity ?plan activity =
+  String.concat "\n"
+    (Footer.render_lines ~colorize:(fun token text -> "[" ^ token ^ "]" ^ text)
+       ~width:160
+       { base_snapshot with plan; activity })
+
+let test_activity_hidden_when_zero () =
+  let lines =
+    Footer.render_lines ~colorize:(fun _ text -> text) ~width:120 base_snapshot
+  in
+  assert_int "no activity lines" 1 (List.length lines)
+
+let test_activity_counts () =
+  let line =
+    render_activity
+      {
+        running_agents = 2;
+        orphaned_agents = 0;
+        single_agent_description = None;
+        live_execs = 3;
+        single_exec_command = None;
+      }
+  in
+  if not (contains_substring line "2 agents") then
+    failwith "activity omits agent count";
+  if not (contains_substring line "3 exec") then
+    failwith "activity omits exec count"
+
+let test_activity_single_labels () =
+  let line =
+    render_activity
+      {
+        running_agents = 1;
+        orphaned_agents = 0;
+        single_agent_description = Some "Investigate footer";
+        live_execs = 1;
+        single_exec_command = Some "sleep 30";
+      }
+  in
+  if not (contains_substring line "Investigate footer") then
+    failwith "single agent label missing";
+  if not (contains_substring line "sleep 30") then
+    failwith "single exec label missing";
+  if contains_substring line "1 agents" || contains_substring line "1 exec" then
+    failwith "single labels still show counts"
+
+let test_activity_orphaned_error () =
+  let line =
+    render_activity
+      {
+        running_agents = 1;
+        orphaned_agents = 2;
+        single_agent_description = Some "stuck";
+        live_execs = 0;
+        single_exec_command = None;
+      }
+  in
+  if not (contains_substring line "[error]2 orphaned") then
+    failwith "orphaned count missing error token"
+
+let test_activity_with_plan_separator () =
+  let line =
+    render_activity ~plan:sample_plan
+      {
+        running_agents = 2;
+        orphaned_agents = 0;
+        single_agent_description = None;
+        live_execs = 1;
+        single_exec_command = Some "make test";
+      }
+  in
+  if not (contains_substring line "Plan active") then
+    failwith "plan status missing beside activity";
+  if not (contains_substring line "│") then
+    failwith "plan/activity separator missing";
+  if not (contains_substring line "2 agents") then
+    failwith "activity missing after plan"
+
+let test_activity_second_line_alone () =
+  let lines =
+    Footer.render_lines ~colorize:(fun _ text -> text) ~width:120
+      {
+        base_snapshot with
+        activity =
+          {
+            running_agents = 0;
+            orphaned_agents = 0;
+            single_agent_description = None;
+            live_execs = 2;
+            single_exec_command = None;
+          };
+      }
+  in
+  assert_int "activity alone second line" 2 (List.length lines);
+  match lines with
+  | [ _; second ] ->
+      if not (contains_substring second "2 exec") then
+        failwith "activity-only second line missing exec count"
+  | _ -> failwith "unexpected line count"
+
 let () =
   test_parse_git_numstat ();
   test_format_token_window ();
@@ -227,4 +344,10 @@ let () =
   test_no_sandbox_all_text_tokens ();
   test_render_git_states ();
   test_narrow_width_preserves_colored_dots ();
-  test_render_plan_status ()
+  test_render_plan_status ();
+  test_activity_hidden_when_zero ();
+  test_activity_counts ();
+  test_activity_single_labels ();
+  test_activity_orphaned_error ();
+  test_activity_with_plan_separator ();
+  test_activity_second_line_alone ()

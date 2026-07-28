@@ -496,6 +496,43 @@ export type AgentNotificationClaimValidation = Static<typeof AgentNotificationCl
 export type AgentActiveCountResult = Static<typeof AgentActiveCountResultSchema>;
 export type AgentCleanupPlan = Static<typeof AgentCleanupPlanSchema>;
 export type AgentManagerSnapshot = Static<typeof AgentManagerSnapshotSchema>;
+
+export const ProcessManagerEntrySchema = Type.Object(
+  {
+    sessionId: Type.Integer({ minimum: 0 }),
+    command: Type.String(),
+    runState: Type.Union([Type.Literal("running"), Type.Literal("exited")]),
+    exitCode: Type.Optional(Type.Integer()),
+    ageSeconds: Type.Integer({ minimum: 0 }),
+    retained: Type.Boolean(),
+  },
+  { $id: "ProcessManagerEntry", additionalProperties: false },
+);
+export const ProcessManagerSnapshotSchema = Type.Object(
+  { sessions: Type.Array(ProcessManagerEntrySchema) },
+  { $id: "ProcessManagerSnapshot", additionalProperties: false },
+);
+export const ProcessManagerOutputSchema = Type.Object(
+  { available: Type.Boolean(), text: Type.String() },
+  { $id: "ProcessManagerOutput", additionalProperties: false },
+);
+export const ProcessManagerOwnerFactsSchema = Type.Object(
+  { ownerId: Type.String({ minLength: 1 }) },
+  { $id: "ProcessManagerOwnerFacts", additionalProperties: false },
+);
+export const ProcessManagerSessionFactsSchema = Type.Object(
+  {
+    ownerId: Type.String({ minLength: 1 }),
+    sessionId: Type.Integer({ minimum: 0 }),
+  },
+  { $id: "ProcessManagerSessionFacts", additionalProperties: false },
+);
+export type ProcessManagerEntry = Static<typeof ProcessManagerEntrySchema>;
+export type ProcessManagerSnapshot = Static<typeof ProcessManagerSnapshotSchema>;
+export type ProcessManagerOutput = Static<typeof ProcessManagerOutputSchema>;
+export type ProcessManagerOwnerFacts = Static<typeof ProcessManagerOwnerFactsSchema>;
+export type ProcessManagerSessionFacts = Static<typeof ProcessManagerSessionFactsSchema>;
+
 export const PreparedToolActionSchema = Type.Union([
   GatewayCommandErrorSchema, BridgeToolResultSchema, OpenAiUsageFetchSchema, UsagePairFetchSchema, PreparedReadSchema,
   PreparedViewMediaSchema, PreparedWriteStdinSchema, PreparedExecSchema, PreparedExecApprovalSchema,

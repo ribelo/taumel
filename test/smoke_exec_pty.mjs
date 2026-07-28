@@ -148,4 +148,52 @@ try {
 } finally {
   await rm(gitDir, { recursive: true, force: true });
 }
+
+// exec-lfy6: at most 64 concurrently live command sessions per owning session.
+{
+  const liveIds = [];
+  for (let index = 0; index < 64; index += 1) {
+    const prepared = core.call("prepareTool", [{
+      name: "exec_command",
+      params: { cmd: "sleep 30", yield_time_ms: 250 },
+      ctx,
+    }]);
+    assert.equal(prepared.ok, true, JSON.stringify(prepared));
+    const result = await core.call("runExecCommand", [
+      prepared,
+      "exec-pty-smoke",
+      null,
+      ctx,
+    ]);
+    assert.equal(typeof result.details.sessionId, "number", JSON.stringify(result));
+    liveIds.push(result.details.sessionId);
+  }
+  let rejected = null;
+  try {
+    const prepared = core.call("prepareTool", [{
+      name: "exec_command",
+      params: { cmd: "sleep 30", yield_time_ms: 250 },
+      ctx,
+    }]);
+    assert.equal(prepared.ok, true, JSON.stringify(prepared));
+    await core.call("runExecCommand", [
+      prepared,
+      "exec-pty-smoke",
+      null,
+      ctx,
+    ]);
+  } catch (error) {
+    rejected = error;
+  }
+  assert.ok(rejected, "65th live session must be rejected");
+  assert.match(String(rejected?.message ?? rejected), /64/);
+  for (const sessionId of liveIds) {
+    await core.call("processManagerKill", [{
+      ownerId: "exec-pty-smoke",
+      sessionId,
+    }]);
+  }
+  core.call("shutdownExecOwner", ["exec-pty-smoke"]);
+}
+
 console.log("exec PTY smoke: all assertions passed");

@@ -83,6 +83,52 @@ let network_mode_string = function
 
 let plan_presentation () = !loaded_footer_plan
 
+let activity_for_render () =
+  let owner_id =
+    match !loaded_session_id with
+    | Some id when String.trim id <> "" -> String.trim id
+    | _ -> ""
+  in
+  let running_runs =
+    if owner_id = "" then []
+    else
+      let owned_ids =
+        Taumel.Agents.owned_identities !agent_state ~owner_session_id:owner_id
+        |> List.map (fun (identity : Taumel.Agents.identity) ->
+               identity.identity_agent_id)
+      in
+      (!agent_state).runs
+      |> List.filter (fun (run : Taumel.Agents.agent_run) ->
+             List.mem run.run_agent_id owned_ids
+             && run.run_status = Taumel.Agents.Running)
+  in
+  let active_runs, orphaned_runs =
+    List.partition
+      (fun (run : Taumel.Agents.agent_run) ->
+        run.run_activity_state <> Taumel.Agents.Orphaned)
+      running_runs
+  in
+  let running_agents = List.length active_runs in
+  let orphaned_agents = List.length orphaned_runs in
+  let single_agent_description =
+    match active_runs with
+    | [ run ] -> Some run.run_description
+    | _ -> None
+  in
+  let live_execs, single_exec_command =
+    if owner_id = "" then (0, None)
+    else
+      match Exec_session.background_activity_for_owner owner_id with
+      | count, command -> (count, command)
+  in
+  {
+    Model.running_agents;
+    orphaned_agents;
+    single_agent_description;
+    live_execs;
+    single_exec_command;
+  }
+
 let snapshot_for_render host footer_data =
   let permissions = !loaded_footer_permissions in
   let branch =
@@ -112,4 +158,5 @@ let snapshot_for_render host footer_data =
     context_percent = state.context_percent;
     context_window = state.context_window;
     plan = plan_presentation ();
+    activity = activity_for_render ();
   }

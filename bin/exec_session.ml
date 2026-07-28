@@ -2,6 +2,7 @@ open Jsoo_bridge
 type session = {
   id : int;
   owner_id : string;
+  command : string;
   started_at : float;
   tty : bool;
   mutable child : Unsafe.any option;
@@ -21,8 +22,18 @@ type session = {
 type retained_session = {
   retained_id : int;
   retained_owner_id : string;
+  retained_command : string;
+  retained_started_at : float;
   retained_exit_code : int option;
 }
+let live_session_cap_per_owner = 64
+let command_display_cap = 240
+let truncate_command command =
+  let trimmed = String.trim command in
+  if String.length trimmed <= command_display_cap then trimmed
+  else String.sub trimmed 0 command_display_cap
+let is_background_session (session : session) =
+  (not session.exited) && session.session_id_exposed
 type truncation = Exec_output.truncation
 type run_result = {
   chunk_id : string;
@@ -46,6 +57,24 @@ let min_empty_write_stdin_yield_time_ms = 5_000.
 let max_empty_write_stdin_yield_time_ms = 300_000.
 let sessions : (int, session) Hashtbl.t = Hashtbl.create 16
 let retained_sessions : (int, retained_session) Hashtbl.t = Hashtbl.create 16
+let count_live_sessions_for_owner owner_id =
+  Hashtbl.fold
+    (fun _ session count ->
+      if session.owner_id = owner_id && not session.exited then count + 1 else count)
+    sessions 0
+let background_activity_for_owner owner_id =
+  let live =
+    Hashtbl.fold
+      (fun _ session acc ->
+        if session.owner_id = owner_id && is_background_session session then
+          session :: acc
+        else acc)
+      sessions []
+    |> List.sort (fun a b -> compare a.id b.id)
+  in
+  match live with
+  | [ session ] -> (1, Some session.command)
+  | _ -> (List.length live, None)
 let next_session_id = ref 1
 let next_chunk_id = ref 0
 let generate_chunk_id () =
@@ -427,12 +456,13 @@ let spawn_session session ~file ~args ~cwd ?env () =
             session.exit_code <- Some (int_field_default event "exitCode" 1);
             release_broker_lease session;
             notify session)) |])
-let new_session owner_id tty =
+let new_session owner_id command tty =
   let id = !next_session_id in
   incr next_session_id;
   {
     id;
     owner_id;
+    command = truncate_command command;
     started_at = now_ms ();
     tty;
     child = None;
@@ -468,6 +498,8 @@ let retain_completed_session session =
     {
       retained_id = session.id;
       retained_owner_id = session.owner_id;
+      retained_command = session.command;
+      retained_started_at = session.started_at;
       retained_exit_code = session.exit_code;
     };
   prune_retained_sessions session.owner_id
@@ -578,79 +610,88 @@ let run_exec_command prepared owner_id signal owner_context =
   let plan_id = get_string prepared "planId" in
   match Authority_plans.claim_exec ~owner_context plan_id with
   | Error message -> rejected_promise message
-  | Ok (plan, force_unsandboxed) -> (
-      match
-        Sandbox_bridge.planned_exec_host_call plan (inject Js.null)
-          (inject Js.null) force_unsandboxed
-      with
-      | Error message ->
-          ignore
-            (Authority_plans.finish_exec ~owner_context plan_id
-               ~retry_eligible:false);
-          rejected_promise message
-      | Ok call ->
-          let session = new_session owner_id call.tty in
-          let broker_agent_id =
-            Option.bind plan.brokered_git (fun broker -> broker.agent_id)
-          in
-          (match broker_agent_id with
-          | None -> ()
-          | Some agent_id -> (
-              match Taumel.Agent_git_broker.Lease.try_acquire agent_id with
-              | Error message -> failwith message
-              | Ok () -> session.broker_agent_id <- Some agent_id));
-          (match plan.brokered_git with
-          | Some broker when broker.subcommand = "add" -> (
-              match
-                Agent_worktree_host.perform_secure_broker_add
-                  ~worktree_path:broker.git_work_tree broker.argv
-              with
-              | Error message ->
-                  release_broker_lease session;
-                  failwith message
-              | Ok () ->
-                  (* Staging completed via filter-free plumbing; release lease and
-                     mark the synthetic session successful without spawning Git. *)
-                  session.exited <- true;
-                  session.exit_code <- Some 0;
-                  release_broker_lease session)
-          | Some _ | None -> ());
-          (try
-             if session.exited then ()
-             else
-               let env =
-                 Option.map
-                   (fun (broker : Authority_plans.brokered_git) ->
-                     Trusted_git.broker_environment ~git_dir:broker.git_dir
-                       ~git_work_tree:broker.git_work_tree
-                       ~commit:(broker.subcommand = "commit"))
-                   plan.brokered_git
-               in
-               spawn_session session ~file:call.invocation.command
-                 ~args:call.invocation.args ~cwd:call.cwd ?env ()
-           with exn ->
-             let message = Printexc.to_string exn ^ "\n" in
-             ignore (add_output session message);
-             session.exited <- true;
-             session.exit_code <- Some 1;
-             release_broker_lease session);
-          Hashtbl.replace sessions session.id session;
-          let extra =
-            Unsafe.obj
-              [|
-                ("sandboxed", js_bool call.invocation.sandboxed);
-                ("escalated", js_bool call.escalated);
-              |]
-          in
-          promise_of_session session
-            (normalize_exec_yield_ms call.yield_time_ms)
-            ?timeout_ms:call.timeout_ms
-            ?max_output_tokens:plan.max_output_tokens
-            ~on_finish:(fun result ->
-              ignore
-                (Authority_plans.finish_exec ~owner_context plan_id
-                   ~retry_eligible:(authority_retry_eligible plan call result)))
-            signal extra)
+  | Ok (plan, force_unsandboxed) ->
+      if count_live_sessions_for_owner owner_id >= live_session_cap_per_owner then (
+        ignore
+          (Authority_plans.finish_exec ~owner_context plan_id
+             ~retry_eligible:false);
+        rejected_promise
+          (Printf.sprintf
+             "at most %d concurrently live command sessions are allowed per owning session"
+             live_session_cap_per_owner))
+      else
+        match
+          Sandbox_bridge.planned_exec_host_call plan (inject Js.null)
+            (inject Js.null) force_unsandboxed
+        with
+        | Error message ->
+            ignore
+              (Authority_plans.finish_exec ~owner_context plan_id
+                 ~retry_eligible:false);
+            rejected_promise message
+        | Ok call ->
+            let session = new_session owner_id plan.cmd call.tty in
+            let broker_agent_id =
+              Option.bind plan.brokered_git (fun broker -> broker.agent_id)
+            in
+            (match broker_agent_id with
+            | None -> ()
+            | Some agent_id -> (
+                match Taumel.Agent_git_broker.Lease.try_acquire agent_id with
+                | Error message -> failwith message
+                | Ok () -> session.broker_agent_id <- Some agent_id));
+            (match plan.brokered_git with
+            | Some broker when broker.subcommand = "add" -> (
+                match
+                  Agent_worktree_host.perform_secure_broker_add
+                    ~worktree_path:broker.git_work_tree broker.argv
+                with
+                | Error message ->
+                    release_broker_lease session;
+                    failwith message
+                | Ok () ->
+                    (* Staging completed via filter-free plumbing; release lease and
+                       mark the synthetic session successful without spawning Git. *)
+                    session.exited <- true;
+                    session.exit_code <- Some 0;
+                    release_broker_lease session)
+            | Some _ | None -> ());
+            (try
+               if session.exited then ()
+               else
+                 let env =
+                   Option.map
+                     (fun (broker : Authority_plans.brokered_git) ->
+                       Trusted_git.broker_environment ~git_dir:broker.git_dir
+                         ~git_work_tree:broker.git_work_tree
+                         ~commit:(broker.subcommand = "commit"))
+                     plan.brokered_git
+                 in
+                 spawn_session session ~file:call.invocation.command
+                   ~args:call.invocation.args ~cwd:call.cwd ?env ()
+             with exn ->
+               let message = Printexc.to_string exn ^ "\n" in
+               ignore (add_output session message);
+               session.exited <- true;
+               session.exit_code <- Some 1;
+               release_broker_lease session);
+            Hashtbl.replace sessions session.id session;
+            let extra =
+              Unsafe.obj
+                [|
+                  ("sandboxed", js_bool call.invocation.sandboxed);
+                  ("escalated", js_bool call.escalated);
+                |]
+            in
+            promise_of_session session
+              (normalize_exec_yield_ms call.yield_time_ms)
+              ?timeout_ms:call.timeout_ms
+              ?max_output_tokens:plan.max_output_tokens
+              ~on_finish:(fun result ->
+                ignore
+                  (Authority_plans.finish_exec ~owner_context plan_id
+                     ~retry_eligible:(authority_retry_eligible plan call result)))
+              signal extra
 let write_stdin raw_facts =
   let facts = decode_ojs_contract Tool_contracts.WriteStdinFacts.t_of_js (ojs_of_js raw_facts) in
   let session_id = Tool_contracts.WriteStdinFacts.get_sessionId facts |> int_of_float in
@@ -837,3 +878,84 @@ let await_exec_completion session_id =
              in
              wait ()));
     |]
+
+let age_seconds_of started_at =
+  max 0 (int_of_float (Float.floor ((now_ms () -. started_at) /. 1000.)))
+
+let process_manager_entry_of_session (session : session) =
+  Tool_contracts.ProcessManagerEntry.create
+    ~sessionId:(float_of_int session.id) ~command:session.command
+    ~runState:
+      (Boundary_contracts.ProcessManagerEntry.run_state_to_contract
+         (if session.exited then `V_exited else `V_running))
+    ?exitCode:(Option.map float_of_int session.exit_code)
+    ~ageSeconds:(float_of_int (age_seconds_of session.started_at))
+    ~retained:false ()
+
+let process_manager_entry_of_retained (retained : retained_session) =
+  Tool_contracts.ProcessManagerEntry.create
+    ~sessionId:(float_of_int retained.retained_id)
+    ~command:retained.retained_command
+    ~runState:
+      (Boundary_contracts.ProcessManagerEntry.run_state_to_contract `V_exited)
+    ?exitCode:(Option.map float_of_int retained.retained_exit_code)
+    ~ageSeconds:(float_of_int (age_seconds_of retained.retained_started_at))
+    ~retained:true ()
+
+let process_manager_snapshot owner_id =
+  let live =
+    Hashtbl.fold
+      (fun _ session acc ->
+        if session.owner_id = owner_id then session :: acc else acc)
+      sessions []
+    |> List.sort (fun a b -> compare a.id b.id)
+    |> List.map process_manager_entry_of_session
+  in
+  let retained =
+    Hashtbl.fold
+      (fun _ retained acc ->
+        if retained.retained_owner_id = owner_id then retained :: acc else acc)
+      retained_sessions []
+    |> List.sort (fun a b -> compare a.retained_id b.retained_id)
+    |> List.map process_manager_entry_of_retained
+  in
+  Tool_contracts.ProcessManagerSnapshot.create ~sessions:(live @ retained) ()
+  |> Tool_contracts.ProcessManagerSnapshot.t_to_js
+  |> inject
+
+let process_manager_output owner_id session_id =
+  let unavailable () =
+    Tool_contracts.ProcessManagerOutput.create ~available:false
+      ~text:"no longer available" ()
+    |> Tool_contracts.ProcessManagerOutput.t_to_js
+    |> inject
+  in
+  match Hashtbl.find_opt sessions session_id with
+  | Some session when session.owner_id <> owner_id -> unavailable ()
+  | Some session -> (
+      match Exec_output.collectable_display session.output with
+      | None -> unavailable ()
+      | Some text ->
+          Tool_contracts.ProcessManagerOutput.create ~available:true ~text ()
+          |> Tool_contracts.ProcessManagerOutput.t_to_js
+          |> inject)
+  | None -> unavailable ()
+
+let process_manager_kill owner_id session_id =
+  match Hashtbl.find_opt sessions session_id with
+  | None ->
+      error_obj (Printf.sprintf "Unknown shell session: %d" session_id)
+  | Some session when session.owner_id <> owner_id ->
+      error_obj
+        (Printf.sprintf "Shell session %d belongs to another pi session" session_id)
+  | Some session when session.exited ->
+      error_obj
+        (Printf.sprintf "session %d already completed; cannot kill" session_id)
+  | Some session ->
+      kill_session session;
+      if not session.exited then (
+        session.exited <- true;
+        session.exit_code <- Some (Option.value session.exit_code ~default:143);
+        release_broker_lease session;
+        notify session);
+      core_ack ()

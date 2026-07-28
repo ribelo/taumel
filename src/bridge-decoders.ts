@@ -1,6 +1,6 @@
 import { Compile } from "typebox/compile";
 import { ActiveToolsPlanSchema, AuthorityPlanIssuedSchema, BridgeCommandResultSchema, BridgeErrorResultSchema, BridgeToolExecutionResultSchema, BridgeToolResultSchema, ChildDispatchPlanSchema, ChildSessionStartPlanSchema, CommandChildDispatchPlanSchema, CommandChildSessionPlanSchema, CommandExecutionPlanSchema, CommandNotificationPlanSchema, CommandSpecsResultSchema, CompactionCommandPlanSchema, CompactionSessionPlanSchema, CoreAckSchema, CronCommandResultSchema, CronDeliveredResultSchema, CronPlanFactsSchema, CronListResultSchema, CronPollPlanSchema, CronPromptPlanSchema, CronPromptSchema, CronStartupPlanSchema, EditApplicationResultSchema, EnvironmentContextPlanSchema, ExecApprovalPromptPlanSchema, ExecApprovalResultSchema, ExecNotificationClaimSchema, ExecPolicyAllowRuleResultSchema, ExecToolResultSchema, PlanContinuationPlanSchema, PlanRollbackResultSchema, KimiUsageHostAuthSchema, KimiUsageHostParamsSchema, OpenAiUsageHostAuthSchema, OpenAiUsageHostParamsSchema, UsagePairHostParamsSchema, PatchApplicationResultSchema, PendingExecNotificationsResultSchema, PermissionsCommandResultSchema, PermissionsPromptPlanSchema, PermissionsPromptSchema, RefreshExecPolicyResultSchema, SkillListResultSchema, SkillResolveResultSchema, ThreadCatalogScansResultSchema, ToolNamesResultSchema, ToolResultEnvelopeSchema, ViewMediaResultEnvelopeSchema, VisibilityListResultSchema, VisibilityRowsResultSchema, VisibilitySavePlanSchema, VisibilityToggleResultSchema, VisibilityWarningsResultSchema, WorkspaceMutationValidationSchema, type ActiveToolsPlan, type AuthorityPlanIssued, type BridgeCommandResult, type BridgeToolExecutionResult, type BridgeToolResult, type ChildDispatchPlan, type ChildSessionStartPlan, type CommandChildDispatchPlan, type CommandChildSessionPlan, type CommandExecutionPlan, type CommandNotificationPlan, type CommandSpecsResult, type CompactionCommandPlan, type CompactionSessionPlan, type CoreAck, type CronCommandResult, type CronDeliveredResult, type CronPlanFacts, type CronListResult, type CronPollPlan, type CronPrompt, type CronPromptPlan, type CronStartupPlan, type EditApplicationResult, type EnvironmentContextPlan, type ExecApprovalPromptPlan, type ExecApprovalResult, type ExecNotificationClaim, type ExecPolicyAllowRuleResult, type ExecToolResult, type PlanContinuationPlan, type PlanRollbackResult, type KimiUsageHostAuth, type KimiUsageHostParams, type OpenAiUsageHostAuth, type OpenAiUsageHostParams, type UsagePairHostParams, type PatchApplicationResult, type PendingExecNotificationsResult, type PermissionsCommandResult, type PermissionsPrompt, type PermissionsPromptPlan, type RefreshExecPolicyResult, type SkillListResult, type SkillResolveResult, type ThreadCatalogScansResult, type ToolNamesResult, type ToolResultEnvelope, type ViewMediaResultEnvelope, type VisibilityListResult, type VisibilityRowsResult, type VisibilitySavePlan, type VisibilityToggleResult, type VisibilityWarningsResult, type WorkspaceMutationValidation } from "./bridge-core-contracts.ts";
-import { AgentActiveCountResultSchema, AgentCleanupPlanSchema, AgentManagerSnapshotSchema, AgentNotificationClaimValidationSchema, AgentRoutingDiagnosticsResultSchema, ComposerCommandResultSchema, CronPlanCreationResultSchema, GatewayCommandOutputSchema, PendingAgentNotificationsResultSchema, PreparedToolActionSchema, type AgentActiveCountResult, type AgentCleanupPlan, type AgentManagerSnapshot, type AgentNotificationClaimValidation, type AgentRoutingDiagnosticsResult, type ComposerCommandResult, type CronPlanCreationResult, type GatewayCommandOutput, type PendingAgentNotificationsResult, type PreparedToolAction } from "./bridge-action-contracts.ts";
+import { AgentActiveCountResultSchema, AgentCleanupPlanSchema, AgentManagerSnapshotSchema, AgentNotificationClaimValidationSchema, AgentRoutingDiagnosticsResultSchema, ComposerCommandResultSchema, CronPlanCreationResultSchema, GatewayCommandOutputSchema, PendingAgentNotificationsResultSchema, PreparedToolActionSchema, ProcessManagerOutputSchema, ProcessManagerSnapshotSchema, type AgentActiveCountResult, type AgentCleanupPlan, type AgentManagerSnapshot, type AgentNotificationClaimValidation, type AgentRoutingDiagnosticsResult, type ComposerCommandResult, type CronPlanCreationResult, type GatewayCommandOutput, type PendingAgentNotificationsResult, type PreparedToolAction, type ProcessManagerOutput, type ProcessManagerSnapshot } from "./bridge-action-contracts.ts";
 import { ChildSessionMetadataSchema, type ChildSessionMetadata } from "./bridge-child-session-contracts.ts";
 import { ChildPermissionRefreshPlanSchema, type ChildPermissionRefreshPlan } from "./bridge-core-contracts.ts";
 import { TaumelPersistedCustomEntrySchema, type AnyPersistedTaumelCustomEntry } from "./session-entry-contracts.ts";
@@ -10,6 +10,8 @@ const commandSpecsResultDecoder = Compile(CommandSpecsResultSchema);
 const toolNamesResultDecoder = Compile(ToolNamesResultSchema);
 const threadCatalogScansResultDecoder = Compile(ThreadCatalogScansResultSchema);
 const pendingExecNotificationsResultDecoder = Compile(PendingExecNotificationsResultSchema);
+const processManagerSnapshotDecoder = Compile(ProcessManagerSnapshotSchema);
+const processManagerOutputDecoder = Compile(ProcessManagerOutputSchema);
 const execNotificationClaimDecoder = Compile(ExecNotificationClaimSchema);
 const openAiUsageHostAuthDecoder = Compile(OpenAiUsageHostAuthSchema);
 const kimiUsageHostAuthDecoder = Compile(KimiUsageHostAuthSchema);
@@ -112,6 +114,22 @@ export function decodePendingExecNotificationsResult(value: unknown): PendingExe
     return pendingExecNotificationsResultDecoder.Decode(value);
   } catch {
     throw new Error("Invalid OCaml pending-exec-notifications response");
+  }
+}
+
+export function decodeProcessManagerSnapshot(value: unknown): ProcessManagerSnapshot {
+  try {
+    return processManagerSnapshotDecoder.Decode(value);
+  } catch {
+    throw new Error("Invalid OCaml process-manager snapshot response");
+  }
+}
+
+export function decodeProcessManagerOutput(value: unknown): ProcessManagerOutput {
+  try {
+    return processManagerOutputDecoder.Decode(value);
+  } catch {
+    throw new Error("Invalid OCaml process-manager output response");
   }
 }
 
@@ -429,3 +447,4 @@ export function decodeAgentManagerSnapshot(value: unknown): AgentManagerSnapshot
   try { return agentManagerSnapshotDecoder.Decode(value); }
   catch { throw new Error("Invalid agent manager snapshot"); }
 }
+

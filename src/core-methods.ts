@@ -44,6 +44,9 @@ export type CoreMethodArgs = {
   readonly releaseExecNotificationDelivery: readonly [number];
   readonly markExecNotificationDelivered: readonly [number];
   readonly awaitExecCompletion: readonly [number];
+  readonly processManagerSnapshot: readonly [Static<typeof Action.ProcessManagerOwnerFactsSchema>];
+  readonly processManagerOutput: readonly [Static<typeof Action.ProcessManagerSessionFactsSchema>];
+  readonly processManagerKill: readonly [Static<typeof Action.ProcessManagerSessionFactsSchema>];
   readonly planCommandExecution: readonly [Static<typeof Core.CommandExecutionFactsSchema>];
   readonly planPlanContinuation: readonly [Static<typeof Core.PlanContinuationFactsSchema>];
   readonly rollbackPlanCommand: readonly [Static<typeof Core.PlanRollbackFactsSchema>];
