@@ -781,7 +781,7 @@ export async function executeAgentPrepared(
         revalidateCapability();
         // Cancel identity-owned broker sessions before cleanliness/removal inspection.
         try {
-          decodeCoreAck(core.call("cancelAgentBrokerSessions", [{ agent_id: agentId }]));
+          decodeCoreAck(await core.call("cancelAgentBrokerSessions", [{ agent_id: agentId }]));
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           return agentErrorToolResult(core, "cleanup_failed", message || "broker session cancellation failed");

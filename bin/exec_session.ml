@@ -1,22 +1,34 @@
 open Jsoo_bridge
+
+module Effect = Eta.Effect
+module Promise = Eta.Promise
+module Exit = Eta.Exit
+
+type terminal_outcome =
+  | Ordinary_exit of int
+  | Timeout of int
+  | Output_limit of int
+  | Forced_termination of int
+
+type lifecycle = Running | Terminal of terminal_outcome
+type terminal_consumption = Pending | Consumed_by_tool
+type notification_state = Pending | Sent
+
 type session = {
   id : int;
   owner_id : string;
   command : string;
   started_at : float;
   tty : bool;
-  mutable child : Unsafe.any option;
+  mutable process : Exec_process_jsoo.t option;
   output : Exec_output.t;
-  mutable timeout_exceeded : bool;
-  mutable exited : bool;
-  mutable exit_code : int option;
+  completion : (terminal_outcome, string) Promise.t;
+  mutable lifecycle : lifecycle;
   mutable session_id_exposed : bool;
-  mutable terminal_consumed : bool;
-  mutable notification_sent : bool;
+  mutable terminal_consumption : terminal_consumption;
+  mutable notification_state : notification_state;
   mutable notification_delivery_claimed : bool;
-  mutable active_write_stdin_waiters : int;
-  mutable waiters : (int * (unit -> unit)) list;
-  mutable next_waiter_id : int;
+  mutable active_write_stdin_claims : int;
   mutable broker_agent_id : string option;
 }
 type retained_session = {
@@ -33,7 +45,7 @@ let truncate_command command =
   if String.length trimmed <= command_display_cap then trimmed
   else String.sub trimmed 0 command_display_cap
 let is_background_session (session : session) =
-  (not session.exited) && session.session_id_exposed
+  session.lifecycle = Running && session.session_id_exposed
 type truncation = Exec_output.truncation
 type run_result = {
   chunk_id : string;
@@ -60,7 +72,8 @@ let retained_sessions : (int, retained_session) Hashtbl.t = Hashtbl.create 16
 let count_live_sessions_for_owner owner_id =
   Hashtbl.fold
     (fun _ session count ->
-      if session.owner_id = owner_id && not session.exited then count + 1 else count)
+      if session.owner_id = owner_id && session.lifecycle = Running then count + 1
+      else count)
     sessions 0
 let background_activity_for_owner owner_id =
   let live =
@@ -111,115 +124,20 @@ let js_require = Exec_output.js_require
 let make_truncation = Exec_output.make_truncation
 let add_output (session : session) text = Exec_output.add session.output text
 let close_temp (session : session) = Exec_output.close session.output
-let node_process () = Unsafe.get Unsafe.global "process"
-let js_error message =
-  Unsafe.new_obj (Unsafe.get Unsafe.global "Error") [| js_string message |]
-let reject_error reject message =
-  ignore (Unsafe.fun_call reject [| inject (js_error message) |])
-let property obj name =
-  optional_field obj name
-let data_to_string data =
-  match string_value data with
-  | Some value -> value
-  | None -> (
-      match function_field data "toString" with
-      | None -> ""
-      | Some _ ->
-          Option.value
-            (string_value
-               (Unsafe.meth_call data "toString" [| js_string "utf8" |]))
-            ~default:"")
-let int_from_js_default value default =
-  match float_value value with
-  | Some value -> int_of_float value
-  | None -> default
-let notify (session : session) =
-  let waiters = session.waiters in
-  session.waiters <- [];
-  List.iter (fun (_, waiter) -> waiter ()) waiters
-let add_waiter (session : session) waiter =
-  let id = session.next_waiter_id in
-  session.next_waiter_id <- id + 1;
-  session.waiters <- (id, waiter) :: session.waiters;
-  id
-let remove_waiter (session : session) id =
-  session.waiters <- List.filter (fun (waiter_id, _) -> waiter_id <> id) session.waiters
-let process_pid (session : session) =
-  match session.child with
-  | None -> None
-  | Some child ->
-      (match int_field child "pid" with
-      | Some pid when pid > 0 -> Some pid
-      | _ -> None)
-let kill_pid pid =
-  let process = node_process () in
-  ignore
-    (Unsafe.meth_call process "kill"
-       [| js_number (float_of_int (-pid)); js_string "SIGTERM" |]);
-  ignore
-    (Unsafe.meth_call process "kill"
-       [| js_number (float_of_int pid); js_string "SIGTERM" |])
 let kill_session (session : session) =
-  match session.child with
-  | Some child when session.tty -> (
-      try ignore (Unsafe.meth_call child "kill" [||]) with _ -> ())
-  | _ -> (
-      match process_pid session with
-      | None -> ()
-      | Some pid -> kill_pid pid)
-let timer_set callback delay_ms =
-  Unsafe.fun_call (Unsafe.get Unsafe.global "setTimeout")
-    [| inject (Js.wrap_callback callback); js_number delay_ms |]
-let timer_clear timer =
-  match function_field Unsafe.global "clearTimeout" with
-  | None -> ()
-  | Some clear_timeout -> ignore (Unsafe.fun_call clear_timeout [| timer |])
-let signal_aborted signal =
-  (not (is_nullish signal)) && get_bool_property signal "aborted"
-let add_abort_listener signal callback =
-  if is_nullish signal then fun () -> ()
-  else
-    let wrapped = Js.wrap_callback callback in
-    let options = Unsafe.obj [| ("once", js_bool true) |] in
-    ignore
-      (Unsafe.meth_call signal "addEventListener"
-         [| js_string "abort"; inject wrapped; inject options |]);
-    fun () ->
-      ignore
-        (Unsafe.meth_call signal "removeEventListener"
-           [| js_string "abort"; inject wrapped |])
-let wait_for_notification session wait_ms signal ~on_wake ~on_abort =
-  if session.exited || wait_ms <= 0. then on_wake ()
-  else if signal_aborted signal then on_abort ()
-  else
-    let active = ref true in
-    let waiter_id = ref None in
-    let timeout = ref None in
-    let cleanup () =
-      if !active then (
-        active := false;
-        Option.iter (remove_waiter session) !waiter_id;
-        Option.iter timer_clear !timeout)
-    in
-    let remove_abort = ref (fun () -> ()) in
-    let finish callback () =
-      if !active then (
-        cleanup ();
-        !remove_abort ();
-        callback ())
-    in
-    waiter_id := Some (add_waiter session (finish on_wake));
-    timeout := Some (timer_set (finish on_wake) wait_ms);
-    remove_abort := add_abort_listener signal (finish on_abort)
-let wait_for_settle session yield_ms signal ~on_done ~on_abort =
-  let deadline = now_ms () +. yield_ms in
-  let rec loop () =
-    if session.exited || now_ms () >= deadline then on_done ()
-    else
-      wait_for_notification session (deadline -. now_ms ()) signal
-        ~on_wake:loop ~on_abort
-  in
-  loop ()
+  Option.iter Exec_process_jsoo.request_sigterm session.process
+
+let terminal_exit_code = function
+  | Ordinary_exit code
+  | Timeout code
+  | Output_limit code
+  | Forced_termination code ->
+      code
+
+let session_terminal_outcome session =
+  match session.lifecycle with Running -> None | Terminal outcome -> Some outcome
+
+let session_exited session = session_terminal_outcome session <> None
 let make_result ?(output_mode = "delta") ?(max_output_tokens = default_max_output_tokens)
     (session : session) =
   let delta_output, delta_truncation = Exec_output.codex_display session.output max_output_tokens in
@@ -251,15 +169,21 @@ let make_result ?(output_mode = "delta") ?(max_output_tokens = default_max_outpu
       output_mode;
       suppressed_lines = (if output_mode = "status" then suppressed_lines else 0);
       suppressed_bytes = (if output_mode = "status" then suppressed_bytes else 0);
-      output_limit_exceeded = session.output.output_limit_exceeded;
-      timeout_exceeded = session.timeout_exceeded;
+      output_limit_exceeded =
+        (match session.lifecycle with
+        | Terminal (Output_limit _) -> true
+        | Running | Terminal _ -> session.output.output_limit_exceeded);
+      timeout_exceeded =
+        (match session.lifecycle with
+        | Terminal (Timeout _) -> true
+        | Running | Terminal _ -> false);
     }
   in
-  if session.exited then
-    { base with exit_code = Some (Option.value session.exit_code ~default:1) }
-  else (
+  match session.lifecycle with
+  | Terminal outcome -> { base with exit_code = Some (terminal_exit_code outcome) }
+  | Running ->
     session.session_id_exposed <- true;
-    { base with session_id = Some session.id })
+    { base with session_id = Some session.id }
 let shell_result_text result =
   let body = result.output in
   let append status = if body = "" then status else body ^ "\n\n" ^ status in
@@ -340,122 +264,26 @@ let shell_tool_result result extra =
   Tool_contracts.ExecToolResult.create ~content:[ content ]
     ~details:(shell_result_details result extra) ()
   |> Tool_contracts.ExecToolResult.t_to_js |> inject
-let node_env _tty ~shell =
-  let process = node_process () in
-  let env = Unsafe.get process "env" in
-  Unsafe.fun_call (Unsafe.get (Unsafe.get Unsafe.global "Object") "assign")
-    [|
-      inject (Unsafe.obj [||]);
-      inject env;
-      inject
-        (Unsafe.obj
-           [|
-             ("NO_COLOR", js_string "1");
-             ("TERM", js_string "dumb");
-             ("LANG", js_string "C.UTF-8");
-             ("LC_CTYPE", js_string "C.UTF-8");
-             ("LC_ALL", js_string "C.UTF-8");
-             ("COLORTERM", js_string "");
-             ("PAGER", js_string "cat");
-             ("GIT_PAGER", js_string "cat");
-             ("GIT_TERMINAL_PROMPT", js_string "0");
-             ("SHELL", js_string shell);
-           |]);
-    |]
-let spawn_options cwd tty ~shell =
-  let process = node_process () in
-  Unsafe.obj
-    [|
-      ("cwd", js_string cwd);
-      ("detached", js_bool (get_string process "platform" <> "win32"));
-      ("env", node_env tty ~shell);
-      ( "stdio",
-        js_array
-          [
-            js_string (if tty then "pipe" else "ignore");
-            js_string "pipe";
-            js_string "pipe";
-          ] );
-      ("windowsHide", js_bool true);
-    |]
-let wire_stream session child name =
-  match property child name with
-  | None -> ()
-  | Some stream ->
-      ignore
-        (Unsafe.meth_call stream "on"
-           [|
-             js_string "data";
-             inject
-               (Js.wrap_callback (fun data ->
-                    let crossed = add_output session (data_to_string data) in
-                    if crossed then kill_session session;
-                    notify session));
-           |])
 let release_broker_lease session =
   match session.broker_agent_id with
   | None -> ()
   | Some agent_id ->
       Taumel.Agent_git_broker.Lease.release agent_id;
       session.broker_agent_id <- None
-let cancel_broker_sessions_for_agent agent_id =
-  let agent_id = String.trim agent_id in
-  let live = ref [] in
-  Hashtbl.iter
-    (fun _ session ->
-      match session.broker_agent_id with
-      | Some id when id = agent_id -> live := session :: !live
-      | _ -> ())
-    sessions;
-  List.iter (fun session -> if not session.exited then kill_session session) !live;
-  let deadline = now_ms () +. 5000. in
-  let rec wait () =
-    if List.for_all (fun session -> session.exited) !live then true
-    else if now_ms () >= deadline then false
-    else (
-      let start = now_ms () in
-      while now_ms () -. start < 25. do () done;
-      wait ())
-  in
-  if wait () then (
-    List.iter release_broker_lease !live;
-    Taumel.Agent_git_broker.Lease.release agent_id;
-    true)
-  else false
-let spawn_session session ~file ~args ~cwd ?env () =
-  let fs = js_require "node:fs" in
-  let exists = Unsafe.fun_call (Unsafe.get fs "existsSync") [| js_string cwd |] in
-  if not (Js.to_bool (Unsafe.coerce exists)) then
-    failwith ("Working directory does not exist: " ^ cwd);
-  let node_pty = js_require "node-pty" in
-  let options =
-    Unsafe.obj
-      [|
-        ("name", js_string "dumb");
-        ("cols", js_number 80.);
-        ("rows", js_number 24.);
-        ("cwd", js_string cwd);
-        ("env", Option.value env ~default:(node_env true ~shell:file));
-      |]
-  in
-  let child =
-    Unsafe.fun_call (Unsafe.get node_pty "spawn")
-      [| js_string file; js_array (List.map js_string args); inject options |]
-  in
-  session.child <- Some child;
-  ignore
-    (Unsafe.meth_call child "onData"
-       [| inject (Js.wrap_callback (fun data ->
-            let crossed = add_output session (data_to_string data) in
-            if crossed then kill_session session;
-            notify session)) |]);
-  ignore
-    (Unsafe.meth_call child "onExit"
-       [| inject (Js.wrap_callback (fun event ->
-            session.exited <- true;
-            session.exit_code <- Some (int_field_default event "exitCode" 1);
-            release_broker_lease session;
-            notify session)) |])
+let resolve_completion session outcome =
+  Eta_jsoo.run
+    (fun () -> Promise.resolve session.completion (Exit.Ok outcome))
+    ~on_result:(fun _ -> ())
+
+let transition_terminal session outcome =
+  match session.lifecycle with
+  | Terminal _ -> false
+  | Running ->
+      session.lifecycle <- Terminal outcome;
+      release_broker_lease session;
+      resolve_completion session outcome;
+      true
+
 let new_session owner_id command tty =
   let id = !next_session_id in
   incr next_session_id;
@@ -465,18 +293,15 @@ let new_session owner_id command tty =
     command = truncate_command command;
     started_at = now_ms ();
     tty;
-    child = None;
+    process = None;
     output = Exec_output.create id;
-    timeout_exceeded = false;
-    exited = false;
-    exit_code = None;
+    completion = Promise.create ();
+    lifecycle = Running;
     session_id_exposed = false;
-    terminal_consumed = false;
-    notification_sent = false;
+    terminal_consumption = Pending;
+    notification_state = Pending;
     notification_delivery_claimed = false;
-    active_write_stdin_waiters = 0;
-    waiters = [];
-    next_waiter_id = 1;
+    active_write_stdin_claims = 0;
     broker_agent_id = None;
   }
 let retained_session_cap_per_owner = 128
@@ -494,98 +319,111 @@ let prune_retained_sessions owner_id =
          if index >= retained_session_cap_per_owner then
            Hashtbl.remove retained_sessions retained.retained_id)
 let retain_completed_session session =
+  let exit_code = Option.map terminal_exit_code (session_terminal_outcome session) in
   Hashtbl.replace retained_sessions session.id
     {
       retained_id = session.id;
       retained_owner_id = session.owner_id;
       retained_command = session.command;
       retained_started_at = session.started_at;
-      retained_exit_code = session.exit_code;
+      retained_exit_code = exit_code;
     };
   prune_retained_sessions session.owner_id
-let finish_session ?(output_mode = "delta") ?max_output_tokens ?on_finish session
-    extra resolve =
-  let result = make_result ~output_mode ?max_output_tokens session in
-  Option.iter (fun finish -> finish result) on_finish;
-  if session.exited then (
-    session.terminal_consumed <- true;
-    close_temp session;
-    if session.session_id_exposed then retain_completed_session session;
-    Hashtbl.remove sessions session.id);
-  ignore (Unsafe.fun_call resolve [| inject (shell_tool_result result extra) |])
-let rejected_promise message =
-  Unsafe.new_obj (Unsafe.get Unsafe.global "Promise")
-    [|
-      inject
-        (Js.wrap_callback (fun _resolve reject -> reject_error reject message));
-    |]
-let resolved_promise value =
-  Unsafe.new_obj (Unsafe.get Unsafe.global "Promise")
-    [|
-      inject
-        (Js.wrap_callback (fun resolve _reject ->
-             ignore (Unsafe.fun_call resolve [| inject value |])));
-    |]
-let promise_of_session session yield_ms ?timeout_ms
-    ?(abort_disposition = `Kill_session) ?(write_stdin_waiter = false)
-    ?(output_mode = "delta") ?max_output_tokens ?on_finish signal
-    extra =
-  Unsafe.new_obj (Unsafe.get Unsafe.global "Promise")
-    [|
-      inject
-        (Js.wrap_callback (fun resolve reject ->
-             let settled = ref false in
-             let timeout_ref = ref None in
-             if write_stdin_waiter then
-               session.active_write_stdin_waiters <-
-                 session.active_write_stdin_waiters + 1;
-             let cleanup () = Option.iter timer_clear !timeout_ref in
-             let clear_write_stdin_waiter () =
-               if write_stdin_waiter then
-                 session.active_write_stdin_waiters <-
-                   max 0 (session.active_write_stdin_waiters - 1)
-             in
-             let resolve_once () =
-               if not !settled then (
-                 settled := true;
-                 cleanup ();
-                 clear_write_stdin_waiter ();
-                 finish_session ~output_mode ?max_output_tokens ?on_finish session
-                   extra resolve)
-             in
-             let reject_once ?(kill = false) message =
-               if not !settled then (
-                 settled := true;
-                 cleanup ();
-                 clear_write_stdin_waiter ();
-                 if kill then (
-                   kill_session session;
-                   close_temp session;
-                   Hashtbl.remove sessions session.id);
-                 reject_error reject message)
-             in
-             let on_abort () =
-               match abort_disposition with
-               | `Kill_session ->
-                   let body = (make_result ?max_output_tokens session).output in
-                   let message =
-                     if body = "" then "Command aborted"
-                     else body ^ "\n\nCommand aborted"
-                   in
-                   reject_once ~kill:true message
-               | `Keep_session -> reject_once "Operation aborted"
-             in
-             if signal_aborted signal then on_abort ()
-             else (
-               timeout_ref :=
-                 (match timeout_ms with
-                 | Some timeout_ms when timeout_ms > 0. ->
-                     Some (timer_set (fun () -> session.timeout_exceeded <- true; kill_session session) timeout_ms)
-                 | _ -> None);
-               wait_for_settle session yield_ms signal ~on_done:resolve_once
-                 ~on_abort;
-               ())));
-    |]
+type wait_winner =
+  | Completion of terminal_outcome
+  | Yield
+  | Abort
+
+let wait_for_session session yield_ms signal =
+  Effect.race
+    [
+      Promise.await session.completion |> Effect.map (fun outcome -> Completion outcome);
+      Effect.sleep (Eta.Duration.ms (int_of_float yield_ms))
+      |> Effect.map (fun () -> Yield);
+      Eta_host_doors.await_abort_signal signal |> Effect.map (fun () -> Abort);
+    ]
+
+let rec string_cause_message = function
+  | Eta.Cause.Fail message -> message
+  | Eta.Cause.Sequential (cause :: _)
+  | Eta.Cause.Concurrent (cause :: _) ->
+      string_cause_message cause
+  | cause -> Format.asprintf "%a" (Eta.Cause.pp Format.pp_print_string) cause
+
+let promise_of_effect program =
+  Eta_host_doors.js_promise_of_effect_rejecting
+    ~error_message:string_cause_message program
+
+let rejected_effect message = promise_of_effect (Effect.fail message)
+let resolved_effect value = promise_of_effect (Effect.pure value)
+
+let consume_terminal ?(output_mode = "delta") ?max_output_tokens session extra =
+  match (session.lifecycle, session.terminal_consumption) with
+  | Running, _ -> Error "shell session is still running"
+  | Terminal _, Consumed_by_tool ->
+      Error (Printf.sprintf "session %d terminal result already consumed" session.id)
+  | Terminal _, Pending ->
+      session.terminal_consumption <- Consumed_by_tool;
+      let result = make_result ~output_mode ?max_output_tokens session in
+      close_temp session;
+      if session.session_id_exposed then retain_completed_session session;
+      Hashtbl.remove sessions session.id;
+      Ok (result, shell_tool_result result extra)
+
+let spawn_session session ~file ~args ~cwd ?env () =
+  let on_data text = add_output session text in
+  let on_exit code =
+    let outcome =
+      if session.output.output_limit_exceeded then Output_limit code
+      else Ordinary_exit code
+    in
+    ignore (transition_terminal session outcome)
+  in
+  session.process <-
+    Some
+      (Exec_process_jsoo.spawn ~file ~args ~cwd ?env ~tty:session.tty ~on_data
+         ~on_exit ())
+
+let launch_timeout session timeout_ms =
+  match timeout_ms with
+  | Some timeout_ms when timeout_ms > 0. ->
+      Eta_jsoo.run
+        (fun () ->
+          let open Eta.Syntax in
+          let* () = Effect.sleep (Eta.Duration.ms (int_of_float timeout_ms)) in
+          Effect.sync (fun () ->
+              if transition_terminal session (Timeout 143) then kill_session session))
+        ~on_result:(fun () -> ())
+  | Some _ | None -> ()
+
+let cancel_broker_sessions_for_agent agent_id =
+  let agent_id = String.trim agent_id in
+  let live =
+    Hashtbl.fold
+      (fun _ session acc ->
+        match session.broker_agent_id with
+        | Some id when id = agent_id -> session :: acc
+        | Some _ | None -> acc)
+      sessions []
+  in
+  List.iter
+    (fun session -> if session.lifecycle = Running then kill_session session)
+    live;
+  let waits =
+    List.map
+      (fun session -> Promise.await session.completion |> Effect.map (fun _ -> ()))
+      live
+  in
+  let open Eta.Syntax in
+  let wait_for_all =
+    Effect.all ~max_concurrent:(max 1 (List.length waits)) waits
+    |> Effect.map (fun _ -> ())
+  in
+  let* () =
+    Effect.timeout_as (Eta.Duration.seconds 5) ~on_timeout:"cleanup timeout"
+      wait_for_all
+  in
+  Effect.pure true
 let authority_retry_eligible (plan : Authority_plans.exec_plan)
     (call : Taumel.Sandbox.exec_host_call) result =
   let policy_allows_retry =
@@ -609,13 +447,13 @@ let authority_retry_eligible (plan : Authority_plans.exec_plan)
 let run_exec_command prepared owner_id signal owner_context =
   let plan_id = get_string prepared "planId" in
   match Authority_plans.claim_exec ~owner_context plan_id with
-  | Error message -> rejected_promise message
+  | Error message -> rejected_effect message
   | Ok (plan, force_unsandboxed) ->
       if count_live_sessions_for_owner owner_id >= live_session_cap_per_owner then (
         ignore
           (Authority_plans.finish_exec ~owner_context plan_id
              ~retry_eligible:false);
-        rejected_promise
+        rejected_effect
           (Printf.sprintf
              "at most %d concurrently live command sessions are allowed per owning session"
              live_session_cap_per_owner))
@@ -628,54 +466,45 @@ let run_exec_command prepared owner_id signal owner_context =
             ignore
               (Authority_plans.finish_exec ~owner_context plan_id
                  ~retry_eligible:false);
-            rejected_promise message
+            rejected_effect message
         | Ok call ->
             let session = new_session owner_id plan.cmd call.tty in
-            let broker_agent_id =
-              Option.bind plan.brokered_git (fun broker -> broker.agent_id)
-            in
-            (match broker_agent_id with
-            | None -> ()
-            | Some agent_id -> (
-                match Taumel.Agent_git_broker.Lease.try_acquire agent_id with
-                | Error message -> failwith message
-                | Ok () -> session.broker_agent_id <- Some agent_id));
-            (match plan.brokered_git with
-            | Some broker when broker.subcommand = "add" -> (
-                match
-                  Agent_worktree_host.perform_secure_broker_add
-                    ~worktree_path:broker.git_work_tree broker.argv
-                with
-                | Error message ->
-                    release_broker_lease session;
-                    failwith message
-                | Ok () ->
-                    (* Staging completed via filter-free plumbing; release lease and
-                       mark the synthetic session successful without spawning Git. *)
-                    session.exited <- true;
-                    session.exit_code <- Some 0;
-                    release_broker_lease session)
-            | Some _ | None -> ());
+            Hashtbl.replace sessions session.id session;
             (try
-               if session.exited then ()
-               else
-                 let env =
-                   Option.map
-                     (fun (broker : Authority_plans.brokered_git) ->
-                       Trusted_git.broker_environment ~git_dir:broker.git_dir
-                         ~git_work_tree:broker.git_work_tree
-                         ~commit:(broker.subcommand = "commit"))
-                     plan.brokered_git
-                 in
-                 spawn_session session ~file:call.invocation.command
-                   ~args:call.invocation.args ~cwd:call.cwd ?env ()
+               let broker_agent_id =
+                 Option.bind plan.brokered_git (fun broker -> broker.agent_id)
+               in
+               (match broker_agent_id with
+               | None -> ()
+               | Some agent_id -> (
+                   match Taumel.Agent_git_broker.Lease.try_acquire agent_id with
+                   | Error message -> failwith message
+                   | Ok () -> session.broker_agent_id <- Some agent_id));
+               match plan.brokered_git with
+               | Some broker when broker.subcommand = "add" -> (
+                   match
+                     Agent_worktree_host.perform_secure_broker_add
+                       ~worktree_path:broker.git_work_tree broker.argv
+                   with
+                   | Error message -> failwith message
+                   | Ok () ->
+                       ignore (transition_terminal session (Ordinary_exit 0)))
+               | Some _ | None ->
+                   let env =
+                     Option.map
+                       (fun (broker : Authority_plans.brokered_git) ->
+                         Trusted_git.broker_environment ~git_dir:broker.git_dir
+                           ~git_work_tree:broker.git_work_tree
+                           ~commit:(broker.subcommand = "commit"))
+                       plan.brokered_git
+                   in
+                   spawn_session session ~file:call.invocation.command
+                     ~args:call.invocation.args ~cwd:call.cwd ?env ()
              with exn ->
                let message = Printexc.to_string exn ^ "\n" in
                ignore (add_output session message);
-               session.exited <- true;
-               session.exit_code <- Some 1;
-               release_broker_lease session);
-            Hashtbl.replace sessions session.id session;
+               ignore (transition_terminal session (Ordinary_exit 1)));
+            launch_timeout session call.timeout_ms;
             let extra =
               Unsafe.obj
                 [|
@@ -683,15 +512,92 @@ let run_exec_command prepared owner_id signal owner_context =
                   ("escalated", js_bool call.escalated);
                 |]
             in
-            promise_of_session session
-              (normalize_exec_yield_ms call.yield_time_ms)
-              ?timeout_ms:call.timeout_ms
-              ?max_output_tokens:plan.max_output_tokens
-              ~on_finish:(fun result ->
-                ignore
-                  (Authority_plans.finish_exec ~owner_context plan_id
-                     ~retry_eligible:(authority_retry_eligible plan call result)))
-              signal extra
+            let open Eta.Syntax in
+            let program =
+              let* winner =
+                wait_for_session session
+                  (normalize_exec_yield_ms call.yield_time_ms)
+                  signal
+              in
+              match winner with
+              | Completion _ ->
+                  Effect.sync_result (fun () ->
+                      consume_terminal ?max_output_tokens:plan.max_output_tokens
+                        session extra)
+              | Yield ->
+                  Effect.sync (fun () ->
+                      let result =
+                        make_result ?max_output_tokens:plan.max_output_tokens
+                          session
+                      in
+                      (result, shell_tool_result result extra))
+              | Abort ->
+                  let* () =
+                    Effect.sync (fun () ->
+                        ignore
+                          (transition_terminal session (Forced_termination 143));
+                        kill_session session;
+                        close_temp session;
+                        Hashtbl.remove sessions session.id)
+                  in
+                  Effect.fail "Shell command aborted"
+            in
+            let program =
+              let* result, tool_result = program in
+              let* () =
+                Effect.sync (fun () ->
+                    ignore
+                      (Authority_plans.finish_exec ~owner_context plan_id
+                         ~retry_eligible:
+                           (authority_retry_eligible plan call result)))
+              in
+              Effect.pure tool_result
+            in
+            promise_of_effect program
+
+let already_completed_result session_id exit_code =
+  {
+    chunk_id = generate_chunk_id ();
+    original_token_count = 0;
+    output =
+      Printf.sprintf "(session %d already completed; no new output)" session_id;
+    truncation =
+      make_truncation ~truncated:false ~truncated_by:"none" ~total_lines:1
+        ~total_bytes:0 ~output_lines:1 ~output_bytes:0 ();
+    wall_time_ms = 0.;
+    session_id = None;
+    exit_code;
+    output_mode = "delta";
+    suppressed_lines = 0;
+    suppressed_bytes = 0;
+    output_limit_exceeded = false;
+    timeout_exceeded = false;
+  }
+
+let already_completed_tool_result session_id exit_code =
+  let result = already_completed_result session_id exit_code in
+  let extra =
+    Unsafe.obj
+      [| ("kind", js_string "write_stdin"); ("alreadyCompleted", js_bool true) |]
+  in
+  shell_tool_result result extra
+
+type write_claim = {
+  claimed_session : session;
+  mutable write_claim_released : bool;
+}
+
+let acquire_write_claim session =
+  session.active_write_stdin_claims <- session.active_write_stdin_claims + 1;
+  { claimed_session = session; write_claim_released = false }
+
+let release_write_claim claim =
+  if not claim.write_claim_released then (
+    claim.write_claim_released <- true;
+    let session = claim.claimed_session in
+    session.active_write_stdin_claims <-
+      max 0 (session.active_write_stdin_claims - 1))
+
 let write_stdin raw_facts =
   let facts = decode_ojs_contract Tool_contracts.WriteStdinFacts.t_of_js (ojs_of_js raw_facts) in
   let session_id = Tool_contracts.WriteStdinFacts.get_sessionId facts |> int_of_float in
@@ -706,67 +612,38 @@ let write_stdin raw_facts =
   | None -> (
       match Hashtbl.find_opt retained_sessions session_id with
       | Some retained when retained.retained_owner_id <> owner_id ->
-          rejected_promise
+          rejected_effect
             (Printf.sprintf "Shell session %d belongs to another pi session" session_id)
       | Some retained ->
           if chars <> "" then
-            rejected_promise
+            rejected_effect
               (Printf.sprintf "session %d already completed; cannot write stdin" session_id)
           else
-            let result =
-              {
-                chunk_id = generate_chunk_id ();
-                original_token_count = 0;
-                output =
-                  Printf.sprintf
-                    "(session %d already completed; no new output)" session_id;
-                truncation =
-                  make_truncation ~truncated:false ~truncated_by:"none"
-                    ~total_lines:1 ~total_bytes:0 ~output_lines:1
-                    ~output_bytes:0 ();
-                wall_time_ms = 0.;
-                session_id = None;
-                exit_code = None;
-                output_mode = "delta";
-                suppressed_lines = 0;
-                suppressed_bytes = 0;
-                output_limit_exceeded = false;
-                timeout_exceeded = false;
-              }
-            in
-            let extra_fields =
-              [ ("kind", js_string "write_stdin"); ("alreadyCompleted", js_bool true) ]
-              @
-              match retained.retained_exit_code with
-              | None -> []
-              | Some code -> [ ("exitCode", js_number (float_of_int code)) ]
-            in
-            resolved_promise
-              (shell_tool_result result (Unsafe.obj (Array.of_list extra_fields)))
+            resolved_effect
+              (already_completed_tool_result session_id retained.retained_exit_code)
       | None ->
-          rejected_promise (Printf.sprintf "Unknown shell session: %d" session_id))
+          rejected_effect (Printf.sprintf "Unknown shell session: %d" session_id))
   | Some session when session.owner_id <> owner_id ->
-      rejected_promise
+      rejected_effect
         (Printf.sprintf "Shell session %d belongs to another pi session" session_id)
   | Some session ->
       let stdin_error =
-        if signal_aborted signal then Some "Operation aborted"
-        else if chars <> "" && session.exited then
+        if Eta_host_doors.signal_aborted signal then Some "Operation aborted"
+        else if chars <> "" && session_exited session then
           Some
             (Printf.sprintf "session %d already completed; cannot write stdin"
                session_id)
         else if chars = "" then None
         else
-          match session.child with
-          | Some child when session.tty ->
-              ignore (Unsafe.meth_call child "write" [| js_string chars |]);
-              None
-          | _ ->
-              Some
-                "stdin is closed for this session"
+          match session.process with
+          | Some process -> (
+              match Exec_process_jsoo.write process chars with
+              | Ok () -> None
+              | Error message -> Some message)
+          | None -> Some "stdin is closed for this session"
       in
       (match stdin_error with
-      | Some message -> rejected_promise message
+      | Some message -> rejected_effect message
       | None ->
           let extra = Unsafe.obj [| ("kind", js_string "write_stdin") |] in
           let output_mode =
@@ -774,21 +651,54 @@ let write_stdin raw_facts =
             | Some `V_status -> "status"
             | Some `V_delta | None -> "delta"
           in
-          promise_of_session session
-            (normalize_write_yield_ms
-               (Tool_contracts.WriteStdinFacts.get_yieldTimeMs facts)
-               (chars = "") output_mode)
-            ~abort_disposition:`Keep_session ~write_stdin_waiter:true ~output_mode
-            ?max_output_tokens:
-              (Option.map int_of_float
-                 (Tool_contracts.WriteStdinFacts.get_maxOutputTokens facts))
-            signal extra)
+          let max_output_tokens =
+            Option.map int_of_float
+              (Tool_contracts.WriteStdinFacts.get_maxOutputTokens facts)
+          in
+          let claim = acquire_write_claim session in
+          let terminal_result () =
+            match
+              consume_terminal ~output_mode ?max_output_tokens session extra
+            with
+            | Ok (_, tool_result) -> tool_result
+            | Error _ ->
+                already_completed_tool_result session.id
+                  (Option.map terminal_exit_code
+                     (session_terminal_outcome session))
+          in
+          let open Eta.Syntax in
+          let program =
+            let* winner =
+              wait_for_session session
+                (normalize_write_yield_ms
+                   (Tool_contracts.WriteStdinFacts.get_yieldTimeMs facts)
+                   (chars = "") output_mode)
+                signal
+            in
+            match winner with
+            | Abort -> Effect.fail "Operation aborted"
+            | Completion _ -> Effect.sync terminal_result
+            | Yield ->
+                Effect.sync (fun () ->
+                    match session.lifecycle with
+                    | Terminal _ -> terminal_result ()
+                    | Running ->
+                        let result =
+                          make_result ~output_mode ?max_output_tokens session
+                        in
+                        shell_tool_result result extra)
+          in
+          promise_of_effect
+            (Effect.finally
+               (Effect.sync (fun () -> release_write_claim claim))
+               program))
 let shutdown_owner owner_id =
   Agent_action_capability.discard_owner owner_id;
   Authority_plans.discard_owner owner_id;
   Hashtbl.filter_map_inplace
     (fun _ session ->
       if session.owner_id = owner_id then (
+        ignore (transition_terminal session (Forced_termination 143));
         kill_session session;
         close_temp session;
         None)
@@ -804,10 +714,10 @@ let exec_notification_content (session : session) =
     "Command session %d has finished. To read and consume the result, call write_stdin with session_id=%d, chars=\"\", yield_time_ms=5000."
     session.id session.id
 let exec_notification_deliverable owner_id session =
-  session.owner_id = owner_id && session.exited
-  && (not session.terminal_consumed)
-  && session.active_write_stdin_waiters = 0
-  && (not session.notification_sent)
+  session.owner_id = owner_id && session_exited session
+  && session.terminal_consumption = Pending
+  && session.active_write_stdin_claims = 0
+  && session.notification_state = Pending
   && not session.notification_delivery_claimed
 let exec_notification_obj session =
   Tool_contracts.ExecNotification.create ~sessionId:(float_of_int session.id)
@@ -844,7 +754,7 @@ let claim_exec_notification_delivery owner_id session_id =
       Tool_contracts.ExecNotificationUnavailable.t_to_js claim |> inject
 let release_exec_notification_delivery session_id =
   (match Hashtbl.find_opt sessions session_id with
-  | Some session when not session.notification_sent ->
+  | Some session when session.notification_state = Pending ->
       session.notification_delivery_claimed <- false
   | _ -> ());
   core_ack ()
@@ -852,43 +762,33 @@ let mark_exec_notification_delivered session_id =
   (match Hashtbl.find_opt sessions session_id with
   | Some session ->
       session.notification_delivery_claimed <- false;
-      session.notification_sent <- true
+      session.notification_state <- Sent
   | None -> ());
   core_ack ()
 let await_exec_completion session_id =
-  Unsafe.new_obj (Unsafe.get Unsafe.global "Promise")
-    [|
-      inject
-        (Js.wrap_callback (fun resolve _reject ->
-             let resolve_now () =
-               ignore
-                 (Unsafe.fun_call resolve
-                    [|
-                      inject
-                        (Boundary_contracts.ExecCompletionWaitResult.create
-                           ~exited:true ()
-                        |> Tool_contracts.ExecCompletionWaitResult.t_to_js)
-                    |])
-             in
-             let rec wait () =
-               match Hashtbl.find_opt sessions session_id with
-               | None -> resolve_now ()
-               | Some session when session.exited -> resolve_now ()
-               | Some session -> ignore (add_waiter session (fun () -> wait ()))
-             in
-             wait ()));
-    |]
+  let completion_result () =
+    Boundary_contracts.ExecCompletionWaitResult.create ~exited:true ()
+    |> Tool_contracts.ExecCompletionWaitResult.t_to_js
+    |> inject
+  in
+  match Hashtbl.find_opt sessions session_id with
+  | None -> resolved_effect (completion_result ())
+  | Some session ->
+      Promise.await session.completion
+      |> Effect.map (fun _ -> completion_result ())
+      |> promise_of_effect
 
 let age_seconds_of started_at =
   max 0 (int_of_float (Float.floor ((now_ms () -. started_at) /. 1000.)))
 
 let process_manager_entry_of_session (session : session) =
+  let exit_code = Option.map terminal_exit_code (session_terminal_outcome session) in
   Tool_contracts.ProcessManagerEntry.create
     ~sessionId:(float_of_int session.id) ~command:session.command
     ~runState:
       (Boundary_contracts.ProcessManagerEntry.run_state_to_contract
-         (if session.exited then `V_exited else `V_running))
-    ?exitCode:(Option.map float_of_int session.exit_code)
+         (if session_exited session then `V_exited else `V_running))
+    ?exitCode:(Option.map float_of_int exit_code)
     ~ageSeconds:(float_of_int (age_seconds_of session.started_at))
     ~retained:false ()
 
@@ -948,14 +848,10 @@ let process_manager_kill owner_id session_id =
   | Some session when session.owner_id <> owner_id ->
       error_obj
         (Printf.sprintf "Shell session %d belongs to another pi session" session_id)
-  | Some session when session.exited ->
+  | Some session when session_exited session ->
       error_obj
         (Printf.sprintf "session %d already completed; cannot kill" session_id)
   | Some session ->
+      ignore (transition_terminal session (Forced_termination 143));
       kill_session session;
-      if not session.exited then (
-        session.exited <- true;
-        session.exit_code <- Some (Option.value session.exit_code ~default:143);
-        release_broker_lease session;
-        notify session);
       core_ack ()

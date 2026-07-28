@@ -44,15 +44,16 @@ let js_error_to_string error =
 let await_js_result promise =
   Eta_js.from_js_promise ~on_reject:js_error_to_string promise
 
-let cause_message cause =
+let cause_message : type err. err Eta.Cause.t -> string =
+ fun cause ->
   Format.asprintf "%a"
-    (Eta.Cause.pp (fun fmt () -> Format.pp_print_string fmt "async failure"))
+    (Eta.Cause.pp (fun fmt _ -> Format.pp_print_string fmt "async failure"))
     cause
 
 let js_error message =
   Unsafe.new_obj (Unsafe.get Unsafe.global "Error") [| js_string message |]
 
-let run_effect_as_js_promise ~on_failure (eff : (Unsafe.any, unit) Effect.t) =
+let run_effect_as_js_promise ~on_failure (eff : (Unsafe.any, 'err) Effect.t) =
   let promise_ctor = Unsafe.get Unsafe.global "Promise" in
   let executor =
     Js.wrap_callback (fun resolve reject ->
@@ -65,15 +66,16 @@ let run_effect_as_js_promise ~on_failure (eff : (Unsafe.any, unit) Effect.t) =
 
 (** Resolve-semantics reverse door: Eta failures become resolved bridge error
     objects. Used by Exa/usage paths. *)
-let js_promise_of_effect ~error_value (eff : (Unsafe.any, unit) Effect.t) =
+let js_promise_of_effect ~error_value (eff : (Unsafe.any, 'err) Effect.t) =
   run_effect_as_js_promise eff ~on_failure:(fun resolve _reject cause ->
       ignore (Unsafe.fun_call resolve [| inject (error_value cause) |]))
 
 (** Rejecting reverse door: Eta failures reject the host promise. *)
-let js_promise_of_effect_rejecting (eff : (Unsafe.any, unit) Effect.t) =
+let js_promise_of_effect_rejecting ?(error_message = cause_message)
+    (eff : (Unsafe.any, 'err) Effect.t) =
   run_effect_as_js_promise eff ~on_failure:(fun _resolve reject cause ->
       ignore
-        (Unsafe.fun_call reject [| inject (js_error (cause_message cause)) |]))
+        (Unsafe.fun_call reject [| inject (js_error (error_message cause)) |]))
 
 let signal_aborted signal =
   (not (is_nullish signal))

@@ -245,9 +245,16 @@ let core_call name_js args_js =
           (ojs_of_js (arg 0))
       in
       let agent_id = Tool_contracts.AgentIdFacts.get_agent_id facts in
-      let clean = Exec_session.cancel_broker_sessions_for_agent agent_id in
-      if clean then core_ack ()
-      else error_obj "cleanup_failed: could not terminate identity-owned broker sessions"
+      let program =
+        Exec_session.cancel_broker_sessions_for_agent agent_id
+        |> Eta.Effect.bind (fun clean ->
+               if clean then Eta.Effect.pure (core_ack ())
+               else
+                 Eta.Effect.fail
+                   "cleanup_failed: could not terminate identity-owned broker sessions")
+      in
+      Eta_host_doors.js_promise_of_effect_rejecting
+        ~error_message:Exec_session.string_cause_message program
   | "deleteAgentChildSession" ->
       Agent_tools.delete_child_session (arg 0)
         (Agent_tools.agent_owner_context (arg 1))

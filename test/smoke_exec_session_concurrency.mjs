@@ -5,8 +5,7 @@
  * controlled without wall-clock waits. The real node-pty smoke remains in
  * smoke_exec_pty.mjs for integration ordering.
  *
- * GAP markers: where current code violates a requirement, the suite stays
- * green and records the gap rather than encoding the violation as baseline.
+ * Previously recorded concurrency gaps are hard assertions in this suite.
  */
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -16,15 +15,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
-const gaps = [];
-function gap(id, actual, required, detail = "") {
-  const entry = { id, actual, required, detail };
-  gaps.push(entry);
-  console.log(
-    `GAP ${id}: actual=${JSON.stringify(actual)} required=${JSON.stringify(required)}${detail ? ` (${detail})` : ""}`,
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Fake node-pty
 // ---------------------------------------------------------------------------
@@ -305,19 +295,7 @@ async function testExitAbortSameTurnInitial() {
   // Abort may win or exit may win depending on ordering; both are terminal for the call.
   if (rejected) {
     const message = String(rejected?.message ?? rejected);
-    if (message.includes("Shell command aborted")) {
-      // requirement-correct
-    } else if (message.includes("Command aborted")) {
-      gap(
-        "exec-rt05-abort-text",
-        "Command aborted",
-        "Shell command aborted",
-        "initial abort rejection text",
-      );
-    } else {
-      // Exit may have won the race — acceptable same-turn outcome.
-      assert.match(message, /abort|exit|Process/i, message);
-    }
+    assert.match(message, /Shell command aborted/, message);
   } else {
     // Exit settled first: still fine for same-turn race coverage.
     assert.equal(typeof lastTerminal().exited, "boolean");
@@ -343,18 +321,7 @@ async function testInitialAbortKillsRemovesNoNotification() {
   }
   assert.ok(rejected, "initial abort must reject");
   const message = String(rejected?.message ?? rejected);
-  if (message.includes("Shell command aborted")) {
-    // ok
-  } else if (message.includes("Command aborted")) {
-    gap(
-      "exec-rt05-abort-text",
-      "Command aborted",
-      "Shell command aborted",
-      "pre-aborted initial exec",
-    );
-  } else {
-    assert.fail(`unexpected abort message: ${message}`);
-  }
+  assert.match(message, /Shell command aborted/, message);
   const pending = pendingNotifications();
   assert.equal(pending.notifications.length, 0, "aborted initial exec must not notify");
   if (FakeTerminal.instances.length > 0) {
@@ -506,19 +473,12 @@ async function testConcurrentTerminalWriteStdin() {
   // Requirement: only one call may consume/return the terminal result (exec-rt08).
   const terminalConsumers =
     Number(aHasLifecycle && !aRetained) + Number(bHasLifecycle && !bRetained);
-  if (terminalConsumers > 1) {
-    gap(
-      "exec-rt08-concurrent-write-stdin",
-      "both concurrent write_stdin waits returned terminal lifecycle content",
-      "at most one terminal consumption",
-      `aExit=${aExit} bExit=${bExit} a=${aText.slice(0, 100)} b=${bText.slice(0, 100)}`,
-    );
-  } else {
-    assert.ok(
-      terminalConsumers === 1 || aRetained || bRetained,
-      `expected one terminal consumer or retained path; a=${aText.slice(0, 80)} b=${bText.slice(0, 80)}`,
-    );
-  }
+  assert.equal(
+    terminalConsumers,
+    1,
+    `exactly one call may consume terminal content; aExit=${aExit} bExit=${bExit} a=${aText.slice(0, 100)} b=${bText.slice(0, 100)}`,
+  );
+  assert.ok(aRetained || bRetained, "the losing terminal read must use the retained path");
 }
 
 async function testTerminalReadVsNotificationSameTurn() {
@@ -622,32 +582,27 @@ async function testProcessManagerKillWakesCompletionWaits() {
 }
 
 async function testBrokerCleanupObservesExitBeforeTimeout() {
-  // cancel_broker_sessions_for_agent busy-waits on Date.now. With a fake PTY,
-  // onExit only runs when the event loop turns — the busy wait can starve it.
-  // We assert the public cancel path returns promptly for an agent with no
-  // broker sessions, and document the busy-wait risk for live broker sessions.
+  // The public cancellation path must yield to Eta rather than blocking the JS
+  // event loop, even when there are no matching broker sessions.
   resetTerminals();
   const started = await startSession("sleep 999", 250);
   const sessionId = started.details.sessionId;
   const term = lastTerminal();
 
-  const t0 = Date.now();
-  const result = core.call("cancelAgentBrokerSessions", [{ agent_id: "no-such-agent" }]);
-  const elapsed = Date.now() - t0;
-  assert.ok(elapsed < 1000, `empty broker cancel should be prompt, took ${elapsed}ms`);
+  let eventLoopAdvanced = false;
+  queueMicrotask(() => {
+    eventLoopAdvanced = true;
+  });
+  const cancellation = core.call("cancelAgentBrokerSessions", [{ agent_id: "no-such-agent" }]);
+  assert.equal(typeof cancellation?.then, "function", "broker cancellation must return an Eta-backed promise");
+  const result = await cancellation;
+  assert.equal(eventLoopAdvanced, true, "broker cancellation blocked the JS event loop");
   assert.ok(result);
 
   // Force-exit the unrelated session so cleanup remains tidy.
   term.exit(0);
   await writeStdin(sessionId, { yieldTimeMs: 250 });
 
-  // Document known risk: busy-wait may miss onExit within the 5s window under load.
-  gap(
-    "broker-cleanup-busy-wait",
-    "Date.now busy-spin up to 5s",
-    "Effect completion await with timeout",
-    "code inspection: cancel_broker_sessions_for_agent blocks the JS event loop; live broker exit observation is not reliably testable until migration",
-  );
 }
 
 async function testPiToolExecutionDefaultIsParallel() {
@@ -670,11 +625,10 @@ async function testPiToolExecutionDefaultIsParallel() {
   } catch {
     // keep monorepo evidence string
   }
-  gap(
-    "pi-tool-execution-mode",
-    "parallel (default); write_stdin has no executionMode override",
-    "serialization if exec-rt08 is to hold without an internal claim",
-    `Pi agent-loop executeToolCallsParallel runs allowed tools concurrently via Promise.all; ${evidence}`,
+  assert.match(
+    evidence,
+    /parallel/,
+    `test precondition changed: Pi tool execution should remain parallel; ${evidence}`,
   );
 }
 
@@ -698,7 +652,7 @@ const tests = [
   ["output-limit termination distinct and bounded", testOutputLimitDistinctAndBounded],
   ["owner shutdown closes without notification", testOwnerShutdownNoNotification],
   ["process-manager kill wakes completion waits", testProcessManagerKillWakesCompletionWaits],
-  ["broker cleanup path (empty + busy-wait gap)", testBrokerCleanupObservesExitBeforeTimeout],
+    ["broker cleanup yields through Eta", testBrokerCleanupObservesExitBeforeTimeout],
   ["pi tool execution default (investigation)", testPiToolExecutionDefaultIsParallel],
 ];
 
@@ -723,10 +677,5 @@ if (failed > 0) {
   console.error(`exec-session concurrency smoke: ${failed} failure(s)`);
   process.exitCode = 1;
 } else {
-  console.log(
-    `exec-session concurrency smoke: all assertions passed (${gaps.length} gap(s) recorded)`,
-  );
-  for (const entry of gaps) {
-    console.log(`  - ${entry.id}`);
-  }
+  console.log("exec-session concurrency smoke: all assertions passed");
 }
