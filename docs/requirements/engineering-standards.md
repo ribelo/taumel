@@ -25,4 +25,5 @@ independent of any single feature.
 - OCaml code shall express a `Result` or `Option` bind chain nested three or more levels deep with a monadic binding operator such as `let*`; shallower chains may use direct `bind` calls. ^eng-cb01
 - OCaml code shall use standard-library functions such as `List.take` and `List.drop` instead of local reimplementations when the standard-library shape matches. ^eng-cb02
 - A helper needed by more than one module shall be defined once in the appropriate shared module rather than duplicated per module. ^eng-cb03
+- Asynchronous coordination in OCaml shall go through Eta: `Eta.Promise` for one-shot waits and `Eta.Effect` with an `Eta_jsoo` runtime for scheduling; new and revised modules shall not hand-roll raw jsoo promise plumbing, and existing raw plumbing shall migrate to Eta when its module is revised; the shared jsoo bridge remains the only owner of JavaScript-promise interop. ^eng-qr2y
 - The project shall not create ADRs or use ADRs as an authoritative source for new decisions; it shall capture each new decision by adding or updating the applicable EARS requirements. ^eng-rq02
