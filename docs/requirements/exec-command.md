@@ -98,6 +98,7 @@ and user-facing rendering remains Taumel-owned.
 - When empty `write_stdin` uses `output_mode = status`, the system shall use the status-specific wait range while retaining delta polling's interruption semantics, atomically drain all output produced since the previous response, preserve that output in the command's full-output record, and omit the drained stdout/stderr from model-facing result text. ^exec-rt16
 - The system shall consider output drained by a status-only response, including bytes omitted from the in-memory buffer, consumed for incremental-read purposes and shall never return it through a later delta poll. ^exec-rt17
 - The system shall default status-mode `write_stdin` to a 5000 ms wait, accept waits from 5000 through 300000 ms, and instruct callers needing a longer delay to end the turn and rely on completion notification. ^exec-rt18
+- The system shall allow at most 64 concurrently live command sessions per owning session and shall reject creation beyond the cap with an error naming the cap. ^exec-lfy6
 
 ### Result
 
@@ -139,6 +140,15 @@ and user-facing rendering remains Taumel-owned.
 - If a `write_stdin` call for a session has returned a terminal result, then the system shall not send a later completion notification for that session even when process exit wakes concurrent waiters in the same event-loop turn. ^exec-bg14
 - When the system is about to send an `exec_completion` custom message, the system shall revalidate and transiently claim the session, skip a stale notification if the claim fails, release the claim if sending fails, and mark notification state `sent` only after successful delivery. ^exec-bg15
 - The system shall own exec completion waiting and delivery within the exec subsystem and shall not depend on child-agent or sub-agent lifecycle facilities. ^exec-bg16
+
+### Process manager
+
+- When the user runs `/ps`, the system shall open exactly one process-manager modal; the command shall not emit a transient notification, shall not add a transcript entry, and shall not submit content to the agent. ^exec-nexq
+- The process-manager modal shall list the owning session's live command sessions and retained terminal session records with session id, command, run state, exit code when present, and age. ^exec-7y7j
+- The process-manager modal shall let the user move a selection cursor with the arrow keys and shall act on the selected session with single keys: `o` view output and `k` kill, closing on Esc or `q`; the modal shall display the available keys in a footer. ^exec-oijh
+- The output view shall show the selected session's collectable output through the shared display limits, reading the full-output artifact when one exists; when the selected session has no collectable output, the view shall report that its output is no longer available. ^exec-26s6
+- The process-manager modal shall require confirmation before killing a session; a confirmed kill shall terminate the session's process group with SIGTERM, resolve the session as exited, and preserve its output and terminal state for collection. ^exec-h5bn
+- Process-manager mutations shall apply through the same core command-session operations and validation as the exec tools. ^exec-ty2l
 
 ### Rendering and security
 

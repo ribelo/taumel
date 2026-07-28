@@ -162,6 +162,9 @@ contract the agent is policed against cannot be renegotiated by the agent.
 - The modal shall collect task titles and descriptions through Pi text-input prompts and shall reopen with refreshed plan state after each prompt flow. ^plan-kz4n
 - When the user runs `/tasks` while no plan exists, the modal shall present an empty state inviting the user to add the first task, and adding that task shall create a draft plan containing it. ^plan-t0cc
 - If a core operation rejects a modal mutation, then the modal shall surface the rejection reason and remain open. ^plan-fent
+- The modal shall display a plan header line with lifecycle status, task progress, and active time above the task list. ^plan-wi58
+- Task rows shall lead with the task status rendered in color, followed by the title, the origin rendered dim, and `depends_on` references rendered dim inline; row truncation shall never remove the status. ^plan-2fnt
+- The modal shall visually separate the task list from its key-hints footer. ^plan-j4x8
 
 ### Continuation
 
