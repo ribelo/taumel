@@ -13,12 +13,11 @@ promises instead of touching JavaScript async APIs. TypeScript stays the
 thinnest pi adapter; its orchestration logic belongs in the core and moves
 there as modules are revised. The migration is gardener's-method: the target
 shape is declared here, and the codebase is pruned toward it continuously,
-module by module — never as a single rewrite. Raw `Unsafe` should shrink
-where that genuinely simplifies interop, but JavaScript is unsafe by design:
-the project does not pursue total `Unsafe` elimination, and typed wrappers
-must never cost more complexity than the safety they buy.
+module by module — never as a single rewrite.
 
 ## Requirements
+
+- The system shall reduce raw `Unsafe` usage only where doing so simplifies interop; the system shall not pursue total `Unsafe` elimination, and typed wrappers shall not add complexity beyond the safety they provide. ^eta-6b4o
 
 - The system shall route every JavaScript promise, callback, and timer entering the OCaml core through shared jsoo-bridge adapters that expose Eta values; OCaml modules outside the bridge shall not call JavaScript promise, callback, or timer APIs directly. ^eta-5ihg
 - The system shall provide bridge adapters that convert a JavaScript promise to an Eta awaitable, a JavaScript event registration to an Eta-consumable source, and a JavaScript timer to an Eta schedule. ^eta-sxp9
