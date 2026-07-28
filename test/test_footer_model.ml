@@ -202,6 +202,7 @@ let test_render_plan_status () =
                  tokens_used = 0;
                  time_used_seconds = 720;
                  time_limit_seconds = Some 1800;
+                 extension_unlocked = false;
                  plan_id = "g";
                  session_id = "s";
                };

@@ -61,10 +61,9 @@ Taumel work that may remain live after its initiating call and therefore carries
 
 **Plan**:
 A per-session ordered task list with a lifecycle (`draft`, `active`,
-`paused`, `blocked`, `time_limited`, `complete`), telemetry,
-and an
-automation gate; the plan is defined by its tasks, and activation commits the
-task list and starts continuation.
+`paused`, `blocked`, `time_limited`, `complete`), telemetry, extension-unlock
+state, and an automation gate; the plan is defined by its tasks, and
+activation commits the task list and starts continuation.
 _Avoid_: goal, objective record, todo list
 
 **Plan task**:
@@ -75,9 +74,10 @@ content, and gates plan completion.
 _Avoid_: todo, plan item, subagent task
 
 **Frozen plan**:
-The derived, never-stored condition of a plan in any status other than
-`draft`; while frozen the agent may not create tasks or edit task content,
-and only the user may return the plan to `draft`.
+The derived condition of a plan that is not agent-editable for task creation
+or content edits: every status other than `draft`, except that a `complete`
+plan may become extension-unlocked after the completing turn ends and then
+allows append-only task creation (which reopens the plan to `active`).
 _Avoid_: locked flag, plan mode, read-only mode
 the identity of the parent session that may observe or control it.
 _Avoid_: Background global, detached task
@@ -345,5 +345,6 @@ _Avoid_: User message, plan acknowledgement, hidden prompt
 **Complete plan**:
 A plan the agent has marked complete through `update_plan`, which stops
 automated continuation but remains recorded and may be resumed, returned to
-draft, or cleared only by the user.
+draft, or cleared only by the user. After the completing turn ends it is
+extension-unlocked so the agent may append tasks and reopen it to `active`.
 _Avoid_: Deleted plan, immutable plan, free plan slot

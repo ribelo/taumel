@@ -160,6 +160,8 @@ export const PlanStateSchema = Type.Union([
     tasks: Type.Array(PlanTaskSchema, { minItems: 1 }),
     tokensUsed: Type.Integer({ minimum: 0 }), timeUsedSeconds: Type.Integer({ minimum: 0 }),
     timeLimitSeconds: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
+    // Absent on legacy entries; OCaml decode defaults missing to false (^plan-w247).
+    extensionUnlocked: Type.Optional(Type.Boolean()),
     createdAt: Type.Integer({ minimum: 0 }), updatedAt: Type.Integer({ minimum: 0 }),
   }, { additionalProperties: false }),
 ], { $id: "PlanState" });

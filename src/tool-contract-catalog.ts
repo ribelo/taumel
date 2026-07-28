@@ -106,8 +106,8 @@ export const toolContracts: readonly ToolContract[] = [
     name: "create_task",
     label: "create_task",
     description:
-      "Create one or more tasks for the current plan. Tasks are the living breakdown of the work: order, dependencies, and completion state drive continuation and gate plan completion. Creating a task while no plan exists creates a draft plan; activate it with update_plan to start continuation. Tasks may be created only while the plan is in draft.",
-    promptSnippet: "Create one or more plan tasks while the plan is in draft.",
+      "Create one or more tasks for the current plan. Tasks are the living breakdown of the work: order, dependencies, and completion state drive continuation and gate plan completion. Creating a task while no plan exists creates a draft plan; activate it with update_plan to start continuation. Tasks may be created while the plan is in draft, or to extend a completed plan once the turn in which it completed has ended; extending a completed plan reopens it to active.",
+    promptSnippet: "Create one or more plan tasks while the plan is in draft or a completed plan is extension-unlocked.",
     parameters: toolParameters(CreateTaskParamsSchema),
   },
   {

@@ -35,6 +35,7 @@ let js_plan (plan : Taumel.Plan.t) =
       ("timeUsedSeconds", js_number (float_of_int plan.time_used_seconds));
       ("timeUsage", js_string (Taumel.Plan.time_usage plan));
       ("timeLimitSeconds", js_optional_int plan.time_limit_seconds);
+      ("extensionUnlocked", js_bool plan.extension_unlocked);
       ("createdAt", js_number (float_of_int plan.created_at));
       ("updatedAt", js_number (float_of_int plan.updated_at));
     |]
@@ -61,9 +62,16 @@ let details ?created_task_ids plan automation =
            [| ("createdTaskIds", js_array (List.map js_string ids)) |])
 
 let model_state_text plan automation =
-  let status, tokens_used, time_used_seconds, time_limit_seconds, tasks =
+  let status, tokens_used, time_used_seconds, time_limit_seconds,
+      extension_unlocked, tasks =
     match plan with
-    | None -> (Taumel.Shared.Null, 0, 0, Taumel.Shared.Null, Taumel.Shared.Array [])
+    | None ->
+        ( Taumel.Shared.Null,
+          0,
+          0,
+          Taumel.Shared.Null,
+          false,
+          Taumel.Shared.Array [] )
     | Some (plan : Taumel.Plan.t) ->
         let tasks =
           match Taumel.Plan.to_json plan with
@@ -78,6 +86,7 @@ let model_state_text plan automation =
           (match plan.time_limit_seconds with
           | None -> Taumel.Shared.Null
           | Some value -> Taumel.Shared.Number (float_of_int value)),
+          plan.extension_unlocked,
           tasks )
   in
   Taumel.Shared.encode_json
@@ -88,6 +97,7 @@ let model_state_text plan automation =
          ("tokensUsed", Taumel.Shared.Number (float_of_int tokens_used));
          ("timeUsedSeconds", Taumel.Shared.Number (float_of_int time_used_seconds));
          ("timeLimitSeconds", time_limit_seconds);
+         ("extensionUnlocked", Taumel.Shared.Bool extension_unlocked);
          ("tasks", tasks);
          ( "automation",
            Taumel.Shared.Object

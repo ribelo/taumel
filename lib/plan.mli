@@ -50,6 +50,7 @@ type t = private {
   tokens_used : int;
   time_used_seconds : int;
   time_limit_seconds : int option;
+  extension_unlocked : bool;
   created_at : int;
   updated_at : int;
 }
@@ -79,6 +80,7 @@ type presentation = {
   tokens_used : int;
   time_used_seconds : int;
   time_limit_seconds : int option;
+  extension_unlocked : bool;
   plan_id : string;
   session_id : string;
 }

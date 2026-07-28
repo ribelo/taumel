@@ -6,12 +6,13 @@ type decoded = {
   tokens_used : int;
   time_used_seconds : int;
   time_limit_seconds : int option;
+  extension_unlocked : bool;
   created_at : int;
   updated_at : int;
 }
 
 let encode ~plan_id ~session_id ~status ~tasks ~tokens_used ~time_used_seconds
-    ~time_limit_seconds ~created_at ~updated_at =
+    ~time_limit_seconds ~extension_unlocked ~created_at ~updated_at =
   Shared.Object
     [
       ("planId", Shared.String plan_id);
@@ -21,6 +22,7 @@ let encode ~plan_id ~session_id ~status ~tasks ~tokens_used ~time_used_seconds
       ("tokensUsed", Shared.Number (float_of_int tokens_used));
       ("timeUsedSeconds", Shared.Number (float_of_int time_used_seconds));
       ("timeLimitSeconds", Shared.option_int_to_json time_limit_seconds);
+      ("extensionUnlocked", Shared.Bool extension_unlocked);
       ("createdAt", Shared.Number (float_of_int created_at));
       ("updatedAt", Shared.Number (float_of_int updated_at));
     ]
@@ -67,6 +69,10 @@ let decode = function
         | Some name -> Error ("incompatible legacy plan field: " ^ name)
         | None -> Ok ()
       in
+      (* ^plan-w247: extensionUnlocked may be absent and defaults to locked. *)
+      let fields_without_extension =
+        List.filter (fun (name, _) -> name <> "extensionUnlocked") fields
+      in
       let* () =
         Shared.json_exact_fields "plan"
           [
@@ -80,7 +86,7 @@ let decode = function
             "createdAt";
             "updatedAt";
           ]
-          fields
+          fields_without_extension
       in
       let* plan_id = string_field "planId" in
       let* session_id = string_field "sessionId" in
@@ -98,6 +104,12 @@ let decode = function
       let* tokens_used = int_field "tokensUsed" in
       let* time_used_seconds = int_field "timeUsedSeconds" in
       let* time_limit_seconds = option_int_field "timeLimitSeconds" in
+      let* extension_unlocked =
+        match List.assoc_opt "extensionUnlocked" fields with
+        | None -> Ok false
+        | Some (Shared.Bool value) -> Ok value
+        | Some _ -> Error "extensionUnlocked must be a boolean"
+      in
       let* created_at = int_field "createdAt" in
       let* updated_at = int_field "updatedAt" in
       let* () =
@@ -135,6 +147,7 @@ let decode = function
              tokens_used;
              time_used_seconds;
              time_limit_seconds;
+             extension_unlocked;
              created_at;
              updated_at;
            })

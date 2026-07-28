@@ -43,7 +43,7 @@ let get_plan_prompt_snippet =
   "Inspect the current plan, tasks, status, usage, and automation state."
 
 let create_task_description =
-  "Create one or more tasks for the current plan. Tasks are the living breakdown of the work: order, dependencies, and completion state drive continuation and gate plan completion. Creating a task while no plan exists creates a draft plan; activate it with update_plan to start continuation. Tasks may be created only while the plan is in draft."
+  "Create one or more tasks for the current plan. Tasks are the living breakdown of the work: order, dependencies, and completion state drive continuation and gate plan completion. Creating a task while no plan exists creates a draft plan; activate it with update_plan to start continuation. Tasks may be created while the plan is in draft, or to extend a completed plan once the turn in which it completed has ended; extending a completed plan reopens it to active."
 
 let create_task_id_description =
   "Optional explicit task identity, unique within this plan. Omit to auto-generate a task- identity."
@@ -58,7 +58,7 @@ let create_task_depends_on_description =
   "Task identities that must reach completed or cancelled before this task may enter in_progress. May reference identities supplied earlier in this call."
 
 let create_task_prompt_snippet =
-  "Create one or more plan tasks while the plan is in draft."
+  "Create one or more plan tasks while the plan is in draft or a completed plan is extension-unlocked."
 
 let update_task_description =
   "Update one task's status, title, description, or dependencies. Content edits require a draft plan; status changes require an active or draft plan. Setting in_progress requires every depended task to be completed or cancelled. Mark a task completed only when its work is verifiably done; cancel tasks that are no longer needed. User-authored task text and cancellation are reserved to the user."

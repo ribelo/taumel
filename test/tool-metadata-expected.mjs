@@ -13,7 +13,7 @@ export const TOOL_DESCRIPTIONS = {
   get_plan:
     "Get the current plan for this thread, including status, automation state, tasks, token telemetry, elapsed active time, and optional time limit.",
   create_task:
-    "Create one or more tasks for the current plan. Tasks are the living breakdown of the work: order, dependencies, and completion state drive continuation and gate plan completion. Creating a task while no plan exists creates a draft plan; activate it with update_plan to start continuation. Tasks may be created only while the plan is in draft.",
+    "Create one or more tasks for the current plan. Tasks are the living breakdown of the work: order, dependencies, and completion state drive continuation and gate plan completion. Creating a task while no plan exists creates a draft plan; activate it with update_plan to start continuation. Tasks may be created while the plan is in draft, or to extend a completed plan once the turn in which it completed has ended; extending a completed plan reopens it to active.",
   update_task:
     "Update one task's status, title, description, or dependencies. Content edits require a draft plan; status changes require an active or draft plan. Setting in_progress requires every depended task to be completed or cancelled. Mark a task completed only when its work is verifiably done; cancel tasks that are no longer needed. User-authored task text and cancellation are reserved to the user.",
   update_plan: "Update the plan lifecycle: activate a draft plan to commit its task list and start continuation, or mark an active plan complete or genuinely blocked. Completion requires every task to be completed or cancelled first.",
@@ -63,7 +63,7 @@ export const PROMPT_SNIPPETS = {
   write: "Create, overwrite, or append to a text file.",
   edit: "Make one or more exact replacements in a text file.",
   get_plan: "Inspect the current plan, tasks, status, usage, and automation state.",
-  create_task: "Create one or more plan tasks while the plan is in draft.",
+  create_task: "Create one or more plan tasks while the plan is in draft or a completed plan is extension-unlocked.",
   update_task: "Update one plan task's status or content within editability rules.",
   update_plan: "Activate the plan, or mark it complete or genuinely blocked.",
   cron_create:
@@ -352,12 +352,12 @@ export const REQUIREMENT_CHECKS = [
   ["sandbox-tl31", "param", "write.mode"],
   ["plan-gt04", "tool", "get_plan"],
   ["plan-gt05", "snippet", "get_plan"],
-  ["plan-gt06", "tool", "create_task"],
+  ["plan-o5ch", "tool", "create_task"],
   ["plan-gt07", "param", "create_task.tasks.items.id"],
   ["plan-gt08", "param", "create_task.tasks.items.title"],
   ["plan-gt09", "param", "create_task.tasks.items.description"],
   ["plan-gt10", "param", "create_task.tasks.items.depends_on"],
-  ["plan-gt11", "snippet", "create_task"],
+  ["plan-5n6h", "snippet", "create_task"],
   ["plan-gt12", "tool", "update_task"],
   ["plan-gt13", "snippet", "update_task"],
   ["plan-gt14", "tool", "update_plan"],

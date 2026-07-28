@@ -314,7 +314,7 @@ const continuation = decodePlanContinuationPlan({
       planId: "plan-1", sessionId: "session-1", status: "active", statusLabel: "active",
       tasks: [{ taskId: "task-1", title: "ship", description: null, status: "in_progress", depends_on: [], origin: "user" }],
       completedTasks: 0, totalTasks: 1, tokensUsed: 10, timeUsedSeconds: 2,
-      timeUsage: "2s", timeLimitSeconds: null, createdAt: 1, updatedAt: 2,
+      timeUsage: "2s", timeLimitSeconds: null, extensionUnlocked: false, createdAt: 1, updatedAt: 2,
     },
     automation: { continuation: "enabled", requiresUserInput: false },
   },

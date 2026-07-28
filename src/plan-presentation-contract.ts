@@ -25,6 +25,7 @@ const PlanPresentationSchema = Type.Object(
     tokensUsed: Type.Integer({ minimum: 0 }), timeUsedSeconds: Type.Integer({ minimum: 0 }),
     timeUsage: Type.String({ minLength: 1 }),
     timeLimitSeconds: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
+    extensionUnlocked: Type.Boolean(),
     createdAt: Type.Integer({ minimum: 0 }), updatedAt: Type.Integer({ minimum: 0 }),
   },
   { additionalProperties: false },

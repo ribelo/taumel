@@ -15,6 +15,7 @@ function planPresentation(tasks, status = "active") {
     timeUsedSeconds: 0,
     timeUsage: "0s",
     timeLimitSeconds: null,
+    extensionUnlocked: false,
     createdAt: 1,
     updatedAt: 1,
   };

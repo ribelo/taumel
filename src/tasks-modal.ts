@@ -34,6 +34,7 @@ type PlanPresentation = {
   readonly timeUsedSeconds: number;
   readonly timeUsage: string;
   readonly timeLimitSeconds: number | null;
+  readonly extensionUnlocked: boolean;
   readonly createdAt: number;
   readonly updatedAt: number;
 };

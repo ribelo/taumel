@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
@@ -713,6 +714,19 @@ async function loadContracts(sourcePath) {
 
 async function main() {
   await mkdir(outputDir, { recursive: true });
+  await writeFile(
+    join(outputDir, "dune"),
+    `(library
+ (name taumel_contracts)
+ (wrapped false)
+ (modes byte)
+ (private_modules ts2ocaml_internal raw_tool_contracts contract_decoder contract_schemas)
+ (libraries gen_js_api ojs)
+ (preprocess
+  (pps gen_js_api.ppx)))
+`,
+    "utf8",
+  );
   const modules = await Promise.all(sourcePaths.map(loadContracts));
   const dtsSchemas = modules.flatMap((contracts) => [
     ...(Array.isArray(contracts.dtsSchemas) ? contracts.dtsSchemas : []),
@@ -733,15 +747,27 @@ async function main() {
   ].join("\n\n");
   await writeFile(join(outputDir, "tool_contracts.d.ts"), dts, "utf8");
 
-  run(ts2ocamlBin, [
-    "jsoo",
-    "--preset",
-    "minimal",
-    "--create-minimal-stdlib",
-    "--output-dir",
-    outputDir,
-    join(outputDir, "tool_contracts.d.ts"),
-  ]);
+  // ts2ocaml resolves the nearest tsconfig when the output path sits inside the
+  // project tree and reorders modules without honoring forward references.
+  // Generate outside the repo, then copy the artifacts back.
+  const ts2ocamlDir = await mkdtemp(join(tmpdir(), "taumel-ts2ocaml-"));
+  try {
+    const dtsPath = join(ts2ocamlDir, "tool_contracts.d.ts");
+    await copyFile(join(outputDir, "tool_contracts.d.ts"), dtsPath);
+    run(ts2ocamlBin, [
+      "jsoo",
+      "--preset",
+      "minimal",
+      "--create-minimal-stdlib",
+      "--output-dir",
+      ts2ocamlDir,
+      dtsPath,
+    ]);
+    await copyFile(join(ts2ocamlDir, "tool_contracts.mli"), join(outputDir, "tool_contracts.mli"));
+    await copyFile(join(ts2ocamlDir, "ts2ocaml_min.mli"), join(outputDir, "ts2ocaml_min.mli"));
+  } finally {
+    await rm(ts2ocamlDir, { recursive: true, force: true });
+  }
 
   const minimalMli = await readFile(join(outputDir, "ts2ocaml_min.mli"), "utf8");
   await writeFile(

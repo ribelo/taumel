@@ -65,6 +65,7 @@ let test_birth_and_identity () =
   assert_bool "fork plan id" (forked.plan.plan_id <> second.plan_id);
   assert_bool "fork session id" (forked.plan.session_id = "forked");
   assert_bool "fork tasks" (forked.plan.tasks = second.tasks);
+  assert_bool "fork unlock default" (not forked.plan.extension_unlocked);
   assert_bool "fork interrupted"
     (forked.automation = Plan.Automation_interrupted)
 
@@ -211,7 +212,160 @@ let test_completion_gate () =
     expect_ok "cancelled passes"
       (Plan.update_plan ~now:4 Plan.Complete (Some cancelled))
   in
-  assert_bool "complete" (complete.status = Plan.Complete)
+  assert_bool "complete" (complete.status = Plan.Complete);
+  assert_bool "complete starts locked" (not complete.extension_unlocked)
+
+let complete_plan ?(session = "extension") () =
+  let draft = agent_plan ~session () in
+  let active =
+    expect_ok "activate complete plan"
+      (Plan.update_plan ~now:2 Plan.Active (Some draft))
+  in
+  let task = List.hd active.tasks in
+  let finished =
+    expect_ok "finish sole task"
+      (Plan.update_task ~now:3 ~task_id:task.task_id
+         (patch ~status:Plan.Completed ()) (Some active))
+  in
+  expect_ok "complete plan"
+    (Plan.update_plan ~now:4 Plan.Complete (Some finished))
+
+let unlock_complete plan ~session ~now =
+  let result =
+    Plan.account_turn_end ~session_id:session ~now ~active_time_seconds:0
+      ~last_accounting_key:None ~latest_usage:None (Some plan)
+  in
+  Option.get result.plan
+
+let test_extension_unlock () =
+  let complete = complete_plan ~session:"extension" () in
+  assert_bool "same-turn locked" (not complete.extension_unlocked);
+  let same_turn_error =
+    expect_error "same-turn create rejected"
+      (Plan.create_task ~session_id:"extension" ~now:5 "follow-on"
+         (Some complete))
+  in
+  assert_bool "same-turn error names turn boundary"
+    (contains same_turn_error "after its turn ends");
+  assert_bool "same-turn leaves status" (complete.status = Plan.Complete);
+  let unlocked = unlock_complete complete ~session:"extension" ~now:5 in
+  assert_bool "turn-end unlocks" unlocked.extension_unlocked;
+  assert_bool "turn-end keeps complete" (unlocked.status = Plan.Complete);
+  let presented = Plan.present Plan.Automation_enabled unlocked in
+  assert_bool "get_plan exposes unlock" presented.extension_unlocked;
+  let content_error =
+    expect_error "complete content frozen"
+      (Plan.update_task ~now:6 ~task_id:(List.hd unlocked.tasks).task_id
+         (patch ~title:"rewrite" ()) (Some unlocked))
+  in
+  assert_bool "content stays draft-only" (contains content_error "draft");
+  let status_error =
+    expect_error "complete status frozen"
+      (Plan.update_task ~now:6 ~task_id:(List.hd unlocked.tasks).task_id
+         (patch ~status:Plan.Pending ()) (Some unlocked))
+  in
+  assert_bool "status stays active/draft-only"
+    (contains status_error "active or draft");
+  let extended =
+    expect_ok "extension batch"
+      (Plan.create_tasks ~session_id:"extension" ~now:6
+         [ creation ~id:"task-next" "next"; creation ~id:"task-after" "after" ]
+         (Some unlocked))
+  in
+  assert_bool "extension reopens active" (extended.status = Plan.Active);
+  assert_bool "extension clears unlock" (not extended.extension_unlocked);
+  assert_bool "extension appends atomically" (List.length extended.tasks = 3);
+  assert_bool "extension order"
+    (List.map (fun (task : Plan.task) -> task.title) extended.tasks
+    = [ "first task"; "next"; "after" ]);
+  let complete_again =
+    let finished =
+      List.fold_left
+        (fun plan (task : Plan.task) ->
+          if task.status = Plan.Completed || task.status = Plan.Cancelled then plan
+          else
+            expect_ok "finish for reopen"
+              (Plan.update_task ~now:7 ~task_id:task.task_id
+                 (patch ~status:Plan.Completed ()) (Some plan)))
+        extended extended.tasks
+    in
+    expect_ok "complete again"
+      (Plan.update_plan ~now:8 Plan.Complete (Some finished))
+  in
+  let unlocked_again =
+    unlock_complete complete_again ~session:"extension" ~now:9
+  in
+  let resumed =
+    expect_ok "resume clears unlock"
+      (Plan.apply_command ~session_id:"extension" ~now:10 "resume"
+         (Some unlocked_again))
+    |> fun result -> Option.get result.plan
+  in
+  assert_bool "resume active" (resumed.status = Plan.Active);
+  assert_bool "resume clears unlock" (not resumed.extension_unlocked);
+  let complete_for_draft =
+    expect_ok "complete for draft"
+      (Plan.update_plan ~now:11 Plan.Complete (Some resumed))
+  in
+  let unlocked_for_draft =
+    unlock_complete complete_for_draft ~session:"extension" ~now:12
+  in
+  let drafted =
+    expect_ok "draft clears unlock"
+      (Plan.apply_command ~session_id:"extension" ~now:13 "draft"
+         (Some unlocked_for_draft))
+    |> fun result -> Option.get result.plan
+  in
+  assert_bool "draft clears unlock" (not drafted.extension_unlocked);
+  let complete_for_text = complete_plan ~session:"extension-text" () in
+  let unlocked_text =
+    unlock_complete complete_for_text ~session:"extension-text" ~now:5
+  in
+  let appended =
+    expect_ok "/plan text on complete"
+      (Plan.apply_command ~session_id:"extension-text" ~now:6 "next wave"
+         (Some unlocked_text))
+  in
+  let appended_plan = Option.get appended.plan in
+  assert_bool "text reopen active" (appended_plan.status = Plan.Active);
+  assert_bool "text clears unlock" (not appended_plan.extension_unlocked);
+  assert_bool "text appends task" (List.length appended_plan.tasks = 2);
+  let paused =
+    expect_ok "pause sticky"
+      (Plan.apply_command ~session_id:"extension-text" ~now:7 "pause"
+         (Some appended_plan))
+    |> fun result -> Option.get result.plan
+  in
+  let paused_append =
+    expect_ok "append while paused"
+      (Plan.apply_command ~session_id:"extension-text" ~now:8 "while paused"
+         (Some paused))
+  in
+  assert_bool "paused stays paused"
+    ((Option.get paused_append.plan).status = Plan.Paused);
+  let blocked =
+    expect_ok "block sticky"
+      (Plan.update_plan ~now:9 Plan.Blocked
+         (Some
+            (expect_ok "resume to block"
+               (Plan.apply_command ~session_id:"extension-text" ~now:9 "resume"
+                  paused_append.plan)
+             |> fun result -> Option.get result.plan)))
+  in
+  let blocked_append =
+    expect_ok "append while blocked"
+      (Plan.apply_command ~session_id:"extension-text" ~now:10 "while blocked"
+         (Some blocked))
+  in
+  assert_bool "blocked stays blocked"
+    ((Option.get blocked_append.plan).status = Plan.Blocked);
+  let unlocked_fork =
+    unlock_complete (complete_plan ~session:"extension-fork" ())
+      ~session:"extension-fork" ~now:5
+  in
+  let forked = Plan.fork ~session_id:"forked-extension" unlocked_fork in
+  assert_bool "fork preserves unlock" forked.plan.extension_unlocked;
+  assert_bool "fork keeps complete" (forked.plan.status = Plan.Complete)
 
 let test_commands () =
   let created =
@@ -384,6 +538,30 @@ let test_persistence () =
     |> Option.get
   in
   assert_bool "round trip" (decoded.tasks = plan.tasks);
+  assert_bool "round trip locked" (not decoded.extension_unlocked);
+  let unlocked_complete =
+    unlock_complete (complete_plan ~session:"codec-unlock" ())
+      ~session:"codec-unlock" ~now:5
+  in
+  let decoded_unlocked =
+    expect_ok "unlock round trip"
+      (Plan.codec.decode (Plan.codec.encode (Some unlocked_complete)))
+    |> Option.get
+  in
+  assert_bool "unlock round trip" decoded_unlocked.extension_unlocked;
+  let absent_unlock =
+    persisted_plan ~status:"complete"
+      ~tasks:
+        (Some
+           (Shared.Array
+              [ persisted_task ~status:"completed" "done-task" "Done" ]))
+      ()
+  in
+  let decoded_absent =
+    expect_ok "absent unlock field" (Plan.codec.decode absent_unlock)
+    |> Option.get
+  in
+  assert_bool "absent field locks" (not decoded_absent.extension_unlocked);
   ignore
     (expect_error "empty tasks"
        (Plan.codec.decode
@@ -499,12 +677,24 @@ let test_accounting_and_time () =
   assert_bool "terminal accounted first"
     (final.status = Plan.Complete && final.tokens_used = 22
    && final.time_used_seconds = 4);
-  let duplicate =
+  assert_bool "terminal remains locked until natural turn-end"
+    (not final.extension_unlocked);
+  let unlocked_turn =
     Plan.account_turn_end ~session_id:"accounting" ~now:4
       ~active_time_seconds:4 ~last_accounting_key:accounted.accounting_key
       ~latest_usage:(Plan.latest_assistant_usage branch) accounted.plan
   in
-  assert_bool "exactly once" (not duplicate.changed)
+  let unlocked = Option.get unlocked_turn.plan in
+  assert_bool "natural turn-end unlocks complete" unlocked.extension_unlocked;
+  assert_bool "unlock does not re-account tokens" (unlocked.tokens_used = 22);
+  assert_bool "unlock keeps accounting key"
+    (unlocked_turn.accounting_key = accounted.accounting_key);
+  let duplicate =
+    Plan.account_turn_end ~session_id:"accounting" ~now:5
+      ~active_time_seconds:4 ~last_accounting_key:unlocked_turn.accounting_key
+      ~latest_usage:(Plan.latest_assistant_usage branch) unlocked_turn.plan
+  in
+  assert_bool "exactly once after unlock" (not duplicate.changed)
 
 let test_task_manager_commands () =
   let created =
@@ -589,6 +779,7 @@ let () =
   test_user_task_protection ();
   test_dependencies_and_atomic_batch ();
   test_completion_gate ();
+  test_extension_unlock ();
   test_commands ();
   test_task_manager_commands ();
   test_continuation ();
