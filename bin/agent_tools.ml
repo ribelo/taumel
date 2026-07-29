@@ -44,16 +44,9 @@ let js_tier = function
 
 let local_timestamp seconds =
   let value = Unix.localtime (float_of_int seconds) in
-  let date =
-    Unsafe.new_obj
-      (Unsafe.get Unsafe.global "Date")
-      [| js_number (float_of_int seconds *. 1000.) |]
-  in
-  let offset =
-    match float_value (Unsafe.meth_call date "getTimezoneOffset" [||]) with
-    | Some minutes -> -int_of_float (minutes *. 60.)
-    | None -> 0
-  in
+  let date = Node_date.of_unix_seconds seconds in
+  let minutes = Node_date.get_timezone_offset date in
+  let offset = -int_of_float (minutes *. 60.) in
   let sign = if offset < 0 then "-" else "+" in
   let absolute = abs offset in
   Printf.sprintf "%04d-%02d-%02dT%02d:%02d:%02d%s%02d:%02d"

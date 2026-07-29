@@ -40,14 +40,9 @@ let random_id state =
 
 let human_time seconds =
   try
-    let date =
-      Unsafe.new_obj
-        (Unsafe.get Unsafe.global "Date")
-        [| js_number (float_of_int seconds *. 1000.) |]
-    in
-    Option.value
-      (string_value (Unsafe.meth_call date "toLocaleString" [||]))
-      ~default:(string_of_int seconds)
+    let date = Node_date.of_unix_seconds seconds in
+    let text = Node_date.to_locale_string date in
+    if text = "" then string_of_int seconds else text
   with _ -> string_of_int seconds
 
 let task_summary (task : Taumel.Cron.task) =
