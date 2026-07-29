@@ -127,7 +127,7 @@ export const PARAM_DESCRIPTIONS = {
   "cron_create.plan":
     "Whether to deliver the prompt as a plan instead of a message. Defaults to false; a plan-mode fire waits while the session\u2019s plan slot is occupied.",
   "cron_delete.id":
-    "Eight-character lowercase hexadecimal task ID returned by cron_create or cron_list.",
+    "Task ID returned by cron_create or cron_list, shaped cron-<nano-id>.",
   "create_task.tasks.items.id":
     "Optional explicit task identity, unique within this plan. Omit to auto-generate a task- identity.",
   "create_task.tasks.items.title": "Short statement of the work. Trimmed; must not be empty.",

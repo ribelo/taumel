@@ -37,7 +37,7 @@ holds.
 
 - The system shall run cron entirely within an open Pi session, firing tasks only while that session is running. ^cron-sc01
 - The system shall scope tasks to the session, persist them in the session entry `taumel.cron`, and reload them on resume. ^cron-sc02
-- When decoding persisted cron state, the system shall accept only schema version `1` and tasks with unique eight-character lowercase hexadecimal ids, valid cron expressions, non-empty prompts, representable non-negative integral creation times, next-due times that are later than creation and match the task's schedule at a minute boundary, and pending timestamps equal to their task's next due time. ^cron-60bw
+- When decoding persisted cron state, the system shall accept only schema version `1` and tasks with unique ids matching the `cron-<nano-id>` grammar of **cron-xuhd**, valid cron expressions, non-empty prompts, representable non-negative integral creation times, next-due times that are later than creation and match the task's schedule at a minute boundary, and pending timestamps equal to their task's next due time. ^cron-agfd
 - The system shall execute every fire on the main session agent so the work stays visible, interactive, and context-accumulating. ^cron-sc03
 
 ### Schedule
@@ -48,7 +48,7 @@ holds.
 
 ### Task record
 
-- The system shall represent each task as a record with `id` (8 lowercase hex), `cron`, `prompt`, `recurring`, `mode`, per-task `enabled`, `createdAt`, `nextDue`, optional `pendingSince`, and a derived `coalesced` count. ^cron-rs01
+- The system shall represent each task as a record with `id` (`cron-<nano-id>` where nano-id is exactly four characters from `abcdefghjkmnpqrstuvwxyz23456789`), `cron`, `prompt`, `recurring`, `mode`, per-task `enabled`, `createdAt`, `nextDue`, optional `pendingSince`, and a derived `coalesced` count. ^cron-xuhd
 - The system shall hold at most one outstanding fire per task by representing pending state as the single optional `pendingSince` timestamp rather than a list. ^cron-rs02
 - The system shall regenerate the delivered message from the task's `prompt` at delivery time and store no separate message body. ^cron-rs03
 
@@ -107,7 +107,7 @@ holds.
 - The system shall present `cron_create` in the system tool catalog with the prompt snippet `Create a recurring or one-shot cron task. Tell the user the returned task id and that /cron manages crons.` ^cron-tl10
 - The system shall describe `cron_list` to the model as `List this Pi session’s cron tasks and scheduling state.` and present it in the system tool catalog with the prompt snippet `List cron tasks.` ^cron-tl11
 - The system shall describe `cron_delete` to the model as `Delete a scheduled cron task by ID.` ^cron-tl12
-- The system shall describe `cron_delete.id` to the model as `Eight-character lowercase hexadecimal task ID returned by cron_create or cron_list.` ^cron-tl13
+- The system shall describe `cron_delete.id` to the model as `Task ID returned by cron_create or cron_list, shaped cron-<nano-id>.` ^cron-hkvz
 - The system shall present `cron_delete` in the system tool catalog with the prompt snippet `Delete a cron task.` ^cron-tl14
 
 ### User command

@@ -46,20 +46,16 @@ let mode_of_string = function
 
 let validate_prompt prompt = Shared.require_non_empty "cron prompt" prompt
 
-(* Cron ids stay eight lowercase hex (cron-rs01 / cron-60bw / cron-tl13).
-   Entropy uses the Shared nano-id grammar (alphabet + namespace size) and the
-   plan-tk03 retry-until-unique pattern: never lengthen on collision, fail
-   clearly on exhaustion. Two nano-id indexes are folded into one 32-bit hex
-   handle so the external shape stays contractual. *)
-let task_id_length = 8
+(* Cron task ids use the shared nano-id grammar (plan-tk03): a "cron-" prefix
+   plus four characters from the Shared alphabet. *)
+let task_id_prefix = "cron-"
 
 let valid_task_id value =
-  String.length value = task_id_length
+  String.length value = String.length task_id_prefix + Shared.nano_id_length
+  && String.starts_with ~prefix:task_id_prefix value
   && String.for_all
-       (fun character ->
-         (character >= '0' && character <= '9')
-         || (character >= 'a' && character <= 'f'))
-       value
+       (fun character -> String.contains Shared.nano_id_alphabet character)
+       (String.sub value (String.length task_id_prefix) Shared.nano_id_length)
 
 let scheduled_at expr timestamp =
   let parts = Unix.localtime (float_of_int timestamp) in
@@ -77,30 +73,15 @@ let next_due cron ~now =
 
 let id_rng = Random.State.make_self_init ()
 
-let id_from_seed seed =
-  (* Deterministic 8-hex handle from a non-negative seed (tests / stable fixtures). *)
-  Printf.sprintf "%08lx" (Int32.logand (Int32.of_int seed) Int32.minus_one)
-
-let id_from_nano_indexes left right =
-  (* Map two Shared.nano_id indexes onto the contractual 8-hex handle. *)
-  let open Int64 in
-  let combined =
-    add
-      (mul (of_int left) (of_int Shared.nano_id_namespace_size))
-      (of_int right)
-  in
-  Printf.sprintf "%08Lx" (logand combined 0xFFFF_FFFFL)
-
 let next_id reserved =
-  (* Attempt budget matches plan-tk03: one full pass over the shared nano-id
-     namespace. The product space is larger; a full product would overflow
-     31-bit jsoo ints and look "exhausted" immediately. *)
   let rec attempt remaining =
     if remaining <= 0 then Error "cron task id namespace is exhausted"
     else
-      let left = Random.State.full_int id_rng Shared.nano_id_namespace_size in
-      let right = Random.State.full_int id_rng Shared.nano_id_namespace_size in
-      let id = id_from_nano_indexes left right in
+      let id =
+        task_id_prefix
+        ^ Shared.nano_id
+            (Random.State.full_int id_rng Shared.nano_id_namespace_size)
+      in
       if List.mem id reserved then attempt (remaining - 1) else Ok id
   in
   attempt Shared.nano_id_namespace_size
@@ -321,7 +302,7 @@ let task_of_json json =
   let* prompt = validate_prompt prompt in
   let* expr = Cron_expr.parse cron in
   if not (valid_task_id id) then
-    Error "taumel.cron.task.id must be eight lowercase hexadecimal characters"
+    Error "taumel.cron.task.id must be shaped cron-<nano-id>"
   else if created_at < 0 || next_due <= created_at then
     Error "taumel.cron.task timestamps are invalid"
   else if not (scheduled_at expr next_due) then
