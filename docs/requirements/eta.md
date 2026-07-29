@@ -25,3 +25,5 @@ module by module — never as a single rewrite.
 - The exec-session Eta conversion shall be verified by deterministic tests covering waiter release exactly once, notification claim and restore, delta and status consumption, turn-end flush, and kill during wait. ^eta-4b69
 - When a module outside the bridge is found to call JavaScript async APIs directly, the system shall convert that usage through the bridge adapters; conversion shall proceed continuously and per module rather than as a single rewrite. ^eta-ednd
 - When a TypeScript-side orchestration module is revised, the system shall move its orchestration logic to the OCaml core on Eta and keep TypeScript as the thinnest pi adapter. ^eta-bd25
+- The system shall provide a typed Node.js interop layer of `gen_js_api` bindings covering the Node APIs the core actually uses — fs, path, os, process, Buffer, and child_process — rather than binding whole API surfaces speculatively. ^eta-4u1e
+- OCaml modules shall consume the typed Node layer for the APIs it covers and shall not call those APIs through raw `Unsafe`; `Unsafe` remains acceptable only for interop the layer does not cover, per **eta-6b4o**. ^eta-pw57
