@@ -6,7 +6,7 @@ import { showScrollModal, wrapModalText, type ModalTheme, type ModalUi } from ".
 type AgentIdentity = AgentManagerSnapshot["agents"][number];
 type AgentRun = AgentManagerSnapshot["runs"][number];
 
-function statusColor(status: AgentRun["status"]): string {
+export function statusColor(status: AgentRun["status"]): string {
   switch (status) {
     case "completed": return "success";
     case "failed":

@@ -209,14 +209,14 @@ export async function showInteractiveList<T>(
         },
         invalidate: () => undefined,
         handleInput: (input: string) => {
-          if (input === "\x1b[A") {
+          if (input === "\x1b[A" || input === "k") {
             if (options.items.length > 0) {
               cursor = Math.max(0, cursor - 1);
               requestRender();
             }
             return;
           }
-          if (input === "\x1b[B") {
+          if (input === "\x1b[B" || input === "j") {
             if (options.items.length > 0) {
               cursor = Math.min(options.items.length - 1, cursor + 1);
               requestRender();
@@ -225,6 +225,10 @@ export async function showInteractiveList<T>(
           }
           if (input === "q" || matchesKey(input, Key.escape)) {
             finish(undefined);
+            return;
+          }
+          if (actionKeys.has("enter") && matchesKey(input, Key.enter)) {
+            finish({ key: "enter", index: cursor });
             return;
           }
           if (!actionKeys.has(input)) return;
