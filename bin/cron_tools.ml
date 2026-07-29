@@ -77,10 +77,7 @@ let typed_task (task : Taumel.Cron.task) =
     ~enabled:task.enabled ~nextDue:(float_of_int task.next_due)
     ~nextDueText:(human_time task.next_due) ~pending:(Option.is_some task.pending_since) ()
 
-let tool_result text details =
-  Boundary_contracts.BridgeToolResult.create ~text
-    ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details)) ()
-  |> Tool_contracts.BridgeToolResult.t_to_js |> inject
+let tool_result = Jsoo_bridge.tool_result_js
 
 let stale_session_message = "Cron unavailable while session context is stale."
 

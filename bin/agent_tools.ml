@@ -106,10 +106,7 @@ let isolation_of_params params =
   | None -> Ok Taumel.Agent_workspace.default_isolation
   | Some value -> Taumel.Agent_workspace.isolation_of_string (String.trim value)
 let identity_metadata = Agent_worktree_ops.identity_metadata
-let tool_result text details =
-  Boundary_contracts.BridgeToolResult.create ~text
-    ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details)) ()
-  |> Tool_contracts.BridgeToolResult.t_to_js |> inject
+let tool_result = Jsoo_bridge.tool_result_js
 let json_text value = Taumel.Shared.encode_json value
 let json_success fields = json_text (Taumel.Shared.Object fields)
 let start_details ~(identity : Taumel.Agents.identity) ~(run : Taumel.Agents.agent_run)

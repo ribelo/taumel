@@ -42,9 +42,7 @@ let is_directory path =
   try Node_fs.is_directory (Node_fs.stat_sync path) with _ -> false
 let mkdir_p path = Node_fs.mkdir_sync ~recursive:true path
 let write_file path contents = Node_fs.write_file_sync_string path contents
-let read_file path =
-  try Ok (Node_fs.read_file_sync_utf8 path)
-  with error -> Error (Printexc.to_string error)
+let read_file = Node_files.read_file
 let repository_identity = Agent_worktree_verification.repository_identity
 (* Worktree removal is descriptor-anchored like private-session cleanup
    (ADR 0003): ancestor or component swaps cannot redirect deletion. *)

@@ -260,6 +260,11 @@ let command_result_obj ~ok ~message ~details =
     ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details)) ()
   |> Tool_contracts.BridgeCommandResult.t_to_js |> inject
 
+let tool_result_js text details =
+  Boundary_contracts.BridgeToolResult.create ~text
+    ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details)) ()
+  |> Tool_contracts.BridgeToolResult.t_to_js |> inject
+
 let tool_result_to_command_result result =
   if not (is_js_object result) then
     command_result_obj ~ok:false ~message:"Invalid tool result" ~details:result

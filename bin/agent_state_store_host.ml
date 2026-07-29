@@ -19,11 +19,7 @@ let registry_path ~owner_session_id =
   Store.owner_registry_path ~private_root:(private_root ())
     ~owner_component:(owner_component owner_session_id)
 
-let mkdir_p target =
-  try
-    Node_fs.mkdir_sync ~recursive:true target;
-    Ok ()
-  with error -> Error (Printexc.to_string error)
+let mkdir_p = Node_files.mkdir_p
 
 type file_presence = Missing | Regular_file | Invalid_file | Unavailable of string
 
@@ -39,45 +35,15 @@ let file_presence target =
     | Some "ENOENT" -> Missing
     | _ -> Unavailable (Printexc.to_string error))
 
-let realpath target =
-  try Ok (Node_fs.realpath_sync target)
-  with error -> Error (Printexc.to_string error)
+let realpath = Node_files.realpath
 
-let read_file target =
-  try Ok (Node_fs.read_file_sync_utf8 target)
-  with error -> Error (Printexc.to_string error)
+let read_file = Node_files.read_file
 
-let write_file_durable target contents =
-  let descriptor = ref None in
-  let close () =
-    match !descriptor with
-    | None -> ()
-    | Some fd ->
-        descriptor := None;
-        (try Node_fs.close_sync fd with _ -> ())
-  in
-  try
-    let fd = Node_fs.open_sync_mode target "w" 0o600 in
-    descriptor := Some fd;
-    Node_fs.write_file_sync_fd fd contents;
-    Node_fs.fsync_sync fd;
-    close ();
-    Ok ()
-  with error ->
-    close ();
-    Error (Printexc.to_string error)
+let write_file_durable = Node_files.write_file_durable
 
-let rename source destination =
-  try
-    Node_fs.rename_sync source destination;
-    Ok ()
-  with error -> Error (Printexc.to_string error)
+let rename = Node_files.rename
 
-let unlink target =
-  try
-    Node_fs.unlink_sync target;
-    Ok ()
-  with _ -> Ok ()
+let unlink = Node_files.unlink
 
 let random_suffix () =
   try
