@@ -1,5 +1,4 @@
 open Jsoo_bridge
-let crypto_mod = lazy (node_require "crypto")
 let pi_agent_dir () =
   let home = try Node_os.homedir () with _ -> "" in
   match Node_process.env_get "PI_CODING_AGENT_DIR" with
@@ -83,14 +82,8 @@ let resolve_repository source_workspace =
                       Ok
                         ( toplevel, main_repository_root, main_repository_id,
                           head )))))
-let sha256_hex value =
-  let crypto = Lazy.force crypto_mod in
-  let hash = Unsafe.fun_call (Unsafe.get crypto "createHash") [| js_string "sha256" |] in
-  ignore (Unsafe.meth_call hash "update" [| js_string value |]);
-  Js.to_string (Unsafe.meth_call hash "digest" [| js_string "hex" |])
 let file_entry_fingerprint ~root relative =
   let path = Filename.concat root relative in
-  let crypto = Lazy.force crypto_mod in
   try
     if not (path_exists path) then Ok ("deleted\000" ^ relative)
     else
@@ -102,14 +95,7 @@ let file_entry_fingerprint ~root relative =
         Error ("unsupported directory entry in source snapshot: " ^ relative)
       else if Node_fs.is_file lstat then
         let mode = int_of_float (Node_fs.mode lstat) land 0o777 in
-        let buf = js_of_ojs (Node_fs.read_file_sync path) in
-        let hash =
-          Unsafe.fun_call (Unsafe.get crypto "createHash") [| js_string "sha256" |]
-        in
-        ignore (Unsafe.meth_call hash "update" [| buf |]);
-        let digest =
-          Js.to_string (Unsafe.meth_call hash "digest" [| js_string "hex" |])
-        in
+        let digest = Node_crypto.sha256_bytes (Node_fs.read_file_sync path) in
         Ok ("file\000" ^ relative ^ "\000" ^ string_of_int mode ^ "\000" ^ digest)
       else Error ("unsupported source entry type: " ^ relative)
   with error -> Error (relative ^ ": " ^ Printexc.to_string error)
@@ -144,7 +130,7 @@ let fingerprint_entries ~root entries =
   let ( let* ) = Result.bind in
   let* entry_lines = loop [] entries in
   let* head = run_git ~cwd:root [ "rev-parse"; "HEAD" ] in
-  Ok (sha256_hex (head ^ "\n" ^ String.concat "\n" entry_lines))
+  Ok (Node_crypto.sha256_hex (head ^ "\n" ^ String.concat "\n" entry_lines))
 let capture_source_manifest ~source_workspace =
   let ( let* ) = Result.bind in
   let* first_entries = list_source_entries ~source_workspace in

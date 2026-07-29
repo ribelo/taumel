@@ -1,5 +1,3 @@
-open Jsoo_bridge
-
 module Host = Agent_child_session_host
 
 type lease = {
@@ -13,8 +11,6 @@ type lease = {
 type lease_error = Lease_held | Lease_error of string
 
 let active_leases : (string, lease) Hashtbl.t = Hashtbl.create 4
-
-let process_object () = js_of_ojs (Node_process.as_ojs ())
 
 let current_pid () = Node_process.pid ()
 
@@ -37,15 +33,7 @@ let process_is_alive pid expected_start =
     let actual_start = process_start_token pid in
     if expected_start <> "" && actual_start <> "" then
       actual_start = expected_start
-    else
-      let predicate =
-        Unsafe.js_expr
-          "((process, pid) => { try { process.kill(pid, 0); return true; } catch (error) { return error?.code === 'EPERM'; } })"
-      in
-      Js.to_bool
-        (Unsafe.coerce
-           (Unsafe.fun_call predicate
-              [| inject (process_object ()); js_number (float_of_int pid) |]))
+    else Node_process.probe pid
 
 let owner_directory owner_session_id =
   Node_path.join [ Host.private_root (); Host.owner_component owner_session_id ]

@@ -1,13 +1,7 @@
-open Jsoo_bridge
-
 let max_lines = 2000
 let max_bytes = 50 * 1024
 
-let owner_token value =
-  let crypto = node_require "crypto" in
-  let hash = Unsafe.fun_call (Unsafe.get crypto "createHash") [| js_string "sha256" |] in
-  ignore (Unsafe.meth_call hash "update" [| js_string value |]);
-  Js.to_string (Unsafe.meth_call hash "digest" [| js_string "hex" |])
+let owner_token value = Node_crypto.sha256_hex value
 
 let rec take acc count = function
   | [] -> List.rev acc

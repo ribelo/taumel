@@ -6,9 +6,6 @@ open Jsoo_bridge
 
 module Store = Taumel.Agent_state_store
 
-let crypto = lazy (node_require "crypto")
-
-
 let private_root () = Agent_child_session_host.private_root ()
 
 let owner_component owner_session_id =
@@ -39,11 +36,7 @@ let file_presence target =
 
 
 let random_suffix () =
-  try
-    Unsafe.meth_call (Lazy.force crypto) "randomBytes" [| js_number 6. |]
-    |> fun bytes ->
-    Unsafe.meth_call bytes "toString" [| js_string "hex" |] |> Js.to_string
-  with _ -> string_of_int (Random.bits ())
+  try Node_crypto.random_hex 6 with _ -> string_of_int (Random.bits ())
 
 let ensure_owner_directory ~owner_session_id directory =
   match Node_files.mkdir_p directory with
@@ -96,8 +89,6 @@ let env_flag name =
   | Some value when String.trim value = "1" -> true
   | _ -> false
 
-let clear_env_flag name = Node_process.env_delete name
-
 let filesystem_backend : Store.registry_backend =
   {
     read_registry =
@@ -118,7 +109,7 @@ let filesystem_backend : Store.registry_backend =
     write_registry =
       (fun ~owner_session_id ~contents ->
         if env_flag "TAUMEL_FAIL_NEXT_AGENT_REGISTRY_WRITE" then (
-          clear_env_flag "TAUMEL_FAIL_NEXT_AGENT_REGISTRY_WRITE";
+          Node_process.env_delete "TAUMEL_FAIL_NEXT_AGENT_REGISTRY_WRITE";
           Error "forced agent persistence failure")
         else
           write_atomic ~owner_session_id ~path:(registry_path ~owner_session_id)

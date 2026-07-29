@@ -1,14 +1,6 @@
 open Jsoo_bridge
 
-let crypto = lazy (node_require "crypto")
-
-
-let owner_component owner_session_id =
-  let hash =
-    Unsafe.meth_call (Lazy.force crypto) "createHash" [| js_string "sha256" |]
-  in
-  ignore (Unsafe.meth_call hash "update" [| js_string owner_session_id |]);
-  Unsafe.meth_call hash "digest" [| js_string "hex" |] |> Js.to_string
+let owner_component owner_session_id = Node_crypto.sha256_hex owner_session_id
 
 let valid_agent_component agent_id =
   agent_id <> "" && agent_id <> "." && agent_id <> ".."
@@ -156,8 +148,7 @@ let authorized_private_session ~(identity : Taumel.Agents.identity) =
       validate_exact_directory ~require_child_marker:true ~owner_session_id
         ~agent_id ~expected:live_path live_path
 
-let fresh_nonce () =
-  Unsafe.meth_call (Lazy.force crypto) "randomUUID" [||] |> Js.to_string
+let fresh_nonce () = Node_crypto.random_hex 16
 
 type staged_private_session =
   | No_private_session

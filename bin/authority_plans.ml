@@ -59,18 +59,12 @@ type agent_action_entry = {
   mutable agent_action_state : agent_action_state;
 }
 
-let crypto = lazy (node_require "crypto")
 let exec_entries : (string, exec_entry) Hashtbl.t = Hashtbl.create 32
 let exa_entries : (string, exa_entry) Hashtbl.t = Hashtbl.create 32
 let agent_action_entries : (string, agent_action_entry) Hashtbl.t = Hashtbl.create 32
 
 let rec fresh_id () =
-  let id =
-    Js.to_string
-      (Unsafe.coerce
-         (Unsafe.meth_call (Lazy.force crypto) "randomUUID" [||]))
-  in
-  let id = "plan-" ^ id in
+  let id = "plan-" ^ Node_crypto.random_hex 16 in
   if
     Hashtbl.mem exec_entries id || Hashtbl.mem exa_entries id
     || Hashtbl.mem agent_action_entries id

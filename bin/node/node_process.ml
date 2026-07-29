@@ -7,6 +7,7 @@ module Binding = [%js:
   val pid : t -> float [@@js.get]
   val argv : t -> Ojs.t [@@js.get]
   val kill : t -> float -> string -> unit [@@js.call]
+  val kill_signal : t -> float -> Ojs.t -> unit [@@js.call "kill"]
   val get_builtin_module : t -> string -> Ojs.t [@@js.call]
 ]
 
@@ -39,5 +40,22 @@ let argv () =
 
 let kill pid signal =
   Binding.kill (process ()) (float_of_int pid) signal
+
+let exception_code error =
+  try
+    let code = Ojs.get_prop_ascii (Obj.magic error : Ojs.t) "code" in
+    match Ojs.type_of code with
+    | "string" -> Some (Ojs.string_of_js code)
+    | _ -> None
+  with _ -> None
+
+(** Signal-0 liveness probe: true when the pid is alive or the caller lacks
+    permission to signal it ([EPERM]); false when the process is missing or the
+    probe fails for any other reason. *)
+let probe pid =
+  try
+    Binding.kill_signal (process ()) (float_of_int pid) (Ojs.int_to_js 0);
+    true
+  with error -> ( match exception_code error with Some "EPERM" -> true | _ -> false )
 
 let as_ojs () = to_js ()
