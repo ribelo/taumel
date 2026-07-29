@@ -368,12 +368,13 @@ for (const name of readdirSync(binRoot.pathname).filter((entry) => entry.endsWit
   if (/\bRaw_tool_contracts\b/.test(source)) {
     failures.push(`${name}: private raw contract representation used outside generated façade`);
   }
-  for (const [index, line] of source.split("\n").entries()) {
-    if (
-      /Tool_contracts\.[A-Za-z0-9_]+\.t_of_js/.test(line) &&
-      !/decode_(?:ojs_)?contract|prepare_body_tool/.test(line)
-    ) {
-      failures.push(`${name}:${index + 1}: generated input decoder result is not handled`);
+  const sourceLines = source.split("\n");
+  for (const [index, line] of sourceLines.entries()) {
+    if (/Tool_contracts\.[A-Za-z0-9_]+\.t_of_js/.test(line)) {
+      const context = sourceLines.slice(Math.max(0, index - 2), index + 1).join(" ");
+      if (!/decode_(?:ojs_)?contract|prepare_body_tool/.test(context)) {
+        failures.push(`${name}:${index + 1}: generated input decoder result is not handled`);
+      }
     }
   }
   if (name !== "jsoo_bridge.ml" && name !== "agent_worktree_host.ml" && /\bObj\.magic\b/.test(source)) {
