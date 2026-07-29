@@ -452,4 +452,61 @@ function makeCommandHarness(plans) {
   assert.match(result.message, /openai\/gpt-4o/);
 }
 
+// compaction-g442: a winning `inherit` defers to Pi's default compaction silently.
+{
+  const commandCtx = {
+    cwd: process.cwd(),
+    isProjectTrusted: () => false,
+    sessionManager: {
+      getSessionId: () => "session-1",
+      getSessionFile: () => "/tmp/session-1.jsonl",
+    },
+    ui: { notify: () => undefined },
+  };
+  const commandPi = {
+    on: () => undefined,
+    events: { on: () => () => undefined, emit: () => undefined },
+    exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+  };
+  const setCore = {
+    init: () => undefined,
+    call(name) {
+      assert.equal(name, "planCompactionModelCommand");
+      return { kind: "set_project", model: "inherit" };
+    },
+  };
+  const setResult = await executeCompactionModelCommand(commandPi, setCore, "inherit", commandCtx);
+  assert.equal(setResult.ok, true, "inherit set should succeed");
+
+  const notifications = [];
+  const registry = {
+    find() {
+      throw new Error("find should not run when inheriting");
+    },
+    async getApiKeyAndHeaders() {
+      throw new Error("auth should not run when inheriting");
+    },
+  };
+  const handler = makeHarness(
+    { kind: "default" },
+    registry,
+    async () => {
+      throw new Error("compact should not run when inheriting");
+    },
+  ).get("session_before_compact");
+  const result = await handler(event, makeContext(registry, notifications));
+
+  assert.equal(result, undefined, "inherit should defer to Pi's default compaction");
+  assert.deepEqual(notifications, []);
+
+  const clearCore = {
+    init: () => undefined,
+    call(name) {
+      assert.equal(name, "planCompactionModelCommand");
+      return { kind: "clear_project" };
+    },
+  };
+  await executeCompactionModelCommand(commandPi, clearCore, "clear", commandCtx);
+}
+
 console.log("compaction model smoke: all assertions passed");

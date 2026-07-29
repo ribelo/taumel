@@ -33,18 +33,23 @@ let resolve_configured settings =
   let session = normalize_setting settings.session in
   let project = normalize_setting settings.project in
   let global = normalize_setting settings.global in
+  let resolved source value =
+    if value = "inherit" then (Inherit, "inherit (" ^ source ^ ")")
+    else (Model value, source)
+  in
   match (session, project, global) with
-  | Some value, _, _ -> (Model value, "session")
-  | None, Some value, _ -> (Model value, "project")
-  | None, None, Some value -> (Model value, "global")
+  | Some value, _, _ -> resolved "session" value
+  | None, Some value, _ -> resolved "project" value
+  | None, None, Some value -> resolved "global" value
   | None, None, None -> (Inherit, "inherit")
 
 let parse_command input =
   let input = String.trim input in
   if input = "" then Ok Pick
   else if input = "clear" then Ok Clear
+  else if input = "inherit" then Ok (Set "inherit")
   else if is_valid_model_id input then Ok (Set input)
-  else Error "usage: /compaction-model [<provider/model>|clear]"
+  else Error "usage: /compaction-model [<provider/model>|inherit|clear]"
 
 let plan_command ~settings input =
   let current, source = resolve_configured settings in

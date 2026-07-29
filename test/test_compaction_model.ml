@@ -42,6 +42,9 @@ let test_parse_command () =
     (nested_set_ok = Compaction_model.Set "openrouter/deepseek/deepseek-v4-pro");
   assert_bool "invalid model is rejected"
     (Result.is_error (Compaction_model.parse_command "gpt-4o"));
+  assert_bool "inherit parses to Set inherit"
+    (expect_ok "inherit" (Compaction_model.parse_command "inherit")
+    = Compaction_model.Set "inherit");
   assert_bool "whitespace around model is trimmed"
     (expect_ok "trim" (Compaction_model.parse_command "  openai/gpt-4o  ")
     = Compaction_model.Set "openai/gpt-4o")
@@ -135,7 +138,22 @@ let test_plan_command () =
   in
   assert_bool "picker reports inherit when unset"
     (show_empty
-    = Compaction_model.Open_picker { current = Compaction_model.Inherit })
+    = Compaction_model.Open_picker { current = Compaction_model.Inherit });
+  let global_inherit_settings =
+    {
+      Compaction_model.session = None;
+      global = Some "inherit";
+      project = None;
+    }
+  in
+  let show_global_inherit =
+    expect_ok "clear with global inherit shows current"
+      (Compaction_model.plan_command ~settings:global_inherit_settings "clear")
+  in
+  assert_bool "clear with global inherit reports inherit (global)"
+    (show_global_inherit
+    = Compaction_model.Show_current
+        { model = Compaction_model.Inherit; source = "inherit (global)" })
 
 let test_plan_session_before_compact () =
   let inherit_settings =
@@ -169,7 +187,33 @@ let test_plan_session_before_compact () =
   in
   assert_bool "session model takes precedence"
     (Compaction_model.plan_session_before_compact session_settings
-    = Compaction_model.Use_model "openai/gpt-5")
+    = Compaction_model.Use_model "openai/gpt-5");
+  let session_inherit_settings =
+    { project_settings with session = Some "inherit" }
+  in
+  assert_bool "session inherit shadows project and global"
+    (Compaction_model.plan_session_before_compact session_inherit_settings
+    = Compaction_model.Use_default);
+  let project_inherit_settings =
+    {
+      Compaction_model.session = None;
+      global = Some "openai/gpt-4o";
+      project = Some "inherit";
+    }
+  in
+  assert_bool "project inherit shadows global"
+    (Compaction_model.plan_session_before_compact project_inherit_settings
+    = Compaction_model.Use_default);
+  let global_inherit_settings =
+    {
+      Compaction_model.session = None;
+      global = Some "inherit";
+      project = None;
+    }
+  in
+  assert_bool "global inherit uses default"
+    (Compaction_model.plan_session_before_compact global_inherit_settings
+    = Compaction_model.Use_default)
 
 let () =
   test_validation ();

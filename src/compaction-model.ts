@@ -153,7 +153,8 @@ function compactionSettingsForContext(ctx: unknown): Promise<{ readonly session:
 }
 
 function hasConfiguredCompactionModel(settings: { readonly session: string | undefined; readonly global: string | undefined; readonly project: string | undefined }): boolean {
-  return settings.session !== undefined || settings.project !== undefined || settings.global !== undefined;
+  const winning = settings.session ?? settings.project ?? settings.global;
+  return winning !== undefined && winning !== "inherit";
 }
 
 type CompactionRunner = typeof compact;
