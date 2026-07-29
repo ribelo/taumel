@@ -339,7 +339,7 @@ agents, plan-mode continuation, Librarian, Review, and Painter.
 - The manager shall show actual model, thinking, kind, isolation mode, source workspace, effective workspace, and run status without exposing hidden reasoning or raw prompts. ^agent-29qq
 - The system shall not restore the old `/agents` profile manager or profile enable/disable state. ^agent-ui04
 - When the user opens an identity's Inspect submenu in `/agent-runs`, the manager shall show the full path to that identity's private Pi child-session file. ^agent-ui05
-- The `/agent-runs` manager shall show each run's latest agent task description, turn count, and wall-clock age since its latest activity in its identity and run rows; before the first child activity, it shall show age since run start; an identity row shall use the values from its latest run. ^agent-ui06
+- The `/agent-runs` manager shall show each run's latest agent task description, turn count, and human-readable wall-clock age since its latest activity in its identity and run rows; before the first child activity, it shall show age since run start; an identity row shall use the values from its latest run. ^agent-ui06
 - Identity rows shall show handle, kind, latest lifecycle status, activity state only while running, latest task description, turn count, and derived activity age; run rows shall show the corresponding run ID, status, running activity state, description, turn count, and age, without exact timestamps or recommendations. ^agent-ui07
 - The Inspect submenu shall show identity ID, kind, isolation mode, applicable tier, resolved model and thinking, source workspace, effective workspace, creation time, and private child-session path, plus run ID, lifecycle status, activity state and recommendation, start time, exact last-activity time, applicable end or suspension time, turn count, task description, bounded reason or error, and notification state. ^agent-91jh
 - A terminal or suspended row shall omit the redundant `inactive` activity label, while a running row shall expose `starting`, `reasoning`, `using_tool`, or `orphaned` beside its lifecycle status. ^agent-ui09
@@ -351,6 +351,12 @@ agents, plan-mode continuation, Librarian, Review, and Painter.
 - The system shall recover the current instruction on demand from the identity's private child session and shall not record instruction text in parent run metadata. ^agent-9jof
 - The Inspect modal shall scroll with the arrow keys and shall close on Esc, q, or Enter. ^agent-qaiy
 - The Inspect modal shall convey run status through colored text rather than a status-dot glyph. ^agent-vaxh
+- When the user runs `/agent-runs` without arguments, the system shall present the identity list as an interactive modal that keeps the selected identity visible while navigating beyond the viewport. ^agent-u5gw
+- The `/agent-runs` identity list shall order identities with a non-terminal latest run before identities with a terminal latest run, and shall order identities within each group by most recent activity first. ^agent-wuyh
+- The `/agent-runs` identity list shall navigate with ↑/↓ and j/k, shall inspect the selected identity on Enter or i, and shall expose single-key actions: o for latest-run output, r for the runs list, s to stop, c to close with confirmation, and x to prune. ^agent-64x4
+- When the user invokes the prune action, the system shall close every identity whose latest run is terminal after user confirmation, shall leave identities with a non-terminal latest run untouched, and shall report how many identities were closed. ^agent-6d58
+- When the user closes the `/agent-runs` manager without choosing an action, the system shall not add a transcript entry and shall not emit a transient notification. ^agent-bxg4
+- After an identity action completes, the system shall reopen the `/agent-runs` identity list with a refreshed snapshot. ^agent-mljb
 
 ### Non-interactive draining
 
