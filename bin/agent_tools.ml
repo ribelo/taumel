@@ -106,7 +106,6 @@ let isolation_of_params params =
   | None -> Ok Taumel.Agent_workspace.default_isolation
   | Some value -> Taumel.Agent_workspace.isolation_of_string (String.trim value)
 let identity_metadata = Agent_worktree_ops.identity_metadata
-let tool_result = Jsoo_bridge.tool_result_js
 let json_text value = Taumel.Shared.encode_json value
 let json_success fields = json_text (Taumel.Shared.Object fields)
 let start_details ~(identity : Taumel.Agents.identity) ~(run : Taumel.Agents.agent_run)
@@ -676,7 +675,7 @@ let prepare_wait params ctx =
                   ("pending_run_ids", pending);
                 |]
             in
-            tool_result text details)
+            Jsoo_bridge.tool_result_js text details)
         | Ok wait ->
             let details =
               Boundary_contracts.AgentWaitDetails.create ~results:[]
@@ -813,7 +812,7 @@ let prepare_list ctx =
         in
         let text = Taumel.Shared.encode_json (Taumel.Shared.Array json_agents)
         in
-        tool_result text
+        Jsoo_bridge.tool_result_js text
           (Unsafe.obj
              [|
                ("ok", js_bool true);

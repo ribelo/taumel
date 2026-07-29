@@ -8,7 +8,6 @@ module Store = Taumel.Agent_state_store
 
 let crypto = lazy (node_require "crypto")
 
-let join parts = Node_path.join parts
 
 let private_root () = Agent_child_session_host.private_root ()
 
@@ -19,7 +18,6 @@ let registry_path ~owner_session_id =
   Store.owner_registry_path ~private_root:(private_root ())
     ~owner_component:(owner_component owner_session_id)
 
-let mkdir_p = Node_files.mkdir_p
 
 type file_presence = Missing | Regular_file | Invalid_file | Unavailable of string
 
@@ -35,15 +33,10 @@ let file_presence target =
     | Some "ENOENT" -> Missing
     | _ -> Unavailable (Printexc.to_string error))
 
-let realpath = Node_files.realpath
 
-let read_file = Node_files.read_file
 
-let write_file_durable = Node_files.write_file_durable
 
-let rename = Node_files.rename
 
-let unlink = Node_files.unlink
 
 let random_suffix () =
   try
@@ -53,14 +46,14 @@ let random_suffix () =
   with _ -> string_of_int (Random.bits ())
 
 let ensure_owner_directory ~owner_session_id directory =
-  match mkdir_p directory with
+  match Node_files.mkdir_p directory with
   | Error _ as error -> error
   | Ok () -> (
-      match (realpath (private_root ()), realpath directory) with
+      match (Node_files.realpath (private_root ()), Node_files.realpath directory) with
       | Error _, _ | _, Error _ ->
           Error "agent registry directory cannot be resolved canonically"
       | Ok canonical_root, Ok canonical_directory ->
-          let expected = join [ canonical_root; owner_component owner_session_id ] in
+          let expected = Node_path.join [ canonical_root; owner_component owner_session_id ] in
           if
             canonical_directory <> expected
             || not
@@ -75,20 +68,20 @@ let write_atomic ~owner_session_id ~path:target ~contents =
   | Error _ as error -> error
   | Ok () ->
       let temp =
-        join
+        Node_path.join
           [
             directory;
             ".registry." ^ random_suffix () ^ ".tmp";
           ]
       in
-      (match write_file_durable temp contents with
+      (match Node_files.write_file_durable temp contents with
       | Error message ->
-          ignore (unlink temp);
+          ignore (Node_files.unlink temp);
           Error message
       | Ok () -> (
-          match rename temp target with
+          match Node_files.rename temp target with
           | Error message ->
-              ignore (unlink temp);
+              ignore (Node_files.unlink temp);
               Error message
           | Ok () ->
               (try
@@ -119,7 +112,7 @@ let filesystem_backend : Store.registry_backend =
           (match ensure_owner_directory ~owner_session_id directory with
           | Error _ as error -> error
           | Ok () -> (
-              match read_file target with
+              match Node_files.read_file target with
               | Ok contents -> Ok (Some contents)
               | Error message -> Error message)));
     write_registry =

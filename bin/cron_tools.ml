@@ -77,7 +77,6 @@ let typed_task (task : Taumel.Cron.task) =
     ~enabled:task.enabled ~nextDue:(float_of_int task.next_due)
     ~nextDueText:(human_time task.next_due) ~pending:(Option.is_some task.pending_since) ()
 
-let tool_result = Jsoo_bridge.tool_result_js
 
 let stale_session_message = "Cron unavailable while session context is stale."
 
@@ -95,7 +94,7 @@ let prepare_create params ctx =
     | Ok (state, task) ->
         cron_state := state;
         save_state ctx;
-        tool_result
+        Jsoo_bridge.tool_result_js
           (Printf.sprintf
              "Created cron task %s (%s). Tell the user this id and that they can manage crons with /cron."
              task.id (Taumel.Cron.mode_to_string task.mode))
@@ -135,7 +134,7 @@ let prepare_delete params ctx =
     cron_state := Taumel.Cron.delete id !cron_state;
     save_state ctx;
     let deleted = List.length !cron_state.tasks < before in
-    tool_result
+    Jsoo_bridge.tool_result_js
       (if deleted then "Deleted cron task " ^ id ^ "." else "No cron task matched " ^ id ^ ".")
       (Unsafe.obj [| ("id", js_string id); ("deleted", js_bool deleted) |])
 

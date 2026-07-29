@@ -19,7 +19,7 @@ let process_object () = js_of_ojs (Node_process.as_ojs ())
 let current_pid () = Node_process.pid ()
 
 let process_start_token pid =
-  match Host.read_file (Printf.sprintf "/proc/%d/stat" pid) with
+  match Node_files.read_file (Printf.sprintf "/proc/%d/stat" pid) with
   | Error _ -> ""
   | Ok raw -> (
       match String.rindex_opt raw ')' with
@@ -48,10 +48,10 @@ let process_is_alive pid expected_start =
               [| inject (process_object ()); js_number (float_of_int pid) |]))
 
 let owner_directory owner_session_id =
-  Host.join [ Host.private_root (); Host.owner_component owner_session_id ]
+  Node_path.join [ Host.private_root (); Host.owner_component owner_session_id ]
 
 let lease_path owner_session_id =
-  Host.join
+  Node_path.join
     [ owner_directory owner_session_id; ".ephemeral-cleanup.lease.json" ]
 
 let encode lease =
@@ -65,7 +65,7 @@ let encode lease =
        ])
 
 let read path =
-  match Host.read_file path with
+  match Node_files.read_file path with
   | Error _ as error -> error
   | Ok raw -> (
       match Taumel.Shared.decode_json_string raw with
@@ -93,10 +93,10 @@ let read path =
 
 let publish lease =
   let temporary = lease.path ^ ".tmp-" ^ lease.nonce in
-  match Host.write_file_durable temporary (encode lease) with
+  match Node_files.write_file_durable temporary (encode lease) with
   | Error message -> Error message
   | Ok () -> (
-      match Host.link_file temporary lease.path with
+      match Node_files.link_file temporary lease.path with
       | Ok () ->
           ignore (Host.unlink_file temporary);
           Ok ()
@@ -108,7 +108,7 @@ let acquire ~owner_session_id =
   match Hashtbl.find_opt active_leases owner_session_id with
   | Some lease -> Ok lease
   | None -> (
-      match Host.mkdir_p (owner_directory owner_session_id) with
+      match Node_files.mkdir_p (owner_directory owner_session_id) with
       | Error message -> Error (Lease_error message)
       | Ok () ->
           let owner_path = owner_directory owner_session_id in
@@ -134,14 +134,14 @@ let acquire ~owner_session_id =
                 Ok candidate
             | Error _ when attempts < 3 -> (
                 match read path with
-                | Error _ when not (Host.path_exists path) -> loop (attempts + 1)
+                | Error _ when not (Node_files.path_exists path) -> loop (attempts + 1)
                 | Error message -> Error (Lease_error message)
                 | Ok current
                   when process_is_alive current.pid current.process_start ->
                     Error Lease_held
                 | Ok _ ->
                     let quarantine = path ^ ".reclaim-" ^ Host.fresh_nonce () in
-                    (match Host.rename path quarantine with
+                    (match Node_files.rename path quarantine with
                     | Error _ -> loop (attempts + 1)
                     | Ok () ->
                         ignore (Host.unlink_file quarantine);
@@ -156,7 +156,7 @@ let acquire ~owner_session_id =
 let release lease =
   let result =
     match read lease.path with
-    | Error _ when not (Host.path_exists lease.path) -> Ok ()
+    | Error _ when not (Node_files.path_exists lease.path) -> Ok ()
     | Error message -> Error message
     | Ok current when current.nonce <> lease.nonce ->
         Error "ephemeral cleanup lease ownership changed"
@@ -185,9 +185,9 @@ let register ~owner_session_id ~agent_id =
       | Error _ as error -> error
       | Ok envelope_path ->
           let marker_path =
-            Host.join [ envelope_path; "cleanup-marker.json" ]
+            Node_path.join [ envelope_path; "cleanup-marker.json" ]
           in
-          if Host.path_exists envelope_path then
+          if Node_files.path_exists envelope_path then
             match Host.read_envelope_marker marker_path with
             | Error _ as error -> error
             | Ok marker
@@ -199,7 +199,7 @@ let register ~owner_session_id ~agent_id =
                 Ok ()
             | Ok _ -> Error "ephemeral cleanup registration marker mismatch"
           else
-            match Host.mkdir_p envelope_path with
+            match Node_files.mkdir_p envelope_path with
             | Error _ as error -> error
             | Ok () ->
                 Host.write_envelope_marker ~scope:"ephemeral" ~marker_path
@@ -208,18 +208,18 @@ let register ~owner_session_id ~agent_id =
 
 let deferred_candidates () =
   let root = Host.private_root () in
-  Host.list_directory root
+  Node_files.list_directory root
   |> List.concat_map (fun owner_name ->
-         let owner_path = Host.join [ root; owner_name ] in
-         if not (Host.is_directory owner_path) then []
+         let owner_path = Node_path.join [ root; owner_name ] in
+         if not (Node_files.is_directory owner_path) then []
          else
-           Host.list_directory owner_path
+           Node_files.list_directory owner_path
            |> List.filter_map (fun name ->
                   if not (String.starts_with ~prefix:".cleanup-" name) then None
                   else
-                    let envelope_path = Host.join [ owner_path; name ] in
+                    let envelope_path = Node_path.join [ owner_path; name ] in
                     let marker_path =
-                      Host.join [ envelope_path; "cleanup-marker.json" ]
+                      Node_path.join [ envelope_path; "cleanup-marker.json" ]
                     in
                     match Host.read_envelope_marker marker_path with
                     | Ok marker
@@ -258,9 +258,9 @@ let promote_deferred envelope_path marker =
       match Host.private_directory ~owner_session_id ~agent_id with
       | Error _ as error -> error
       | Ok live_path ->
-          let payload_path = Host.join [ envelope_path; "session" ] in
-          let live_exists = Host.path_exists live_path in
-          let payload_exists = Host.path_exists payload_path in
+          let payload_path = Node_path.join [ envelope_path; "session" ] in
+          let live_exists = Node_files.path_exists live_path in
+          let payload_exists = Node_files.path_exists payload_path in
           if live_exists && payload_exists then
             Error "deferred ephemeral cleanup has both live and staged sessions"
           else
@@ -274,7 +274,7 @@ let promote_deferred envelope_path marker =
                 | Error _ as error -> error
                 | Ok None -> Ok ()
                 | Ok (Some canonical_live) ->
-                    Host.rename canonical_live payload_path
+                    Node_files.rename canonical_live payload_path
             in
             match stage_result with
             | Error _ as error -> error
