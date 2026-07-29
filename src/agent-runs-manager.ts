@@ -271,7 +271,7 @@ export async function executeAgentRunsManager(
       items,
       header: (theme) => theme.fg("accent", ` Agent runs (${items.length})`),
       renderRow: (item, _index, selected, theme, width) => pickerRow(item, selected, theme, width, Date.now()),
-      footer: " ↑↓/jk move · Enter/i inspect · o output · r runs · s stop · c close · x prune · q/Esc close",
+      footer: " ↑↓/jk move · i inspect · o output · r runs · s stop · c close · x prune · q close",
       actionKeys: ["enter", "i", "o", "r", "s", "c", "x"],
       initialIndex: Math.max(0, items.findIndex((item) => item.agent.agentId === lastAgentId)),
     });

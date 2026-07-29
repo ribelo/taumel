@@ -1,4 +1,4 @@
-import { Key, matchesKey } from "@earendil-works/pi-tui";
+import { Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 
 export type ModalTheme = {
   readonly fg: (color: string, text: string) => string;
@@ -77,11 +77,12 @@ export async function showScrollModal(
     const requestRender = requestRenderFrom(tui);
     return {
       render: (width: number) => {
-        const lines = content(width, theme);
+        const w = Math.max(1, width);
+        const lines = content(w, theme);
         offset = Math.min(offset, Math.max(0, lines.length - 1));
         const visible = lines.slice(offset, offset + pageSize);
         const footer = options.footer ?? " ↑↓ scroll · Esc/q/Enter close";
-        return [...visible, theme.fg("dim", footer)];
+        return [...visible, theme.fg("dim", footer)].map((line) => truncateToWidth(line, w, "..."));
       },
       invalidate: () => undefined,
       handleInput: (input: string) => {
@@ -205,7 +206,7 @@ export async function showInteractiveList<T>(
             ...visible,
             "",
             theme.fg("dim", footer),
-          ];
+          ].map((line) => truncateToWidth(line, w, "..."));
         },
         invalidate: () => undefined,
         handleInput: (input: string) => {
