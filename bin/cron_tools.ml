@@ -32,17 +32,11 @@ let sync ctx =
         cron_loaded_session_id := Some session_id);
       true
 
-let random_id () =
-  let math = Unsafe.get Unsafe.global "Math" in
-  let n =
-    match function_field math "random" with
-    | Some random -> (
-        match float_value (Unsafe.fun_call random [||]) with
-        | Some value -> int_of_float (value *. 2147483647.)
-        | None -> App_state.now_seconds ())
-    | None -> App_state.now_seconds ()
+let random_id state =
+  let reserved =
+    List.map (fun (task : Taumel.Cron.task) -> task.id) state.Taumel.Cron.tasks
   in
-  Taumel.Cron.id_from_seed n
+  Taumel.Cron.next_id reserved
 
 let human_time seconds =
   try
@@ -108,31 +102,34 @@ let prepare_create params ctx =
     let request : Taumel.Cron.create_request =
       { cron; prompt; recurring; mode }
     in
-    match
-      Taumel.Cron.create ~now:(App_state.now_seconds ()) ~id:(random_id ())
-        request !cron_state
-    with
+    match random_id !cron_state with
     | Error message -> error_obj message
-    | Ok (state, task) ->
-        cron_state := state;
-        save_state ctx;
-        Jsoo_bridge.tool_result_js
-          (Printf.sprintf
-             "Created cron task %s (%s). Tell the user this id and that they \
-              can manage crons with /cron."
-             task.id
-             (Taumel.Cron.mode_to_string task.mode))
-          (Unsafe.obj
-             [|
-               ("task", inject (task_summary task));
-               ("id", js_string task.id);
-               ("schedule", js_string task.cron);
-               ("recurring", js_bool task.recurring);
-               ("mode", js_string (Taumel.Cron.mode_to_string task.mode));
-               ("enabled", js_bool task.enabled);
-               ("nextDue", js_number (float_of_int task.next_due));
-               ("nextDueText", js_string (human_time task.next_due));
-             |])
+    | Ok id -> (
+        match
+          Taumel.Cron.create ~now:(App_state.now_seconds ()) ~id request
+            !cron_state
+        with
+        | Error message -> error_obj message
+        | Ok (state, task) ->
+            cron_state := state;
+            save_state ctx;
+            Jsoo_bridge.tool_result_js
+              (Printf.sprintf
+                 "Created cron task %s (%s). Tell the user this id and that \
+                  they can manage crons with /cron."
+                 task.id
+                 (Taumel.Cron.mode_to_string task.mode))
+              (Unsafe.obj
+                 [|
+                   ("task", inject (task_summary task));
+                   ("id", js_string task.id);
+                   ("schedule", js_string task.cron);
+                   ("recurring", js_bool task.recurring);
+                   ("mode", js_string (Taumel.Cron.mode_to_string task.mode));
+                   ("enabled", js_bool task.enabled);
+                   ("nextDue", js_number (float_of_int task.next_due));
+                   ("nextDueText", js_string (human_time task.next_due));
+                 |]))
 
 let prepare_list _params ctx =
   if not (sync ctx) then error_obj stale_session_message
