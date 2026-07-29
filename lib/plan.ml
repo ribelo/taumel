@@ -359,6 +359,15 @@ let add_user_task ?id ?description ?(depends_on = []) ?time_limit_seconds
 let find_task task_id (tasks : task list) =
   List.find_opt (fun (task : task) -> task.task_id = task_id) tasks
 
+let unfinished_tasks (plan : t) = List.filter Plan_task.unfinished plan.tasks
+
+(* ^plan-zv0s: committed statuses complete themselves when no unfinished work remains. *)
+let apply_completion_invariant ~now (plan : t) =
+  match plan.status with
+  | (Active | Paused | Blocked | Time_limited) when unfinished_tasks plan = [] ->
+      with_status ~now Complete plan
+  | _ -> plan
+
 let apply_task_patch (task : task) patch =
   let ( let* ) = Result.bind in
   let* title =
@@ -435,7 +444,9 @@ let update_task_for ~user ~now ~task_id patch (store : store) =
                   | [] -> Ok ()
                   | blockers -> Error (Plan_task.blockers_error blockers)
               in
-              Ok { plan with tasks = candidate_tasks; updated_at = now }))
+              Ok
+                (apply_completion_invariant ~now
+                   { plan with tasks = candidate_tasks; updated_at = now })))
 
 let update_task ~now ~task_id patch store =
   update_task_for ~user:false ~now ~task_id patch store
@@ -506,41 +517,27 @@ let user_delete_task ~now ~task_id (store : store) =
       else
         match Plan_task.validate_graph remaining with
         | Error _ as error -> error
-        | Ok () -> Ok { plan with tasks = remaining; updated_at = now })
-
-let unfinished_tasks (plan : t) = List.filter Plan_task.unfinished plan.tasks
-
-let completion_gate (plan : t) =
-  match unfinished_tasks plan with [] -> Ok () | tasks -> Error tasks
-
-let unfinished_tasks_error tasks =
-  let payload =
-    Shared.encode_json (Shared.Array (List.map Plan_task.blocker_to_json tasks))
-  in
-  "cannot complete plan while tasks remain unfinished: " ^ payload
+        | Ok () ->
+            Ok
+              (apply_completion_invariant ~now
+                 { plan with tasks = remaining; updated_at = now }))
 
 let update_plan ~now status (store : store) =
   match store with
   | None -> Error "cannot update plan because this session has no plan"
   | Some plan -> (
       match (status, plan.status) with
-      | Active, Draft -> Ok (with_status ~now Active plan)
-      | (Complete | Blocked), Active ->
-          if status = Complete then
-            Result.map
-              (fun () -> with_status ~now Complete plan)
-              (match completion_gate plan with
-              | Ok () -> Ok ()
-              | Error tasks -> Error (unfinished_tasks_error tasks))
-          else Ok (with_status ~now Blocked plan)
-      | (Draft | Paused | Time_limited), _ ->
+      | Active, Draft ->
+          (* ^plan-oua0: all-done activate lands complete in the same transition. *)
+          Ok (apply_completion_invariant ~now (with_status ~now Active plan))
+      | Blocked, Active -> Ok (with_status ~now Blocked plan)
+      | (Draft | Paused | Time_limited | Complete), _ ->
           Error
-            "update_plan accepts only active, complete, or blocked; draft, \
-             paused, time_limited, time limits, and automation are user or \
+            "update_plan accepts only active or blocked; draft, paused, \
+             time_limited, complete, time limits, and automation are user or \
              system controlled"
       | Active, _ -> Error "update_plan can activate only a draft plan"
-      | (Complete | Blocked), _ ->
-          Error "update_plan can complete or block only an active plan")
+      | Blocked, _ -> Error "update_plan can block only an active plan")
 
 let final_unrecoverable_error ~now (store : store) =
   match store with
@@ -767,7 +764,14 @@ let parse_time_limit_args = Plan_command.parse_time_limit_args
 
 let split_command = Shared.split_command
 
-let task_command_ok message plan =
+let task_command_ok ~(before : store) message (plan : t) =
+  let message =
+    match before with
+    | Some previous
+      when previous.status <> Complete && plan.status = Complete ->
+        "Plan complete."
+    | _ -> message
+  in
   command_result ~changed:true ~message (Some plan)
 
 let require_lone_task_id ~usage rest =
@@ -783,7 +787,7 @@ let apply_command_task ~session_id ~now args store =
       | Ok (None, _) -> Error "task title is required"
       | Ok (Some title, description_opt) ->
           Result.map
-            (task_command_ok "Task added.")
+            (task_command_ok ~before:store "Task added.")
             (add_user_task
                ?description:(Option.join description_opt)
                ~create_status:Draft ~session_id ~now title store))
@@ -804,7 +808,7 @@ let apply_command_task ~session_id ~now args store =
               Error "task edit requires a title or description change"
             else
               Result.map
-                (task_command_ok "Task updated.")
+                (task_command_ok ~before:store "Task updated.")
                 (user_update_task ~now ~task_id
                    { no_task_update with title; description }
                    store))
@@ -813,21 +817,21 @@ let apply_command_task ~session_id ~now args store =
         (require_lone_task_id ~usage:"usage: /plan task advance <task-id>" rest)
         (fun task_id ->
           Result.map
-            (task_command_ok "Task advanced.")
+            (task_command_ok ~before:store "Task advanced.")
             (user_advance_task ~now ~task_id store))
   | "cancel" ->
       Result.bind
         (require_lone_task_id ~usage:"usage: /plan task cancel <task-id>" rest)
         (fun task_id ->
           Result.map
-            (task_command_ok "Task cancelled.")
+            (task_command_ok ~before:store "Task cancelled.")
             (user_cancel_task ~now ~task_id store))
   | "delete" ->
       Result.bind
         (require_lone_task_id ~usage:"usage: /plan task delete <task-id>" rest)
         (fun task_id ->
           Result.map
-            (task_command_ok "Task deleted.")
+            (task_command_ok ~before:store "Task deleted.")
             (user_delete_task ~now ~task_id store))
   | _ -> Error "usage: /plan task <add|edit|advance|cancel|delete> ..."
 
@@ -919,11 +923,18 @@ let apply_command_resume ~now ~automation args (store : store) =
                    resume --no-time-limit"
               else
                 let plan =
-                  { (with_status ~now Active plan) with time_limit_seconds }
+                  (* ^plan-oua0: all-done resume lands complete with no continuation. *)
+                  apply_completion_invariant ~now
+                    { (with_status ~now Active plan) with time_limit_seconds }
                 in
-                Ok
-                  (command_result ~automation:Automation_enabled ~followup:true
-                     ~changed:true (Some plan))))
+                if plan.status = Complete then
+                  Ok
+                    (command_result ~automation:Automation_enabled ~changed:true
+                       ~message:"Plan complete." (Some plan))
+                else
+                  Ok
+                    (command_result ~automation:Automation_enabled ~followup:true
+                       ~changed:true (Some plan))))
 
 let apply_command ?(automation = Automation_enabled) ~session_id ~now args store
     =

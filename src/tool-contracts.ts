@@ -300,8 +300,8 @@ export const UpdateTaskParamsSchema = Type.Object(
 
 export const UpdatePlanParamsSchema = Type.Object(
   {
-    status: Type.Union([Type.Literal("active"), Type.Literal("complete"), Type.Literal("blocked")], {
-      description: "Lifecycle status to set: active commits the task list and starts continuation; complete declares every required outcome satisfied; blocked marks a genuine impasse requiring user input or an external-state change.",
+    status: Type.Union([Type.Literal("active"), Type.Literal("blocked")], {
+      description: "Lifecycle status to set: active commits the task list and starts continuation; blocked marks a genuine impasse requiring user input or an external-state change.",
     }),
   },
   { $id: "UpdatePlanParams", additionalProperties: false },

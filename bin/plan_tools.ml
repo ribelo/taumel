@@ -6,6 +6,31 @@ let js_optional_int = function
   | None -> Unsafe.inject Js.null
   | Some value -> js_number (float_of_int value)
 
+let notify_info ctx message =
+  let ui = Unsafe.get ctx "ui" in
+  if Option.is_some (function_field ui "notify") then
+    ignore (call2 ui "notify" (js_string message) (js_string "info"))
+
+let apply_plan_transition ctx ~(previous : Taumel.Plan.store)
+    (plan : Taumel.Plan.t) =
+  let completed_now =
+    match previous with
+    | Some prev ->
+        prev.status <> Taumel.Plan.Complete && plan.status = Taumel.Plan.Complete
+    | None -> plan.status = Taumel.Plan.Complete
+  in
+  if completed_now then (
+    (* ^plan-ac02 / ^plan-hwit: account the in-flight turn while still active. *)
+    current_plan := Some plan;
+    pending_plan_terminal_status := Some Taumel.Plan.Pending_complete;
+    Session_sync.account_plan_turn_end ctx;
+    pending_plan_terminal_status := None;
+    (* ^plan-yve7: house-ack style transient on invariant fire. *)
+    notify_info ctx "Plan complete.")
+  else (
+    current_plan := Some plan;
+    Session_sync.save_plan_state ctx)
+
 let js_optional_string = function
   | None -> Unsafe.inject Js.null
   | Some value -> js_string value
@@ -316,6 +341,7 @@ let prepare_update_task params ctx =
           depends_on = Tool_contracts.UpdateTaskParams.get_depends_on params;
         }
       in
+      let previous = !current_plan in
       match
         Taumel.Plan.update_task ~now:(now_seconds ())
           ~task_id:(Tool_contracts.UpdateTaskParams.get_taskId params)
@@ -323,10 +349,9 @@ let prepare_update_task params ctx =
       with
       | Error message -> error_obj message
       | Ok plan ->
-          current_plan := Some plan;
-          Session_sync.save_plan_state ctx;
-          tool_result (Some plan)
-            (model_state_text (Some plan) !plan_automation))
+          apply_plan_transition ctx ~previous plan;
+          tool_result !current_plan
+            (model_state_text !current_plan !plan_automation))
 
 let prepare_update_plan params ctx =
   with_gateway_authorized "update_plan" (fun _ ->
@@ -334,27 +359,24 @@ let prepare_update_plan params ctx =
         decode_ojs_contract Tool_contracts.UpdatePlanParams.t_of_js
           (ojs_of_js params)
       in
-      let status, pending =
+      let status =
         match Boundary_contracts.UpdatePlanParams.get_status params with
-        | `V_active -> (Taumel.Plan.Active, None)
-        | `V_complete ->
-            (Taumel.Plan.Complete, Some Taumel.Plan.Pending_complete)
-        | `V_blocked -> (Taumel.Plan.Blocked, Some Taumel.Plan.Pending_blocked)
+        | `V_active -> Taumel.Plan.Active
+        | `V_blocked -> Taumel.Plan.Blocked
       in
+      let previous = !current_plan in
       match
         Taumel.Plan.update_plan ~now:(now_seconds ()) status !current_plan
       with
       | Error message -> error_obj message
       | Ok plan ->
-          (match pending with
-          | None -> current_plan := Some plan
-          | Some pending ->
-              pending_plan_terminal_status := Some pending;
-              Session_sync.account_plan_turn_end ctx);
-          pending_plan_terminal_status := None;
-          (match pending with
-          | None -> Session_sync.save_plan_state ctx
-          | Some _ -> ());
+          (match status with
+          | Taumel.Plan.Blocked ->
+              current_plan := Some plan;
+              pending_plan_terminal_status := Some Taumel.Plan.Pending_blocked;
+              Session_sync.account_plan_turn_end ctx;
+              pending_plan_terminal_status := None
+          | _ -> apply_plan_transition ctx ~previous plan);
           tool_result !current_plan
             (model_state_text !current_plan !plan_automation))
 

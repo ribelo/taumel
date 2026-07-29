@@ -106,7 +106,7 @@ export const toolContracts: readonly ToolContract[] = [
     name: "create_task",
     label: "create_task",
     description:
-      "Create one or more tasks for the current plan. Tasks are the living breakdown of the work: order, dependencies, and completion state drive continuation and gate plan completion. Creating a task while no plan exists creates a draft plan; activate it with update_plan to start continuation. Tasks may be created while the plan is in draft, or to extend a completed plan once the turn in which it completed has ended; extending a completed plan reopens it to active.",
+      "Create one or more tasks for the current plan. Tasks are the living breakdown of the work: order, dependencies, and completion state drive continuation and complete the plan when every task is completed or cancelled. Creating a task while no plan exists creates a draft plan; activate it with update_plan to start continuation. Tasks may be created while the plan is in draft, or to extend a completed plan once the turn in which it completed has ended; extending a completed plan reopens it to active.",
     promptSnippet: "Create one or more plan tasks while the plan is in draft or a completed plan is extension-unlocked.",
     parameters: toolParameters(CreateTaskParamsSchema),
   },
@@ -121,8 +121,8 @@ export const toolContracts: readonly ToolContract[] = [
   {
     name: "update_plan",
     label: "update_plan",
-    description: "Update the plan lifecycle: activate a draft plan to commit its task list and start continuation, or mark an active plan complete or genuinely blocked. Completion requires every task to be completed or cancelled first.",
-    promptSnippet: "Activate the plan, or mark it complete or genuinely blocked.",
+    description: "Update the plan lifecycle: activate a draft plan to commit its task list and start continuation, or mark an active plan genuinely blocked. A plan completes automatically when every task is completed or cancelled.",
+    promptSnippet: "Activate the plan, or mark it genuinely blocked.",
     parameters: toolParameters(UpdatePlanParamsSchema),
   },
   {

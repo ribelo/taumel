@@ -125,6 +125,10 @@ function applyMutation(
     notify(ui, "plan command failed", "warning");
     return undefined;
   }
+  // ^plan-yve7: modal bypasses command-executor notify; surface the house ack here.
+  if (result.message === "Plan complete.") {
+    notify(ui, result.message, "info");
+  }
   return asPlanDetails(result.details);
 }
 

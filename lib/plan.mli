@@ -160,8 +160,6 @@ val user_delete_task : now:int -> task_id:string -> store -> (t, string) result
 
 val unfinished_tasks : t -> task list
 
-val completion_gate : t -> (unit, task list) result
-
 val update_plan : now:int -> status -> store -> (t, string) result
 
 val final_unrecoverable_error : now:int -> store -> store

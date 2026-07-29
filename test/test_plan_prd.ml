@@ -72,7 +72,7 @@ let test_birth_and_identity () =
 let test_lifecycle_and_editability () =
   let draft = agent_plan ~session:"lifecycle" () in
   ignore
-    (expect_error "draft cannot complete"
+    (expect_error "update_plan complete rejected"
        (Plan.update_plan ~now:2 Plan.Complete (Some draft)));
   let active =
     expect_ok "activate" (Plan.update_plan ~now:2 Plan.Active (Some draft))
@@ -202,31 +202,157 @@ let test_dependencies_and_atomic_batch () =
   in
   assert_bool "cycle named" (contains cyclic "cycle")
 
-let test_completion_gate () =
+let unlock_complete plan ~session ~now =
+  let result =
+    Plan.account_turn_end ~session_id:session ~now ~active_time_seconds:0
+      ~last_accounting_key:None ~latest_usage:None (Some plan)
+  in
+  Option.get result.plan
+
+let test_completion_invariant () =
   let draft = agent_plan ~session:"completion" () in
   let active =
     expect_ok "activate" (Plan.update_plan ~now:2 Plan.Active (Some draft))
   in
   let task = List.hd active.tasks in
-  let error =
-    expect_error "pending blocks complete"
-      (Plan.update_plan ~now:3 Plan.Complete (Some active))
-  in
-  assert_bool "unfinished id" (contains error task.task_id);
-  assert_bool "unfinished title" (contains error "first task");
-  assert_bool "unfinished status" (contains error "pending");
-  let cancelled =
-    expect_ok "cancel agent task"
+  ignore
+    (expect_error "update_plan complete rejected"
+       (Plan.update_plan ~now:3 Plan.Complete (Some active)));
+  let complete =
+    expect_ok "last task completes plan"
       (Plan.update_task ~now:3 ~task_id:task.task_id
-         (patch ~status:Plan.Cancelled ())
+         (patch ~status:Plan.Completed ())
          (Some active))
   in
-  let complete =
-    expect_ok "cancelled passes"
-      (Plan.update_plan ~now:4 Plan.Complete (Some cancelled))
+  assert_bool "active auto-complete" (complete.status = Plan.Complete);
+  assert_bool "complete starts locked" (not complete.extension_unlocked);
+  let cancelled_draft = agent_plan ~session:"completion-cancel" () in
+  let cancelled_active =
+    expect_ok "activate cancel path"
+      (Plan.update_plan ~now:2 Plan.Active (Some cancelled_draft))
   in
-  assert_bool "complete" (complete.status = Plan.Complete);
-  assert_bool "complete starts locked" (not complete.extension_unlocked)
+  let cancelled =
+    expect_ok "all-cancelled completes"
+      (Plan.update_task ~now:3
+         ~task_id:(List.hd cancelled_active.tasks).task_id
+         (patch ~status:Plan.Cancelled ())
+         (Some cancelled_active))
+  in
+  assert_bool "cancelled auto-complete" (cancelled.status = Plan.Complete);
+  let draft_done = agent_plan ~session:"completion-draft" () in
+  let draft_finished =
+    expect_ok "draft finishes tasks without completing"
+      (Plan.update_task ~now:2 ~task_id:(List.hd draft_done.tasks).task_id
+         (patch ~status:Plan.Completed ())
+         (Some draft_done))
+  in
+  assert_bool "draft exempt" (draft_finished.status = Plan.Draft);
+  let activated_done =
+    expect_ok "activate all-done lands complete"
+      (Plan.update_plan ~now:3 Plan.Active (Some draft_finished))
+  in
+  assert_bool "activate all-done" (activated_done.status = Plan.Complete);
+  let paused =
+    expect_ok "pause for user tick"
+      (Plan.apply_command ~session_id:"completion-paused" ~now:1
+         "task add {\"title\":\"only\"}" None)
+    |> fun result ->
+    let plan =
+      expect_ok "activate paused path"
+        (Plan.update_plan ~now:2 Plan.Active result.plan)
+    in
+    expect_ok "pause"
+      (Plan.apply_command ~session_id:"completion-paused" ~now:3 "pause"
+         (Some plan))
+    |> fun paused -> Option.get paused.plan
+  in
+  let paused_done =
+    expect_ok "user advance completes paused"
+      (Plan.apply_command ~session_id:"completion-paused" ~now:4
+         ("task advance " ^ (List.hd paused.tasks).task_id)
+         (Some paused))
+  in
+  (* advance pending -> in_progress first *)
+  let paused_in_progress = Option.get paused_done.plan in
+  assert_bool "first advance stays paused"
+    (paused_in_progress.status = Plan.Paused);
+  let paused_complete =
+    expect_ok "second advance completes paused"
+      (Plan.apply_command ~session_id:"completion-paused" ~now:5
+         ("task advance " ^ (List.hd paused_in_progress.tasks).task_id)
+         (Some paused_in_progress))
+  in
+  assert_bool "paused auto-complete"
+    ((Option.get paused_complete.plan).status = Plan.Complete);
+  assert_bool "paused complete notifies"
+    (paused_complete.message = "Plan complete.");
+  assert_bool "paused complete no followup" (not paused_complete.followup);
+  let blocked =
+    let draft = agent_plan ~session:"completion-blocked" () in
+    let active =
+      expect_ok "activate blocked path"
+        (Plan.update_plan ~now:2 Plan.Active (Some draft))
+    in
+    expect_ok "block" (Plan.update_plan ~now:3 Plan.Blocked (Some active))
+  in
+  let blocked_complete =
+    expect_ok "user completes blocked"
+      (Plan.user_update_task ~now:4 ~task_id:(List.hd blocked.tasks).task_id
+         (patch ~status:Plan.Completed ())
+         (Some blocked))
+  in
+  assert_bool "blocked auto-complete" (blocked_complete.status = Plan.Complete);
+  let limited =
+    expect_ok "time limited birth"
+      (Plan.add_user_task ~time_limit_seconds:1 ~session_id:"completion-tl"
+         ~now:1 "limited" None)
+    |> fun plan ->
+    Plan.account_usage ~now:2 ~time_delta_seconds:1
+      { input_tokens = 1; cached_input_tokens = 0; output_tokens = 0 }
+      plan
+  in
+  assert_bool "time limited" (limited.status = Plan.Time_limited);
+  let limited_complete =
+    expect_ok "user completes time_limited"
+      (Plan.user_update_task ~now:3 ~task_id:(List.hd limited.tasks).task_id
+         (patch ~status:Plan.Completed ())
+         (Some limited))
+  in
+  assert_bool "time_limited auto-complete"
+    (limited_complete.status = Plan.Complete);
+  let resume_source =
+    let draft = agent_plan ~session:"completion-resume" () in
+    let finished =
+      expect_ok "finish before activate"
+        (Plan.update_task ~now:2 ~task_id:(List.hd draft.tasks).task_id
+           (patch ~status:Plan.Completed ())
+           (Some draft))
+    in
+    expect_ok "activate to complete"
+      (Plan.update_plan ~now:3 Plan.Active (Some finished))
+  in
+  let unlocked =
+    unlock_complete resume_source ~session:"completion-resume" ~now:4
+  in
+  let resumed =
+    expect_ok "resume all-done"
+      (Plan.apply_command ~session_id:"completion-resume" ~now:5 "resume"
+         (Some unlocked))
+  in
+  assert_bool "resume all-done lands complete"
+    ((Option.get resumed.plan).status = Plan.Complete);
+  assert_bool "resume all-done notifies" (resumed.message = "Plan complete.");
+  assert_bool "resume all-done no continuation" (not resumed.followup);
+  let blocked_still =
+    let draft = agent_plan ~session:"completion-block-tool" () in
+    let active =
+      expect_ok "activate block tool"
+        (Plan.update_plan ~now:2 Plan.Active (Some draft))
+    in
+    expect_ok "blocked unchanged"
+      (Plan.update_plan ~now:3 Plan.Blocked (Some active))
+  in
+  assert_bool "blocked stays blocked" (blocked_still.status = Plan.Blocked)
 
 let complete_plan ?(session = "extension") () =
   let draft = agent_plan ~session () in
@@ -235,21 +361,10 @@ let complete_plan ?(session = "extension") () =
       (Plan.update_plan ~now:2 Plan.Active (Some draft))
   in
   let task = List.hd active.tasks in
-  let finished =
-    expect_ok "finish sole task"
-      (Plan.update_task ~now:3 ~task_id:task.task_id
-         (patch ~status:Plan.Completed ())
-         (Some active))
-  in
-  expect_ok "complete plan"
-    (Plan.update_plan ~now:4 Plan.Complete (Some finished))
-
-let unlock_complete plan ~session ~now =
-  let result =
-    Plan.account_turn_end ~session_id:session ~now ~active_time_seconds:0
-      ~last_accounting_key:None ~latest_usage:None (Some plan)
-  in
-  Option.get result.plan
+  expect_ok "finish sole task auto-completes"
+    (Plan.update_task ~now:3 ~task_id:task.task_id
+       (patch ~status:Plan.Completed ())
+       (Some active))
 
 let test_extension_unlock () =
   let complete = complete_plan ~session:"extension" () in
@@ -295,38 +410,30 @@ let test_extension_unlock () =
     (List.map (fun (task : Plan.task) -> task.title) extended.tasks
     = [ "first task"; "next"; "after" ]);
   let complete_again =
-    let finished =
-      List.fold_left
-        (fun plan (task : Plan.task) ->
-          if task.status = Plan.Completed || task.status = Plan.Cancelled then
-            plan
-          else
-            expect_ok "finish for reopen"
-              (Plan.update_task ~now:7 ~task_id:task.task_id
-                 (patch ~status:Plan.Completed ())
-                 (Some plan)))
-        extended extended.tasks
-    in
-    expect_ok "complete again"
-      (Plan.update_plan ~now:8 Plan.Complete (Some finished))
+    List.fold_left
+      (fun plan (task : Plan.task) ->
+        if task.status = Plan.Completed || task.status = Plan.Cancelled then plan
+        else
+          expect_ok "finish for reopen"
+            (Plan.update_task ~now:7 ~task_id:task.task_id
+               (patch ~status:Plan.Completed ())
+               (Some plan)))
+      extended extended.tasks
   in
+  assert_bool "reopen auto-completes" (complete_again.status = Plan.Complete);
   let unlocked_again =
     unlock_complete complete_again ~session:"extension" ~now:9
   in
   let resumed =
-    expect_ok "resume clears unlock"
+    expect_ok "resume all-done lands complete"
       (Plan.apply_command ~session_id:"extension" ~now:10 "resume"
          (Some unlocked_again))
     |> fun result -> Option.get result.plan
   in
-  assert_bool "resume active" (resumed.status = Plan.Active);
+  assert_bool "resume all-done complete" (resumed.status = Plan.Complete);
   assert_bool "resume clears unlock" (not resumed.extension_unlocked);
-  let complete_for_draft =
-    expect_ok "complete for draft"
-      (Plan.update_plan ~now:11 Plan.Complete (Some resumed))
-  in
   let unlocked_for_draft =
-    unlock_complete complete_for_draft ~session:"extension" ~now:12
+    unlock_complete resumed ~session:"extension" ~now:12
   in
   let drafted =
     expect_ok "draft clears unlock"
@@ -811,7 +918,7 @@ let () =
   test_lifecycle_and_editability ();
   test_user_task_protection ();
   test_dependencies_and_atomic_batch ();
-  test_completion_gate ();
+  test_completion_invariant ();
   test_extension_unlock ();
   test_commands ();
   test_task_manager_commands ();

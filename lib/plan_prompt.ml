@@ -25,12 +25,10 @@ let continuation_followup ~unfinished_tasks_json ~tokens_used ~time_used_seconds
        command output, tests, and external state. A turn boundary, difficulty, \
        uncertainty, partial progress, or a live process is not completion or \
        blockage.";
-      "Before calling update_plan with status \"complete\", verify every \
-       required outcome against current authoritative evidence and ensure \
-       every task is completed or cancelled. Call update_plan with status \
-       \"blocked\" only at a genuine impasse that requires user input or an \
-       external-state change. Otherwise leave the plan active so continuation \
-       proceeds.";
+      "Mark tasks completed only when their work is verifiably done. Call \
+       update_plan with status \"blocked\" only at a genuine impasse that \
+       requires user input or an external-state change. Otherwise leave the \
+       plan active so continuation proceeds.";
     ]
 
 let continuation_state ~status ~tokens_used ~time_used_seconds
@@ -63,11 +61,12 @@ let get_plan_prompt_snippet =
 let create_task_description =
   "Create one or more tasks for the current plan. Tasks are the living \
    breakdown of the work: order, dependencies, and completion state drive \
-   continuation and gate plan completion. Creating a task while no plan exists \
-   creates a draft plan; activate it with update_plan to start continuation. \
-   Tasks may be created while the plan is in draft, or to extend a completed \
-   plan once the turn in which it completed has ended; extending a completed \
-   plan reopens it to active."
+   continuation and complete the plan when every task is completed or \
+   cancelled. Creating a task while no plan exists creates a draft plan; \
+   activate it with update_plan to start continuation. Tasks may be created \
+   while the plan is in draft, or to extend a completed plan once the turn in \
+   which it completed has ended; extending a completed plan reopens it to \
+   active."
 
 let create_task_id_description =
   "Optional explicit task identity, unique within this plan. Omit to \
@@ -100,13 +99,13 @@ let update_task_prompt_snippet =
 
 let update_plan_description =
   "Update the plan lifecycle: activate a draft plan to commit its task list \
-   and start continuation, or mark an active plan complete or genuinely \
-   blocked. Completion requires every task to be completed or cancelled first."
+   and start continuation, or mark an active plan genuinely blocked. A plan \
+   completes automatically when every task is completed or cancelled."
 
 let update_plan_status_description =
   "Lifecycle status to set: active commits the task list and starts \
-   continuation; complete declares every required outcome satisfied; blocked \
-   marks a genuine impasse requiring user input or an external-state change."
+   continuation; blocked marks a genuine impasse requiring user input or an \
+   external-state change."
 
 let update_plan_prompt_snippet =
-  "Activate the plan, or mark it complete or genuinely blocked."
+  "Activate the plan, or mark it genuinely blocked."
