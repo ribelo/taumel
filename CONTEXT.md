@@ -15,6 +15,12 @@ An extension-provided capability that Pi does not provide and that Taumel owns
 end to end within Pi's extension boundaries.
 _Avoid_: Pi patch, host override, compatibility layer
 
+**Release checkout**:
+A versioned Taumel Git checkout that is complete for Pi to install and run
+without the Taumel build toolchain; the checkout is not specialized by operating
+system or architecture.
+_Avoid_: Source checkout, release asset, npm package, platform build
+
 **Host behavior**:
 Behavior supplied and owned by Pi that Taumel uses without duplicating,
 policing, or replacing it.

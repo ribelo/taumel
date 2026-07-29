@@ -48,9 +48,9 @@
               repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
               cd "$repo_root"
 
-              eta_path="''${TAUMEL_ETA_PATH:-$repo_root/../ocaml/Eta}"
-              if [ ! -d "$eta_path" ]; then
-                echo "Eta checkout not found at $eta_path" >&2
+              eta_revision="$(tr -d '[:space:]' < "$repo_root/eta-revision")"
+              if ! printf '%s' "$eta_revision" | grep -Eq '^[0-9a-f]{40}$'; then
+                echo "eta-revision must contain one full Git commit hash" >&2
                 exit 1
               fi
 
@@ -68,8 +68,13 @@
               export OPAMSWITCH="$switch_name"
               eval "$(opam env --switch "$switch_name" --set-switch)"
 
-              eta_root="$(cd "$eta_path" && git rev-parse --show-toplevel)"
-              eta_url="git+file://$eta_root#master"
+              if [ -n "''${TAUMEL_ETA_PATH:-}" ]; then
+                eta_root="$(cd "$TAUMEL_ETA_PATH" && git rev-parse --show-toplevel)"
+                git -C "$eta_root" cat-file -e "$eta_revision^{commit}"
+                eta_url="git+file://$eta_root#$eta_revision"
+              else
+                eta_url="git+https://github.com/ribelo/eta.git#$eta_revision"
+              fi
               eta_packages="''${TAUMEL_ETA_PACKAGES:-eta eta_http eta_jsoo eta_http_js}"
               if [ "$#" -gt 0 ]; then
                 eta_packages="$*"
@@ -85,6 +90,7 @@
               opam install . --deps-only --with-test --assume-depexts --yes
 
               echo "Taumel OPAM deps installed into switch: $switch_name"
+              echo "Eta revision: $eta_revision"
               echo "Eta packages: $eta_packages"
             '';
           };

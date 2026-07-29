@@ -38,32 +38,19 @@ This split keeps policy testable without replacing or patching Pi's agent loop.
 
 - Pi with `@earendil-works/pi-coding-agent` compatible with `^0.82.0`
 - Node.js and npm
-- Nix with flakes enabled
-- An Eta checkout at `../ocaml/Eta`, relative to this repository, or at
-  `TAUMEL_ETA_PATH`
-
-The Nix environment creates a shared OPAM switch under `~/.cache/opam`. The
-default switch is OCaml `5.4.1`.
 
 ## Quick start
 
 ```bash
-git clone https://github.com/ribelo/taumel.git
-cd taumel
-npm ci
-
-# Point this at Eta when it is not checked out at ../ocaml/Eta.
-export TAUMEL_ETA_PATH=/absolute/path/to/Eta
-
-npm run ocaml:init
-npm run build:ocaml
-
-mkdir -p ~/.pi/agent/extensions
-ln -sfn "$PWD" ~/.pi/agent/extensions/taumel
+pi install git:github.com/ribelo/taumel@VERSION_TAG
 ```
 
-Restart Pi after the first installation. The built extension entry point is
-`dist/extension.js`; the compiled OCaml artifact is `dist/taumel.cjs`.
+Replace `VERSION_TAG` with an immutable tag such as
+`v0.0.300-ga1b2c3d4e5f6`, chosen from
+[GitHub Releases](https://github.com/ribelo/taumel/releases). Pi clones the
+tagged release checkout and installs its runtime dependencies; consumers do not
+need Nix, opam, OCaml, Eta, Bun, or TypeScript. Upgrade by installing the next
+desired version tag explicitly.
 
 Inside Pi, initialize Taumel's global defaults and inspect the installation:
 
@@ -149,7 +136,7 @@ does not use a separate Taumel settings file or environment-variable override.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `TAUMEL_ETA_PATH` | `../ocaml/Eta` | Eta checkout used for local OPAM pins |
+| `TAUMEL_ETA_PATH` | unset | Optional local Eta repository containing the commit in `eta-revision` |
 | `TAUMEL_OPAM_SWITCH` | `5.4.1` | Shared OPAM switch name |
 | `OPAMROOT` | `~/.cache/opam` | Shared OPAM root |
 | `TAUMEL_ETA_PACKAGES` | `eta eta_http eta_jsoo eta_http_js` | Eta packages pinned during initialization |
@@ -179,8 +166,9 @@ maintain a separate global database.
   agents.
 - Finder and Oracle are fixed built-ins. User-authored specialist definitions
   and prompt overrides are not supported.
-- `npm run ocaml:init` pins Eta packages from the configured local checkout. A
-  missing or incompatible Eta checkout stops initialization.
+- `npm run ocaml:init` pins Eta packages to the commit in `eta-revision`, using
+  the public Eta repository unless `TAUMEL_ETA_PATH` names a local repository
+  containing that commit.
 - Pi cannot load Taumel without `dist/extension.js` and `dist/taumel.cjs`.
   Rebuild after changing TypeScript, embedded Markdown resources, or OCaml code.
 
@@ -199,7 +187,9 @@ behavioral requirement sets.
 
 ## Development
 
-Install dependencies and initialize the OCaml environment once:
+Development requires Nix with flakes enabled. The repository records the exact
+Eta commit used by release builds and dependency initialization. Install
+dependencies and initialize the OCaml environment once:
 
 ```bash
 npm ci

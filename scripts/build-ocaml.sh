@@ -15,7 +15,6 @@ if ! ocamlfind query js_of_ocaml >/dev/null 2>&1; then
   eval "$(opam env --switch "$switch_name" --set-switch)"
 fi
 
-node scripts/generate-contract-bindings.mjs
 dune build --profile release bin/taumel_main.bc.js
 mkdir -p dist
 rm -f dist/taumel.cjs

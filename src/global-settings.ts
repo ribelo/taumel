@@ -2,11 +2,12 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { nodeErrorCode, readJsonObjectForAtomicUpdate, recordValue, writeFileAtomically } from "./util.ts";
+import { taumelVersion } from "./version.ts";
 
 type SettingsObject = { [key: string]: unknown };
 export type TaumelGlobalSettings = { readonly taumel: { readonly composer: { readonly enabled: boolean } } };
 export type TaumelConfigDiagnostic = { readonly path: string; readonly key: string; readonly message: string };
-export type TaumelInitResult = { readonly ok: boolean; readonly action: "command_result"; readonly message: string; readonly details: { readonly path: string; readonly initialized: readonly string[]; readonly missing: readonly string[]; readonly diagnostics: readonly TaumelConfigDiagnostic[] } };
+export type TaumelInitResult = { readonly ok: boolean; readonly action: "command_result"; readonly message: string; readonly details: { readonly path: string; readonly initialized: readonly string[]; readonly missing: readonly string[]; readonly diagnostics: readonly TaumelConfigDiagnostic[]; readonly version?: string } };
 export const defaultTaumelGlobalSettings: TaumelGlobalSettings = { taumel: { composer: { enabled: true } } };
 const settingsBlocks = ["composer", "tools", "skills"] as const;
 const visibilityBlocks = ["tools", "skills"] as const;
@@ -112,7 +113,7 @@ export async function writeTaumelComposerEnabled(path: string, enabled: boolean)
   composer["enabled"] = enabled;
   await writeFileAtomically(read.authorization, `${JSON.stringify(root, null, 2)}\n`, true);
 }
-export async function taumelStatus(path = taumelGlobalSettingsPath()): Promise<TaumelInitResult> {
+export async function taumelStatus(path = taumelGlobalSettingsPath(), version = taumelVersion): Promise<TaumelInitResult> {
   const read = await readRoot(path);
   const missing: string[] = [];
   const taumel = recordValue<SettingsObject>(read.root["taumel"]) ? read.root["taumel"] : {};
@@ -123,10 +124,12 @@ export async function taumelStatus(path = taumelGlobalSettingsPath()): Promise<T
     if (block?.["disabled"] === undefined) missing.push(`taumel.${name}.disabled`);
   }
   const message = [
+    ...(version === "" ? [] : [`Taumel version: ${version}`]),
     `Taumel global config: ${read.exists ? path : `${path} (missing)`}`,
     `Missing defaults: ${missing.length}`,
     `Diagnostics: ${read.diagnostics.length}`,
     "Commands: taumel, composer, tools, skills, cron, compaction-model, execpolicy",
   ].join("\n");
-  return result(read.diagnostics.length === 0, message, path, [], missing, read.diagnostics);
+  const status = result(read.diagnostics.length === 0, message, path, [], missing, read.diagnostics);
+  return version === "" ? status : { ...status, details: { ...status.details, version } };
 }

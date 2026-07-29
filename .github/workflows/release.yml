@@ -1,0 +1,139 @@
+name: Validate and release
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: cachix/install-nix-action@v31
+
+      - name: Cache opam
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/opam
+          key: opam-${{ runner.os }}-${{ hashFiles('eta-revision', 'taumel.opam', 'flake.lock') }}
+
+      - run: npm ci
+
+      # ^release-1zti ^release-cge4: PRs and main run the same complete validation.
+      - name: Run quality gate
+        run: npm run gate
+
+      - name: Stage release checkout
+        run: npm run release:stage
+
+      - name: Test consumer installation
+        run: npm run smoke:release-checkout
+
+      - id: release-version
+        name: Record release version
+        run: echo "version=$(scripts/release-version.sh HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Preserve staged release files
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-checkout-${{ github.sha }}
+          path: |
+            package.json
+            package-lock.json
+            dist/extension.js
+            dist/taumel.cjs
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: publication
+        name: Inspect publication state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          state="new"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            git fetch origin "refs/tags/$tag:refs/tags/$tag"
+            tagged_source="$(git rev-parse "$tag^{}^")"
+            if [[ "$tagged_source" != "$(git rev-parse HEAD)" ]]; then
+              echo "$tag already names a different source revision" >&2
+              exit 1
+            fi
+            state="tag-only"
+            if gh release view "$tag" >/dev/null 2>&1; then state="complete"; fi
+          fi
+          echo "state=$state" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        if: steps.publication.outputs.state == 'new'
+        with:
+          name: release-checkout-${{ github.sha }}
+          path: .
+
+      # ^release-4579: this job cannot start until validation succeeds.
+      # ^release-bdqc: only the generated commit adds ignored distribution files.
+      - name: Publish immutable Git release
+        if: steps.publication.outputs.state != 'complete'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLICATION_STATE: ${{ steps.publication.outputs.state }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          expected="$(scripts/release-version.sh HEAD)"
+          if [[ "$VERSION" != "$expected" ]]; then
+            echo "staged version $VERSION does not match source version $expected" >&2
+            exit 1
+          fi
+
+          tag="v$VERSION"
+          if [[ "$PUBLICATION_STATE" == "new" ]]; then
+            if [[ "$(node -p 'require("./package.json").version')" != "$VERSION" ]]; then
+              echo "package metadata does not match $VERSION" >&2
+              exit 1
+            fi
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add package.json package-lock.json
+            git add -f dist/extension.js dist/taumel.cjs
+            git commit -m "Release $tag"
+            git tag -a "$tag" -m "Release $tag"
+            git push origin "$tag"
+          fi
+
+          # ^release-bzia ^release-k0b1: publish a prerelease with generated notes only.
+          gh release create "$tag" \
+            --verify-tag \
+            --prerelease \
+            --generate-notes \
+            --title "$tag"
