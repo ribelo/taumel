@@ -9,10 +9,7 @@ type execution_plan =
   | Command_direct
   | Command_child_session of child_session_plan
 
-type result_details = {
-  task_id : string;
-  child_prompt : string;
-}
+type result_details = { task_id : string; child_prompt : string }
 
 type command_result = {
   object_like : bool;

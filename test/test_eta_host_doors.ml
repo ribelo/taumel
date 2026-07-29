@@ -8,7 +8,8 @@ module Runtime = Eta_jsoo.Runtime
 
 let log message =
   ignore
-    (Unsafe.fun_call (Unsafe.js_expr "console.log")
+    (Unsafe.fun_call
+       (Unsafe.js_expr "console.log")
        [| Unsafe.inject (Js.string message) |])
 
 let set_exit_code code =
@@ -16,6 +17,7 @@ let set_exit_code code =
   Unsafe.set process "exitCode" code
 
 let suite_completed = ref false
+
 let fail_test message = failwith message
 
 let () =
@@ -54,8 +56,7 @@ let js_promise_reject reason =
 let new_abort_controller () =
   Unsafe.new_obj (Unsafe.get Unsafe.global "AbortController") [||]
 
-let js_to_string value =
-  Js.to_string (Unsafe.coerce value)
+let js_to_string value = Js.to_string (Unsafe.coerce value)
 
 let test_from_js_promise_resolve done_ =
   let promise = js_promise_resolve (Js.string "ok") in
@@ -117,8 +118,7 @@ let test_abort_signal_canceler_removes_listener done_ =
   (* timeout_as interrupts the parked abort waiter; canceler must detach. *)
   let program =
     Effect.timeout_as (Eta.Duration.ms 5) ~on_timeout:`Timeout
-      (Eta_host_doors.await_abort_signal signal
-      |> Effect.map (fun () -> `Abort))
+      (Eta_host_doors.await_abort_signal signal |> Effect.map (fun () -> `Abort))
   in
   run program
     ~on_result:
@@ -146,9 +146,7 @@ let test_rejecting_reverse_door done_ =
         log "rejecting reverse door resolved unexpectedly";
         done_ ())
   in
-  let on_rejected =
-    Js.wrap_callback (fun _reason -> done_ ())
-  in
+  let on_rejected = Js.wrap_callback (fun _reason -> done_ ()) in
   ignore
     (Unsafe.meth_call promise "then"
        [| Unsafe.inject on_fulfilled; Unsafe.inject on_rejected |])
@@ -184,9 +182,11 @@ let tests =
     ("from_js_promise reject", test_from_js_promise_reject);
     ("abort signal already aborted", test_abort_signal_already_aborted);
     ("abort signal fires", test_abort_signal_fires);
-    ("abort signal canceler removes listener", test_abort_signal_canceler_removes_listener);
+    ( "abort signal canceler removes listener",
+      test_abort_signal_canceler_removes_listener );
     ("rejecting reverse door rejects", test_rejecting_reverse_door);
-    ("resolve reverse door resolves errors", test_resolve_reverse_door_keeps_resolve_semantics);
+    ( "resolve reverse door resolves errors",
+      test_resolve_reverse_door_keeps_resolve_semantics );
   ]
 
 let rec run_tests = function

@@ -19,11 +19,12 @@ let mark_notification_sent state ~run_id =
 let pending_notifications state ~owner_session_id =
   state.runs
   |> List.filter (fun run ->
-         terminal_run_status run.run_status && run.run_announcement = Pending
-         &&
-         match find_identity state run.run_agent_id with
-         | Some identity -> identity.identity_owner_session_id = owner_session_id
-         | None -> false)
+      terminal_run_status run.run_status
+      && run.run_announcement = Pending
+      &&
+      match find_identity state run.run_agent_id with
+      | Some identity -> identity.identity_owner_session_id = owner_session_id
+      | None -> false)
 
 let completion_message identity run =
   Shared.encode_json
@@ -66,7 +67,8 @@ let record_close state ~owner_session_id ~agent_id =
   | Ok identity ->
       Ok
         ( {
-            identities = remove_identity identity.identity_agent_id state.identities;
+            identities =
+              remove_identity identity.identity_agent_id state.identities;
             runs = remove_runs_for_agent identity.identity_agent_id state.runs;
             issued_identity_counts = state.issued_identity_counts;
             cleanup_pending = state.cleanup_pending;
@@ -97,7 +99,8 @@ let record_close_with_cleanup state ~owner_session_id ~agent_id ~cleanup_nonce
       in
       Ok
         ( {
-            identities = remove_identity identity.identity_agent_id state.identities;
+            identities =
+              remove_identity identity.identity_agent_id state.identities;
             runs = remove_runs_for_agent identity.identity_agent_id state.runs;
             issued_identity_counts = state.issued_identity_counts;
             cleanup_pending;
@@ -139,7 +142,8 @@ let suspend_running_for_owner state ~now ~owner_session_id ~reason_code =
   in
   { state with runs }
 
-let suspend_running_for_agent state ~now ~owner_session_id ~agent_id ~reason_code =
+let suspend_running_for_agent state ~now ~owner_session_id ~agent_id
+    ~reason_code =
   match owned_identity state ~owner_session_id agent_id with
   | Error _ as error -> error
   | Ok _ ->
@@ -157,39 +161,50 @@ let suspend_running_for_agent state ~now ~owner_session_id ~agent_id ~reason_cod
 
 let list_for_owner state ~owner_session_id =
   owned_identities state ~owner_session_id
-  |> List.map (fun identity -> (identity, latest_run state identity.identity_agent_id))
+  |> List.map (fun identity ->
+      (identity, latest_run state identity.identity_agent_id))
 
 let record_activity_event state ~run_id ~submission_id ~now ~event =
   match find_run state run_id with
   | None -> state
   | Some run
-    when run.run_status <> Running || run.run_submission_id <> submission_id -> state
+    when run.run_status <> Running || run.run_submission_id <> submission_id ->
+      state
   | Some run ->
       let updated =
         match event with
         | Agent_start | Turn_start ->
             { run with run_activity_state = Reasoning }
         | Tool_execution_start ->
-            { run with
+            {
+              run with
               run_activity_state = Using_tool;
               run_active_tool_count = run.run_active_tool_count + 1;
-              run_last_activity_at = Some now }
+              run_last_activity_at = Some now;
+            }
         | Tool_execution_update ->
-            { run with
+            {
+              run with
               run_activity_state = Using_tool;
-              run_last_activity_at = Some now }
+              run_last_activity_at = Some now;
+            }
         | Tool_execution_end ->
             let active_tool_count = max 0 (run.run_active_tool_count - 1) in
-            { run with
-              run_activity_state = if active_tool_count = 0 then Reasoning else Using_tool;
+            {
+              run with
+              run_activity_state =
+                (if active_tool_count = 0 then Reasoning else Using_tool);
               run_active_tool_count = active_tool_count;
-              run_last_activity_at = Some now }
+              run_last_activity_at = Some now;
+            }
         | Turn_end ->
-            { run with
+            {
+              run with
               run_turn_count = run.run_turn_count + 1;
               run_last_activity_at = Some now;
               run_activity_state =
-                if run.run_active_tool_count > 0 then Using_tool else Reasoning }
+                (if run.run_active_tool_count > 0 then Using_tool else Reasoning);
+            }
       in
       { state with runs = replace_run updated state.runs }
 
@@ -214,6 +229,7 @@ let count_active_child_runs state ~owner_session_id =
       match find_identity state run.run_agent_id with
       | Some identity
         when identity.identity_owner_session_id = owner_session_id
-             && active_work_run_status run.run_status -> count + 1
+             && active_work_run_status run.run_status ->
+          count + 1
       | _ -> count)
     0 state.runs

@@ -41,7 +41,8 @@ let base_snapshot =
 
 let test_parse_git_numstat () =
   let delta =
-    Footer.parse_git_numstat "10\t2\tlib/a.ml\n-\t-\timage.png\n3\t4\tlib/b.ml\n"
+    Footer.parse_git_numstat
+      "10\t2\tlib/a.ml\n-\t-\timage.png\n3\t4\tlib/b.ml\n"
   in
   assert_int "added" 13 delta.added;
   assert_int "removed" 6 delta.removed
@@ -77,23 +78,27 @@ let test_render_line () =
       }
   in
   if not (String.contains line '$') then failwith "rendered line omits cost";
-  if not (contains_substring line "Δ") then failwith "rendered line omits git delta";
-  if not (String.contains line '%') then failwith "rendered line omits context usage";
+  if not (contains_substring line "Δ") then
+    failwith "rendered line omits git delta";
+  if not (String.contains line '%') then
+    failwith "rendered line omits context usage";
   if not (String.contains line ':') then failwith "rendered line omits branch";
-  if contains_substring line "danger-full-access"
-     || contains_substring line "workspace-write"
-     || contains_substring line "+net"
+  if
+    contains_substring line "danger-full-access"
+    || contains_substring line "workspace-write"
+    || contains_substring line "+net"
   then failwith "rendered line includes textual permission label"
 
 let test_render_no_permission_label () =
   let line =
     Footer.render_line ~colorize:(fun _ text -> text) ~width:120 base_snapshot
   in
-  if contains_substring line "read-only"
-     || contains_substring line "workspace-write"
-     || contains_substring line "danger-full-access"
-     || contains_substring line "no-sandbox"
-     || contains_substring line "+net"
+  if
+    contains_substring line "read-only"
+    || contains_substring line "workspace-write"
+    || contains_substring line "danger-full-access"
+    || contains_substring line "no-sandbox"
+    || contains_substring line "+net"
   then failwith "footer renders permission text instead of dots only";
   if not (contains_substring line "•••") then
     failwith "footer omits three permission dots"
@@ -115,9 +120,7 @@ let test_permission_dot_tokens () =
     "[" ^ token ^ "]" ^ value
   in
   ignore
-    (Footer.render_line
-       ~colorize
-       ~width:120
+    (Footer.render_line ~colorize ~width:120
        {
          base_snapshot with
          filesystem_mode = "read-only";
@@ -127,7 +130,8 @@ let test_permission_dot_tokens () =
   let seen = !tokens in
   if seen <> [ "success"; "error"; "success" ] then
     failwith
-      (Printf.sprintf "permission dot tokens: expected success/error/success, got %s"
+      (Printf.sprintf
+         "permission dot tokens: expected success/error/success, got %s"
          (String.concat "/" seen))
 
 let test_no_sandbox_all_text_tokens () =
@@ -137,9 +141,7 @@ let test_no_sandbox_all_text_tokens () =
     value
   in
   ignore
-    (Footer.render_line
-       ~colorize
-       ~width:120
+    (Footer.render_line ~colorize ~width:120
        {
          base_snapshot with
          filesystem_mode = "danger-full-access";
@@ -154,30 +156,38 @@ let test_no_sandbox_all_text_tokens () =
 
 let test_render_git_states () =
   let render git_repo git_error =
-    Footer.render_line ~colorize:(fun _ text -> text) ~width:120
-      { base_snapshot with git_delta = { added = 4; removed = 2 }; git_repo; git_error }
+    Footer.render_line
+      ~colorize:(fun _ text -> text)
+      ~width:120
+      {
+        base_snapshot with
+        git_delta = { added = 4; removed = 2 };
+        git_repo;
+        git_error;
+      }
   in
   let non_repo = render false false in
   if contains_substring non_repo "main" || contains_substring non_repo "Δ" then
     failwith "non-git directory renders git information";
   let failed = render false true in
-  if not (contains_substring failed "git error") || contains_substring failed "Δ" then
-    failwith "git failure is hidden or rendered as a clean delta"
+  if
+    (not (contains_substring failed "git error"))
+    || contains_substring failed "Δ"
+  then failwith "git failure is hidden or rendered as a clean delta"
 
 let test_narrow_width_preserves_colored_dots () =
   let line =
     Footer.render_line
       ~colorize:(fun token value -> "(" ^ token ^ ")" ^ value)
-      ~width:8
-      base_snapshot
+      ~width:8 base_snapshot
   in
-  if not
-       (contains_substring line "(warning)"
-        && contains_substring line "(success)"
-        && contains_substring line "(accent)")
+  if
+    not
+      (contains_substring line "(warning)"
+      && contains_substring line "(success)"
+      && contains_substring line "(accent)")
   then
-    failwith
-      (Printf.sprintf "narrow footer flattened permission dots: %S" line)
+    failwith (Printf.sprintf "narrow footer flattened permission dots: %S" line)
 
 let test_render_plan_status () =
   let line =
@@ -212,10 +222,8 @@ let test_render_plan_status () =
   in
   if
     not
-      (contains_substring line
-         "Plan active (interrupted) · 1/2 tasks · 12m/30m")
-  then
-    failwith "rendered line omits plan status"
+      (contains_substring line "Plan active (interrupted) · 1/2 tasks · 12m/30m")
+  then failwith "rendered line omits plan status"
   else if contains_substring line "tokens" then
     failwith "rendered plan line includes token telemetry"
 
@@ -236,7 +244,8 @@ let sample_plan =
 
 let render_activity ?plan activity =
   String.concat "\n"
-    (Footer.render_lines ~colorize:(fun token text -> "[" ^ token ^ "]" ^ text)
+    (Footer.render_lines
+       ~colorize:(fun token text -> "[" ^ token ^ "]" ^ text)
        ~width:160
        { base_snapshot with plan; activity })
 
@@ -314,7 +323,9 @@ let test_activity_with_plan_separator () =
 
 let test_activity_second_line_alone () =
   let lines =
-    Footer.render_lines ~colorize:(fun _ text -> text) ~width:120
+    Footer.render_lines
+      ~colorize:(fun _ text -> text)
+      ~width:120
       {
         base_snapshot with
         activity =

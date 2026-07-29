@@ -10,13 +10,9 @@ type composer_command_result = {
   message : string;
 }
 
-type composer_command =
-  | Show
-  | Set_enabled of bool
-  | Toggle
+type composer_command = Show | Set_enabled of bool | Toggle
 
-let default =
-  { taumel = { composer = { enabled = true } } }
+let default = { taumel = { composer = { enabled = true } } }
 
 let parse_composer_command input =
   match Shared.split_words input with
@@ -26,15 +22,15 @@ let parse_composer_command input =
   | [ "toggle" ] -> Ok Toggle
   | _ -> Error "usage: /composer [show|on|off|toggle]"
 
-let composer_text settings = if settings.taumel.composer.enabled then "on" else "off"
+let composer_text settings =
+  if settings.taumel.composer.enabled then "on" else "off"
 
 let message ~path settings =
   Printf.sprintf "Composer: %s (%s)" (composer_text settings) path
 
 let apply_composer_command settings = function
   | Show -> (settings, false)
-  | Set_enabled enabled ->
-      ({ taumel = { composer = { enabled } } }, true)
+  | Set_enabled enabled -> ({ taumel = { composer = { enabled } } }, true)
   | Toggle ->
       ( {
           taumel =
@@ -56,6 +52,7 @@ let to_json settings =
         Shared.Object
           [
             ( "composer",
-              Shared.Object [ ("enabled", Shared.Bool settings.taumel.composer.enabled) ] );
+              Shared.Object
+                [ ("enabled", Shared.Bool settings.taumel.composer.enabled) ] );
           ] );
     ]

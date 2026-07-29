@@ -9,10 +9,7 @@ let default_routing ~kind ~effort ~parent_model =
   let thinking = Agents.default_thinking_for_kind ~effort kind in
   (Option.value parent_model ~default:"inherit", thinking, effort)
 
-type entry = {
-  model : string;
-  thinking : string;
-}
+type entry = { model : string; thinking : string }
 
 type catalog = {
   generic_low : entry option;
@@ -40,12 +37,11 @@ let valid_thinking value = List.mem value thinking_levels
 
 let valid_model_id value =
   match String.index_opt value '/' with
-  | Some separator ->
-      separator > 0 && separator < String.length value - 1
+  | Some separator -> separator > 0 && separator < String.length value - 1
   | None -> false
 
 let parse_entry path = function
-  | Shared.Object fields -> (
+  | Shared.Object fields ->
       let ( let* ) = Result.bind in
       let* model = Shared.json_required_string path fields "model" in
       let* thinking = Shared.json_required_string path fields "thinking" in
@@ -56,7 +52,7 @@ let parse_entry path = function
         Error (path ^ ".model must be \"inherit\" or provider/model")
       else if not (valid_thinking thinking) then
         Error (path ^ ".thinking is not a supported Pi thinking level")
-      else Ok { model; thinking })
+      else Ok { model; thinking }
   | _ -> Error (path ^ " must be an object with model and thinking")
 
 let parse_agents_object path = function
@@ -122,19 +118,30 @@ let of_taumel_json = function
 let merge ~base ~override =
   {
     generic_low =
-      (match override.generic_low with Some _ as value -> value | None -> base.generic_low);
+      (match override.generic_low with
+      | Some _ as value -> value
+      | None -> base.generic_low);
     generic_medium =
       (match override.generic_medium with
       | Some _ as value -> value
       | None -> base.generic_medium);
     generic_high =
-      (match override.generic_high with Some _ as value -> value | None -> base.generic_high);
-    finder = (match override.finder with Some _ as value -> value | None -> base.finder);
-    oracle = (match override.oracle with Some _ as value -> value | None -> base.oracle);
+      (match override.generic_high with
+      | Some _ as value -> value
+      | None -> base.generic_high);
+    finder =
+      (match override.finder with
+      | Some _ as value -> value
+      | None -> base.finder);
+    oracle =
+      (match override.oracle with
+      | Some _ as value -> value
+      | None -> base.oracle);
     diagnostics = base.diagnostics @ override.diagnostics;
   }
 
-let entry_for catalog ~(kind : Agents.agent_kind) ~(effort : Agents.effort option) =
+let entry_for catalog ~(kind : Agents.agent_kind)
+    ~(effort : Agents.effort option) =
   match kind with
   | Agents.Finder -> catalog.finder
   | Agents.Oracle -> catalog.oracle

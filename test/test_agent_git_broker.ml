@@ -39,15 +39,12 @@ let test_accepts_status_and_injects_log_count () =
     (String.concat " " status.argv)
     "status --short --branch -- src";
   let log = parse_ok [ "git"; "log"; "--oneline" ] in
-  assert_true "log injects max-count"
-    (List.mem "--max-count=100" log.argv)
+  assert_true "log injects max-count" (List.mem "--max-count=100" log.argv)
 
 let test_accepts_add_restore_commit () =
   let add = parse_ok [ "git"; "add"; "--"; "a.txt"; "b.txt" ] in
   assert_true "add mutating" add.mutating;
-  let restore =
-    parse_ok [ "git"; "restore"; "--staged"; "--"; "a.txt" ]
-  in
+  let restore = parse_ok [ "git"; "restore"; "--staged"; "--"; "a.txt" ] in
   assert_equal "restore"
     (Agent_git_broker.subcommand_to_string restore.subcommand)
     "restore";
@@ -88,10 +85,11 @@ let test_read_only_authorization () =
   | Error (Agent_git_broker.Permission_denied _) -> ()
   | Error _ -> failwith "expected permission denied");
   let status = parse_ok [ "git"; "status" ] in
-  (match Agent_git_broker.authorize ~read_only:true status with
+  match Agent_git_broker.authorize ~read_only:true status with
   | Ok _ -> ()
   | Error error ->
-      failwith ("status should be allowed: " ^ Agent_git_broker.error_message error))
+      failwith
+        ("status should be allowed: " ^ Agent_git_broker.error_message error)
 
 let () =
   test_accepts_status_and_injects_log_count ();

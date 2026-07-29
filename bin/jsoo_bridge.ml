@@ -6,12 +6,19 @@ module Schedule = Eta.Schedule
 module Runtime = Eta_jsoo.Runtime
 
 let inject = Unsafe.inject
+
 let js_string value = inject (Js.string value)
+
 let js_number value = inject (Js.number_of_float value)
+
 let js_bool value = inject (Js.bool value)
+
 let ojs_of_js value : Ojs.t = Obj.magic value
+
 let js_of_ojs (value : Ojs.t) : Unsafe.any = Obj.magic value
+
 let unknown_of_js value = Ts2ocaml.unknown_of_js (ojs_of_js value)
+
 let js_of_unknown value = Ts2ocaml.unknown_to_js value |> js_of_ojs
 
 let require_contract = function
@@ -21,15 +28,20 @@ let require_contract = function
 let decode_ojs_contract decoder value = decoder value |> require_contract
 
 let call0 obj name = Unsafe.fun_call (Unsafe.get obj name) [||]
+
 let call1 obj name a = Unsafe.fun_call (Unsafe.get obj name) [| a |]
+
 let call2 obj name a b = Unsafe.fun_call (Unsafe.get obj name) [| a; b |]
+
 let call3 obj name a b c = Unsafe.fun_call (Unsafe.get obj name) [| a; b; c |]
 
 let predicate_bool predicate value =
   Js.to_bool (Unsafe.coerce (Unsafe.fun_call predicate [| value |]))
 
 let is_nullish =
-  let predicate = Unsafe.js_expr "((value) => value === null || value === undefined)" in
+  let predicate =
+    Unsafe.js_expr "((value) => value === null || value === undefined)"
+  in
   fun value -> predicate_bool predicate value
 
 let is_js_array =
@@ -55,7 +67,8 @@ let is_js_boolean =
 let is_js_object =
   let predicate =
     Unsafe.js_expr
-      "((value) => value !== null && typeof value === 'object' && !Array.isArray(value))"
+      "((value) => value !== null && typeof value === 'object' && \
+       !Array.isArray(value))"
   in
   fun value -> predicate_bool predicate value
 
@@ -78,21 +91,24 @@ let has_property obj name =
   else
     Js.to_bool
       (Unsafe.coerce
-         (call2 (Unsafe.get Unsafe.global "Object") "hasOwn" (inject obj)
-            (js_string name)))
+         (call2
+            (Unsafe.get Unsafe.global "Object")
+            "hasOwn" (inject obj) (js_string name)))
 
 let object_field obj name =
   if has_property obj name then Some (Unsafe.get obj name) else None
 
 let property_value obj name =
-  if is_property_container (inject obj) then Some (Unsafe.get obj name) else None
+  if is_property_container (inject obj) then Some (Unsafe.get obj name)
+  else None
 
 let optional_field obj name =
   match object_field obj name with
   | Some value when not (is_nullish value) -> Some value
   | _ -> None
 
-let function_field obj name = Option.bind (property_value obj name) function_value
+let function_field obj name =
+  Option.bind (property_value obj name) function_value
 
 let node_require name = js_of_ojs (Node_require.require name)
 
@@ -117,8 +133,8 @@ let get_bool_property obj name =
 
 let float_value value =
   if is_js_number value then
-      let value = Js.to_float (Unsafe.coerce value) in
-      if Float.is_finite value then Some value else None
+    let value = Js.to_float (Unsafe.coerce value) in
+    if Float.is_finite value then Some value else None
   else None
 
 let float_field obj name = Option.bind (object_field obj name) float_value
@@ -137,9 +153,8 @@ let optional_string_field obj name =
   | Some value -> (
       match string_value value with
       | Some value -> Some value
-      | None ->
-          failwith
-            (Printf.sprintf "Invalid Taumel string field: %s" name))
+      | None -> failwith (Printf.sprintf "Invalid Taumel string field: %s" name)
+      )
 
 let get_string_array obj name =
   match object_field obj name with
@@ -147,19 +162,14 @@ let get_string_array obj name =
   | _ -> []
 
 let get_object_array obj name =
-  match object_field obj name with
-  | Some value -> array_items value
-  | _ -> []
+  match object_field obj name with Some value -> array_items value | _ -> []
 
 let js_array_of_strings values =
   values |> List.map Js.string |> Array.of_list |> Js.array |> inject
 
 let js_options ~cwd ~timeout =
   Unsafe.obj
-    [|
-      ("cwd", js_string cwd);
-      ("timeout", js_number (float_of_int timeout));
-    |]
+    [| ("cwd", js_string cwd); ("timeout", js_number (float_of_int timeout)) |]
 
 let js_error_to_string = Eta_host_doors.js_error_to_string
 
@@ -174,8 +184,7 @@ let await_js_result promise = Eta_host_doors.await_js_result promise
 
 let await_abort_signal signal = Eta_host_doors.await_abort_signal signal
 
-let js_lines lines =
-  lines |> List.map Js.string |> Array.of_list |> Js.array
+let js_lines lines = lines |> List.map Js.string |> Array.of_list |> Js.array
 
 let js_array values = values |> Array.of_list |> Js.array |> inject
 
@@ -191,13 +200,17 @@ let object_keys obj =
   if not (is_property_container (inject obj)) then []
   else
     let object_ctor = Unsafe.get Unsafe.global "Object" in
-    let keys = Unsafe.fun_call (Unsafe.get object_ctor "keys") [| inject obj |] in
+    let keys =
+      Unsafe.fun_call (Unsafe.get object_ctor "keys") [| inject obj |]
+    in
     Js.to_array (Unsafe.coerce keys)
-    |> Array.to_list |> List.filter_map string_value
+    |> Array.to_list
+    |> List.filter_map string_value
 
 let json_to_js value =
   let json_ctor = Unsafe.get Unsafe.global "JSON" in
-  Unsafe.fun_call (Unsafe.get json_ctor "parse")
+  Unsafe.fun_call
+    (Unsafe.get json_ctor "parse")
     [| js_string (Taumel.Shared.encode_json value) |]
 
 let text_result_with_details text details =
@@ -205,8 +218,10 @@ let text_result_with_details text details =
     [|
       ( "content",
         js_array
-          [ Unsafe.obj [| ("type", js_string "text"); ("text", js_string text) |] ]
-      );
+          [
+            Unsafe.obj
+              [| ("type", js_string "text"); ("text", js_string text) |];
+          ] );
       ("details", json_to_js details);
     |]
 
@@ -257,12 +272,14 @@ let js_content_to_text value =
 
 let command_result_obj ~ok ~message ~details =
   Boundary_contracts.BridgeCommandResult.create ~ok ~message
-    ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details)) ()
+    ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details))
+    ()
   |> Tool_contracts.BridgeCommandResult.t_to_js |> inject
 
 let tool_result_js text details =
   Boundary_contracts.BridgeToolResult.create ~text
-    ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details)) ()
+    ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details))
+    ()
   |> Tool_contracts.BridgeToolResult.t_to_js |> inject
 
 let tool_result_to_command_result result =
@@ -275,8 +292,7 @@ let tool_result_to_command_result result =
     in
     let ok =
       not
-        (is_js_object details
-        && has_property details "ok"
+        (is_js_object details && has_property details "ok"
         && get_bool details "ok" = false)
     in
     command_result_obj ~ok
@@ -289,7 +305,10 @@ let js_object_or_empty value =
 let merge_js_details base extra =
   js_of_ojs
     (Node_object.assign
-       [ ojs_of_js (js_object_or_empty base); ojs_of_js (js_object_or_empty extra) ])
+       [
+         ojs_of_js (js_object_or_empty base);
+         ojs_of_js (js_object_or_empty extra);
+       ])
 
 let command_result_with_details result extra =
   if not (is_js_object result) then result
@@ -305,18 +324,21 @@ let command_result_with_details result extra =
 let text_tool_result text details =
   let content = Boundary_contracts.ToolResultTextContent.create ~text () in
   Tool_contracts.ToolResultEnvelope.create ~content:[ content ]
-    ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details)) ()
+    ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details))
+    ()
   |> Tool_contracts.ToolResultEnvelope.t_to_js |> inject
 
 let prepared_tool_result_with_extra prepared extra =
-  text_tool_result (get_string prepared "text")
+  text_tool_result
+    (get_string prepared "text")
     (merge_js_details (Unsafe.get prepared "details") extra)
 
 let tool_result_envelope params =
   if has_property params "prepared" then
     let prepared = Unsafe.get params "prepared" in
     let extra =
-      if has_property params "extraDetails" then Unsafe.get params "extraDetails"
+      if has_property params "extraDetails" then
+        Unsafe.get params "extraDetails"
       else Unsafe.obj [||]
     in
     prepared_tool_result_with_extra prepared extra
@@ -324,12 +346,7 @@ let tool_result_envelope params =
     let error = get_string params "error" in
     let details =
       if has_property params "details" then Unsafe.get params "details"
-      else
-        Unsafe.obj
-          [|
-            ("ok", js_bool false);
-            ("error", js_string error);
-          |]
+      else Unsafe.obj [| ("ok", js_bool false); ("error", js_string error) |]
     in
     text_tool_result error details
   else
@@ -349,11 +366,7 @@ let host_tool_result params =
   match action with
   | "write_stdin" ->
       text_tool_result Taumel.Sandbox.write_stdin_success_message
-        (Unsafe.obj
-           [|
-             ("ok", js_bool true);
-             ("result", inject details);
-           |])
+        (Unsafe.obj [| ("ok", js_bool true); ("result", inject details) |])
   | "apply_patch" ->
       text_tool_result Taumel.Sandbox.apply_patch_success_message details
   | "write" ->

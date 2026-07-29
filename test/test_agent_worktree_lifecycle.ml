@@ -35,7 +35,9 @@ let test_marker_roundtrip_and_match () =
     (not
        (Agent_worktree.valid_creation_steps
           [ Marker_recorded; Worktree_created ]));
-  match Agent_worktree.marker_of_json (Agent_worktree.marker_to_json marker) with
+  match
+    Agent_worktree.marker_of_json (Agent_worktree.marker_to_json marker)
+  with
   | Error message -> failwith message
   | Ok decoded ->
       assert_true "matches"
@@ -65,7 +67,7 @@ let test_spawn_persists_worktree_binding () =
       ~workspace_binding:binding ()
   with
   | Error message -> failwith message
-  | Ok (_state, identity, _run) ->
+  | Ok (_state, identity, _run) -> (
       assert_equal "isolation"
         (Agent_workspace.isolation_to_string
            (Agents.identity_isolation identity))
@@ -80,8 +82,12 @@ let test_spawn_persists_worktree_binding () =
                Agents.identities = [ identity ];
                runs = [];
                issued_identity_counts =
-                 { Agents.generic = 1; finder = 0; oracle = 0;
-                   issued_ids = [ identity.identity_agent_id ] };
+                 {
+                   Agents.generic = 1;
+                   finder = 0;
+                   oracle = 0;
+                   issued_ids = [ identity.identity_agent_id ];
+                 };
                cleanup_pending = [];
              })
       with
@@ -91,7 +97,7 @@ let test_spawn_persists_worktree_binding () =
           assert_equal "restored isolation"
             (Agent_workspace.isolation_to_string
                (Agents.identity_isolation restored))
-            "worktree"
+            "worktree")
 
 let test_delete_worktree_message_for_none () =
   assert_true "message mentions worktree"

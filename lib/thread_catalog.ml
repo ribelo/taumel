@@ -1,7 +1,4 @@
-type message = {
-  role : string;
-  content : string;
-}
+type message = { role : string; content : string }
 
 type visible_entry = {
   entry_id : string option;
@@ -34,10 +31,7 @@ type thread = {
   diagnostics : diagnostic list;
 }
 
-type read_result =
-  | Found of thread
-  | Not_found
-  | Ambiguous of string list
+type read_result = Found of thread | Not_found | Ambiguous of string list
 
 type catalog_scan = {
   root : string;
@@ -46,10 +40,7 @@ type catalog_scan = {
   suffix : string;
 }
 
-type catalog = {
-  threads : thread list;
-  diagnostics : diagnostic list;
-}
+type catalog = { threads : thread list; diagnostics : diagnostic list }
 
 type locator = {
   locator_thread_id : string;
@@ -89,10 +80,7 @@ type query_result = {
   diagnostics : diagnostic list;
 }
 
-type read_mode =
-  | Overview
-  | Window
-  | Full
+type read_mode = Overview | Window | Full
 
 type read_request_input = {
   thread_id : string option;
@@ -153,11 +141,7 @@ let catalog_roots ?override ~cwd ~home () =
     let root = String.trim root in
     if root = "" || List.mem root roots then roots else roots @ [ root ]
   in
-  let roots =
-    match override with
-    | Some root -> push root []
-    | None -> []
-  in
+  let roots = match override with Some root -> push root [] | None -> [] in
   let roots =
     if String.trim cwd = "" then roots
     else
@@ -172,21 +156,23 @@ let catalog_roots ?override ~cwd ~home () =
     |> push (join_path home ".pi/sessions")
 
 let default_catalog_scan_max_depth = 4
+
 let default_catalog_scan_max_files = 200
+
 let default_catalog_scan_suffixes = [ ".jsonl"; ".json" ]
 
 let catalog_scans ?override ~cwd ~home () =
   catalog_roots ?override ~cwd ~home ()
   |> List.concat_map (fun root ->
-         List.map
-           (fun suffix ->
-             {
-               root;
-               max_depth = default_catalog_scan_max_depth;
-               max_files = default_catalog_scan_max_files;
-               suffix;
-             })
-           default_catalog_scan_suffixes)
+      List.map
+        (fun suffix ->
+          {
+            root;
+            max_depth = default_catalog_scan_max_depth;
+            max_files = default_catalog_scan_max_files;
+            suffix;
+          })
+        default_catalog_scan_suffixes)
 
 let contains haystack needle =
   let haystack = String.lowercase_ascii haystack in
@@ -217,8 +203,9 @@ let basename path =
 let drop_suffix suffix value =
   let suffix_len = String.length suffix in
   let value_len = String.length value in
-  if value_len >= suffix_len
-     && String.sub value (value_len - suffix_len) suffix_len = suffix
+  if
+    value_len >= suffix_len
+    && String.sub value (value_len - suffix_len) suffix_len = suffix
   then String.sub value 0 (value_len - suffix_len)
   else value
 
@@ -229,11 +216,12 @@ let object_field name = function
   | Shared.Object fields -> List.assoc_opt name fields
   | _ -> None
 
-let option_or_else left right =
-  match left with Some _ -> left | None -> right
+let option_or_else left right = match left with Some _ -> left | None -> right
 
 let string_field name json =
-  match object_field name json with Some (Shared.String value) -> Some value | _ -> None
+  match object_field name json with
+  | Some (Shared.String value) -> Some value
+  | _ -> None
 
 let string_from_fields json names =
   List.find_map
@@ -246,29 +234,33 @@ let string_from_fields json names =
 
 let int_field name json =
   match object_field name json with
-  | Some (Shared.Number value) when Float.is_finite value -> Some (int_of_float value)
+  | Some (Shared.Number value) when Float.is_finite value ->
+      Some (int_of_float value)
   | _ -> None
 
 let array_field name json =
-  match object_field name json with Some (Shared.Array values) -> values | _ -> []
+  match object_field name json with
+  | Some (Shared.Array values) -> values
+  | _ -> []
 
 let rec content_to_visible_text = function
   | Shared.String value -> value
   | Shared.Array values ->
       values
       |> List.filter_map (function
-           | Shared.String value -> Some value
-           | Shared.Object _ as json -> (
-               match string_field "type" json with
-               | Some ("thinking" | "reasoning") -> None
-               | Some "text" -> string_field "text" json
-               | _ -> string_field "text" json)
-           | _ -> None)
+        | Shared.String value -> Some value
+        | Shared.Object _ as json -> (
+            match string_field "type" json with
+            | Some ("thinking" | "reasoning") -> None
+            | Some "text" -> string_field "text" json
+            | _ -> string_field "text" json)
+        | _ -> None)
       |> String.concat "\n"
   | Shared.Object _ as json -> (
       match string_field "type" json with
       | Some ("thinking" | "reasoning") -> ""
-      | _ -> (match string_field "text" json with Some value -> value | None -> ""))
+      | _ -> (
+          match string_field "text" json with Some value -> value | None -> ""))
   | Shared.Null | Bool _ | Number _ -> ""
 
 let summary_candidate_text json =
@@ -294,9 +286,9 @@ let summary_candidate_text json =
       if direct <> "" then direct
       else
         content_to_visible_text
-          (object_field "content" json
-          |> fun value -> option_or_else value (object_field "text" json)
-          |> Option.value ~default:Shared.Null)
+          ( object_field "content" json |> fun value ->
+            option_or_else value (object_field "text" json)
+            |> Option.value ~default:Shared.Null )
   | _ -> content_to_visible_text json
 
 let matches_summary_kind kind value =
@@ -310,20 +302,22 @@ let summary_from_entries entries kind =
     | [] -> None
     | entry :: rest ->
         let custom_type =
-          string_from_fields entry [ "customType"; "custom_type"; "type"; "kind" ]
+          string_from_fields entry
+            [ "customType"; "custom_type"; "type"; "kind" ]
         in
         let direct = summary_candidate_text entry in
-        if direct <> ""
-           && (matches_summary_kind kind custom_type
-              || matches_summary_kind kind direct)
+        if
+          direct <> ""
+          && (matches_summary_kind kind custom_type
+             || matches_summary_kind kind direct)
         then Some direct
         else if not (matches_summary_kind kind custom_type) then loop rest
         else
           let data =
-            object_field "data" entry
-            |> fun value -> option_or_else value (object_field "value" entry)
-            |> fun value -> option_or_else value (object_field "payload" entry)
-            |> fun value -> option_or_else value (object_field "summary" entry)
+            object_field "data" entry |> fun value ->
+            option_or_else value (object_field "value" entry) |> fun value ->
+            option_or_else value (object_field "payload" entry) |> fun value ->
+            option_or_else value (object_field "summary" entry)
             |> Option.value ~default:Shared.Null
           in
           let text = summary_candidate_text data in
@@ -350,30 +344,20 @@ let bounded_text ~max_lines ~max_bytes text =
   let clipped_by_bytes = String.length text > max_bytes in
   let text = if clipped_by_bytes then safe_prefix max_bytes text else text in
   let omitted = clipped_by_lines || clipped_by_bytes in
-  if omitted then
-    if text = "" then "… omitted"
-    else text ^ "\n… omitted"
+  if omitted then if text = "" then "… omitted" else text ^ "\n… omitted"
   else text
 
 let snippet text = bounded_text ~max_lines:5 ~max_bytes:1024 text
 
 let make_entry ?entry_id ?line ?timestamp ?role ?tool_name kind text =
-  {
-    entry_id;
-    line;
-    timestamp;
-    role;
-    kind;
-    tool_name;
-    text = String.trim text;
-  }
+  { entry_id; line; timestamp; role; kind; tool_name; text = String.trim text }
 
 let compact_json json = Shared.encode_json json
 
 let tool_arguments_text json =
   match
-    object_field "arguments" json
-    |> fun value -> option_or_else value (object_field "args" json)
+    object_field "arguments" json |> fun value ->
+    option_or_else value (object_field "args" json)
   with
   | Some (Shared.String value) -> value
   | Some value -> compact_json value
@@ -381,40 +365,59 @@ let tool_arguments_text json =
 
 let content_item_entries ?entry_id ?line ?timestamp ?role item =
   match item with
-  | Shared.String value -> [ make_entry ?entry_id ?line ?timestamp ?role "message" value ]
+  | Shared.String value ->
+      [ make_entry ?entry_id ?line ?timestamp ?role "message" value ]
   | Shared.Object _ as json -> (
       match string_field "type" json with
       | Some ("thinking" | "reasoning") -> []
       | Some "toolCall" ->
-          let tool_name = string_from_fields json [ "name"; "toolName"; "tool_name" ] in
+          let tool_name =
+            string_from_fields json [ "name"; "toolName"; "tool_name" ]
+          in
           let args = tool_arguments_text json in
           let text =
-            if args = "" then tool_name else String.concat "\n" [ tool_name; args ]
+            if args = "" then tool_name
+            else String.concat "\n" [ tool_name; args ]
           in
-          [ make_entry ?entry_id ?line ?timestamp ?role ~tool_name "tool_call" text ]
+          [
+            make_entry ?entry_id ?line ?timestamp ?role ~tool_name "tool_call"
+              text;
+          ]
       | Some "toolResult" ->
-          let tool_name = string_from_fields json [ "name"; "toolName"; "tool_name" ] in
-          let text = content_to_visible_text (Option.value (object_field "content" json) ~default:json) in
-          [ make_entry ?entry_id ?line ?timestamp ?role ~tool_name "tool_result" text ]
+          let tool_name =
+            string_from_fields json [ "name"; "toolName"; "tool_name" ]
+          in
+          let text =
+            content_to_visible_text
+              (Option.value (object_field "content" json) ~default:json)
+          in
+          [
+            make_entry ?entry_id ?line ?timestamp ?role ~tool_name "tool_result"
+              text;
+          ]
       | Some "text" -> (
           match string_field "text" json with
-          | Some value -> [ make_entry ?entry_id ?line ?timestamp ?role "message" value ]
+          | Some value ->
+              [ make_entry ?entry_id ?line ?timestamp ?role "message" value ]
           | None -> [])
       | _ -> (
           match string_field "text" json with
-          | Some value -> [ make_entry ?entry_id ?line ?timestamp ?role "message" value ]
+          | Some value ->
+              [ make_entry ?entry_id ?line ?timestamp ?role "message" value ]
           | None -> []))
   | _ -> []
 
 let message_entries ?entry_id ?line ?timestamp role message =
   let content =
-    object_field "content" message
-    |> fun value -> option_or_else value (object_field "text" message)
-    |> fun value -> option_or_else value (object_field "message" message)
-    |> fun value -> option_or_else value (object_field "body" message)
+    object_field "content" message |> fun value ->
+    option_or_else value (object_field "text" message) |> fun value ->
+    option_or_else value (object_field "message" message) |> fun value ->
+    option_or_else value (object_field "body" message)
     |> Option.value ~default:Shared.Null
   in
-  let tool_name = string_from_fields message [ "toolName"; "tool_name"; "name" ] in
+  let tool_name =
+    string_from_fields message [ "toolName"; "tool_name"; "name" ]
+  in
   match role with
   | "toolResult" | "tool" ->
       [
@@ -426,7 +429,9 @@ let message_entries ?entry_id ?line ?timestamp role message =
   | _ -> (
       match content with
       | Shared.Array values ->
-          List.concat_map (content_item_entries ?entry_id ?line ?timestamp ~role) values
+          List.concat_map
+            (content_item_entries ?entry_id ?line ?timestamp ~role)
+            values
       | value -> content_item_entries ?entry_id ?line ?timestamp ~role value)
 
 let event_entries ?line event =
@@ -436,7 +441,9 @@ let event_entries ?line event =
     | value -> Some value
   in
   let timestamp =
-    match string_from_fields event [ "timestamp"; "createdAt"; "created_at" ] with
+    match
+      string_from_fields event [ "timestamp"; "createdAt"; "created_at" ]
+    with
     | "" -> None
     | value -> Some value
   in
@@ -448,8 +455,9 @@ let event_entries ?line event =
         | _ -> event
       in
       let role = string_from_fields message [ "role"; "author"; "speaker" ] in
-      if role = "" then [] else message_entries ?entry_id ?line ?timestamp role message
-  | Some "custom_message" | Some "custom" -> (
+      if role = "" then []
+      else message_entries ?entry_id ?line ?timestamp role message
+  | Some "custom_message" | Some "custom" ->
       let custom_type =
         string_from_fields event [ "customType"; "custom_type"; "kind" ]
       in
@@ -458,16 +466,16 @@ let event_entries ?line event =
       in
       if content <> "" && custom_type = "notification" then
         [ make_entry ?entry_id ?line ?timestamp "notification" content ]
-      else [])
+      else []
   | _ -> []
 
 let messages_from_entries entries =
   entries
   |> List.filter_map (fun entry ->
-         match entry.role with
-         | Some ("user" | "assistant" as role) when entry.kind = "message" ->
-             Some { role; content = entry.text }
-         | _ -> None)
+      match entry.role with
+      | Some (("user" | "assistant") as role) when entry.kind = "message" ->
+          Some { role; content = entry.text }
+      | _ -> None)
 
 let diagnostic ?source_path ?line message = { source_path; line; message }
 
@@ -483,50 +491,56 @@ let jsonl_thread_of_text ~path text : (thread, diagnostic list) result =
   let diagnostics = ref [] in
   lines
   |> List.iteri (fun index line_text ->
-         let line_number = index + 1 in
-         if String.trim line_text <> "" then
-           match Shared.decode_json_string line_text with
-           | Error message ->
-               diagnostics :=
-                 diagnostic ~source_path:path ~line:line_number
-                   ("invalid JSONL entry: " ^ message)
-                 :: !diagnostics
-           | Ok (Shared.Object _ as json) ->
-               json_entries := json :: !json_entries;
-               (match string_field "type" json with
-               | Some "session" ->
-                   let id =
-                     string_from_fields json
-                       [ "id"; "threadId"; "thread_id"; "sessionId"; "session_id" ]
-                   in
-                   if id <> "" then session_id := Some id;
-                   let cwd = string_from_fields json [ "cwd"; "workspace"; "workdir" ] in
-                   if cwd <> "" then workspace := Some cwd;
-                   let timestamp = string_from_fields json [ "timestamp"; "createdAt"; "created_at" ] in
-                   if timestamp <> "" then started_at := Some timestamp
-               | Some "session_info" ->
-                   let name = string_from_fields json [ "name"; "title" ] in
-                   title := if name = "" then None else Some name
-               | _ -> ());
-               let event_timestamp =
-                 string_from_fields json [ "timestamp"; "createdAt"; "created_at" ]
-               in
-               if event_timestamp <> "" then updated_at := Some event_timestamp;
-               entries := event_entries ~line:line_number json @ !entries
-           | Ok _ ->
-               diagnostics :=
-                 diagnostic ~source_path:path ~line:line_number
-                   "invalid JSONL entry: expected object"
-                 :: !diagnostics);
+      let line_number = index + 1 in
+      if String.trim line_text <> "" then
+        match Shared.decode_json_string line_text with
+        | Error message ->
+            diagnostics :=
+              diagnostic ~source_path:path ~line:line_number
+                ("invalid JSONL entry: " ^ message)
+              :: !diagnostics
+        | Ok (Shared.Object _ as json) ->
+            json_entries := json :: !json_entries;
+            (match string_field "type" json with
+            | Some "session" ->
+                let id =
+                  string_from_fields json
+                    [ "id"; "threadId"; "thread_id"; "sessionId"; "session_id" ]
+                in
+                if id <> "" then session_id := Some id;
+                let cwd =
+                  string_from_fields json [ "cwd"; "workspace"; "workdir" ]
+                in
+                if cwd <> "" then workspace := Some cwd;
+                let timestamp =
+                  string_from_fields json
+                    [ "timestamp"; "createdAt"; "created_at" ]
+                in
+                if timestamp <> "" then started_at := Some timestamp
+            | Some "session_info" ->
+                let name = string_from_fields json [ "name"; "title" ] in
+                title := if name = "" then None else Some name
+            | _ -> ());
+            let event_timestamp =
+              string_from_fields json [ "timestamp"; "createdAt"; "created_at" ]
+            in
+            if event_timestamp <> "" then updated_at := Some event_timestamp;
+            entries := event_entries ~line:line_number json @ !entries
+        | Ok _ ->
+            diagnostics :=
+              diagnostic ~source_path:path ~line:line_number
+                "invalid JSONL entry: expected object"
+              :: !diagnostics);
   let id = Option.value !session_id ~default:(thread_id_from_path path) in
-  if id = "" then Error [ diagnostic ~source_path:path "thread source has no usable id" ]
+  if id = "" then
+    Error [ diagnostic ~source_path:path "thread source has no usable id" ]
   else
     let entries = List.rev !entries in
     let json_entries = List.rev !json_entries in
     let title =
       match !title with
       | Some value -> value
-      | None -> (match !workspace with Some cwd -> basename cwd | None -> id)
+      | None -> ( match !workspace with Some cwd -> basename cwd | None -> id)
     in
     Ok
       {
@@ -557,7 +571,9 @@ let legacy_thread_of_json ~path json : thread option =
       in
       if id = "" then None
       else
-        let workspace = string_from_fields json [ "cwd"; "workspace"; "workdir" ] in
+        let workspace =
+          string_from_fields json [ "cwd"; "workspace"; "workdir" ]
+        in
         let title =
           match string_from_fields json [ "title"; "name"; "preview" ] with
           | "" when workspace <> "" -> basename workspace
@@ -565,26 +581,30 @@ let legacy_thread_of_json ~path json : thread option =
           | value -> value
         in
         let raw_messages =
-          object_field "messages" json
-          |> fun value -> option_or_else value (object_field "branch" json)
-          |> fun value -> option_or_else value (object_field "entries" json)
-          |> fun value -> option_or_else value (object_field "turns" json)
+          object_field "messages" json |> fun value ->
+          option_or_else value (object_field "branch" json) |> fun value ->
+          option_or_else value (object_field "entries" json) |> fun value ->
+          option_or_else value (object_field "turns" json)
           |> Option.value ~default:Shared.Null
         in
-        let summary_entries = array_field "entries" json @ array_field "branch" json in
+        let summary_entries =
+          array_field "entries" json @ array_field "branch" json
+        in
         let entries =
           match raw_messages with
           | Shared.Array values ->
               values
               |> List.mapi (fun index value ->
-                     let message =
-                       match object_field "message" value with
-                       | Some (Shared.Object _ as message) -> message
-                       | _ -> value
-                     in
-                     let role = string_from_fields message [ "role"; "author"; "speaker" ] in
-                     if role = "" then []
-                     else message_entries ~line:(index + 1) role message)
+                  let message =
+                    match object_field "message" value with
+                    | Some (Shared.Object _ as message) -> message
+                    | _ -> value
+                  in
+                  let role =
+                    string_from_fields message [ "role"; "author"; "speaker" ]
+                  in
+                  if role = "" then []
+                  else message_entries ~line:(index + 1) role message)
               |> List.concat
           | _ -> []
         in
@@ -595,18 +615,25 @@ let legacy_thread_of_json ~path json : thread option =
             workspace = (if workspace = "" then None else Some workspace);
             messages = messages_from_entries entries;
             plan_summary =
-              (string_field "planSummary" json
-              |> fun value -> option_or_else value (string_field "plan_summary" json)
-              |> fun value -> option_or_else value (summary_from_entries summary_entries `Plan));
+              ( string_field "planSummary" json |> fun value ->
+                option_or_else value (string_field "plan_summary" json)
+                |> fun value ->
+                option_or_else value
+                  (summary_from_entries summary_entries `Plan) );
             branch_summary =
-              (string_field "branchSummary" json
-              |> fun value -> option_or_else value (string_field "branch_summary" json)
-              |> fun value -> option_or_else value (summary_from_entries summary_entries `Branch));
+              ( string_field "branchSummary" json |> fun value ->
+                option_or_else value (string_field "branch_summary" json)
+                |> fun value ->
+                option_or_else value
+                  (summary_from_entries summary_entries `Branch) );
             compaction_summary =
-              (string_field "compactionSummary" json
-              |> fun value -> option_or_else value (string_field "compaction_summary" json)
-              |> fun value -> option_or_else value (string_field "compactSummary" json)
-              |> fun value -> option_or_else value (summary_from_entries summary_entries `Compaction));
+              ( string_field "compactionSummary" json |> fun value ->
+                option_or_else value (string_field "compaction_summary" json)
+                |> fun value ->
+                option_or_else value (string_field "compactSummary" json)
+                |> fun value ->
+                option_or_else value
+                  (summary_from_entries summary_entries `Compaction) );
             source_path = Some path;
             started_at = string_field "timestamp" json;
             updated_at = string_field "updatedAt" json;
@@ -626,19 +653,28 @@ let thread_of_source_json json : (thread, diagnostic list) result =
             ?source_path:(if path = "" then None else Some path)
             (if message = "" then "thread source is unreadable" else message);
         ]
-  | Some "sessionFile" ->
+  | Some "sessionFile" -> (
       let path = string_from_fields json [ "path"; "file" ] in
       let text = string_from_fields json [ "text"; "contents"; "content" ] in
       if path = "" then Error [ diagnostic "thread source is missing path" ]
       else if text = "" then
-        Error [ diagnostic ~source_path:path "thread source is empty or unreadable" ]
-      else if Filename.check_suffix path ".jsonl" then jsonl_thread_of_text ~path text
-      else (
+        Error
+          [
+            diagnostic ~source_path:path "thread source is empty or unreadable";
+          ]
+      else if Filename.check_suffix path ".jsonl" then
+        jsonl_thread_of_text ~path text
+      else
         match Shared.decode_json_string text with
         | Ok json -> (
             match legacy_thread_of_json ~path json with
             | Some thread -> Ok thread
-            | None -> Error [ diagnostic ~source_path:path "thread source has no usable id" ])
+            | None ->
+                Error
+                  [
+                    diagnostic ~source_path:path
+                      "thread source has no usable id";
+                  ])
         | Error message -> Error [ diagnostic ~source_path:path message ])
   | _ -> (
       match legacy_thread_of_json ~path:"" json with
@@ -667,8 +703,10 @@ let unique_catalog (parsed : (thread, diagnostic list) result list) : catalog =
           diagnostics := source_diagnostics @ !diagnostics)
     parsed;
   let catalog_threads : thread list =
-    Hashtbl.to_seq_values by_id |> List.of_seq
-    |> List.sort (fun (left : thread) (right : thread) -> compare left.id right.id)
+    Hashtbl.to_seq_values by_id
+    |> List.of_seq
+    |> List.sort (fun (left : thread) (right : thread) ->
+        compare left.id right.id)
   in
   ({ threads = catalog_threads; diagnostics = List.rev !diagnostics } : catalog)
 

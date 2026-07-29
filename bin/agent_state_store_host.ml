@@ -3,7 +3,6 @@
    only for deterministic tests. *)
 
 open Jsoo_bridge
-
 module Store = Taumel.Agent_state_store
 
 let private_root () = Agent_child_session_host.private_root ()
@@ -15,11 +14,13 @@ let registry_path ~owner_session_id =
   Store.owner_registry_path ~private_root:(private_root ())
     ~owner_component:(owner_component owner_session_id)
 
+type file_presence =
+  | Missing
+  | Regular_file
+  | Invalid_file
+  | Unavailable of string
 
-type file_presence = Missing | Regular_file | Invalid_file | Unavailable of string
-
-let error_code error =
-  js_exception_string_field error "code"
+let error_code error = js_exception_string_field error "code"
 
 let file_presence target =
   try
@@ -30,11 +31,6 @@ let file_presence target =
     | Some "ENOENT" -> Missing
     | _ -> Unavailable (Printexc.to_string error))
 
-
-
-
-
-
 let random_suffix () =
   try Node_crypto.random_hex 6 with _ -> string_of_int (Random.bits ())
 
@@ -42,11 +38,15 @@ let ensure_owner_directory ~owner_session_id directory =
   match Node_files.mkdir_p directory with
   | Error _ as error -> error
   | Ok () -> (
-      match (Node_files.realpath (private_root ()), Node_files.realpath directory) with
+      match
+        (Node_files.realpath (private_root ()), Node_files.realpath directory)
+      with
       | Error _, _ | _, Error _ ->
           Error "agent registry directory cannot be resolved canonically"
       | Ok canonical_root, Ok canonical_directory ->
-          let expected = Node_path.join [ canonical_root; owner_component owner_session_id ] in
+          let expected =
+            Node_path.join [ canonical_root; owner_component owner_session_id ]
+          in
           if
             canonical_directory <> expected
             || not
@@ -59,15 +59,11 @@ let write_atomic ~owner_session_id ~path:target ~contents =
   let directory = Node_path.dirname target in
   match ensure_owner_directory ~owner_session_id directory with
   | Error _ as error -> error
-  | Ok () ->
+  | Ok () -> (
       let temp =
-        Node_path.join
-          [
-            directory;
-            ".registry." ^ random_suffix () ^ ".tmp";
-          ]
+        Node_path.join [ directory; ".registry." ^ random_suffix () ^ ".tmp" ]
       in
-      (match Node_files.write_file_durable temp contents with
+      match Node_files.write_file_durable temp contents with
       | Error message ->
           ignore (Node_files.unlink temp);
           Error message
@@ -97,26 +93,29 @@ let filesystem_backend : Store.registry_backend =
         match file_presence target with
         | Missing -> Ok None
         | Invalid_file -> Error "agent registry is not a regular file"
-        | Unavailable message -> Error ("agent registry cannot be inspected: " ^ message)
-        | Regular_file ->
-          let directory = Node_path.dirname target in
-          (match ensure_owner_directory ~owner_session_id directory with
-          | Error _ as error -> error
-          | Ok () -> (
-              match Node_files.read_file target with
-              | Ok contents -> Ok (Some contents)
-              | Error message -> Error message)));
+        | Unavailable message ->
+            Error ("agent registry cannot be inspected: " ^ message)
+        | Regular_file -> (
+            let directory = Node_path.dirname target in
+            match ensure_owner_directory ~owner_session_id directory with
+            | Error _ as error -> error
+            | Ok () -> (
+                match Node_files.read_file target with
+                | Ok contents -> Ok (Some contents)
+                | Error message -> Error message)));
     write_registry =
       (fun ~owner_session_id ~contents ->
         if env_flag "TAUMEL_FAIL_NEXT_AGENT_REGISTRY_WRITE" then (
           Node_process.env_delete "TAUMEL_FAIL_NEXT_AGENT_REGISTRY_WRITE";
           Error "forced agent persistence failure")
         else
-          write_atomic ~owner_session_id ~path:(registry_path ~owner_session_id)
+          write_atomic ~owner_session_id
+            ~path:(registry_path ~owner_session_id)
             ~contents);
   }
 
 let active_backend : Store.registry_backend ref = ref filesystem_backend
+
 let memory_probe : Store.memory_backend option ref = ref None
 
 let use_filesystem_backend () =
@@ -132,12 +131,10 @@ let use_memory_backend () =
 let backend () = !active_backend
 
 let read_registry ~owner_session_id =
-  (!active_backend).read_registry ~owner_session_id
+  !active_backend.read_registry ~owner_session_id
 
 let write_registry ~owner_session_id state =
   Store.write_current_registry !active_backend ~owner_session_id state
 
 let memory_write_count () =
-  match !memory_probe with
-  | Some memory -> memory.write_count
-  | None -> -1
+  match !memory_probe with Some memory -> memory.write_count | None -> -1

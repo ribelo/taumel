@@ -1,4 +1,5 @@
 type status = Pending | In_progress | Completed | Cancelled
+
 type origin = User | Agent
 
 type t = {
@@ -58,6 +59,7 @@ let origin_of_string = function
   | _ -> None
 
 let unfinished (task : t) = task.status = Pending || task.status = In_progress
+
 let dependency_finished (task : t) =
   task.status = Completed || task.status = Cancelled
 
@@ -86,7 +88,8 @@ let validate_graph (tasks : t list) =
       match
         List.find_map
           (fun task ->
-            List.find_opt (fun dependency -> not (List.mem dependency ids))
+            List.find_opt
+              (fun dependency -> not (List.mem dependency ids))
               task.depends_on
             |> Option.map (fun dependency -> (task.task_id, dependency)))
           tasks
@@ -95,7 +98,7 @@ let validate_graph (tasks : t list) =
           Error
             (Printf.sprintf "plan task %s depends on unknown task: %s" task_id
                dependency)
-      | None ->
+      | None -> (
           let dependencies id =
             List.find_opt (fun task -> task.task_id = id) tasks
             |> Option.map (fun (task : t) -> task.depends_on)
@@ -104,8 +107,7 @@ let validate_graph (tasks : t list) =
           let rec reaches target visited id =
             if id = target then true
             else if List.mem id visited then false
-            else
-              List.exists (reaches target (id :: visited)) (dependencies id)
+            else List.exists (reaches target (id :: visited)) (dependencies id)
           in
           match
             List.find_opt
@@ -114,14 +116,13 @@ let validate_graph (tasks : t list) =
               tasks
           with
           | Some task ->
-              Error
-                ("plan task dependency cycle includes task: " ^ task.task_id)
-          | None -> Ok ())
+              Error ("plan task dependency cycle includes task: " ^ task.task_id)
+          | None -> Ok ()))
 
 let blocking_dependencies (tasks : t list) (task : t) =
   task.depends_on
   |> List.filter_map (fun id ->
-         List.find_opt (fun candidate -> candidate.task_id = id) tasks)
+      List.find_opt (fun candidate -> candidate.task_id = id) tasks)
   |> List.filter (fun dependency -> not (dependency_finished dependency))
 
 let blocker_to_json (task : t) =
@@ -133,7 +134,9 @@ let blocker_to_json (task : t) =
     ]
 
 let blockers_error blockers =
-  let payload = Shared.encode_json (Shared.Array (List.map blocker_to_json blockers)) in
+  let payload =
+    Shared.encode_json (Shared.Array (List.map blocker_to_json blockers))
+  in
   "cannot set plan task to in_progress while dependencies are unfinished: "
   ^ payload ^ "; complete or cancel the blocking tasks first"
 
@@ -162,7 +165,8 @@ let continuation_to_json (tasks : t list) (task : t) =
 
 let unfinished_json tasks =
   tasks |> List.filter unfinished |> List.map (continuation_to_json tasks)
-  |> fun values -> Shared.encode_json (Shared.Array values)
+  |> fun values ->
+  Shared.encode_json (Shared.Array values)
   |> String.split_on_char '<' |> String.concat "\\u003c"
   |> String.split_on_char '>' |> String.concat "\\u003e"
 
@@ -173,8 +177,7 @@ let string_list_field path fields name =
         | [] -> Ok (List.rev acc)
         | Shared.String value :: rest -> loop (index + 1) (value :: acc) rest
         | _ ->
-            Error
-              (Printf.sprintf "%s.%s[%d] must be a string" path name index)
+            Error (Printf.sprintf "%s.%s[%d] must be a string" path name index)
       in
       loop 0 [] values
   | _ -> Error (path ^ "." ^ name ^ " must be an array")
@@ -216,7 +219,8 @@ let of_json index = function
         | None -> Error ("unknown plan task origin: " ^ origin_name)
       in
       let* () =
-        if String.trim task_id = "" then Error (path ^ ".taskId must not be empty")
+        if String.trim task_id = "" then
+          Error (path ^ ".taskId must not be empty")
         else if title <> String.trim title then
           Error (path ^ ".title must not have surrounding whitespace")
         else Result.map (fun _ -> ()) (normalize_title title)

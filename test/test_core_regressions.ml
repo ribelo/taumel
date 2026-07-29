@@ -32,15 +32,18 @@ let expect_ok_any label = function
   | Ok value -> value
   | Error _ -> fail label "unexpected error"
 
-let sandbox ?(workspace_roots = [ "/repo" ])
-    ?network_mode ?(approval_policy = Sandbox.Never)
-    filesystem_mode =
+let sandbox ?(workspace_roots = [ "/repo" ]) ?network_mode
+    ?(approval_policy = Sandbox.Never) filesystem_mode =
   let network_mode =
     Option.value network_mode
-      ~default:(if filesystem_mode = Sandbox.Danger_full_access then Sandbox.Network_enabled else Sandbox.Network_disabled)
+      ~default:
+        (if filesystem_mode = Sandbox.Danger_full_access then
+           Sandbox.Network_enabled
+         else Sandbox.Network_disabled)
   in
   Sandbox.validated_config ~filesystem_mode ~workspace_roots ~network_mode
-    ~approval_policy ~no_sandbox:false ~isolated_child:false |> Result.get_ok
+    ~approval_policy ~no_sandbox:false ~isolated_child:false
+  |> Result.get_ok
 
 let expect_error label = function
   | Ok _ -> fail label "expected an error"
@@ -50,10 +53,9 @@ let test_shared_pinq_json_integer_helpers_reject_fractional_values () =
   expect_error "lossy JSON integer literal is rejected"
     (Shared.decode_json_string "{\"count\":9007199254740993}");
   expect_error "out-of-range OCaml integer literal is rejected"
-    (Result.bind (Shared.decode_json_string "{\"count\":2147483648}")
-       (function
-         | Shared.Object fields -> Shared.json_required_int "state" fields "count"
-         | _ -> Error "expected object"));
+    (Result.bind (Shared.decode_json_string "{\"count\":2147483648}") (function
+      | Shared.Object fields -> Shared.json_required_int "state" fields "count"
+      | _ -> Error "expected object"));
   assert_bool "optional integer field rejects fractional number"
     (Shared.json_int_field "count"
        (Shared.Object [ ("count", Shared.Number 1.5) ])
@@ -61,7 +63,8 @@ let test_shared_pinq_json_integer_helpers_reject_fractional_values () =
   expect_error "required integer rejects fractional number"
     (Shared.json_required_int "state" [ ("count", Shared.Number 1.5) ] "count");
   expect_error "defaulted integer rejects fractional number"
-    (Shared.json_int_default "state" [ ("count", Shared.Number (-0.5)) ]
+    (Shared.json_int_default "state"
+       [ ("count", Shared.Number (-0.5)) ]
        "count" 0)
 
 let ralph_state ?(version = Shared.Number 1.) ?(iteration = Shared.Number 0.)
@@ -102,10 +105,12 @@ let test_ralph_zn6r_codec_reconstructs_version_and_iteration_invariants () =
     (Ralph.codec.decode (ralph_state ~max_iterations:(Shared.Number 0.) ()));
   let unknown =
     match ralph_state () with
-    | Shared.Object fields -> Shared.Object (("unknown", Shared.Bool true) :: fields)
+    | Shared.Object fields ->
+        Shared.Object (("unknown", Shared.Bool true) :: fields)
     | _ -> failwith "expected Ralph state"
   in
-  expect_error "Ralph rejects unknown persisted fields" (Ralph.codec.decode unknown)
+  expect_error "Ralph rejects unknown persisted fields"
+    (Ralph.codec.decode unknown)
 
 let test_vis_c2wn_codec_rejects_unsupported_version () =
   expect_error "visibility rejects unsupported version"
@@ -193,7 +198,8 @@ let test_component_codecs () =
     (Capability.allow_tool decoded_profile "usage");
   let permissions_state =
     expect_ok "permissions create for codec"
-      (Permissions.create ~network_mode:Sandbox.Network_enabled ~no_sandbox:true profile)
+      (Permissions.create ~network_mode:Sandbox.Network_enabled ~no_sandbox:true
+         profile)
   in
   let permissions_state =
     expect_ok "permissions codec"
@@ -203,7 +209,8 @@ let test_component_codecs () =
     (permissions_state.profile.approval_policy = Capability.Never);
   assert_bool "permissions network round trip"
     (permissions_state.sandbox.network_mode = Sandbox.Network_enabled);
-  assert_bool "permissions no-sandbox round trip" permissions_state.sandbox.no_sandbox;
+  assert_bool "permissions no-sandbox round trip"
+    permissions_state.sandbox.no_sandbox;
   let restrictive_permissions =
     expect_ok "restrictive permissions create for codec"
       (Permissions.create ~network_mode:Sandbox.Network_enabled
@@ -227,7 +234,8 @@ let test_component_codecs () =
         match List.assoc_opt "profile" fields with
         | Some (Shared.Object profile_fields) ->
             Shared.Object
-              (("profile", Shared.Object (List.remove_assoc field profile_fields))
+              (( "profile",
+                 Shared.Object (List.remove_assoc field profile_fields) )
               :: List.remove_assoc "profile" fields)
         | _ -> fail "permissions codec" "expected profile object")
     | _ -> fail "permissions codec" "expected object payload"
@@ -268,8 +276,7 @@ let test_component_codecs () =
   List.iter
     (fun version ->
       expect_error "permissions codec rejects non-v1 version"
-        (Permissions.codec.decode
-           (replace_permissions_field "version" version)))
+        (Permissions.codec.decode (replace_permissions_field "version" version)))
     [ Shared.Number 1.5; Shared.Number 2.; Shared.String "1" ];
   let contradictory_permissions =
     match permissions_json with
@@ -282,7 +289,8 @@ let test_component_codecs () =
                    Shared.Object
                      (("sandboxPreset", Shared.String "danger-full-access")
                      :: List.remove_assoc "sandboxPreset" profile_fields) )
-              :: (fields |> List.remove_assoc "networkMode"
+              :: (fields
+                 |> List.remove_assoc "networkMode"
                  |> List.remove_assoc "profile"))
         | _ -> fail "permissions codec" "expected profile object")
     | _ -> fail "permissions codec" "expected object payload"
@@ -318,7 +326,8 @@ let test_component_codecs () =
     (Permissions.codec.decode
        (prepend_profile_field "tools"
           (Shared.Object [ ("kind", Shared.String "none") ])));
-  expect_error "profile-kbtx permissions codec rejects extraneous allowlist field"
+  expect_error
+    "profile-kbtx permissions codec rejects extraneous allowlist field"
     (Permissions.codec.decode
        (replace_profile_field "tools"
           (Shared.Object
@@ -330,18 +339,17 @@ let test_component_codecs () =
     (Permissions.codec.decode
        (replace_profile_field "tools"
           (Shared.Object
-             [
-               ("kind", Shared.String "none");
-               ("kind", Shared.String "all");
-             ])));
+             [ ("kind", Shared.String "none"); ("kind", Shared.String "all") ])));
   List.iter
     (fun field ->
-      expect_error ("permissions codec rejects missing field " ^ field)
+      expect_error
+        ("permissions codec rejects missing field " ^ field)
         (Permissions.codec.decode (remove_permissions_field field)))
     [ "version"; "profile"; "networkMode"; "noSandbox"; "isolated_child" ];
   List.iter
     (fun field ->
-      expect_error ("permissions codec rejects missing profile field " ^ field)
+      expect_error
+        ("permissions codec rejects missing profile field " ^ field)
         (Permissions.codec.decode (remove_profile_field field)))
     [
       "modelId";
@@ -359,7 +367,8 @@ let test_component_codecs () =
     expect_ok "child permissions codec"
       (Permissions.codec.decode (Permissions.codec.encode child_permissions))
   in
-  assert_bool "permissions isolated_child round trip" child_permissions.sandbox.isolated_child;
+  assert_bool "permissions isolated_child round trip"
+    child_permissions.sandbox.isolated_child;
   let plan =
     expect_ok "plan codec create"
       (Plan.add_user_task ~time_limit_seconds:42 ~session_id:"thread" ~now:10
@@ -385,8 +394,7 @@ let test_component_codecs () =
       (Ralph.attach_child (Ralph.Controller "controller") "child" task)
   in
   let decoded_tasks =
-    expect_ok "ralph codec"
-      (Ralph.codec.decode (Ralph.codec.encode [ task ]))
+    expect_ok "ralph codec" (Ralph.codec.decode (Ralph.codec.encode [ task ]))
   in
   assert_int "ralph task count round trip" 1 (List.length decoded_tasks);
   assert_equal "ralph child round trip" "child"
@@ -404,9 +412,9 @@ let test_read_only_allows_execution () =
   assert_bool "read-only allows execute effect"
     (Sandbox.authorize_effect read_only_config Gateway.Execute = Ok ());
   (* Mutate must still be denied in read-only mode (filesystem mutation). *)
-  (match Sandbox.authorize_effect read_only_config Gateway.Mutate with
+  match Sandbox.authorize_effect read_only_config Gateway.Mutate with
   | Error _ -> ()
-  | Ok _ -> fail "read-only mutate" "expected mutation denied in read-only")
+  | Ok _ -> fail "read-only mutate" "expected mutation denied in read-only"
 
 let test_sandbox_patch_metadata_protection () =
   (* apply_patch must deny writes to protected workspace metadata dirs. *)
@@ -455,7 +463,8 @@ let test_sandbox_patch_metadata_protection () =
   in
   let files =
     expect_ok "normal workspace file allowed"
-      (Sandbox.apply_patch_to_map sandbox_config Shared.String_map.empty normal_patch)
+      (Sandbox.apply_patch_to_map sandbox_config Shared.String_map.empty
+         normal_patch)
   in
   assert_bool "normal file written"
     (Shared.String_map.mem "/repo/src/main.ml" files)
@@ -486,22 +495,23 @@ let test_sandbox_resolved_workspace_mutation_paths () =
   | Error message ->
       fail "resolved workspace escape" ("unexpected error: " ^ message)
   | Ok _ -> fail "resolved workspace escape" "expected escape denial");
-  (match
-     Sandbox.validate_resolved_workspace_mutation_paths
-       ~workspace_roots:[ "/repo" ]
-       [
-         {
-           Sandbox.requested_path = "/repo/gitlink/config";
-           resolved_path = "/repo/.git/config";
-         };
-       ]
-   with
+  match
+    Sandbox.validate_resolved_workspace_mutation_paths
+      ~workspace_roots:[ "/repo" ]
+      [
+        {
+          Sandbox.requested_path = "/repo/gitlink/config";
+          resolved_path = "/repo/.git/config";
+        };
+      ]
+  with
   | Error
-      "Sandbox: path is inside protected workspace metadata: /repo/gitlink/config" ->
+      "Sandbox: path is inside protected workspace metadata: \
+       /repo/gitlink/config" ->
       ()
   | Error message ->
       fail "resolved metadata path" ("unexpected error: " ^ message)
-  | Ok _ -> fail "resolved metadata path" "expected metadata denial")
+  | Ok _ -> fail "resolved metadata path" "expected metadata denial"
 
 let test_sandbox_patch_relative_paths () =
   (* Relative Codex patch paths must resolve against the workspace root. *)
@@ -535,7 +545,10 @@ let test_sandbox_patch_relative_paths () =
         "*** End Patch";
       ]
   in
-  let files = expect_ok "relative path update" (Sandbox.apply_patch_to_map sandbox_config files update) in
+  let files =
+    expect_ok "relative path update"
+      (Sandbox.apply_patch_to_map sandbox_config files update)
+  in
   assert_equal "relative path updated" "updated content\n"
     (Shared.String_map.find "src/relative.txt" files)
 
@@ -544,10 +557,11 @@ let test_sandbox_patch_tolerant_tau_cases () =
     Shared.String_map.empty
     |> Shared.String_map.add "src/app.ts" "alpha  \nDon't wait…\nomega\n"
     |> Shared.String_map.add "src/old.ts" "before\n"
-	    |> Shared.String_map.add "obsolete.txt" "delete me\n"
-	    |> Shared.String_map.add "crlf.txt" "old\r\n"
-	    |> Shared.String_map.add "eof.txt" "start\nmarker\nend\nmiddle\nmarker\nend\n"
-	    |> Shared.String_map.add "blank.txt" "one\ntwo\n"
+    |> Shared.String_map.add "obsolete.txt" "delete me\n"
+    |> Shared.String_map.add "crlf.txt" "old\r\n"
+    |> Shared.String_map.add "eof.txt"
+         "start\nmarker\nend\nmiddle\nmarker\nend\n"
+    |> Shared.String_map.add "blank.txt" "one\ntwo\n"
   in
   let heredoc_missing_end =
     String.concat "\n"
@@ -607,11 +621,16 @@ let test_sandbox_patch_tolerant_tau_cases () =
         "+Hello world";
       ]
   in
-  let files = expect_ok "git diff add rename delete" (Sandbox.apply_patch_to_map sandbox_config files git_diff) in
-  assert_bool "a/b source removed" (not (Shared.String_map.mem "src/old.ts" files));
+  let files =
+    expect_ok "git diff add rename delete"
+      (Sandbox.apply_patch_to_map sandbox_config files git_diff)
+  in
+  assert_bool "a/b source removed"
+    (not (Shared.String_map.mem "src/old.ts" files));
   assert_equal "rename target normalized" "after\n"
     (Shared.String_map.find "src/new.ts" files);
-  assert_bool "dev null delete removed" (not (Shared.String_map.mem "obsolete.txt" files));
+  assert_bool "dev null delete removed"
+    (not (Shared.String_map.mem "obsolete.txt" files));
   assert_equal "dev null add normalized" "Hello world\n"
     (Shared.String_map.find "notes/hello.txt" files);
   let eof_patch =
@@ -628,46 +647,49 @@ let test_sandbox_patch_tolerant_tau_cases () =
         "*** End Patch";
       ]
   in
-  let files = expect_ok "end of file hunk" (Sandbox.apply_patch_to_map sandbox_config files eof_patch) in
+  let files =
+    expect_ok "end of file hunk"
+      (Sandbox.apply_patch_to_map sandbox_config files eof_patch)
+  in
   assert_equal "eof hunk matches from end"
     "start\nmarker\nend\nmiddle\nmarker-changed\nend\n"
     (Shared.String_map.find "eof.txt" files);
   let crlf_patch =
     String.concat "\n"
+      [ "--- a/crlf.txt"; "+++ b/crlf.txt"; "@@ -1 +1 @@"; "-old"; "+new" ]
+  in
+  let files =
+    expect_ok "unified diff and crlf preservation"
+      (Sandbox.apply_patch_to_map sandbox_config files crlf_patch)
+  in
+  assert_equal "crlf preserved" "new\r\n"
+    (Shared.String_map.find "crlf.txt" files);
+  let trailing_blank_patch =
+    String.concat "\n"
       [
-        "--- a/crlf.txt";
-        "+++ b/crlf.txt";
-        "@@ -1 +1 @@";
-        "-old";
-        "+new";
+        "*** Begin Patch";
+        "*** Update File: blank.txt";
+        "@@";
+        "-one";
+        "-two";
+        "-";
+        "+uno";
+        "+dos";
+        "+";
+        "*** End Patch";
       ]
   in
-	  let files = expect_ok "unified diff and crlf preservation" (Sandbox.apply_patch_to_map sandbox_config files crlf_patch) in
-	  assert_equal "crlf preserved" "new\r\n" (Shared.String_map.find "crlf.txt" files);
-	  let trailing_blank_patch =
-	    String.concat "\n"
-	      [
-	        "*** Begin Patch";
-	        "*** Update File: blank.txt";
-	        "@@";
-	        "-one";
-	        "-two";
-	        "-";
-	        "+uno";
-	        "+dos";
-	        "+";
-	        "*** End Patch";
-	      ]
-	  in
-	  let files =
-	    expect_ok "trailing blank-line mismatch fallback"
+  let files =
+    expect_ok "trailing blank-line mismatch fallback"
       (Sandbox.apply_patch_to_map sandbox_config files trailing_blank_patch)
   in
   assert_equal "trailing blank mismatch fallback" "uno\ndos\n"
     (Shared.String_map.find "blank.txt" files)
 
 let test_sandbox_edit_application () =
-  let edit old_text new_text : Sandbox.edit_replacement = { old_text; new_text } in
+  let edit old_text new_text : Sandbox.edit_replacement =
+    { old_text; new_text }
+  in
   let updated =
     expect_ok "edit preserves bom and crlf"
       (Sandbox.apply_edits ~display_path:"file.txt"
@@ -680,13 +702,17 @@ let test_sandbox_edit_application () =
     (Sandbox.apply_edits ~display_path:"dup.txt" "same\nsame\n"
        [ edit "same" "changed" ]);
   expect_error "edit no-op denied"
-    (Sandbox.apply_edits ~display_path:"noop.txt" "same\n" [ edit "same" "same" ])
+    (Sandbox.apply_edits ~display_path:"noop.txt" "same\n"
+       [ edit "same" "same" ])
 
 let test_gateway_wraps_legacy_mutation_tools () =
   (* bash still has no Taumel wrapper; edit/write are Taumel-owned mutation
      wrappers and therefore go through gateway sandbox authorization. *)
   let context =
-    { Gateway.profile = Capability.default; authorize_effect = (fun _ -> Ok ()) }
+    {
+      Gateway.profile = Capability.default;
+      authorize_effect = (fun _ -> Ok ());
+    }
   in
   (match Gateway.authorize Gateway.empty context ~name:"bash" with
   | Error (Gateway.Unknown_tool "bash") -> ()
@@ -701,9 +727,7 @@ let test_gateway_wraps_legacy_mutation_tools () =
       expect_ok_any ("gateway " ^ name)
         (Gateway.authorize registry context ~name))
     [ "edit"; "write" ];
-  let read_only =
-    sandbox Sandbox.Read_only
-  in
+  let read_only = sandbox Sandbox.Read_only in
   let denied_context =
     {
       Gateway.profile = Capability.default;
@@ -714,7 +738,8 @@ let test_gateway_wraps_legacy_mutation_tools () =
     (fun name ->
       match Gateway.authorize registry denied_context ~name with
       | Error (Gateway.Denied_effect (Gateway.Mutate, _)) -> ()
-      | _ -> fail "legacy wrapper sandbox" ("expected mutation denial for " ^ name))
+      | _ ->
+          fail "legacy wrapper sandbox" ("expected mutation denial for " ^ name))
     [ "edit"; "write" ];
   (* Active-tools rewrite must replace raw bash and route mutation tools by provider. *)
   let sync =
@@ -727,7 +752,8 @@ let test_gateway_wraps_legacy_mutation_tools () =
   assert_bool "rewrite adds exec_command" (List.mem "exec_command" sync.tools);
   assert_bool "rewrite adds write_stdin" (List.mem "write_stdin" sync.tools);
   assert_bool "rewrite adds apply_patch" (List.mem "apply_patch" sync.tools);
-  assert_bool "rewrite preserves query_threads" (List.mem "query_threads" sync.tools);
+  assert_bool "rewrite preserves query_threads"
+    (List.mem "query_threads" sync.tools);
   assert_bool "rewrite changed" sync.changed
 
 let test_plan_turn_accounting () =
@@ -776,9 +802,10 @@ let test_plan_turn_accounting () =
     ]
   in
   let accounted =
-    Plan.account_turn_end ~session_id:"session" ~now:20
-      ~active_time_seconds:10 ~last_accounting_key:None
-      ~latest_usage:(Plan.latest_assistant_usage branch) (Some plan)
+    Plan.account_turn_end ~session_id:"session" ~now:20 ~active_time_seconds:10
+      ~last_accounting_key:None
+      ~latest_usage:(Plan.latest_assistant_usage branch)
+      (Some plan)
   in
   assert_bool "plan accounting changed" accounted.changed;
   let updated =
@@ -788,8 +815,7 @@ let test_plan_turn_accounting () =
   in
   assert_int "plan accounting token delta" 15 updated.tokens_used;
   assert_int "plan accounting time delta" 10 updated.time_used_seconds;
-  assert_bool "plan accounting time limit"
-    (updated.status = Plan.Time_limited);
+  assert_bool "plan accounting time limit" (updated.status = Plan.Time_limited);
   let pi_usage_plan =
     expect_ok "plan create pi usage"
       (Plan.add_user_task ~session_id:"thread" ~now:40 "ship pi usage" None)
@@ -816,8 +842,8 @@ let test_plan_turn_accounting () =
     ]
   in
   let pi_accounted =
-    Plan.account_turn_end ~session_id:"session" ~now:50
-      ~active_time_seconds:7 ~last_accounting_key:None
+    Plan.account_turn_end ~session_id:"session" ~now:50 ~active_time_seconds:7
+      ~last_accounting_key:None
       ~latest_usage:(Plan.latest_assistant_usage pi_usage_branch)
       (Some pi_usage_plan)
   in
@@ -827,14 +853,14 @@ let test_plan_turn_accounting () =
     | Some plan -> plan
     | None -> fail "pi-native plan accounting" "expected updated plan"
   in
-  assert_int "pi-native plan accounting token delta" 26
-    pi_updated.tokens_used;
+  assert_int "pi-native plan accounting token delta" 26 pi_updated.tokens_used;
   assert_int "pi-native plan accounting time delta" 7
     pi_updated.time_used_seconds;
   let repeated =
-    Plan.account_turn_end ~session_id:"session" ~now:30
-      ~active_time_seconds:10 ~last_accounting_key:accounted.accounting_key
-      ~latest_usage:(Plan.latest_assistant_usage branch) accounted.plan
+    Plan.account_turn_end ~session_id:"session" ~now:30 ~active_time_seconds:10
+      ~last_accounting_key:accounted.accounting_key
+      ~latest_usage:(Plan.latest_assistant_usage branch)
+      accounted.plan
   in
   assert_bool "plan accounting dedupes same turn" (not repeated.changed);
   let repeated_plan =
@@ -849,10 +875,8 @@ let test_permissions_active_resolution () =
   assert_bool "sandbox-md05 default profile approval never"
     (Capability.default.approval_policy = Capability.Never);
   let resolved =
-    Permissions.resolve_active
-      ~host_sandbox_preset:None ~host_network_mode:None ~host_no_sandbox:None
-      ~session_isolated_child:false
-      Permissions.Missing
+    Permissions.resolve_active ~host_sandbox_preset:None ~host_network_mode:None
+      ~host_no_sandbox:None ~session_isolated_child:false Permissions.Missing
   in
   assert_bool "missing permissions defaults to full access"
     (resolved.profile.sandbox_preset = Capability.Danger_full_access);
@@ -868,9 +892,8 @@ let test_permissions_active_resolution () =
     resolved.filesystem_mode;
   (* sandbox-md07: invalid persisted permissions fall back to workspace-write, network disabled, profile default approval never *)
   let invalid =
-    Permissions.resolve_active
-      ~host_sandbox_preset:None ~host_network_mode:None ~host_no_sandbox:None
-      ~session_isolated_child:false Permissions.Invalid
+    Permissions.resolve_active ~host_sandbox_preset:None ~host_network_mode:None
+      ~host_no_sandbox:None ~session_isolated_child:false Permissions.Invalid
   in
   assert_bool "sandbox-md07 invalid fallback uses workspace-write"
     (invalid.profile.sandbox_preset = Capability.Workspace_write);
@@ -881,7 +904,9 @@ let test_permissions_active_resolution () =
   assert_bool "sandbox-xg3g invalid persisted permissions deny every tool"
     (not (Capability.allow_tool invalid.profile "exec_command"));
   let refresh_profile =
-    Capability.resolve ~tools:(Capability.of_list [ "exec_command" ]) Capability.default
+    Capability.resolve
+      ~tools:(Capability.of_list [ "exec_command" ])
+      Capability.default
   in
   let parent_permissions =
     expect_ok "parent permissions for child refresh"
@@ -909,7 +934,8 @@ let test_permissions_active_resolution () =
     expect_ok "refreshed child permissions decode"
       (Permissions.codec.decode refreshed_permissions)
   in
-  assert_bool "sandbox-co3e invalid parent keeps refreshed child network disabled"
+  assert_bool
+    "sandbox-co3e invalid parent keeps refreshed child network disabled"
     (refreshed_permissions.sandbox.network_mode = Sandbox.Network_disabled);
   let host_clamped_permissions =
     Child_session.refresh_permissions_entry
@@ -940,7 +966,7 @@ let test_permissions_active_resolution () =
           "exec_command"));
   assert_bool "malformed child ceiling disables network"
     (fail_closed_child_permissions.sandbox.network_mode
-    = Sandbox.Network_disabled);
+   = Sandbox.Network_disabled);
   assert_bool "malformed child ceiling preserves isolation"
     fail_closed_child_permissions.sandbox.isolated_child;
   let metadata_without_network kind =
@@ -958,16 +984,19 @@ let test_permissions_active_resolution () =
     |> Permissions.codec.decode
     |> expect_ok "variant-aware refreshed child permissions decode"
   in
-  let agent_without_network = decode_refreshed (metadata_without_network "agent") in
+  let agent_without_network =
+    decode_refreshed (metadata_without_network "agent")
+  in
   assert_bool "sandbox-tusv agent missing network ceiling denies every tool"
     (not (Capability.allow_tool agent_without_network.profile "exec_command"));
-  let ralph_without_network = decode_refreshed (metadata_without_network "ralph") in
+  let ralph_without_network =
+    decode_refreshed (metadata_without_network "ralph")
+  in
   assert_bool "ralph may omit disabled network ceiling"
     (Capability.allow_tool ralph_without_network.profile "exec_command"
     && ralph_without_network.sandbox.network_mode = Sandbox.Network_disabled);
   let flagged =
-    Permissions.resolve_active
-      ~host_sandbox_preset:(Some Capability.Read_only)
+    Permissions.resolve_active ~host_sandbox_preset:(Some Capability.Read_only)
       ~host_network_mode:(Some Sandbox.Network_enabled)
       ~host_no_sandbox:(Some true) ~session_isolated_child:false
       Permissions.Missing
@@ -986,15 +1015,14 @@ let test_permissions_active_resolution () =
   in
   let persisted =
     expect_ok "persisted permissions"
-      (Permissions.create ~network_mode:Sandbox.Network_disabled ~no_sandbox:true
-         persisted_profile)
+      (Permissions.create ~network_mode:Sandbox.Network_disabled
+         ~no_sandbox:true persisted_profile)
   in
   let overridden =
     Permissions.resolve_active
       ~host_sandbox_preset:(Some Capability.Danger_full_access)
       ~host_network_mode:None ~host_no_sandbox:(Some false)
-      ~session_isolated_child:false
-      (Permissions.Persisted persisted)
+      ~session_isolated_child:false (Permissions.Persisted persisted)
   in
   assert_bool "flags override persisted sandbox"
     (overridden.profile.sandbox_preset = Capability.Danger_full_access);
@@ -1002,8 +1030,7 @@ let test_permissions_active_resolution () =
     (overridden.profile.approval_policy = Capability.On_failure);
   assert_bool "full access flag forces network"
     (overridden.network_mode = Sandbox.Network_enabled);
-  assert_bool "no-sandbox flag overrides persisted"
-    (not overridden.no_sandbox);
+  assert_bool "no-sandbox flag overrides persisted" (not overridden.no_sandbox);
   let child =
     Permissions.resolve_active ~host_sandbox_preset:None ~host_network_mode:None
       ~host_no_sandbox:None ~session_isolated_child:true
@@ -1019,8 +1046,7 @@ let test_permissions_active_resolution () =
 let test_plan_command_planning () =
   let created =
     expect_ok "plan command create"
-      (Plan.apply_command ~session_id:"thread" ~now:10 "ship the thing"
-         None)
+      (Plan.apply_command ~session_id:"thread" ~now:10 "ship the thing" None)
   in
   assert_bool "plan command submits user text"
     (created.submit_user_message = Some "ship the thing");
@@ -1043,7 +1069,8 @@ let test_plan_command_planning () =
     expect_ok "complete remains task text"
       (Plan.apply_command ~session_id:"thread" ~now:12 "complete" shown.plan)
   in
-  assert_int "plan command appends" 2 (List.length (Option.get appended.plan).tasks)
+  assert_int "plan command appends" 2
+    (List.length (Option.get appended.plan).tasks)
 
 let test_plan_continuation_planning () =
   let plan =
@@ -1074,13 +1101,12 @@ let test_plan_continuation_planning () =
   | Plan.No_continuation ->
       fail "plan continuation" "expected active continuation");
   let blocked =
-    expect_ok "block plan"
-      (Plan.update_plan ~now:11 Plan.Blocked (Some plan))
+    expect_ok "block plan" (Plan.update_plan ~now:11 Plan.Blocked (Some plan))
   in
-  (match Plan.plan_continuation ~initial:false (facts blocked) with
+  match Plan.plan_continuation ~initial:false (facts blocked) with
   | Plan.No_continuation -> ()
   | Plan.Send_continuation _ ->
-      fail "plan continuation complete" "expected no continuation")
+      fail "plan continuation complete" "expected no continuation"
 
 let ralph_child_session id = "child-" ^ id
 
@@ -1093,12 +1119,12 @@ let test_ralph_command_planning () =
   in
   assert_bool "ralph command start changed" started.changed;
   assert_equal "ralph command start message"
-    "Started ralph-42 [running] child=child-ralph-42 iteration=0 max=2 reflect=1 objective=build the thing"
+    "Started ralph-42 [running] child=child-ralph-42 iteration=0 max=2 \
+     reflect=1 objective=build the thing"
     started.message;
   (match started.start_details with
   | Some details ->
-      assert_equal "ralph command start details task" "ralph-42"
-        details.task_id;
+      assert_equal "ralph command start details task" "ralph-42" details.task_id;
       assert_equal "ralph command start details child" "child-ralph-42"
         details.child_session_id;
       assert_bool "ralph command start details prompt"
@@ -1113,7 +1139,8 @@ let test_ralph_command_planning () =
   in
   assert_bool "ralph command pause changed" paused.changed;
   assert_equal "ralph command pause message"
-    "ralph-42 [paused] child=child-ralph-42 iteration=0 max=2 reflect=1 objective=build the thing"
+    "ralph-42 [paused] child=child-ralph-42 iteration=0 max=2 reflect=1 \
+     objective=build the thing"
     paused.message;
   let archived =
     expect_ok "ralph command archive"
@@ -1130,16 +1157,14 @@ let test_ralph_command_planning () =
   assert_bool "ralph command list unchanged" (not listed.changed);
   assert_equal "ralph command list hides archived" "No Ralph tasks."
     listed.message;
-  (match
-     Ralph.apply_command ~now:46 ~controller_session:"controller"
-       ~child_session_for_id:ralph_child_session
-       ~start_denied:(Some "agent denied") [] "start blocked"
-   with
+  match
+    Ralph.apply_command ~now:46 ~controller_session:"controller"
+      ~child_session_for_id:ralph_child_session
+      ~start_denied:(Some "agent denied") [] "start blocked"
+  with
   | Error "agent denied" -> ()
-  | Error message ->
-      fail "ralph command denied" ("unexpected error: " ^ message)
-  | Ok _ -> fail "ralph command denied" "expected error")
-
+  | Error message -> fail "ralph command denied" ("unexpected error: " ^ message)
+  | Ok _ -> fail "ralph command denied" "expected error"
 
 let test_authorization_path_symlink_equivalence () =
   with_temp_dir "symlink" (fun root ->
@@ -1174,7 +1199,9 @@ let test_authorization_path_symlink_equivalence () =
       in
       let auth_roots = [ Unix.realpath allowed ] in
       let auth path = Unix.realpath path in
-      let missing_auth = Filename.concat (Unix.realpath allowed) "created-through-link.txt" in
+      let missing_auth =
+        Filename.concat (Unix.realpath allowed) "created-through-link.txt"
+      in
       assert_decision "direct write allowed" Sandbox.Allow
         (Sandbox.authorize_mutation_path ~auth_path:(auth inside_file)
            ~auth_roots never Sandbox.Write inside_file);
@@ -1182,13 +1209,12 @@ let test_authorization_path_symlink_equivalence () =
         (Sandbox.authorize_mutation_path ~auth_path:(auth through_link)
            ~auth_roots never Sandbox.Write through_link);
       assert_decision "missing under symlink allowed" Sandbox.Allow
-        (Sandbox.authorize_mutation_path ~auth_path:missing_auth ~auth_roots never
-           Sandbox.Write missing_through_link);
+        (Sandbox.authorize_mutation_path ~auth_path:missing_auth ~auth_roots
+           never Sandbox.Write missing_through_link);
       assert_decision "symlink workdir readable" Sandbox.Allow
         (Sandbox.authorize_path ~auth_path:(auth alias) ~auth_roots never
            Sandbox.Read alias);
-      assert_decision_kind "escape symlink denied under never"
-        (Sandbox.Deny "")
+      assert_decision_kind "escape symlink denied under never" (Sandbox.Deny "")
         (Sandbox.authorize_mutation_path ~auth_path:(auth escape_link)
            ~auth_roots never Sandbox.Write escape_link);
       assert_decision_kind "escape symlink requires approval"
@@ -1202,7 +1228,8 @@ let test_authorization_path_symlink_equivalence () =
         Sandbox.resolve_mutation_path ~auth_path:(auth through_link) never
           through_link
       in
-      assert_equal "mutation path follows symlink" (Unix.realpath inside_file)
+      assert_equal "mutation path follows symlink"
+        (Unix.realpath inside_file)
         resolved;
       let patch =
         String.concat "\n"
@@ -1248,4 +1275,4 @@ let () =
   test_permissions_active_resolution ();
   test_plan_command_planning ();
   test_plan_continuation_planning ();
-  test_ralph_command_planning ();
+  test_ralph_command_planning ()

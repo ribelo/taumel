@@ -16,27 +16,34 @@ let prepare_query params =
       in
       match
         Taumel.Thread_tools.prepare_query_request
-          ?limit:(Option.map int_of_float (Tool_contracts.QueryThreadsParams.get_limit params))
+          ?limit:
+            (Option.map int_of_float
+               (Tool_contracts.QueryThreadsParams.get_limit params))
           ?scope
-          ~include_tools:(Option.value (Tool_contracts.QueryThreadsParams.get_includeTools params) ~default:true)
+          ~include_tools:
+            (Option.value
+               (Tool_contracts.QueryThreadsParams.get_includeTools params)
+               ~default:true)
           (Tool_contracts.QueryThreadsParams.get_query params)
       with
       | Error message -> error_obj message
       | Ok request ->
           Boundary_contracts.PreparedThreadQuery.create ~query:request.query
             ~limit:(float_of_int request.limit)
-      ~scope:(Boundary_contracts.PreparedThreadQuery.scope_to_contract
-                (match request.scope with
-                | "all" -> `V_all
-                | "current_workspace" -> `V_current_workspace
-                | value -> invalid_arg ("invalid query_threads scope: " ^ value)))
+            ~scope:
+              (Boundary_contracts.PreparedThreadQuery.scope_to_contract
+                 (match request.scope with
+                 | "all" -> `V_all
+                 | "current_workspace" -> `V_current_workspace
+                 | value -> invalid_arg ("invalid query_threads scope: " ^ value)))
             ~includeTools:request.include_tools ()
           |> Tool_contracts.PreparedThreadQuery.t_to_js |> inject)
 
 let read_input_from_params params : Taumel.Thread_tools.read_request_input =
   let raw_params = params in
   let params =
-    decode_ojs_contract Tool_contracts.ReadThreadParams.t_of_js (ojs_of_js params)
+    decode_ojs_contract Tool_contracts.ReadThreadParams.t_of_js
+      (ojs_of_js params)
   in
   let locator =
     match optional_field raw_params "locator" with
@@ -55,22 +62,30 @@ let read_input_from_params params : Taumel.Thread_tools.read_request_input =
   in
   {
     thread_id = Tool_contracts.ReadThreadParams.get_threadID params;
-    locator_thread_id = Option.map Tool_contracts.ThreadLocator.get_threadID locator;
+    locator_thread_id =
+      Option.map Tool_contracts.ThreadLocator.get_threadID locator;
     locator_source_path =
       Option.bind locator Tool_contracts.ThreadLocator.get_sourcePath;
     locator_entry_id =
       Option.bind locator Tool_contracts.ThreadLocator.get_entryID;
-    locator_line = Option.bind locator (fun value -> Option.map int_of_float (Tool_contracts.ThreadLocator.get_line value));
+    locator_line =
+      Option.bind locator (fun value ->
+          Option.map int_of_float (Tool_contracts.ThreadLocator.get_line value));
     entry_id = Tool_contracts.ReadThreadParams.get_entryID params;
-    line = Option.map int_of_float (Tool_contracts.ReadThreadParams.get_line params);
+    line =
+      Option.map int_of_float (Tool_contracts.ReadThreadParams.get_line params);
     mode;
-    around = Option.map int_of_float (Tool_contracts.ReadThreadParams.get_around params);
+    around =
+      Option.map int_of_float
+        (Tool_contracts.ReadThreadParams.get_around params);
     cursor = Tool_contracts.ReadThreadParams.get_cursor params;
   }
 
 let prepare_read params =
   with_gateway_authorized "read_thread" (fun _ ->
-      match Taumel.Thread_tools.prepare_read_request (read_input_from_params params) with
+      match
+        Taumel.Thread_tools.prepare_read_request (read_input_from_params params)
+      with
       | Error message -> error_obj message
       | Ok request ->
           let locator =
@@ -82,35 +97,44 @@ let prepare_read params =
                      ~threadID:locator.locator_thread_id
                      ?sourcePath:locator.locator_source_path
                      ?entryID:locator.locator_entry_id
-                     ?line:(Option.map float_of_int locator.locator_line) ())
+                     ?line:(Option.map float_of_int locator.locator_line)
+                     ())
           in
           Boundary_contracts.PreparedThreadRead.create
             ~threadID:request.thread_id
-            ~mode:(Boundary_contracts.PreparedThreadRead.mode_to_contract
-                     (match request.mode with
-                     | Taumel.Thread_tools.Overview -> `V_overview
-                     | Taumel.Thread_tools.Window -> `V_window
-                     | Taumel.Thread_tools.Full -> `V_full))
+            ~mode:
+              (Boundary_contracts.PreparedThreadRead.mode_to_contract
+                 (match request.mode with
+                 | Taumel.Thread_tools.Overview -> `V_overview
+                 | Taumel.Thread_tools.Window -> `V_window
+                 | Taumel.Thread_tools.Full -> `V_full))
             ~around:(float_of_int request.around)
-            ?entryID:request.entry_id ?line:(Option.map float_of_int request.line)
+            ?entryID:request.entry_id
+            ?line:(Option.map float_of_int request.line)
             ?cursor:request.cursor ?locator ()
           |> Tool_contracts.PreparedThreadRead.t_to_js |> inject)
 
 let js_catalog_scan (scan : Taumel.Thread_tools.catalog_scan) =
   Tool_contracts.ThreadCatalogScan.create ~root:scan.root
-    ~maxDepth:(float_of_int scan.max_depth) ~maxFiles:(float_of_int scan.max_files)
+    ~maxDepth:(float_of_int scan.max_depth)
+    ~maxFiles:(float_of_int scan.max_files)
     ~suffix:scan.suffix ()
 
 let plan_catalog_scans facts =
-  let facts = decode_ojs_contract Tool_contracts.ThreadCatalogFacts.t_of_js (ojs_of_js facts) in
+  let facts =
+    decode_ojs_contract Tool_contracts.ThreadCatalogFacts.t_of_js
+      (ojs_of_js facts)
+  in
   let override =
-    Option.bind (Tool_contracts.ThreadCatalogFacts.get_override facts)
+    Option.bind
+      (Tool_contracts.ThreadCatalogFacts.get_override facts)
       Taumel.Shared.trim_non_empty
   in
   let scans =
     Taumel.Thread_tools.catalog_scans ?override
       ~cwd:(Tool_contracts.ThreadCatalogFacts.get_cwd facts)
-      ~home:(Tool_contracts.ThreadCatalogFacts.get_home facts) ()
+      ~home:(Tool_contracts.ThreadCatalogFacts.get_home facts)
+      ()
     |> List.map js_catalog_scan
   in
   let result = Tool_contracts.ThreadCatalogScansResult.create ~scans () in
@@ -119,14 +143,16 @@ let plan_catalog_scans facts =
 let catalog_from_js catalog =
   array_items catalog
   |> List.map (fun item ->
-         match json_from_js item with
-         | Ok json -> json
-         | Error message ->
-             Taumel.Shared.Object
-               [
-                 ("kind", Taumel.Shared.String "diagnostic");
-                 ("message", Taumel.Shared.String ("invalid thread source payload: " ^ message));
-               ])
+      match json_from_js item with
+      | Ok json -> json
+      | Error message ->
+          Taumel.Shared.Object
+            [
+              ("kind", Taumel.Shared.String "diagnostic");
+              ( "message",
+                Taumel.Shared.String
+                  ("invalid thread source payload: " ^ message) );
+            ])
   |> Taumel.Thread_tools.catalog_of_sources
 
 let js_option_string = function
@@ -200,7 +226,8 @@ let js_truncation fields =
 
 let run_query params catalog =
   let params =
-    decode_ojs_contract Tool_contracts.PreparedThreadQuery.t_of_js (ojs_of_js params)
+    decode_ojs_contract Tool_contracts.PreparedThreadQuery.t_of_js
+      (ojs_of_js params)
   in
   let scope =
     match Boundary_contracts.PreparedThreadQuery.get_scope params with
@@ -209,8 +236,11 @@ let run_query params catalog =
   in
   match
     Taumel.Thread_tools.prepare_query_request
-      ~limit:(int_of_float (Tool_contracts.PreparedThreadQuery.get_limit params))
-      ~scope ~include_tools:(Tool_contracts.PreparedThreadQuery.get_includeTools params)
+      ~limit:
+        (int_of_float (Tool_contracts.PreparedThreadQuery.get_limit params))
+      ~scope
+      ~include_tools:
+        (Tool_contracts.PreparedThreadQuery.get_includeTools params)
       (Tool_contracts.PreparedThreadQuery.get_query params)
   with
   | Error message -> error_obj message
@@ -230,12 +260,14 @@ let run_query params catalog =
           |]
       in
       Boundary_contracts.BridgeToolResult.create ~text:plan.text
-        ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details)) ()
+        ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details))
+        ()
       |> Tool_contracts.BridgeToolResult.t_to_js |> inject
 
 let run_read params catalog =
   let params =
-    decode_ojs_contract Tool_contracts.PreparedThreadRead.t_of_js (ojs_of_js params)
+    decode_ojs_contract Tool_contracts.PreparedThreadRead.t_of_js
+      (ojs_of_js params)
   in
   let locator = Tool_contracts.PreparedThreadRead.get_locator params in
   let input : Taumel.Thread_tools.read_request_input =
@@ -252,12 +284,18 @@ let run_read params catalog =
             Option.map int_of_float
               (Tool_contracts.PreparedThreadLocator.get_line value));
       entry_id = Tool_contracts.PreparedThreadRead.get_entryID params;
-      line = Option.map int_of_float (Tool_contracts.PreparedThreadRead.get_line params);
+      line =
+        Option.map int_of_float
+          (Tool_contracts.PreparedThreadRead.get_line params);
       mode =
         Some
           (match Boundary_contracts.PreparedThreadRead.get_mode params with
-          | `V_overview -> "overview" | `V_window -> "window" | `V_full -> "full");
-      around = Some (int_of_float (Tool_contracts.PreparedThreadRead.get_around params));
+          | `V_overview -> "overview"
+          | `V_window -> "window"
+          | `V_full -> "full");
+      around =
+        Some
+          (int_of_float (Tool_contracts.PreparedThreadRead.get_around params));
       cursor = Tool_contracts.PreparedThreadRead.get_cursor params;
     }
   in
@@ -286,15 +324,28 @@ let run_read params catalog =
           |]
       in
       Boundary_contracts.BridgeToolResult.create ~text:plan.text
-        ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details)) ()
+        ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details))
+        ()
       |> Tool_contracts.BridgeToolResult.t_to_js |> inject
 
 let run raw_facts =
-  let facts = decode_ojs_contract Tool_contracts.ThreadToolFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts =
+    decode_ojs_contract Tool_contracts.ThreadToolFacts.t_of_js
+      (ojs_of_js raw_facts)
+  in
   let name = Boundary_contracts.ThreadToolFacts.get_name facts in
-  let params = Tool_contracts.ThreadToolFacts.get_params facts |> Ts2ocaml.unknown_to_js |> js_of_ojs in
-  let catalog = Tool_contracts.ThreadToolFacts.get_catalog facts |> Ts2ocaml.unknown_to_js |> js_of_ojs in
-  let ctx = Tool_contracts.ThreadToolFacts.get_ctx facts |> Ts2ocaml.unknown_to_js |> js_of_ojs in
+  let params =
+    Tool_contracts.ThreadToolFacts.get_params facts
+    |> Ts2ocaml.unknown_to_js |> js_of_ojs
+  in
+  let catalog =
+    Tool_contracts.ThreadToolFacts.get_catalog facts
+    |> Ts2ocaml.unknown_to_js |> js_of_ojs
+  in
+  let ctx =
+    Tool_contracts.ThreadToolFacts.get_ctx facts
+    |> Ts2ocaml.unknown_to_js |> js_of_ojs
+  in
   Session_sync.require_session_from_host ~scope:"thread tool run" ctx;
   let result =
     match name with

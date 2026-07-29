@@ -33,7 +33,8 @@ let json_non_negative_int_field name = function
   | Shared.Object fields -> (
       match List.assoc_opt name fields with
       | Some (Shared.Number value)
-        when Float.is_finite value && value >= 0. && value = Float.round value
+        when Float.is_finite value && value >= 0.
+             && value = Float.round value
              && value <= 2_147_483_647. ->
           Some (int_of_float value)
       | _ -> None)
@@ -74,16 +75,18 @@ let rec token_usage_of_json usage =
         with
         | Some _ as value -> value
         | None ->
-            if pi_input = None && pi_cache_read = None && pi_cache_write = None then
-              None
+            if pi_input = None && pi_cache_read = None && pi_cache_write = None
+            then None
             else
               Some
-                (option_int_default pi_input + option_int_default pi_cache_read
-               + option_int_default pi_cache_write)
+                (option_int_default pi_input
+                + option_int_default pi_cache_read
+                + option_int_default pi_cache_write)
       in
       let cached_input_tokens =
         match
-          first_json_int_field usage [ "cached_input_tokens"; "cachedInputTokens" ]
+          first_json_int_field usage
+            [ "cached_input_tokens"; "cachedInputTokens" ]
         with
         | Some _ as value -> value
         | None -> (
@@ -99,7 +102,8 @@ let rec token_usage_of_json usage =
             | None -> pi_cache_read
             | Some details -> (
                 match
-                  first_json_int_field details [ "cached_tokens"; "cachedTokens" ]
+                  first_json_int_field details
+                    [ "cached_tokens"; "cachedTokens" ]
                 with
                 | Some _ as value -> value
                 | None -> pi_cache_read))
@@ -114,8 +118,10 @@ let rec token_usage_of_json usage =
             "output";
           ]
       in
-      if input_tokens = None && cached_input_tokens = None && output_tokens = None then
-        None
+      if
+        input_tokens = None && cached_input_tokens = None
+        && output_tokens = None
+      then None
       else
         Some
           {
@@ -160,11 +166,7 @@ let start_turn_clock ~now_ms _clock =
 
 let pause_clock_start ~now_ms clock =
   if clock.pause_depth = 0 then
-    {
-      clock with
-      pause_depth = 1;
-      current_pause_started_at_ms = Some now_ms;
-    }
+    { clock with pause_depth = 1; current_pause_started_at_ms = Some now_ms }
   else { clock with pause_depth = clock.pause_depth + 1 }
 
 let pause_clock_end ~now_ms clock =
@@ -186,7 +188,8 @@ let pause_clock_end ~now_ms clock =
 
 let finalize_open_pause ~now_ms clock =
   let rec loop clock =
-    if clock.pause_depth <= 0 then clock else loop (pause_clock_end ~now_ms clock)
+    if clock.pause_depth <= 0 then clock
+    else loop (pause_clock_end ~now_ms clock)
   in
   loop clock
 

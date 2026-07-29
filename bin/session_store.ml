@@ -3,16 +3,15 @@ open Jsoo_bridge
 let session_id_from_ctx ctx =
   match optional_string_field ctx "taumelSessionId" with
   | Some value when String.trim value <> "" -> String.trim value
-  | _ ->
+  | _ -> (
       let session_manager = Unsafe.get ctx "sessionManager" in
-      (match function_field session_manager "getSessionId" with
+      match function_field session_manager "getSessionId" with
       | Some _ -> (
-        match
-          string_value
-            (Unsafe.meth_call session_manager "getSessionId" [||])
-        with
-        | Some value when String.trim value <> "" -> String.trim value
-        | _ -> "current")
+          match
+            string_value (Unsafe.meth_call session_manager "getSessionId" [||])
+          with
+          | Some value when String.trim value <> "" -> String.trim value
+          | _ -> "current")
       | _ -> "current")
 
 let session_file_from_ctx ctx =

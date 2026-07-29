@@ -122,9 +122,7 @@ let test_kimi_payload_normalization () =
                       ] );
                 ];
               Shared.Object
-                [
-                  ("detail", Shared.Object [ ("broken", Shared.String "x") ]);
-                ];
+                [ ("detail", Shared.Object [ ("broken", Shared.String "x") ]) ];
             ] );
         ( "totalQuota",
           Shared.Object
@@ -165,8 +163,7 @@ let test_kimi_payload_normalization () =
     Usage.kimi_payload_to_account ~fetched_at_ms:1_770_458_400_000.
       ~api_key_present:true payload
   in
-  assert_equal "kimi plan" "Advanced"
-    (Option.value account.plan ~default:"");
+  assert_equal "kimi plan" "Advanced" (Option.value account.plan ~default:"");
   assert_bool "kimi credits"
     (match account.credits_balance with
     | Some value -> abs_float (value -. 100.0) < 0.001
@@ -179,15 +176,17 @@ let test_kimi_payload_normalization () =
   assert_bool "has total quota" (List.mem "Total quota" labels);
   assert_bool "has monthly booster cap" (List.mem "Monthly booster cap" labels);
   assert_bool "omits malformed limit"
-    (not (List.exists (fun label -> String.starts_with ~prefix:"Limit #" label) labels));
+    (not
+       (List.exists
+          (fun label -> String.starts_with ~prefix:"Limit #" label)
+          labels));
   let total =
     List.find (fun row -> row.Usage.label = "Total quota") account.rate_limits
   in
   let plan =
     List.find (fun row -> row.Usage.label = "Plan limit") account.rate_limits
   in
-  assert_bool "weekly plan burn rate"
-    (Option.is_some plan.burn_rate_per_hour);
+  assert_bool "weekly plan burn rate" (Option.is_some plan.burn_rate_per_hour);
   assert_bool "total unknown duration" (total.duration_seconds = None);
   assert_bool "total percent"
     (match total.percent_left with Some 60 -> true | _ -> false);
@@ -259,10 +258,10 @@ let test_partial_pair_details () =
   in
   let details = Usage.result_details { openai; kimi } in
   match details with
-  | Shared.Object fields ->
+  | Shared.Object fields -> (
       assert_bool "has openai" (List.mem_assoc "openai" fields);
       assert_bool "has kimi" (List.mem_assoc "kimi" fields);
-      (match List.assoc "kimi" fields with
+      match List.assoc "kimi" fields with
       | Shared.Object kimi_fields ->
           assert_bool "kimi error present" (List.mem_assoc "error" kimi_fields)
       | _ -> fail "kimi details" "expected object")

@@ -26,7 +26,8 @@ let report_session_sync_error scope error =
     let console = Unsafe.get Unsafe.global "console" in
     if Option.is_some (function_field console "warn") then
       ignore
-        (Unsafe.fun_call (Unsafe.get console "warn")
+        (Unsafe.fun_call
+           (Unsafe.get console "warn")
            [|
              js_string
                ("Taumel session sync failed (" ^ scope ^ "): "
@@ -58,8 +59,7 @@ let message_cost entry =
         | None -> None
         | Some cost ->
             if not (has_property cost "total") then None
-            else
-              float_field cost "total")
+            else float_field cost "total")
 
 let assistant_message entry =
   let message =
@@ -98,8 +98,7 @@ let scan_cost_entries entries ~start acc =
     let entry = entries.(index) in
     let cost = message_cost entry in
     Option.iter
-      (fun cost ->
-        next := { !next with acc_total = !next.acc_total +. cost })
+      (fun cost -> next := { !next with acc_total = !next.acc_total +. cost })
       cost;
     if assistant_message entry then
       next :=
@@ -136,10 +135,13 @@ let cache_acc session_id branch_length acc =
 let cache_total_cost session_id entries =
   let branch_length = Array.length entries in
   let cache_scan acc = cache_acc session_id branch_length acc in
-  let recompute () = cache_scan (scan_cost_entries entries ~start:0 empty_cost_acc) in
+  let recompute () =
+    cache_scan (scan_cost_entries entries ~start:0 empty_cost_acc)
+  in
   match !total_cost_cache with
   | Some cache
-    when cache.session_id = session_id && cache.branch_length <= branch_length -> (
+    when cache.session_id = session_id && cache.branch_length <= branch_length
+    ->
       let same_last_assistant =
         match (cache.last_assistant_index, cache.last_assistant_entry) with
         | None, None -> true
@@ -158,7 +160,7 @@ let cache_total_cost session_id entries =
                acc_last_assistant_index = cache.last_assistant_index;
                acc_last_assistant_entry = cache.last_assistant_entry;
                acc_last_assistant_cost = cache.last_assistant_cost;
-             }))
+             })
   | _ -> recompute ()
 
 let total_cost_from_ctx ctx =
@@ -173,29 +175,34 @@ let bool_of_flag_string value =
   | "0" | "false" | "no" | "off" | "disabled" -> Some false
   | _ -> None
 
-let session_is_isolated_child_data = function
-  | None -> false
-  | Some _ -> true
+let session_is_isolated_child_data = function None -> false | Some _ -> true
 
 let session_is_isolated_child ctx =
-  session_is_isolated_child_data (Session_store.custom_entry_data ctx "taumel.childSession")
+  session_is_isolated_child_data
+    (Session_store.custom_entry_data ctx "taumel.childSession")
 
 let update_session_state host ctx =
   let snapshot = call1 host "sessionSnapshot" (inject ctx) in
   let snapshot_cwd = get_string snapshot "cwd" in
-  let child_session = Session_store.custom_entry_data ctx "taumel.childSession" in
+  let child_session =
+    Session_store.custom_entry_data ctx "taumel.childSession"
+  in
   let next_host_sandbox_preset =
-    Option.bind (optional_string_field snapshot "sandboxMode")
+    Option.bind
+      (optional_string_field snapshot "sandboxMode")
       Taumel.Capability_profile.sandbox_of_string
   in
   let next_host_network_mode =
-    Option.bind (optional_string_field snapshot "networkMode")
+    Option.bind
+      (optional_string_field snapshot "networkMode")
       Taumel.Permissions.network_of_string
   in
   let next_host_no_sandbox =
-    if has_property snapshot "noSandbox" then Some (get_bool snapshot "noSandbox")
+    if has_property snapshot "noSandbox" then
+      Some (get_bool snapshot "noSandbox")
     else
-      Option.bind (optional_string_field snapshot "noSandboxFlag")
+      Option.bind
+        (optional_string_field snapshot "noSandboxFlag")
         bool_of_flag_string
   in
   host_sandbox_preset := next_host_sandbox_preset;
@@ -230,8 +237,8 @@ let update_session_state host ctx =
         | None -> float_field_default snapshot "totalCost" 0.0);
       state.context_percent <- float_field_default snapshot "contextPercent" 0.0;
       state.context_window <- float_field_default snapshot "contextWindow" 0.0;
-      if previous_footer_cwd <> "" && previous_footer_cwd <> state.footer_cwd then
-        state.git_delta <- Model.empty_git_delta
+      if previous_footer_cwd <> "" && previous_footer_cwd <> state.footer_cwd
+      then state.git_delta <- Model.empty_git_delta
 
 let try_refresh_session_state_from_host ?(scope = "session state refresh") ctx =
   try
@@ -293,14 +300,17 @@ let load_plan_state_data ~session_id = function
           pending_plan_load_warning :=
             Some ("Ignoring incompatible saved Taumel plan entry: " ^ message);
           report_session_sync_error "plan load"
-            (Failure ("Ignoring incompatible saved Taumel plan entry: " ^ message));
+            (Failure
+               ("Ignoring incompatible saved Taumel plan entry: " ^ message));
           current_plan := None;
           false)
 
 let load_plan_automation_state_data = function
   | None -> plan_automation := Taumel.Plan.Automation_enabled
   | Some data -> (
-      match Result.bind (json_from_js data) Taumel.Plan.automation_codec.decode with
+      match
+        Result.bind (json_from_js data) Taumel.Plan.automation_codec.decode
+      with
       | Ok automation -> plan_automation := automation
       | Error message ->
           pending_plan_load_warning :=
@@ -308,7 +318,9 @@ let load_plan_automation_state_data = function
               ("Ignoring incompatible saved Taumel plan automation entry: "
              ^ message);
           report_session_sync_error "plan automation load"
-            (Failure ("Ignoring incompatible saved Taumel plan automation entry: " ^ message));
+            (Failure
+               ("Ignoring incompatible saved Taumel plan automation entry: "
+              ^ message));
           plan_automation := Taumel.Plan.Automation_enabled)
 
 let apply_active_permissions (resolved : Taumel.Permissions.active) =
@@ -330,12 +342,13 @@ let load_permissions_state_data ~child_session permissions =
     match permissions with
     | None -> Taumel.Permissions.Missing
     | Some data -> (
-        match Result.bind (json_from_js data) Taumel.Permissions.codec.decode with
+        match
+          Result.bind (json_from_js data) Taumel.Permissions.codec.decode
+        with
         | Ok permissions -> Taumel.Permissions.Persisted permissions
         | Error _ -> Taumel.Permissions.Invalid)
   in
-  Taumel.Permissions.resolve_active
-    ~host_sandbox_preset:!host_sandbox_preset
+  Taumel.Permissions.resolve_active ~host_sandbox_preset:!host_sandbox_preset
     ~host_network_mode:!host_network_mode ~host_no_sandbox:!host_no_sandbox
     ~session_isolated_child persisted
   |> apply_active_permissions
@@ -357,7 +370,8 @@ let load_visibility_state_data visibility =
       | Error message ->
           report_session_sync_error "visibility state load"
             (Failure
-               ("Ignoring incompatible saved Taumel visibility entry: " ^ message));
+               ("Ignoring incompatible saved Taumel visibility entry: "
+              ^ message));
           visibility_state := Taumel.Visibility.empty)
 
 let child_marker_matches (identity : Taumel.Agents.identity) raw =
@@ -371,9 +385,9 @@ let child_marker_matches (identity : Taumel.Agents.identity) raw =
                  List.assoc_opt "customType" fields,
                  List.assoc_opt "data" fields )
              with
-             | Some (Taumel.Shared.String "custom"),
-               Some (Taumel.Shared.String "taumel.childSession"),
-               Some (Taumel.Shared.Object data) ->
+             | ( Some (Taumel.Shared.String "custom"),
+                 Some (Taumel.Shared.String "taumel.childSession"),
+                 Some (Taumel.Shared.Object data) ) ->
                  let string name =
                    match List.assoc_opt name data with
                    | Some (Taumel.Shared.String value) -> value
@@ -413,7 +427,8 @@ let settled_entry_id (identity : Taumel.Agents.identity)
                 | Ok (Taumel.Shared.Object fields) -> (
                     match List.assoc_opt "id" fields with
                     | Some (Taumel.Shared.String id)
-                      when Some id = run.run_previous_assistant_entry_id -> None
+                      when Some id = run.run_previous_assistant_entry_id ->
+                        None
                     | Some (Taumel.Shared.String id) -> (
                         match List.assoc_opt "message" fields with
                         | Some (Taumel.Shared.Object message) -> (
@@ -421,8 +436,11 @@ let settled_entry_id (identity : Taumel.Agents.identity)
                               ( List.assoc_opt "role" message,
                                 List.assoc_opt "stopReason" message )
                             with
-                            | Some (Taumel.Shared.String "assistant"),
-                              Some (Taumel.Shared.String ("stop" | "completed")) -> Some id
+                            | ( Some (Taumel.Shared.String "assistant"),
+                                Some
+                                  (Taumel.Shared.String ("stop" | "completed"))
+                              ) ->
+                                Some id
                             | _ -> scan rest)
                         | _ -> scan rest)
                     | _ -> scan rest)
@@ -443,9 +461,10 @@ let reconcile_settled_runs state =
             | None -> state
             | Some result_entry_id -> (
                 match
-                  Taumel.Agents.record_run_completion state ~now:(now_seconds ())
-                    ~run_id:run.run_id ~status:Taumel.Agents.Completed
-                    ~result_entry_id ~submission_id:run.run_submission_id ()
+                  Taumel.Agents.record_run_completion state
+                    ~now:(now_seconds ()) ~run_id:run.run_id
+                    ~status:Taumel.Agents.Completed ~result_entry_id
+                    ~submission_id:run.run_submission_id ()
                 with
                 | Ok next -> next
                 | Error _ -> state)))
@@ -507,10 +526,10 @@ let ensure_presence_marker ?(force = false) ?(initialize_registry = false) ctx
       (* Before the first lifecycle transition, anchor the registry's current
          value and marker. A marker-append failure therefore cannot leave an
          unreported candidate transition in the sidecar. *)
-      if initialize_registry then (
-        match write_registry_or_fail ~owner_session_id:owner !agent_state with
-        | Error message -> failwith message
-        | Ok () -> ());
+      (if initialize_registry then
+         match write_registry_or_fail ~owner_session_id:owner !agent_state with
+         | Error message -> failwith message
+         | Ok () -> ());
       Session_store.require_append_custom_entry ctx
         Taumel.Agent_state_store.presence_marker_custom_type
         (Taumel.Agent_state_store.encode_presence_marker
@@ -543,8 +562,7 @@ let apply_loaded_agent_state ~ctx ~owner_session_id ~recover_running loaded =
     else state
   in
   let needs_registry_write =
-    loaded.materialize_current
-    || (recover_running && state <> original)
+    loaded.materialize_current || (recover_running && state <> original)
   in
   let write_result =
     if needs_registry_write then write_registry_or_fail ~owner_session_id state
@@ -573,52 +591,61 @@ let load_agent_state_data ~ctx ~session_id ~recover_running ~presence
   if not (Session_store.owner_is_persistent ctx) then (
     agent_state_load_error := None;
     set_agent_state Taumel.Agents.empty_session_state)
-  else match presence with
-  | Some data -> (
-      match json_from_js data with
-      | Error message ->
-          fail_agent_load ("agent presence marker is malformed: " ^ message)
-      | Ok marker_json -> (
-          match Agent_state_store_host.read_registry ~owner_session_id:session_id with
-          | Error message ->
-              fail_agent_load ("agent registry read failed: " ^ message)
-          | Ok sidecar_raw -> (
-              match
-                Taumel.Agent_state_store.resolve_load ~owner_session_id:session_id
-                  ~marker:(Some marker_json) ~sidecar_raw
-                  ~allow_parent_snapshots:
-                    allow_parent_snapshot_bootstrap
-                  ~parent_snapshots:(js_to_json_list parent_snapshots)
-              with
-              | Taumel.Agent_state_store.Empty ->
-                  agent_state_load_error := None;
-                  set_agent_state Taumel.Agents.empty_session_state
-              | Taumel.Agent_state_store.Loaded loaded ->
-                  apply_loaded_agent_state ~ctx ~owner_session_id:session_id
-                    ~recover_running loaded
-              | Taumel.Agent_state_store.Fail_closed message ->
-                  fail_agent_load message)))
-  | None -> (
-      match Agent_state_store_host.read_registry ~owner_session_id:session_id with
-      | Error message ->
-          fail_agent_load ("agent registry read failed: " ^ message)
-      | Ok sidecar_raw -> (
-          match
-            Taumel.Agent_state_store.resolve_load ~owner_session_id:session_id
-              ~marker:None ~sidecar_raw
-              ~allow_parent_snapshots:allow_parent_snapshot_bootstrap
-              ~parent_snapshots:(js_to_json_list parent_snapshots)
-          with
-          | Taumel.Agent_state_store.Empty ->
-              agent_state_load_error := None;
-              set_agent_state Taumel.Agents.empty_session_state
-          | Taumel.Agent_state_store.Loaded loaded ->
-              apply_loaded_agent_state ~ctx ~owner_session_id:session_id
-                ~recover_running loaded
-          | Taumel.Agent_state_store.Fail_closed message -> fail_agent_load message))
+  else
+    match presence with
+    | Some data -> (
+        match json_from_js data with
+        | Error message ->
+            fail_agent_load ("agent presence marker is malformed: " ^ message)
+        | Ok marker_json -> (
+            match
+              Agent_state_store_host.read_registry ~owner_session_id:session_id
+            with
+            | Error message ->
+                fail_agent_load ("agent registry read failed: " ^ message)
+            | Ok sidecar_raw -> (
+                match
+                  Taumel.Agent_state_store.resolve_load
+                    ~owner_session_id:session_id ~marker:(Some marker_json)
+                    ~sidecar_raw
+                    ~allow_parent_snapshots:allow_parent_snapshot_bootstrap
+                    ~parent_snapshots:(js_to_json_list parent_snapshots)
+                with
+                | Taumel.Agent_state_store.Empty ->
+                    agent_state_load_error := None;
+                    set_agent_state Taumel.Agents.empty_session_state
+                | Taumel.Agent_state_store.Loaded loaded ->
+                    apply_loaded_agent_state ~ctx ~owner_session_id:session_id
+                      ~recover_running loaded
+                | Taumel.Agent_state_store.Fail_closed message ->
+                    fail_agent_load message)))
+    | None -> (
+        match
+          Agent_state_store_host.read_registry ~owner_session_id:session_id
+        with
+        | Error message ->
+            fail_agent_load ("agent registry read failed: " ^ message)
+        | Ok sidecar_raw -> (
+            match
+              Taumel.Agent_state_store.resolve_load ~owner_session_id:session_id
+                ~marker:None ~sidecar_raw
+                ~allow_parent_snapshots:allow_parent_snapshot_bootstrap
+                ~parent_snapshots:(js_to_json_list parent_snapshots)
+            with
+            | Taumel.Agent_state_store.Empty ->
+                agent_state_load_error := None;
+                set_agent_state Taumel.Agents.empty_session_state
+            | Taumel.Agent_state_store.Loaded loaded ->
+                apply_loaded_agent_state ~ctx ~owner_session_id:session_id
+                  ~recover_running loaded
+            | Taumel.Agent_state_store.Fail_closed message ->
+                fail_agent_load message))
+
 let load_session_state ctx =
   let snapshot = persisted_session_snapshot ctx in
-  let forked = load_plan_state_data ~session_id:snapshot.session_id snapshot.plan in
+  let forked =
+    load_plan_state_data ~session_id:snapshot.session_id snapshot.plan
+  in
   if forked then plan_automation := Taumel.Plan.Automation_interrupted
   else load_plan_automation_state_data snapshot.plan_automation_entry;
   load_permissions_state_data ~child_session:snapshot.child_session
@@ -675,11 +702,11 @@ let sync_persisted_session_snapshot ?(reset_missing = true)
     load_if_present load_ralph_state_data snapshot.ralph;
     load_if_present load_visibility_state_data snapshot.visibility;
     if
-      not (session_is_isolated_child_data snapshot.child_session)
+      (not (session_is_isolated_child_data snapshot.child_session))
       && !loaded_agent_owner_id <> Some snapshot.session_id
-      &&
-      (reset_missing || Option.is_some snapshot.agent_presence
-      || snapshot.agent_parent_snapshots <> [])
+      && (reset_missing
+         || Option.is_some snapshot.agent_presence
+         || snapshot.agent_parent_snapshots <> [])
     then (
       (match ctx with
       | None ->
@@ -759,7 +786,10 @@ let persist_agent_state ctx state =
     failwith
       ("agent registry projection mismatch: refusing to persist for " ^ owner);
   if not (Session_store.owner_is_persistent ctx) then ()
-  else if not (Taumel.Agent_state_store.durable_change ~previous:!agent_state ~next:state)
+  else if
+    not
+      (Taumel.Agent_state_store.durable_change ~previous:!agent_state
+         ~next:state)
   then ()
   else (
     ensure_presence_marker ~initialize_registry:true ctx ~owner;
@@ -786,16 +816,19 @@ let try_sync_session_from_host_with ?(scope = "session sync")
       ("session synchronization failed (" ^ scope ^ "): "
      ^ Printexc.to_string error)
 
-let try_sync_session_from_host ?(scope = "session sync") ?(reset_missing = true) ctx =
-  Result.map (fun _ -> ())
+let try_sync_session_from_host ?(scope = "session sync") ?(reset_missing = true)
+    ctx =
+  Result.map
+    (fun _ -> ())
     (try_sync_session_from_host_with ~scope ~reset_missing
        (active_host_or_empty ()) ctx)
 
-let sync_session_from_host ?(scope = "session sync") ?(reset_missing = true) ctx =
+let sync_session_from_host ?(scope = "session sync") ?(reset_missing = true) ctx
+    =
   try_sync_session_from_host ~scope ~reset_missing ctx
 
-let require_session_from_host ?(scope = "session sync")
-    ?(reset_missing = true) ctx =
+let require_session_from_host ?(scope = "session sync") ?(reset_missing = true)
+    ctx =
   match sync_session_from_host ~scope ~reset_missing ctx with
   | Ok () -> ()
   | Error message -> failwith message
@@ -812,9 +845,7 @@ let save_plan_automation_state ctx =
      there may be no following turn to repair a stale presentation. *)
   if not (session_is_isolated_child ctx) then (
     capture_loaded_footer_plan ();
-    match !active_host with
-    | Some host -> emit_changed host
-    | None -> ())
+    match !active_host with Some host -> emit_changed host | None -> ())
 
 let set_plan_automation ctx automation =
   if !plan_automation <> automation then (
@@ -888,8 +919,8 @@ let account_plan_turn_end ctx =
   let result =
     Taumel.Plan.account_turn_end
       ?pending_terminal_status:!pending_plan_terminal_status
-      ~session_id:(Session_store.session_id_from_ctx ctx) ~now
-      ~active_time_seconds ~last_accounting_key:!last_plan_accounting_key
+      ~session_id:(Session_store.session_id_from_ctx ctx)
+      ~now ~active_time_seconds ~last_accounting_key:!last_plan_accounting_key
       ~latest_usage:(latest_branch_usage ctx) !current_plan
   in
   pending_plan_terminal_status := None;
@@ -921,5 +952,4 @@ let plan_clock_pause_end () =
 let interrupt_plan_automation ctx =
   set_plan_automation ctx Taumel.Plan.Automation_interrupted
 
-let clear_interrupted_plan_automation ctx =
-  clear_plan_automation ctx
+let clear_interrupted_plan_automation ctx = clear_plan_automation ctx

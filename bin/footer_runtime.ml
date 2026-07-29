@@ -38,7 +38,8 @@ let install host ctx =
               ignore (call1 host "requestRender" (inject tui)))
         in
         let unsub_branch =
-          call2 host "onBranchChange" (inject footer_data) (inject request_render)
+          call2 host "onBranchChange" (inject footer_data)
+            (inject request_render)
         in
         let unsub_footer =
           call2 host "eventsOn" (js_string footer_event) (inject request_render)
@@ -56,7 +57,8 @@ let start_refresh_loop () =
   let rt = Runtime.create () in
   runtime := Some rt;
   let loop =
-    Effect.repeat ~schedule:(Schedule.spaced (Duration.seconds 5))
+    Effect.repeat
+      ~schedule:(Schedule.spaced (Duration.seconds 5))
       (refresh_active_host ())
   in
   Runtime.run rt loop ~on_result:(fun _ -> ())
@@ -66,8 +68,7 @@ let ensure_refresh_loop () =
 
 let refresh_git_now host =
   let rt = Runtime.create () in
-  Runtime.run rt
-    (Footer_bridge.refresh_footer_hygiene host)
+  Runtime.run rt (Footer_bridge.refresh_footer_hygiene host)
     ~on_result:(fun _ -> ())
 
 (* A session_shutdown event marks the active runtime dead even when its API
@@ -96,37 +97,48 @@ let register_handlers host =
         if Session_sync.session_is_isolated_child ctx then ()
         else
           ignore_stale "footer session lifecycle" (fun () ->
-            let previous_cwd = state.footer_cwd in
-            match
-              Session_sync.try_sync_session_from_host_with
-                ~scope:"footer session sync" ~clear_retained_outputs:true host ctx
-            with
-            | Error _ -> ()
-            | Ok snapshot ->
-                let isolated_child =
-                  Session_sync.persisted_session_snapshot_is_isolated_child snapshot
-                in
-                if not isolated_child then capture_loaded_footer_permissions ();
-                capture_loaded_footer_plan ();
-                if state.footer_cwd <> previous_cwd then (
-                  state.git_delta <- Model.empty_git_delta;
-                  state.git_repo <- false;
-                  state.git_error <- false;
-                  emit_changed host;
-                  refresh_git_now host);
-                if install_footer && not isolated_child then install host ctx;
-                ensure_refresh_loop ();
-                emit_changed host))
+              let previous_cwd = state.footer_cwd in
+              match
+                Session_sync.try_sync_session_from_host_with
+                  ~scope:"footer session sync" ~clear_retained_outputs:true host
+                  ctx
+              with
+              | Error _ -> ()
+              | Ok snapshot ->
+                  let isolated_child =
+                    Session_sync.persisted_session_snapshot_is_isolated_child
+                      snapshot
+                  in
+                  if not isolated_child then
+                    capture_loaded_footer_permissions ();
+                  capture_loaded_footer_plan ();
+                  if state.footer_cwd <> previous_cwd then (
+                    state.git_delta <- Model.empty_git_delta;
+                    state.git_repo <- false;
+                    state.git_error <- false;
+                    emit_changed host;
+                    refresh_git_now host);
+                  if install_footer && not isolated_child then install host ctx;
+                  ensure_refresh_loop ();
+                  emit_changed host))
   in
-  ignore (call2 host "on" (js_string "session_start") (inject (update_handler true)));
   ignore
-    (call2 host "on" (js_string "session_shutdown")
+    (call2 host "on" (js_string "session_start") (inject (update_handler true)));
+  ignore
+    (call2 host "on"
+       (js_string "session_shutdown")
        (inject
-          (Js.wrap_callback (fun _event _ctx ->
-               active_runtime_shutdown := true))));
-  ignore (call2 host "on" (js_string "session_resume") (inject (update_handler true)));
-  ignore (call2 host "on" (js_string "session_switch") (inject (update_handler true)));
-  ignore (call2 host "on" (js_string "model_select") (inject (update_handler false)));
+          (Js.wrap_callback (fun _event _ctx -> active_runtime_shutdown := true))));
+  ignore
+    (call2 host "on"
+       (js_string "session_resume")
+       (inject (update_handler true)));
+  ignore
+    (call2 host "on"
+       (js_string "session_switch")
+       (inject (update_handler true)));
+  ignore
+    (call2 host "on" (js_string "model_select") (inject (update_handler false)));
   ignore
     (call2 host "on" (js_string "turn_start")
        (inject
@@ -140,24 +152,24 @@ let register_handlers host =
                  emit_changed host)))));
   ignore
     (call2 host "on" (js_string "turn_end")
-	       (inject
-	          (Js.wrap_callback (fun _event ctx ->
+       (inject
+          (Js.wrap_callback (fun _event ctx ->
                if Session_sync.session_is_isolated_child ctx then ()
                else
-	               ignore_stale "footer turn_end" (fun () ->
-	                   match
-	                     Session_sync.try_sync_session_from_host_with
-	                       ~scope:"footer turn_end sync" host ctx
-	                   with
-		                   | Error _ -> ()
-		                   | Ok _ ->
-	                       capture_loaded_footer_permissions ();
-	                       ignore
-	                         (Session_sync.try_account_plan_turn_end
-	                            ~scope:"footer plan accounting" ctx);
-	                       capture_loaded_footer_plan ();
-	                       ensure_refresh_loop ();
-	                       emit_changed host)))));
+                 ignore_stale "footer turn_end" (fun () ->
+                     match
+                       Session_sync.try_sync_session_from_host_with
+                         ~scope:"footer turn_end sync" host ctx
+                     with
+                     | Error _ -> ()
+                     | Ok _ ->
+                         capture_loaded_footer_permissions ();
+                         ignore
+                           (Session_sync.try_account_plan_turn_end
+                              ~scope:"footer plan accounting" ctx);
+                         capture_loaded_footer_plan ();
+                         ensure_refresh_loop ();
+                         emit_changed host)))));
   ignore
     (call2 host "on" (js_string "session_tree")
        (inject (Js.wrap_callback (fun _event _ctx -> emit_changed host))));
@@ -165,17 +177,22 @@ let register_handlers host =
     (call2 host "on" (js_string "session_fork")
        (inject (Js.wrap_callback (fun _event _ctx -> emit_changed host))));
   ignore
-    (call2 host "eventsOn" (js_string "taumel:sandbox:changed")
+    (call2 host "eventsOn"
+       (js_string "taumel:sandbox:changed")
        (inject
           (Js.wrap_callback (fun payload ->
                let mode = get_string payload "filesystemMode" in
                let next_network_mode =
-                 match Taumel.Permissions.network_of_string (get_string payload "networkMode") with
+                 match
+                   Taumel.Permissions.network_of_string
+                     (get_string payload "networkMode")
+                 with
                  | Some mode -> mode
                  | None -> !active_network_mode
                in
                let next_no_sandbox =
-                 if has_property payload "noSandbox" then get_bool payload "noSandbox"
+                 if has_property payload "noSandbox" then
+                   get_bool payload "noSandbox"
                  else !active_no_sandbox
                in
                if
@@ -186,7 +203,8 @@ let register_handlers host =
                  (if mode = "" then "workspace-write" else mode);
                active_network_mode := next_network_mode;
                active_no_sandbox := next_no_sandbox;
-               if not !active_isolated_child then capture_loaded_footer_permissions ();
+               if not !active_isolated_child then
+                 capture_loaded_footer_permissions ();
                emit_changed host))))
 
 let init host =
@@ -196,7 +214,9 @@ let init host =
 
 let refresh_state ctx =
   let host = active_host_or_empty () in
-  ignore (Session_sync.try_refresh_session_state_from_host ~scope:"footer refresh" ctx);
+  ignore
+    (Session_sync.try_refresh_session_state_from_host ~scope:"footer refresh"
+       ctx);
   emit_changed host;
   core_ack ()
 

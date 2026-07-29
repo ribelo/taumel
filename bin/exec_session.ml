@@ -1,5 +1,4 @@
 open Jsoo_bridge
-
 module Effect = Eta.Effect
 module Promise = Eta.Promise
 module Exit = Eta.Exit
@@ -11,7 +10,9 @@ type terminal_outcome =
   | Forced_termination of int
 
 type lifecycle = Running | Terminal of terminal_outcome
+
 type terminal_consumption = Pending | Consumed_by_tool
+
 type notification_state = Pending | Sent
 
 type session = {
@@ -31,6 +32,7 @@ type session = {
   mutable active_write_stdin_claims : int;
   mutable broker_agent_id : string option;
 }
+
 type retained_session = {
   retained_id : int;
   retained_owner_id : string;
@@ -38,15 +40,21 @@ type retained_session = {
   retained_started_at : float;
   retained_exit_code : int option;
 }
+
 let live_session_cap_per_owner = 64
+
 let command_display_cap = 240
+
 let truncate_command command =
   let trimmed = String.trim command in
   if String.length trimmed <= command_display_cap then trimmed
   else String.sub trimmed 0 command_display_cap
+
 let is_background_session (session : session) =
   session.lifecycle = Running && session.session_id_exposed
+
 type truncation = Exec_output.truncation
+
 type run_result = {
   chunk_id : string;
   original_token_count : int;
@@ -61,20 +69,31 @@ type run_result = {
   output_limit_exceeded : bool;
   timeout_exceeded : bool;
 }
+
 let exec_default_yield_time_ms = 10_000.
+
 let write_stdin_default_yield_time_ms = 250.
+
 let min_yield_time_ms = 250.
+
 let max_yield_time_ms = 30_000.
+
 let min_empty_write_stdin_yield_time_ms = 5_000.
+
 let max_empty_write_stdin_yield_time_ms = 300_000.
+
 let sessions : (int, session) Hashtbl.t = Hashtbl.create 16
+
 let retained_sessions : (int, retained_session) Hashtbl.t = Hashtbl.create 16
+
 let count_live_sessions_for_owner owner_id =
   Hashtbl.fold
     (fun _ session count ->
-      if session.owner_id = owner_id && session.lifecycle = Running then count + 1
+      if session.owner_id = owner_id && session.lifecycle = Running then
+        count + 1
       else count)
     sessions 0
+
 let background_activity_for_owner owner_id =
   let live =
     Hashtbl.fold
@@ -88,18 +107,25 @@ let background_activity_for_owner owner_id =
   match live with
   | [ session ] -> (1, Some session.command)
   | _ -> (List.length live, None)
+
 let next_session_id = ref 1
+
 let next_chunk_id = ref 0
+
 let generate_chunk_id () =
   let value = !next_chunk_id land 0xffffff in
   next_chunk_id := (!next_chunk_id + 1) land 0xffffff;
   Printf.sprintf "%06x" value
+
 let now_ms = Node_globals.now_ms
+
 let clamp value lower upper = min (max value lower) upper
+
 let normalize_exec_yield_ms = function
   | Some value when value >= 0. ->
       clamp (Float.round value) min_yield_time_ms max_yield_time_ms
   | _ -> exec_default_yield_time_ms
+
 let normalize_write_yield_ms value input_is_empty output_mode =
   let normalized =
     match value with
@@ -113,12 +139,19 @@ let normalize_write_yield_ms value input_is_empty output_mode =
     clamp responsive min_empty_write_stdin_yield_time_ms
       max_empty_write_stdin_yield_time_ms
   else min responsive max_yield_time_ms
+
 let default_max_output_tokens = Exec_output.default_max_output_tokens
+
 let approximate_bytes_per_token = Exec_output.approximate_bytes_per_token
+
 let total_output_limit_bytes = Exec_output.total_output_limit_bytes
+
 let make_truncation = Exec_output.make_truncation
+
 let add_output (session : session) text = Exec_output.add session.output text
+
 let close_temp (session : session) = Exec_output.close session.output
+
 let kill_session (session : session) =
   Option.iter Exec_process_jsoo.request_sigterm session.process
 
@@ -130,22 +163,32 @@ let terminal_exit_code = function
       code
 
 let session_terminal_outcome session =
-  match session.lifecycle with Running -> None | Terminal outcome -> Some outcome
+  match session.lifecycle with
+  | Running -> None
+  | Terminal outcome -> Some outcome
 
 let session_exited session = session_terminal_outcome session <> None
-let make_result ?(output_mode = "delta") ?(max_output_tokens = default_max_output_tokens)
-    (session : session) =
-  let delta_output, delta_truncation = Exec_output.codex_display session.output max_output_tokens in
+
+let make_result ?(output_mode = "delta")
+    ?(max_output_tokens = default_max_output_tokens) (session : session) =
+  let delta_output, delta_truncation =
+    Exec_output.codex_display session.output max_output_tokens
+  in
   let suppressed_lines =
     session.output.chunk_lines
-    + if session.output.chunk_bytes > 0 && not session.output.chunk_ends_with_newline then 1 else 0
+    +
+    if
+      session.output.chunk_bytes > 0
+      && not session.output.chunk_ends_with_newline
+    then 1
+    else 0
   in
   let suppressed_bytes = session.output.chunk_bytes in
   let output, truncation =
     if output_mode = "status" then
       ( "",
-        make_truncation ?full_output_path:session.output.temp_path ~truncated:false
-          ~truncated_by:"none" ~total_lines:suppressed_lines
+        make_truncation ?full_output_path:session.output.temp_path
+          ~truncated:false ~truncated_by:"none" ~total_lines:suppressed_lines
           ~total_bytes:suppressed_bytes ~output_lines:0 ~output_bytes:0 () )
     else (delta_output, delta_truncation)
   in
@@ -162,8 +205,10 @@ let make_result ?(output_mode = "delta") ?(max_output_tokens = default_max_outpu
       session_id = None;
       exit_code = None;
       output_mode;
-      suppressed_lines = (if output_mode = "status" then suppressed_lines else 0);
-      suppressed_bytes = (if output_mode = "status" then suppressed_bytes else 0);
+      suppressed_lines =
+        (if output_mode = "status" then suppressed_lines else 0);
+      suppressed_bytes =
+        (if output_mode = "status" then suppressed_bytes else 0);
       output_limit_exceeded =
         (match session.lifecycle with
         | Terminal (Output_limit _) -> true
@@ -175,20 +220,24 @@ let make_result ?(output_mode = "delta") ?(max_output_tokens = default_max_outpu
     }
   in
   match session.lifecycle with
-  | Terminal outcome -> { base with exit_code = Some (terminal_exit_code outcome) }
+  | Terminal outcome ->
+      { base with exit_code = Some (terminal_exit_code outcome) }
   | Running ->
-    session.session_id_exposed <- true;
-    { base with session_id = Some session.id }
+      session.session_id_exposed <- true;
+      { base with session_id = Some session.id }
+
 let shell_result_text result =
   let body = result.output in
   let append status = if body = "" then status else body ^ "\n\n" ^ status in
   let suppression =
-    Printf.sprintf "suppressed %d lines / %d bytes"
-      result.suppressed_lines result.suppressed_bytes
+    Printf.sprintf "suppressed %d lines / %d bytes" result.suppressed_lines
+      result.suppressed_bytes
   in
   let output_limit_message =
     Printf.sprintf
-      "Command terminated after exceeding the fixed %d-byte output limit. Redirect intentionally large output to a file and inspect it selectively."
+      "Command terminated after exceeding the fixed %d-byte output limit. \
+       Redirect intentionally large output to a file and inspect it \
+       selectively."
       total_output_limit_bytes
   in
   let timeout_message =
@@ -198,10 +247,15 @@ let shell_result_text result =
   if result.timeout_exceeded then append timeout_message
   else if result.output_limit_exceeded then append output_limit_message
   else if result.output_mode = "status" then
-    (match (result.session_id, result.exit_code) with
-    | Some id, _ -> Printf.sprintf "Session %d still running; %s — end the turn to get notified via exec_completion when it finishes" id suppression
-    | None, Some code -> Printf.sprintf "Command completed with code %d; %s" code suppression
-    | _ -> "Command completed; " ^ suppression)
+    match (result.session_id, result.exit_code) with
+    | Some id, _ ->
+        Printf.sprintf
+          "Session %d still running; %s — end the turn to get notified via \
+           exec_completion when it finishes"
+          id suppression
+    | None, Some code ->
+        Printf.sprintf "Command completed with code %d; %s" code suppression
+    | _ -> "Command completed; " ^ suppression
   else
     let lifecycle =
       match (result.session_id, result.exit_code) with
@@ -210,12 +264,18 @@ let shell_result_text result =
       | _ -> "Process exited with code 0"
     in
     Printf.sprintf
-      "Chunk ID: %s\nWall time: %.4f seconds\n%s\nOriginal token count: %d\nOutput:\n%s"
-      result.chunk_id (result.wall_time_ms /. 1000.) lifecycle
-      result.original_token_count body
+      "Chunk ID: %s\n\
+       Wall time: %.4f seconds\n\
+       %s\n\
+       Original token count: %d\n\
+       Output:\n\
+       %s"
+      result.chunk_id
+      (result.wall_time_ms /. 1000.)
+      lifecycle result.original_token_count body
+
 let typed_truncation (truncation : truncation) =
-  Tool_contracts.ExecTruncation.create
-    ~truncated:truncation.trunc_truncated
+  Tool_contracts.ExecTruncation.create ~truncated:truncation.trunc_truncated
     ~truncatedBy:truncation.trunc_truncated_by
     ~totalLines:(float_of_int truncation.trunc_total_lines)
     ~totalBytes:(float_of_int truncation.trunc_total_bytes)
@@ -226,6 +286,7 @@ let typed_truncation (truncation : truncation) =
     ~lastLinePartial:truncation.trunc_last_line_partial
     ~firstLineExceedsLimit:truncation.trunc_first_line_exceeds_limit
     ?fullOutputPath:truncation.trunc_full_output_path ()
+
 let shell_result_details result extra =
   let optional_bool name =
     if has_property extra name then Some (get_bool extra name) else None
@@ -236,35 +297,45 @@ let shell_result_details result extra =
   let exit_code = Option.map float_of_int result.exit_code in
   let session_id = Option.map float_of_int result.session_id in
   Tool_contracts.ExecResultDetails.create
-    ~ok:(not result.output_limit_exceeded) ~output:result.output
-    ~stdout:result.output ~stderr:""
+    ~ok:(not result.output_limit_exceeded)
+    ~output:result.output ~stdout:result.output ~stderr:""
     ~truncation:(typed_truncation result.truncation)
     ~wallTimeMs:result.wall_time_ms ~outputMode:result.output_mode
     ~suppressedLines:(float_of_int result.suppressed_lines)
     ~suppressedBytes:(float_of_int result.suppressed_bytes)
-    ?reasonCode:(if result.output_limit_exceeded then Some "output_limit_exceeded" else None)
+    ?reasonCode:
+      (if result.output_limit_exceeded then Some "output_limit_exceeded"
+       else None)
     ?outputLimitBytes:
-      (if result.output_limit_exceeded then Some (float_of_int total_output_limit_bytes) else None)
+      (if result.output_limit_exceeded then
+         Some (float_of_int total_output_limit_bytes)
+       else None)
     ?truncated:(if result.truncation.trunc_truncated then Some true else None)
-    ?fullOutputPath:result.truncation.trunc_full_output_path
-    ?exitCode:exit_code ?code:exit_code ?sessionId:session_id
-    ?session_id ?sandboxed:(optional_bool "sandboxed")
-    ?escalated:(optional_bool "escalated") ?kind:(optional_string "kind")
-    ?alreadyCompleted:(optional_bool "alreadyCompleted") ()
+    ?fullOutputPath:result.truncation.trunc_full_output_path ?exitCode:exit_code
+    ?code:exit_code ?sessionId:session_id ?session_id
+    ?sandboxed:(optional_bool "sandboxed")
+    ?escalated:(optional_bool "escalated")
+    ?kind:(optional_string "kind")
+    ?alreadyCompleted:(optional_bool "alreadyCompleted")
+    ()
+
 let shell_tool_result result extra =
   let content =
     Boundary_contracts.ToolResultTextContent.create
       ~text:(shell_result_text result) ()
   in
   Tool_contracts.ExecToolResult.create ~content:[ content ]
-    ~details:(shell_result_details result extra) ()
+    ~details:(shell_result_details result extra)
+    ()
   |> Tool_contracts.ExecToolResult.t_to_js |> inject
+
 let release_broker_lease session =
   match session.broker_agent_id with
   | None -> ()
   | Some agent_id ->
       Taumel.Agent_git_broker.Lease.release agent_id;
       session.broker_agent_id <- None
+
 let resolve_completion session outcome =
   Eta_jsoo.run
     (fun () -> Promise.resolve session.completion (Exit.Ok outcome))
@@ -299,7 +370,9 @@ let new_session owner_id command tty =
     active_write_stdin_claims = 0;
     broker_agent_id = None;
   }
+
 let retained_session_cap_per_owner = 128
+
 let prune_retained_sessions owner_id =
   let owned =
     Hashtbl.fold
@@ -311,10 +384,13 @@ let prune_retained_sessions owner_id =
   owned
   |> List.mapi (fun index retained -> (index, retained))
   |> List.iter (fun (index, retained) ->
-         if index >= retained_session_cap_per_owner then
-           Hashtbl.remove retained_sessions retained.retained_id)
+      if index >= retained_session_cap_per_owner then
+        Hashtbl.remove retained_sessions retained.retained_id)
+
 let retain_completed_session session =
-  let exit_code = Option.map terminal_exit_code (session_terminal_outcome session) in
+  let exit_code =
+    Option.map terminal_exit_code (session_terminal_outcome session)
+  in
   Hashtbl.replace retained_sessions session.id
     {
       retained_id = session.id;
@@ -324,15 +400,14 @@ let retain_completed_session session =
       retained_exit_code = exit_code;
     };
   prune_retained_sessions session.owner_id
-type wait_winner =
-  | Completion of terminal_outcome
-  | Yield
-  | Abort
+
+type wait_winner = Completion of terminal_outcome | Yield | Abort
 
 let wait_for_session session yield_ms signal =
   Effect.race
     [
-      Promise.await session.completion |> Effect.map (fun outcome -> Completion outcome);
+      Promise.await session.completion
+      |> Effect.map (fun outcome -> Completion outcome);
       Effect.sleep (Eta.Duration.ms (int_of_float yield_ms))
       |> Effect.map (fun () -> Yield);
       Eta_host_doors.await_abort_signal signal |> Effect.map (fun () -> Abort);
@@ -340,8 +415,7 @@ let wait_for_session session yield_ms signal =
 
 let rec string_cause_message = function
   | Eta.Cause.Fail message -> message
-  | Eta.Cause.Sequential (cause :: _)
-  | Eta.Cause.Concurrent (cause :: _) ->
+  | Eta.Cause.Sequential (cause :: _) | Eta.Cause.Concurrent (cause :: _) ->
       string_cause_message cause
   | cause -> Format.asprintf "%a" (Eta.Cause.pp Format.pp_print_string) cause
 
@@ -350,13 +424,15 @@ let promise_of_effect program =
     ~error_message:string_cause_message program
 
 let rejected_effect message = promise_of_effect (Effect.fail message)
+
 let resolved_effect value = promise_of_effect (Effect.pure value)
 
 let consume_terminal ?(output_mode = "delta") ?max_output_tokens session extra =
   match (session.lifecycle, session.terminal_consumption) with
   | Running, _ -> Error "shell session is still running"
   | Terminal _, Consumed_by_tool ->
-      Error (Printf.sprintf "session %d terminal result already consumed" session.id)
+      Error
+        (Printf.sprintf "session %d terminal result already consumed" session.id)
   | Terminal _, Pending ->
       session.terminal_consumption <- Consumed_by_tool;
       let result = make_result ~output_mode ?max_output_tokens session in
@@ -387,7 +463,8 @@ let launch_timeout session timeout_ms =
           let open Eta.Syntax in
           let* () = Effect.sleep (Eta.Duration.ms (int_of_float timeout_ms)) in
           Effect.sync (fun () ->
-              if transition_terminal session (Timeout 143) then kill_session session))
+              if transition_terminal session (Timeout 143) then
+                kill_session session))
         ~on_result:(fun () -> ())
   | Some _ | None -> ()
 
@@ -406,7 +483,8 @@ let cancel_broker_sessions_for_agent agent_id =
     live;
   let waits =
     List.map
-      (fun session -> Promise.await session.completion |> Effect.map (fun _ -> ()))
+      (fun session ->
+        Promise.await session.completion |> Effect.map (fun _ -> ()))
       live
   in
   let open Eta.Syntax in
@@ -419,6 +497,7 @@ let cancel_broker_sessions_for_agent agent_id =
       wait_for_all
   in
   Effect.pure true
+
 let authority_retry_eligible (plan : Authority_plans.exec_plan)
     (call : Taumel.Sandbox.exec_host_call) result =
   let policy_allows_retry =
@@ -426,8 +505,7 @@ let authority_retry_eligible (plan : Authority_plans.exec_plan)
     | Taumel.Sandbox.On_failure | Taumel.Sandbox.Untrusted -> true
     | Taumel.Sandbox.Never | Taumel.Sandbox.On_request -> false
   in
-  policy_allows_retry
-  && result.session_id = None
+  policy_allows_retry && result.session_id = None
   &&
   match result.exit_code with
   | None | Some 0 -> false
@@ -443,14 +521,16 @@ let run_exec_command prepared owner_id signal owner_context =
   let plan_id = get_string prepared "planId" in
   match Authority_plans.claim_exec ~owner_context plan_id with
   | Error message -> rejected_effect message
-  | Ok (plan, force_unsandboxed) ->
-      if count_live_sessions_for_owner owner_id >= live_session_cap_per_owner then (
+  | Ok (plan, force_unsandboxed) -> (
+      if count_live_sessions_for_owner owner_id >= live_session_cap_per_owner
+      then (
         ignore
           (Authority_plans.finish_exec ~owner_context plan_id
              ~retry_eligible:false);
         rejected_effect
           (Printf.sprintf
-             "at most %d concurrently live command sessions are allowed per owning session"
+             "at most %d concurrently live command sessions are allowed per \
+              owning session"
              live_session_cap_per_owner))
       else
         match
@@ -548,7 +628,7 @@ let run_exec_command prepared owner_id signal owner_context =
               in
               Effect.pure tool_result
             in
-            promise_of_effect program
+            promise_of_effect program)
 
 let already_completed_result session_id exit_code =
   {
@@ -573,7 +653,9 @@ let already_completed_tool_result session_id exit_code =
   let result = already_completed_result session_id exit_code in
   let extra =
     Unsafe.obj
-      [| ("kind", js_string "write_stdin"); ("alreadyCompleted", js_bool true) |]
+      [|
+        ("kind", js_string "write_stdin"); ("alreadyCompleted", js_bool true);
+      |]
   in
   shell_tool_result result extra
 
@@ -594,8 +676,13 @@ let release_write_claim claim =
       max 0 (session.active_write_stdin_claims - 1))
 
 let write_stdin raw_facts =
-  let facts = decode_ojs_contract Tool_contracts.WriteStdinFacts.t_of_js (ojs_of_js raw_facts) in
-  let session_id = Tool_contracts.WriteStdinFacts.get_sessionId facts |> int_of_float in
+  let facts =
+    decode_ojs_contract Tool_contracts.WriteStdinFacts.t_of_js
+      (ojs_of_js raw_facts)
+  in
+  let session_id =
+    Tool_contracts.WriteStdinFacts.get_sessionId facts |> int_of_float
+  in
   let chars = Tool_contracts.WriteStdinFacts.get_chars facts in
   let owner_id = Tool_contracts.WriteStdinFacts.get_ownerId facts in
   let signal =
@@ -608,20 +695,25 @@ let write_stdin raw_facts =
       match Hashtbl.find_opt retained_sessions session_id with
       | Some retained when retained.retained_owner_id <> owner_id ->
           rejected_effect
-            (Printf.sprintf "Shell session %d belongs to another pi session" session_id)
+            (Printf.sprintf "Shell session %d belongs to another pi session"
+               session_id)
       | Some retained ->
           if chars <> "" then
             rejected_effect
-              (Printf.sprintf "session %d already completed; cannot write stdin" session_id)
+              (Printf.sprintf "session %d already completed; cannot write stdin"
+                 session_id)
           else
             resolved_effect
-              (already_completed_tool_result session_id retained.retained_exit_code)
+              (already_completed_tool_result session_id
+                 retained.retained_exit_code)
       | None ->
-          rejected_effect (Printf.sprintf "Unknown shell session: %d" session_id))
+          rejected_effect
+            (Printf.sprintf "Unknown shell session: %d" session_id))
   | Some session when session.owner_id <> owner_id ->
       rejected_effect
-        (Printf.sprintf "Shell session %d belongs to another pi session" session_id)
-  | Some session ->
+        (Printf.sprintf "Shell session %d belongs to another pi session"
+           session_id)
+  | Some session -> (
       let stdin_error =
         if Eta_host_doors.signal_aborted signal then Some "Operation aborted"
         else if chars <> "" && session_exited session then
@@ -637,7 +729,7 @@ let write_stdin raw_facts =
               | Error message -> Some message)
           | None -> Some "stdin is closed for this session"
       in
-      (match stdin_error with
+      match stdin_error with
       | Some message -> rejected_effect message
       | None ->
           let extra = Unsafe.obj [| ("kind", js_string "write_stdin") |] in
@@ -687,6 +779,7 @@ let write_stdin raw_facts =
             (Effect.finally
                (Effect.sync (fun () -> release_write_claim claim))
                program))
+
 let shutdown_owner owner_id =
   Agent_action_capability.discard_owner owner_id;
   Authority_plans.discard_owner owner_id;
@@ -704,20 +797,27 @@ let shutdown_owner owner_id =
       if retained.retained_owner_id = owner_id then None else Some retained)
     retained_sessions;
   core_ack ()
+
 let exec_notification_content (session : session) =
   Printf.sprintf
-    "Command session %d has finished. To read and consume the result, call write_stdin with session_id=%d, chars=\"\", yield_time_ms=5000."
+    "Command session %d has finished. To read and consume the result, call \
+     write_stdin with session_id=%d, chars=\"\", yield_time_ms=5000."
     session.id session.id
+
 let exec_notification_deliverable owner_id session =
-  session.owner_id = owner_id && session_exited session
+  session.owner_id = owner_id
+  && session_exited session
   && session.terminal_consumption = Pending
   && session.active_write_stdin_claims = 0
   && session.notification_state = Pending
   && not session.notification_delivery_claimed
+
 let exec_notification_obj session =
   Tool_contracts.ExecNotification.create ~sessionId:(float_of_int session.id)
-    ~customType:"notification" ~content:(exec_notification_content session)
+    ~customType:"notification"
+    ~content:(exec_notification_content session)
     ~display:true ()
+
 let pending_exec_notifications owner_id =
   let pending =
     Hashtbl.fold
@@ -729,9 +829,11 @@ let pending_exec_notifications owner_id =
   let pending = List.sort (fun a b -> compare a.id b.id) pending in
   let result =
     Tool_contracts.PendingExecNotificationsResult.create
-      ~notifications:(List.map exec_notification_obj pending) ()
+      ~notifications:(List.map exec_notification_obj pending)
+      ()
   in
   Tool_contracts.PendingExecNotificationsResult.t_to_js result |> inject
+
 let claim_exec_notification_delivery owner_id session_id =
   match Hashtbl.find_opt sessions session_id with
   | Some session when exec_notification_deliverable owner_id session ->
@@ -739,20 +841,21 @@ let claim_exec_notification_delivery owner_id session_id =
       let claim =
         Boundary_contracts.ExecNotificationClaimed.create
           ~sessionId:(float_of_int session.id) ~customType:"notification"
-          ~content:(exec_notification_content session) ~display:true ()
+          ~content:(exec_notification_content session)
+          ~display:true ()
       in
       Tool_contracts.ExecNotificationClaimed.t_to_js claim |> inject
   | _ ->
-      let claim =
-        Boundary_contracts.ExecNotificationUnavailable.create ()
-      in
+      let claim = Boundary_contracts.ExecNotificationUnavailable.create () in
       Tool_contracts.ExecNotificationUnavailable.t_to_js claim |> inject
+
 let release_exec_notification_delivery session_id =
   (match Hashtbl.find_opt sessions session_id with
   | Some session when session.notification_state = Pending ->
       session.notification_delivery_claimed <- false
   | _ -> ());
   core_ack ()
+
 let mark_exec_notification_delivered session_id =
   (match Hashtbl.find_opt sessions session_id with
   | Some session ->
@@ -760,11 +863,11 @@ let mark_exec_notification_delivered session_id =
       session.notification_state <- Sent
   | None -> ());
   core_ack ()
+
 let await_exec_completion session_id =
   let completion_result () =
     Boundary_contracts.ExecCompletionWaitResult.create ~exited:true ()
-    |> Tool_contracts.ExecCompletionWaitResult.t_to_js
-    |> inject
+    |> Tool_contracts.ExecCompletionWaitResult.t_to_js |> inject
   in
   match Hashtbl.find_opt sessions session_id with
   | None -> resolved_effect (completion_result ())
@@ -777,9 +880,11 @@ let age_seconds_of started_at =
   max 0 (int_of_float (Float.floor ((now_ms () -. started_at) /. 1000.)))
 
 let process_manager_entry_of_session (session : session) =
-  let exit_code = Option.map terminal_exit_code (session_terminal_outcome session) in
-  Tool_contracts.ProcessManagerEntry.create
-    ~sessionId:(float_of_int session.id) ~command:session.command
+  let exit_code =
+    Option.map terminal_exit_code (session_terminal_outcome session)
+  in
+  Tool_contracts.ProcessManagerEntry.create ~sessionId:(float_of_int session.id)
+    ~command:session.command
     ~runState:
       (Boundary_contracts.ProcessManagerEntry.run_state_to_contract
          (if session_exited session then `V_exited else `V_running))
@@ -815,15 +920,13 @@ let process_manager_snapshot owner_id =
     |> List.map process_manager_entry_of_retained
   in
   Tool_contracts.ProcessManagerSnapshot.create ~sessions:(live @ retained) ()
-  |> Tool_contracts.ProcessManagerSnapshot.t_to_js
-  |> inject
+  |> Tool_contracts.ProcessManagerSnapshot.t_to_js |> inject
 
 let process_manager_output owner_id session_id =
   let unavailable () =
     Tool_contracts.ProcessManagerOutput.create ~available:false
       ~text:"no longer available" ()
-    |> Tool_contracts.ProcessManagerOutput.t_to_js
-    |> inject
+    |> Tool_contracts.ProcessManagerOutput.t_to_js |> inject
   in
   match Hashtbl.find_opt sessions session_id with
   | Some session when session.owner_id <> owner_id -> unavailable ()
@@ -832,17 +935,16 @@ let process_manager_output owner_id session_id =
       | None -> unavailable ()
       | Some text ->
           Tool_contracts.ProcessManagerOutput.create ~available:true ~text ()
-          |> Tool_contracts.ProcessManagerOutput.t_to_js
-          |> inject)
+          |> Tool_contracts.ProcessManagerOutput.t_to_js |> inject)
   | None -> unavailable ()
 
 let process_manager_kill owner_id session_id =
   match Hashtbl.find_opt sessions session_id with
-  | None ->
-      error_obj (Printf.sprintf "Unknown shell session: %d" session_id)
+  | None -> error_obj (Printf.sprintf "Unknown shell session: %d" session_id)
   | Some session when session.owner_id <> owner_id ->
       error_obj
-        (Printf.sprintf "Shell session %d belongs to another pi session" session_id)
+        (Printf.sprintf "Shell session %d belongs to another pi session"
+           session_id)
   | Some session when session_exited session ->
       error_obj
         (Printf.sprintf "session %d already completed; cannot kill" session_id)

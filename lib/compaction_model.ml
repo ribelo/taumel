@@ -1,11 +1,6 @@
-type compaction_model =
-  | Inherit
-  | Model of string
+type compaction_model = Inherit | Model of string
 
-type command =
-  | Pick
-  | Set of string
-  | Clear
+type command = Pick | Set of string | Clear
 
 type settings_values = {
   session : string option;
@@ -19,14 +14,10 @@ type command_plan =
   | Clear_project
   | Open_picker of { current : compaction_model }
 
-type session_plan =
-  | Use_default
-  | Use_model of string
+type session_plan = Use_default | Use_model of string
 
 let trim_non_empty value =
-  match Shared.trim_non_empty value with
-  | None -> ""
-  | Some value -> value
+  match Shared.trim_non_empty value with None -> "" | Some value -> value
 
 let is_valid_model_id value =
   let value = trim_non_empty value in
@@ -34,8 +25,7 @@ let is_valid_model_id value =
   else
     match String.index_opt value '/' with
     | None -> false
-    | Some index ->
-        index > 0 && index < String.length value - 1
+    | Some index -> index > 0 && index < String.length value - 1
 
 let normalize_setting value = Option.bind value Shared.trim_non_empty
 
@@ -64,8 +54,7 @@ let plan_command ~settings input =
   | Ok Clear -> (
       match (settings.session, settings.project) with
       | Some _, _ | None, Some _ -> Ok Clear_project
-      | None, None ->
-          Ok (Show_current { model = current; source }))
+      | None, None -> Ok (Show_current { model = current; source }))
   | Ok (Set value) -> Ok (Set_project value)
 
 let plan_session_before_compact settings =

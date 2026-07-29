@@ -2,17 +2,32 @@ open Jsoo_bridge
 
 let typed_sandbox_config (sandbox : Taumel.Sandbox.config) =
   Tool_contracts.SandboxConfig.create
-    ~filesystemMode:(Boundary_contracts.SandboxConfig.filesystem_mode_to_contract
-      (match sandbox.filesystem_mode with Read_only -> `V_read_only | Workspace_write -> `V_workspace_write | Danger_full_access -> `V_danger_full_access))
-    ~networkMode:(Boundary_contracts.SandboxConfig.network_mode_to_contract
-      (match sandbox.network_mode with Network_disabled -> `V_disabled | Network_enabled -> `V_enabled))
+    ~filesystemMode:
+      (Boundary_contracts.SandboxConfig.filesystem_mode_to_contract
+         (match sandbox.filesystem_mode with
+         | Read_only -> `V_read_only
+         | Workspace_write -> `V_workspace_write
+         | Danger_full_access -> `V_danger_full_access))
+    ~networkMode:
+      (Boundary_contracts.SandboxConfig.network_mode_to_contract
+         (match sandbox.network_mode with
+         | Network_disabled -> `V_disabled
+         | Network_enabled -> `V_enabled))
     ~workspaceRoots:sandbox.workspace_roots ~noSandbox:sandbox.no_sandbox
     ~isolatedChild:sandbox.isolated_child
-    ~approvalPolicy:(Boundary_contracts.SandboxConfig.approval_policy_to_contract
-      (match sandbox.approval_policy with Never -> `V_never | On_request -> `V_on_request | On_failure -> `V_on_failure | Untrusted -> `V_untrusted)) ()
+    ~approvalPolicy:
+      (Boundary_contracts.SandboxConfig.approval_policy_to_contract
+         (match sandbox.approval_policy with
+         | Never -> `V_never
+         | On_request -> `V_on_request
+         | On_failure -> `V_on_failure
+         | Untrusted -> `V_untrusted))
+    ()
 
 let sandbox_config_from_js sandbox =
-  let sandbox = decode_ojs_contract Tool_contracts.SandboxConfig.t_of_js (ojs_of_js sandbox) in
+  let sandbox =
+    decode_ojs_contract Tool_contracts.SandboxConfig.t_of_js (ojs_of_js sandbox)
+  in
   let filesystem_mode =
     match Boundary_contracts.SandboxConfig.get_filesystem_mode sandbox with
     | `V_read_only -> Taumel.Sandbox.Read_only
@@ -26,26 +41,37 @@ let sandbox_config_from_js sandbox =
   in
   Taumel.Sandbox.validated_config ~filesystem_mode
     ~workspace_roots:(Tool_contracts.SandboxConfig.get_workspaceRoots sandbox)
-    ~network_mode ~approval_policy:
+    ~network_mode
+    ~approval_policy:
       (match Boundary_contracts.SandboxConfig.get_approval_policy sandbox with
-      | `V_never -> Taumel.Sandbox.Never | `V_on_request -> On_request
-      | `V_on_failure -> On_failure | `V_untrusted -> Untrusted)
+      | `V_never -> Taumel.Sandbox.Never
+      | `V_on_request -> On_request
+      | `V_on_failure -> On_failure
+      | `V_untrusted -> Untrusted)
     ~no_sandbox:(Tool_contracts.SandboxConfig.get_noSandbox sandbox)
     ~isolated_child:(Tool_contracts.SandboxConfig.get_isolatedChild sandbox)
   |> Result.fold ~ok:(fun config -> config) ~error:invalid_arg
 
 let resolved_mutation_path_from_js obj =
   {
-    Taumel.Sandbox.requested_path = Tool_contracts.ResolvedMutationPath.get_path obj;
+    Taumel.Sandbox.requested_path =
+      Tool_contracts.ResolvedMutationPath.get_path obj;
     resolved_path = Tool_contracts.ResolvedMutationPath.get_resolvedPath obj;
   }
 
 let validate_workspace_mutation_paths raw_facts =
-  let facts = decode_ojs_contract Tool_contracts.WorkspaceMutationFacts.t_of_js (ojs_of_js raw_facts) in
-  let paths = Tool_contracts.WorkspaceMutationFacts.get_paths facts |> List.map resolved_mutation_path_from_js in
+  let facts =
+    decode_ojs_contract Tool_contracts.WorkspaceMutationFacts.t_of_js
+      (ojs_of_js raw_facts)
+  in
+  let paths =
+    Tool_contracts.WorkspaceMutationFacts.get_paths facts
+    |> List.map resolved_mutation_path_from_js
+  in
   match
     Taumel.Sandbox.validate_resolved_workspace_mutation_paths
-      ~workspace_roots:(Tool_contracts.WorkspaceMutationFacts.get_workspaceRoots facts)
+      ~workspace_roots:
+        (Tool_contracts.WorkspaceMutationFacts.get_workspaceRoots facts)
       paths
   with
   | Ok () ->
@@ -82,7 +108,9 @@ let js_optional_float_field name = function
 let js_exec_host_call (call : Taumel.Sandbox.exec_host_call) =
   let options =
     Tool_contracts.ExecHostOptions.create ~cwd:call.cwd ?timeout:call.timeout_ms
-      ?yieldTimeMs:call.yield_time_ms ?tty:(if call.tty then Some true else None) ()
+      ?yieldTimeMs:call.yield_time_ms
+      ?tty:(if call.tty then Some true else None)
+      ()
   in
   Boundary_contracts.ExecHostCall.create ~command:call.invocation.command
     ~args:call.invocation.args ~options ~sandboxed:call.invocation.sandboxed
@@ -100,11 +128,7 @@ let planned_exec_host_call (plan : Authority_plans.exec_plan) _host _runtime
         Ok
           {
             Taumel.Sandbox.invocation =
-              {
-                command = broker.command;
-                args = broker.argv;
-                sandboxed = true;
-              };
+              { command = broker.command; args = broker.argv; sandboxed = true };
             cwd;
             timeout_ms = None;
             yield_time_ms = plan.yield_time_ms;
@@ -156,8 +180,7 @@ let format_exec_result raw_prepared raw_result sandboxed escalated =
   let escalated = Js.to_bool (Unsafe.coerce escalated) in
   let result = exec_result_from_js result in
   let diagnostic =
-    Taumel.Sandbox.failure_diagnostic
-      ~filesystem_mode:sandbox.filesystem_mode
+    Taumel.Sandbox.failure_diagnostic ~filesystem_mode:sandbox.filesystem_mode
       ~network_mode:sandbox.network_mode ~sandboxed ~exit_code:result.code
       ~stdout:result.stdout ~stderr:result.stderr
   in
@@ -166,7 +189,10 @@ let format_exec_result raw_prepared raw_result sandboxed escalated =
     (Taumel.Sandbox.exec_result_details ~sandboxed ~escalated ?diagnostic result)
 
 let finish_exec_approval raw_facts =
-  let facts = decode_ojs_contract Tool_contracts.ExecApprovalOutcomeFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts =
+    decode_ojs_contract Tool_contracts.ExecApprovalOutcomeFacts.t_of_js
+      (ojs_of_js raw_facts)
+  in
   let plan_id = Tool_contracts.ExecApprovalOutcomeFacts.get_planId facts in
   let owner_context =
     Tool_contracts.ExecApprovalOutcomeFacts.get_ctx facts
@@ -191,11 +217,17 @@ let finish_exec_approval raw_facts =
       ignore (Authority_plans.discard ~owner_context plan_id);
       let result = text_result_with_details denied.message denied.details in
       Boundary_contracts.ExecApprovalDenied.create
-        ~result:(decode_ojs_contract Tool_contracts.ToolResultEnvelope.t_of_js (ojs_of_js result)) ()
+        ~result:
+          (decode_ojs_contract Tool_contracts.ToolResultEnvelope.t_of_js
+             (ojs_of_js result))
+        ()
       |> Tool_contracts.ExecApprovalDenied.t_to_js |> inject
 
 let discard_authority_plan raw_facts =
-  let facts = decode_ojs_contract Tool_contracts.AuthorityPlanRef.t_of_js (ojs_of_js raw_facts) in
+  let facts =
+    decode_ojs_contract Tool_contracts.AuthorityPlanRef.t_of_js
+      (ojs_of_js raw_facts)
+  in
   let owner_context =
     Tool_contracts.AuthorityPlanRef.get_ctx facts
     |> Ts2ocaml.unknown_to_js |> js_of_ojs
@@ -208,7 +240,10 @@ let discard_authority_plan raw_facts =
   | Error message -> error_obj message
 
 let reissue_exec_plan raw_facts =
-  let facts = decode_ojs_contract Tool_contracts.AuthorityPlanRef.t_of_js (ojs_of_js raw_facts) in
+  let facts =
+    decode_ojs_contract Tool_contracts.AuthorityPlanRef.t_of_js
+      (ojs_of_js raw_facts)
+  in
   let owner_context =
     Tool_contracts.AuthorityPlanRef.get_ctx facts
     |> Ts2ocaml.unknown_to_js |> js_of_ojs
@@ -223,24 +258,34 @@ let reissue_exec_plan raw_facts =
       |> Tool_contracts.AuthorityPlanIssued.t_to_js |> inject
 
 let plan_exec_approval_prompt raw_facts =
-  let facts = decode_ojs_contract Tool_contracts.ExecApprovalPromptFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts =
+    decode_ojs_contract Tool_contracts.ExecApprovalPromptFacts.t_of_js
+      (ojs_of_js raw_facts)
+  in
   let prompt =
     {
-      Taumel.Sandbox.title = Tool_contracts.ExecApprovalPromptFacts.get_approvalTitle facts;
+      Taumel.Sandbox.title =
+        Tool_contracts.ExecApprovalPromptFacts.get_approvalTitle facts;
       prompt = Tool_contracts.ExecApprovalPromptFacts.get_approvalPrompt facts;
-      timeout_ms = int_of_float (Tool_contracts.ExecApprovalPromptFacts.get_approvalTimeoutMs facts);
+      timeout_ms =
+        int_of_float
+          (Tool_contracts.ExecApprovalPromptFacts.get_approvalTimeoutMs facts);
     }
   in
   match
     Taumel.Sandbox.plan_exec_approval_prompt
-      ~ui_available:(Tool_contracts.ExecApprovalPromptFacts.get_uiAvailable facts)
+      ~ui_available:
+        (Tool_contracts.ExecApprovalPromptFacts.get_uiAvailable facts)
       prompt
   with
   | Taumel.Sandbox.Approval_prompt_unavailable ->
       Boundary_contracts.ExecApprovalUnavailable.create ()
       |> Tool_contracts.ExecApprovalUnavailable.t_to_js |> inject
   | Taumel.Sandbox.Approval_prompt_confirm prompt ->
-      let timeoutMs = if prompt.timeout_ms > 0 then Some (float_of_int prompt.timeout_ms) else None in
+      let timeoutMs =
+        if prompt.timeout_ms > 0 then Some (float_of_int prompt.timeout_ms)
+        else None
+      in
       Boundary_contracts.ExecApprovalConfirm.create ~title:prompt.title
         ~prompt:prompt.prompt ?timeoutMs ()
       |> Tool_contracts.ExecApprovalConfirm.t_to_js |> inject
@@ -253,10 +298,7 @@ let plan_write_stdin_host_call prepared facts =
   | None -> error_obj "write_stdin requires session_id"
   | Some session_id -> (
       let request =
-        {
-          Taumel.Sandbox.session_id;
-          chars = get_string prepared "chars";
-        }
+        { Taumel.Sandbox.session_id; chars = get_string prepared "chars" }
       in
       match
         Taumel.Sandbox.plan_write_stdin_host_call
@@ -264,20 +306,20 @@ let plan_write_stdin_host_call prepared facts =
           ?yield_time_ms:(optional_positive_float_js prepared "yieldTimeMs")
           request
       with
-  | Taumel.Sandbox.Stdin_result result ->
-      let result =
-        text_result_with_details result.message result.details
-        |> ojs_of_js |> decode_ojs_contract Tool_contracts.ToolResultEnvelope.t_of_js
-      in
-      Boundary_contracts.WriteStdinHostResult.create ~result ()
-      |> Tool_contracts.WriteStdinHostResult.t_to_js |> inject
-  | Taumel.Sandbox.Stdin_call call ->
-      let options =
-        Tool_contracts.WriteStdinHostOptions.create
-          ?yieldTimeMs:call.yield_time_ms ()
-      in
-      Boundary_contracts.WriteStdinHostCall.create
-        ~sessionId:(float_of_int call.request.session_id)
-        ~chars:call.request.chars ~options ()
-      |> Tool_contracts.WriteStdinHostCall.t_to_js |> inject
-  )
+      | Taumel.Sandbox.Stdin_result result ->
+          let result =
+            text_result_with_details result.message result.details
+            |> ojs_of_js
+            |> decode_ojs_contract Tool_contracts.ToolResultEnvelope.t_of_js
+          in
+          Boundary_contracts.WriteStdinHostResult.create ~result ()
+          |> Tool_contracts.WriteStdinHostResult.t_to_js |> inject
+      | Taumel.Sandbox.Stdin_call call ->
+          let options =
+            Tool_contracts.WriteStdinHostOptions.create
+              ?yieldTimeMs:call.yield_time_ms ()
+          in
+          Boundary_contracts.WriteStdinHostCall.create
+            ~sessionId:(float_of_int call.request.session_id)
+            ~chars:call.request.chars ~options ()
+          |> Tool_contracts.WriteStdinHostCall.t_to_js |> inject)

@@ -1,7 +1,4 @@
-type git_delta = {
-  added : int;
-  removed : int;
-}
+type git_delta = { added : int; removed : int }
 
 type activity = {
   running_agents : int;
@@ -32,10 +29,19 @@ type snapshot = {
 }
 
 val empty_git_delta : git_delta
+
 val empty_activity : activity
+
 val parse_git_numstat : string -> git_delta
+
 val count_in_progress_issues : 'a list -> int
+
 val provider_label : string -> string
+
 val format_token_window : float -> string
-val render_line : colorize:(string -> string -> string) -> width:int -> snapshot -> string
-val render_lines : colorize:(string -> string -> string) -> width:int -> snapshot -> string list
+
+val render_line :
+  colorize:(string -> string -> string) -> width:int -> snapshot -> string
+
+val render_lines :
+  colorize:(string -> string -> string) -> width:int -> snapshot -> string list

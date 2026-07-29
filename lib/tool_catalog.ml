@@ -1,25 +1,19 @@
-type command_spec = {
-  name : string;
-  description : string;
-}
+type command_spec = { name : string; description : string }
 
-type command_notification = {
-  message : string;
-  level : string;
-}
+type command_notification = { message : string; level : string }
 
 type command_notification_plan =
   | Notification_unavailable
   | Notification_send of command_notification
 
-type active_tools_sync = {
-  tools : string list;
-  changed : bool;
-}
+type active_tools_sync = { tools : string list; changed : bool }
 
 let agent_tool_specs =
   [
-    { Tool_gateway.name = "agent_spawn"; effect_kind = Tool_gateway.Spawn_agent };
+    {
+      Tool_gateway.name = "agent_spawn";
+      effect_kind = Tool_gateway.Spawn_agent;
+    };
     { name = "agent_send"; effect_kind = Spawn_agent };
     { name = "agent_wait"; effect_kind = Pure };
     { name = "agent_list"; effect_kind = Pure };
@@ -35,8 +29,7 @@ let plan_tool_names =
   List.map (fun (spec : Tool_gateway.spec) -> spec.name) Plan.tool_specs
 
 let tool_specs =
-  Sandbox.canonical_tool_specs
-  @ Plan.tool_specs @ Ralph_loop.tool_specs
+  Sandbox.canonical_tool_specs @ Plan.tool_specs @ Ralph_loop.tool_specs
   @ [
       { Tool_gateway.name = "cron_create"; effect_kind = Tool_gateway.Mutate };
       { name = "cron_list"; effect_kind = Pure };
@@ -46,33 +39,67 @@ let tool_specs =
 
 let command_specs =
   [
-    { name = "taumel"; description = "Show Taumel status or initialize global Taumel config." };
+    {
+      name = "taumel";
+      description = "Show Taumel status or initialize global Taumel config.";
+    };
     {
       name = "permissions";
       description = "Configure sandbox preset, approval, and tool/agent access.";
     };
-    { name = "network"; description = "Enable or disable sandbox network access." };
+    {
+      name = "network";
+      description = "Enable or disable sandbox network access.";
+    };
     { name = "composer"; description = "Configure the Taumel composer UI." };
-    { name = "ralph"; description = "Start, pause, resume, finish, and list Ralph tasks." };
-    { name = "usage"; description = "Show OpenAI Codex and Kimi Code account usage." };
+    {
+      name = "ralph";
+      description = "Start, pause, resume, finish, and list Ralph tasks.";
+    };
+    {
+      name = "usage";
+      description = "Show OpenAI Codex and Kimi Code account usage.";
+    };
     { name = "plan"; description = "Inspect or update the thread plan." };
     { name = "tasks"; description = "Open the interactive plan task manager." };
-    { name = "ps"; description = "Open the interactive command process manager." };
-    { name = "cron"; description = "List, enable, disable, or cancel cron tasks." };
-    { name = "tools"; description = "List, enable, disable, or save Taumel tool visibility." };
-    { name = "skills"; description = "List, enable, disable, or save Taumel skill visibility." };
-    { name = "execpolicy"; description = "Show or check exec command policy decisions." };
-    { name = "compaction-model"; description = "Choose a model for context compaction." };
+    {
+      name = "ps";
+      description = "Open the interactive command process manager.";
+    };
+    {
+      name = "cron";
+      description = "List, enable, disable, or cancel cron tasks.";
+    };
+    {
+      name = "tools";
+      description = "List, enable, disable, or save Taumel tool visibility.";
+    };
+    {
+      name = "skills";
+      description = "List, enable, disable, or save Taumel skill visibility.";
+    };
+    {
+      name = "execpolicy";
+      description = "Show or check exec command policy decisions.";
+    };
+    {
+      name = "compaction-model";
+      description = "Choose a model for context compaction.";
+    };
     {
       name = "agent-runs";
-      description = "Inspect, stop, or close durable Taumel agent identities and runs.";
+      description =
+        "Inspect, stop, or close durable Taumel agent identities and runs.";
     };
   ]
 
-let tool_names = List.map (fun (spec : Tool_gateway.spec) -> spec.name) tool_specs
+let tool_names =
+  List.map (fun (spec : Tool_gateway.spec) -> spec.name) tool_specs
+
 let command_names = List.map (fun spec -> spec.name) command_specs
 
 let has_tool name = List.exists (( = ) name) tool_names
+
 let has_command name = List.exists (( = ) name) command_names
 
 let command_notification ~command_name ~ok ~message ~error =
@@ -84,7 +111,8 @@ let command_notification ~command_name ~ok ~message ~error =
   { message; level = (if ok then "info" else "warning") }
 
 let plan_command_notification ~ui_available notification =
-  if ui_available then Notification_send notification else Notification_unavailable
+  if ui_available then Notification_send notification
+  else Notification_unavailable
 
 let unique_tool_names tool_names =
   let rec loop seen acc = function
@@ -108,8 +136,8 @@ let legacy_mutation_selection tool_names =
 
 let rewrite_mutation_tool_names ?provider tool_names =
   let mutation_tools = [ "edit"; "write"; "apply_patch" ] in
-  if not (List.exists (fun name -> List.mem name mutation_tools) tool_names) then
-    unique_tool_names tool_names
+  if not (List.exists (fun name -> List.mem name mutation_tools) tool_names)
+  then unique_tool_names tool_names
   else
     let replacement =
       if should_use_apply_patch_for_provider provider then [ "apply_patch" ]
@@ -124,8 +152,8 @@ let rewrite_mutation_tool_names ?provider tool_names =
           if inserted then loop inserted acc rest
           else loop true (List.rev_append replacement acc) rest
       | name :: rest -> loop inserted (name :: acc) rest
-  in
-  loop false [] tool_names |> unique_tool_names
+    in
+    loop false [] tool_names |> unique_tool_names
 
 let remove_tool_names removed tool_names =
   List.filter (fun name -> not (List.mem name removed)) tool_names
@@ -134,11 +162,15 @@ let ensure_tool_names required tool_names =
   unique_tool_names (tool_names @ required)
 
 let ralph_control_tool_names = [ "ralph_continue"; "ralph_finish" ]
+
 let ambient_hidden_tool_names = [ "usage"; "user_detection_tool" ]
+
 let child_plan_tool_names = plan_tool_names
 
 let rewrite_shell_tool_names tool_names =
-  let push name values = if List.mem name values then values else values @ [ name ] in
+  let push name values =
+    if List.mem name values then values else values @ [ name ]
+  in
   let rec loop inserted acc = function
     | [] -> acc
     | "bash" :: rest when inserted -> loop inserted acc rest
@@ -153,7 +185,9 @@ let rewrite_shell_tool_names tool_names =
 let rewrite_active_tools ?provider ?(ralph_child = false) ?(agent_child = false)
     tool_names =
   let tool_names =
-    tool_names |> rewrite_mutation_tool_names ?provider |> rewrite_shell_tool_names
+    tool_names
+    |> rewrite_mutation_tool_names ?provider
+    |> rewrite_shell_tool_names
     |> remove_tool_names ambient_hidden_tool_names
   in
   let tool_names =
@@ -164,8 +198,8 @@ let rewrite_active_tools ?provider ?(ralph_child = false) ?(agent_child = false)
     remove_tool_names (agent_tool_names @ child_plan_tool_names) tool_names
   else tool_names
 
-let plan_active_tools_sync ?provider ?(ralph_child = false) ?(agent_child = false)
-    ?(disabled_tools = []) tool_names =
+let plan_active_tools_sync ?provider ?(ralph_child = false)
+    ?(agent_child = false) ?(disabled_tools = []) tool_names =
   let current = unique_tool_names tool_names in
   let tools =
     rewrite_active_tools ?provider ~ralph_child ~agent_child current

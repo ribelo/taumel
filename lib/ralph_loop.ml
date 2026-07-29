@@ -1,12 +1,6 @@
-type task_status =
-  | Running
-  | Paused
-  | Finished
-  | Archived
+type task_status = Running | Paused | Finished | Archived
 
-type actor =
-  | Controller of string
-  | Child of string
+type actor = Controller of string | Child of string
 
 type task = {
   id : string;
@@ -33,59 +27,70 @@ let status_of_string = function
   | _ -> None
 
 let start ?max_iterations ?reflection_every ~id ~controller_session objective =
-  let valid_limit = function None -> true | Some value -> value > 0 && value <= 2_147_483_647 in
+  let valid_limit = function
+    | None -> true
+    | Some value -> value > 0 && value <= 2_147_483_647
+  in
   if not (valid_limit max_iterations && valid_limit reflection_every) then
     Error "ralph iteration controls must be representable positive integers"
-  else match Shared.require_non_empty "ralph objective" objective with
-  | Error _ as error -> error
-  | Ok objective ->
-      Ok
-        {
-          id;
-          objective;
-          controller_session;
-          child_session = None;
-          iteration = 0;
-          max_iterations;
-          reflection_every;
-          status = Running;
-        }
+  else
+    match Shared.require_non_empty "ralph objective" objective with
+    | Error _ as error -> error
+    | Ok objective ->
+        Ok
+          {
+            id;
+            objective;
+            controller_session;
+            child_session = None;
+            iteration = 0;
+            max_iterations;
+            reflection_every;
+            status = Running;
+          }
 
 let ensure_controller task = function
   | Controller session when session = task.controller_session -> Ok ()
-  | Controller _ -> Error "ralph command belongs to a different controller session"
+  | Controller _ ->
+      Error "ralph command belongs to a different controller session"
   | Child _ -> Error "controller command cannot be called by the child session"
 
 let ensure_child task = function
   | Child session when task.child_session = Some session -> Ok ()
   | Child _ -> Error "child command belongs to a different child session"
-  | Controller _ -> Error "child command cannot be called by the controller session"
+  | Controller _ ->
+      Error "child command cannot be called by the controller session"
 
 let attach_child actor child_session task =
   ensure_controller task actor
   |> Result.map (fun () -> { task with child_session = Some child_session })
 
 let pause actor task =
-  ensure_controller task actor |> Result.map (fun () -> { task with status = Paused })
+  ensure_controller task actor
+  |> Result.map (fun () -> { task with status = Paused })
 
 let resume actor task =
-  ensure_controller task actor |> Result.map (fun () -> { task with status = Running })
+  ensure_controller task actor
+  |> Result.map (fun () -> { task with status = Running })
 
 let finish actor task =
-  ensure_controller task actor |> Result.map (fun () -> { task with status = Finished })
+  ensure_controller task actor
+  |> Result.map (fun () -> { task with status = Finished })
 
 let archive actor task =
-  ensure_controller task actor |> Result.map (fun () -> { task with status = Archived })
+  ensure_controller task actor
+  |> Result.map (fun () -> { task with status = Archived })
 
 let should_reflect task =
   match task.reflection_every with
-  | Some every when every > 0 -> task.iteration > 0 && task.iteration mod every = 0
+  | Some every when every > 0 ->
+      task.iteration > 0 && task.iteration mod every = 0
   | _ -> false
 
 let ralph_continue actor task =
   match ensure_child task actor with
   | Error _ as error -> error
-  | Ok () ->
+  | Ok () -> (
       if task.status <> Running then Error "ralph task is not running"
       else if task.iteration >= 2_147_483_647 then
         Error "ralph iteration limit is exhausted"
@@ -94,10 +99,11 @@ let ralph_continue actor task =
         match task.max_iterations with
         | Some max_iterations when next_iteration > max_iterations ->
             Ok { task with status = Paused }
-        | _ -> Ok { task with iteration = next_iteration }
+        | _ -> Ok { task with iteration = next_iteration })
 
 let ralph_finish actor task =
-  ensure_child task actor |> Result.map (fun () -> { task with status = Finished })
+  ensure_child task actor
+  |> Result.map (fun () -> { task with status = Finished })
 
 let child_prompt task =
   String.concat "\n"
@@ -139,10 +145,13 @@ let parse_positive_int label value =
 let parse_start_args args =
   let rec loop max_iterations reflection_every objective_parts = function
     | [] ->
-        let objective = String.concat " " (List.rev objective_parts) |> String.trim in
+        let objective =
+          String.concat " " (List.rev objective_parts) |> String.trim
+        in
         if objective = "" then Error "ralph objective is required"
         else Ok { objective; max_iterations; reflection_every }
-    | ("--max-iterations" | "--max") :: value :: rest when objective_parts = [] -> (
+    | ("--max-iterations" | "--max") :: value :: rest when objective_parts = []
+      -> (
         match parse_positive_int "max iterations" value with
         | Error _ as error -> error
         | Ok max_iterations ->
@@ -158,7 +167,8 @@ let parse_start_args args =
     | ("--reflection-every" | "--reflect-every" | "--reflect") :: []
       when objective_parts = [] ->
         Error "reflection cadence requires a value"
-    | part :: rest -> loop max_iterations reflection_every (part :: objective_parts) rest
+    | part :: rest ->
+        loop max_iterations reflection_every (part :: objective_parts) rest
   in
   loop None None [] (words args)
 
@@ -186,7 +196,9 @@ let replace_task updated tasks =
 let find_task id tasks = List.find_opt (fun (task : task) -> task.id = id) tasks
 
 let list_plan tasks =
-  let visible = List.filter (fun (task : task) -> task.status <> Archived) tasks in
+  let visible =
+    List.filter (fun (task : task) -> task.status <> Archived) tasks
+  in
   let message =
     match visible with
     | [] -> "No Ralph tasks."
@@ -194,8 +206,8 @@ let list_plan tasks =
   in
   { tasks; message; start_details = None; changed = false }
 
-let start_plan ~now ~controller_session ~child_session_for_id ~start_denied tasks
-    args =
+let start_plan ~now ~controller_session ~child_session_for_id ~start_denied
+    tasks args =
   match start_denied with
   | Some message -> Error message
   | None ->
@@ -247,7 +259,8 @@ let update_plan ~controller_session action id tasks =
         result
 
 let command_usage =
-  "usage: /ralph [list|start <objective>|pause <id>|resume <id>|finish <id>|archive <id>]"
+  "usage: /ralph [list|start <objective>|pause <id>|resume <id>|finish \
+   <id>|archive <id>]"
 
 let apply_command ~now ~controller_session ~child_session_for_id ~start_denied
     tasks args =
@@ -294,13 +307,22 @@ let task_of_json = function
         | None -> Error (name ^ " is required")
         | Some Shared.Null -> Ok None
         | Some value ->
-            Result.map Option.some (Shared.json_int ("Ralph task." ^ name) value)
+            Result.map Option.some
+              (Shared.json_int ("Ralph task." ^ name) value)
       in
       let ( let* ) = Result.bind in
       let* () =
         Shared.json_exact_fields "Ralph task"
-          [ "id"; "objective"; "controllerSession"; "childSession";
-            "iteration"; "maxIterations"; "reflectionEvery"; "status" ]
+          [
+            "id";
+            "objective";
+            "controllerSession";
+            "childSession";
+            "iteration";
+            "maxIterations";
+            "reflectionEvery";
+            "status";
+          ]
           fields
       in
       let* status_name = string_field "status" in
@@ -320,8 +342,10 @@ let task_of_json = function
         if iteration < 0 then Error "iteration must be non-negative"
         else
           match (max_iterations, reflection_every) with
-          | Some value, _ when value <= 0 -> Error "maxIterations must be positive"
-          | _, Some value when value <= 0 -> Error "reflectionEvery must be positive"
+          | Some value, _ when value <= 0 ->
+              Error "maxIterations must be positive"
+          | _, Some value when value <= 0 ->
+              Error "reflectionEvery must be positive"
           | _ -> Ok ()
       in
       Ok
@@ -354,17 +378,17 @@ let tasks_of_json = function
       | Error _ as error -> error
       | Ok version when version <> 1 -> Error "unsupported Ralph state version"
       | Ok _ -> (
-      match List.assoc_opt "tasks" fields with
-      | Some (Shared.Array values) ->
-          let rec collect acc = function
-            | [] -> Ok (List.rev acc)
-            | value :: rest -> (
-                match task_of_json value with
-                | Ok task -> collect (task :: acc) rest
-                | Error _ as error -> error)
-          in
-          collect [] values
-      | _ -> Error "Ralph state requires tasks"))
+          match List.assoc_opt "tasks" fields with
+          | Some (Shared.Array values) ->
+              let rec collect acc = function
+                | [] -> Ok (List.rev acc)
+                | value :: rest -> (
+                    match task_of_json value with
+                    | Ok task -> collect (task :: acc) rest
+                    | Error _ as error -> error)
+              in
+              collect [] values
+          | _ -> Error "Ralph state requires tasks"))
   | _ -> Error "Ralph state must be an object"
 
 let codec = { Shared.encode = tasks_to_json; decode = tasks_of_json }

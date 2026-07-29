@@ -38,7 +38,8 @@ let decode = function
       let int_field name =
         match List.assoc_opt name fields with
         | Some (Shared.Number value)
-          when Float.is_finite value && value = Float.round value
+          when Float.is_finite value
+               && value = Float.round value
                && Float.abs value <= 2_147_483_647. ->
             Ok (int_of_float value)
         | _ -> Error (name ^ " must be a representable integer")
@@ -47,7 +48,8 @@ let decode = function
         match List.assoc_opt name fields with
         | Some Shared.Null -> Ok None
         | Some (Shared.Number value)
-          when Float.is_finite value && value = Float.round value
+          when Float.is_finite value
+               && value = Float.round value
                && Float.abs value <= 2_147_483_647. ->
             Ok (Some (int_of_float value))
         | _ -> Error (name ^ " must be null or a representable integer")
@@ -65,7 +67,9 @@ let decode = function
         ]
       in
       let* () =
-        match List.find_opt (fun name -> List.mem_assoc name fields) legacy_fields with
+        match
+          List.find_opt (fun name -> List.mem_assoc name fields) legacy_fields
+        with
         | Some name -> Error ("incompatible legacy plan field: " ^ name)
         | None -> Ok ()
       in
@@ -114,7 +118,8 @@ let decode = function
       let* updated_at = int_field "updatedAt" in
       let* () =
         if String.trim plan_id = "" then Error "planId must not be empty"
-        else if String.trim session_id = "" then Error "sessionId must not be empty"
+        else if String.trim session_id = "" then
+          Error "sessionId must not be empty"
         else if tokens_used < 0 then Error "tokensUsed must be non-negative"
         else if time_used_seconds < 0 then
           Error "timeUsedSeconds must be non-negative"
@@ -130,8 +135,8 @@ let decode = function
       in
       let* () =
         match (status, time_limit_seconds) with
-        | Plan_status.Time_limited, Some limit
-          when time_used_seconds >= limit ->
+        | Plan_status.Time_limited, Some limit when time_used_seconds >= limit
+          ->
             Ok ()
         | Plan_status.Time_limited, _ ->
             Error "time_limited status requires a reached timeLimitSeconds"

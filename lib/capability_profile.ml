@@ -1,20 +1,10 @@
 module String_set = Shared.String_set
 
-type sandbox_preset =
-  | Read_only
-  | Workspace_write
-  | Danger_full_access
+type sandbox_preset = Read_only | Workspace_write | Danger_full_access
 
-type approval_policy =
-  | Never
-  | On_request
-  | On_failure
-  | Untrusted
+type approval_policy = Never | On_request | On_failure | Untrusted
 
-type allowlist =
-  | None_allowed
-  | Only of String_set.t
-  | All
+type allowlist = None_allowed | Only of String_set.t | All
 
 type t = {
   model_id : string;
@@ -35,7 +25,11 @@ let default =
     no_sandbox_allowed = false;
   }
 
-let of_list values = Only (List.fold_left (fun set value -> String_set.add value set) String_set.empty values)
+let of_list values =
+  Only
+    (List.fold_left
+       (fun set value -> String_set.add value set)
+       String_set.empty values)
 
 let allows allowlist name =
   match allowlist with
@@ -112,14 +106,15 @@ let allowlist_to_json = function
           ("kind", Shared.String "only");
           ( "names",
             Shared.Array
-              (values |> String_set.elements |> List.map (fun value -> Shared.String value)) );
+              (values |> String_set.elements
+              |> List.map (fun value -> Shared.String value)) );
         ]
 
 let allowlist_of_json = function
-  | Shared.Object fields ->
+  | Shared.Object fields -> (
       let ( let* ) = Result.bind in
       let* kind = Shared.json_required_string "allowlist" fields "kind" in
-      (match kind with
+      match kind with
       | "none" ->
           let* () = Shared.json_exact_fields "allowlist" [ "kind" ] fields in
           Ok None_allowed
@@ -155,7 +150,8 @@ let to_json (profile : t) =
       ("modelId", Shared.String profile.model_id);
       ("thinkingLevel", Shared.String profile.thinking_level);
       ("sandboxPreset", Shared.String (sandbox_to_string profile.sandbox_preset));
-      ("approvalPolicy", Shared.String (approval_to_string profile.approval_policy));
+      ( "approvalPolicy",
+        Shared.String (approval_to_string profile.approval_policy) );
       ("tools", allowlist_to_json profile.tools);
       ("noSandboxAllowed", Shared.Bool profile.no_sandbox_allowed);
     ]

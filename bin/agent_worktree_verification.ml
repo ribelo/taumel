@@ -5,7 +5,8 @@ let repository_identity path =
     let real = Node_fs.realpath_sync path in
     let stat = Node_fs.stat_sync_bigint real in
     let field value = Node_buffer.to_string_default value in
-    Ok (real ^ "\000" ^ field (Node_fs.dev stat) ^ ":" ^ field (Node_fs.ino stat))
+    Ok
+      (real ^ "\000" ^ field (Node_fs.dev stat) ^ ":" ^ field (Node_fs.ino stat))
   with error -> Error (Printexc.to_string error)
 
 let verify_repository_identity ~run_git ~main_repository_root
@@ -36,20 +37,21 @@ let verify_registration ~is_directory ~run_git ~repository_identity
             [ "rev-parse"; "--path-format=absolute"; "--git-common-dir" ]
         with
         | Error message -> Error message
-        | Ok common_dir ->
-            (match repository_identity common_dir with
+        | Ok common_dir -> (
+            match repository_identity common_dir with
             | Error message -> Error message
             | Ok actual_id when actual_id <> main_repository_id ->
                 Error "agent worktree repository identity changed"
-            | Ok _ ->
-              match
-                run_git ~cwd:worktree_path
-                  [ "rev-parse"; "--abbrev-ref"; "HEAD" ]
-              with
-              | Error message -> Error message
-              | Ok current when current <> branch ->
-                  Error
-                    "agent worktree is not checked out on its dedicated branch"
-              | Ok _ ->
+            | Ok _ -> (
+                match
                   run_git ~cwd:worktree_path
-                    [ "rev-parse"; "--path-format=absolute"; "--git-dir" ]))
+                    [ "rev-parse"; "--abbrev-ref"; "HEAD" ]
+                with
+                | Error message -> Error message
+                | Ok current when current <> branch ->
+                    Error
+                      "agent worktree is not checked out on its dedicated \
+                       branch"
+                | Ok _ ->
+                    run_git ~cwd:worktree_path
+                      [ "rev-parse"; "--path-format=absolute"; "--git-dir" ])))

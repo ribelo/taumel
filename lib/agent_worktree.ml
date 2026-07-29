@@ -41,9 +41,15 @@ let creation_step_of_string = function
 
 let valid_creation_steps steps =
   let all =
-    [ Marker_recorded; Worktree_creation_started; Worktree_created;
-      Source_reproduced; Baseline_created; Baseline_verified;
-      Identity_accepted ]
+    [
+      Marker_recorded;
+      Worktree_creation_started;
+      Worktree_created;
+      Source_reproduced;
+      Baseline_created;
+      Baseline_verified;
+      Identity_accepted;
+    ]
   in
   let rec prefix actual expected =
     match (actual, expected) with
@@ -55,13 +61,22 @@ let valid_creation_steps steps =
   prefix steps all
 
 let ready_for_acceptance steps =
-  steps =
-    [ Marker_recorded; Worktree_creation_started; Worktree_created;
-      Source_reproduced; Baseline_created; Baseline_verified ]
+  steps
+  = [
+      Marker_recorded;
+      Worktree_creation_started;
+      Worktree_created;
+      Source_reproduced;
+      Baseline_created;
+      Baseline_verified;
+    ]
 
 let baseline_author_name = "Pi Baseline"
+
 let baseline_author_email = "pi-baseline@local"
+
 let baseline_committer_name = baseline_author_name
+
 let baseline_committer_email = baseline_author_email
 
 let provisional_marker_path ~agent_home ~owner_component ~agent_id =
@@ -170,16 +185,20 @@ let opaque_cleanup_incident_id ~owner_session_id ~agent_id ~now =
   String.sub hex 0 (min 16 (String.length hex))
 
 let workspace_unavailable_not_git =
-  "workspace_unavailable: isolated agent worktree cannot be created because the project is not a Git repository"
+  "workspace_unavailable: isolated agent worktree cannot be created because \
+   the project is not a Git repository"
 
 let workspace_unavailable_no_head =
-  "workspace_unavailable: isolated agent worktree cannot be created because the repository has no HEAD commit"
+  "workspace_unavailable: isolated agent worktree cannot be created because \
+   the repository has no HEAD commit"
 
 let workspace_unavailable_collision =
-  "workspace_unavailable: isolated agent worktree cannot be created because the intended worktree path or branch already exists"
+  "workspace_unavailable: isolated agent worktree cannot be created because \
+   the intended worktree path or branch already exists"
 
 let workspace_unavailable_source_changed =
-  "workspace_unavailable: isolated agent worktree cannot be created because the source workspace changed during capture"
+  "workspace_unavailable: isolated agent worktree cannot be created because \
+   the source workspace changed during capture"
 
 let delete_worktree_on_none_message =
   "delete_worktree is only valid for worktree-isolated identities"

@@ -1,13 +1,6 @@
 (* Closed grammar for brokered agent-worktree Git via exec_command. *)
 
-type subcommand =
-  | Status
-  | Diff
-  | Log
-  | Show
-  | Add
-  | Restore_staged
-  | Commit
+type subcommand = Status | Diff | Log | Show | Add | Restore_staged | Commit
 
 type parse_error =
   | Not_simple_git
@@ -24,10 +17,15 @@ type parsed_command = {
 }
 
 let max_argument_tokens = 256
+
 let max_total_argument_bytes = 65_536
+
 let max_revision_bytes = 1_024
+
 let max_pathspec_bytes = 4_096
+
 let max_commit_message_bytes = 16_384
+
 let default_log_count = 100
 
 let subcommand_to_string = function
@@ -41,7 +39,8 @@ let subcommand_to_string = function
 
 let error_message = function
   | Not_simple_git ->
-      "brokered agent Git requires a simple git command with an allowed subcommand"
+      "brokered agent Git requires a simple git command with an allowed \
+       subcommand"
   | Unsupported_subcommand name ->
       "brokered agent Git does not support subcommand: " ^ name
   | Invalid_arguments message -> message
@@ -64,7 +63,8 @@ let byte_length values =
 
 let ensure_limits tokens =
   if List.length tokens > max_argument_tokens then
-    Error (Limits_exceeded "brokered agent Git accepts at most 256 argument tokens")
+    Error
+      (Limits_exceeded "brokered agent Git accepts at most 256 argument tokens")
   else if byte_length tokens > max_total_argument_bytes then
     Error
       (Limits_exceeded
@@ -118,9 +118,7 @@ let parse_status tokens =
     | "--untracked-files=all" :: rest when untracked = None ->
         loop output_form branch (Some "all") rest
     | token :: _ ->
-        Error
-          (Invalid_arguments
-             ("unsupported git status option: " ^ token))
+        Error (Invalid_arguments ("unsupported git status option: " ^ token))
   in
   match loop `Default false None options with
   | Error _ as error -> error
@@ -140,40 +138,36 @@ let parse_status tokens =
         | Some value -> argv @ [ "--untracked-files=" ^ value ]
       in
       let argv =
-        match pathspecs with
-        | [] -> argv
-        | values -> argv @ ("--" :: values)
+        match pathspecs with [] -> argv | values -> argv @ ("--" :: values)
       in
-      Ok
-        {
-          subcommand = Status;
-          mutating = false;
-          argv;
-          commit_message = None;
-        }
+      Ok { subcommand = Status; mutating = false; argv; commit_message = None }
 
 let parse_diff tokens =
   let ( let* ) = Result.bind in
   let options, pathspecs = take_after_separator tokens in
   let* pathspecs = validate_pathspecs pathspecs in
   let rec loop staged output_mode exit_code no_renames unified revs = function
-    | [] -> Ok (staged, output_mode, exit_code, no_renames, unified, List.rev revs)
+    | [] ->
+        Ok (staged, output_mode, exit_code, no_renames, unified, List.rev revs)
     | token :: _ when revs <> [] && String.starts_with ~prefix:"-" token ->
-        Error (Invalid_arguments "git diff options must precede revision operands")
-    | ("--cached" | "--staged") :: rest when not staged && revs = [] ->
+        Error
+          (Invalid_arguments "git diff options must precede revision operands")
+    | ("--cached" | "--staged") :: rest when (not staged) && revs = [] ->
         loop true output_mode exit_code no_renames unified revs rest
-    | "--exit-code" :: rest when not exit_code && revs = [] ->
+    | "--exit-code" :: rest when (not exit_code) && revs = [] ->
         loop staged output_mode true no_renames unified revs rest
-    | "--no-renames" :: rest when not no_renames && revs = [] ->
+    | "--no-renames" :: rest when (not no_renames) && revs = [] ->
         loop staged output_mode exit_code true unified revs rest
-    | token :: rest when String.starts_with ~prefix:"--unified=" token && revs = [] -> (
-        match int_of_string_opt (String.sub token 10 (String.length token - 10)) with
-        | Some n when n >= 0 && n <= 1000 && unified = None && output_mode = None
-          ->
+    | token :: rest
+      when String.starts_with ~prefix:"--unified=" token && revs = [] -> (
+        match
+          int_of_string_opt (String.sub token 10 (String.length token - 10))
+        with
+        | Some n
+          when n >= 0 && n <= 1000 && unified = None && output_mode = None ->
             loop staged (Some `Patch) exit_code no_renames (Some n) revs rest
         | _ ->
-            Error
-              (Invalid_arguments ("unsupported git diff option: " ^ token)))
+            Error (Invalid_arguments ("unsupported git diff option: " ^ token)))
     | token :: rest
       when List.mem token
              [
@@ -188,40 +182,49 @@ let parse_diff tokens =
                "--quiet";
              ]
            && output_mode = None && revs = [] ->
-          let mode =
-            match token with
-            | "--patch" -> `Patch
-            | "--stat" -> `Stat
-            | "--shortstat" -> `Shortstat
-            | "--numstat" -> `Numstat
-            | "--name-only" -> `Name_only
-            | "--name-status" -> `Name_status
-            | "--summary" -> `Summary
-            | "--check" -> `Check
-            | _ -> `Quiet
-          in
-          loop staged (Some mode) exit_code no_renames unified revs rest
+        let mode =
+          match token with
+          | "--patch" -> `Patch
+          | "--stat" -> `Stat
+          | "--shortstat" -> `Shortstat
+          | "--numstat" -> `Numstat
+          | "--name-only" -> `Name_only
+          | "--name-status" -> `Name_status
+          | "--summary" -> `Summary
+          | "--check" -> `Check
+          | _ -> `Quiet
+        in
+        loop staged (Some mode) exit_code no_renames unified revs rest
     | token :: rest when is_revision_or_object token && List.length revs < 2 ->
         if staged && List.length revs >= 1 then
-          Error (Invalid_arguments "git diff --cached accepts at most one revision")
-        else loop staged output_mode exit_code no_renames unified (token :: revs) rest
+          Error
+            (Invalid_arguments "git diff --cached accepts at most one revision")
+        else
+          loop staged output_mode exit_code no_renames unified (token :: revs)
+            rest
     | token :: _ ->
         Error (Invalid_arguments ("unsupported git diff option: " ^ token))
   in
   match loop false None false false None [] options with
   | Error _ as error -> error
   | Ok (staged, output_mode, exit_code, no_renames, unified, revs) ->
-      if Option.is_some unified && output_mode <> Some `Patch && output_mode <> None
-      then Error (Invalid_arguments "--unified is only valid for patch diff output")
+      if
+        Option.is_some unified && output_mode <> Some `Patch
+        && output_mode <> None
+      then
+        Error
+          (Invalid_arguments "--unified is only valid for patch diff output")
       else
         let argv = [ "diff" ] in
         let argv = if staged then argv @ [ "--cached" ] else argv in
         let argv =
           match output_mode with
-          | None | Some `Patch ->
-              (match unified with
+          | None | Some `Patch -> (
+              match unified with
               | Some n -> argv @ [ "--patch"; "--unified=" ^ string_of_int n ]
-              | None -> if output_mode = Some `Patch then argv @ [ "--patch" ] else argv)
+              | None ->
+                  if output_mode = Some `Patch then argv @ [ "--patch" ]
+                  else argv)
           | Some `Stat -> argv @ [ "--stat" ]
           | Some `Shortstat -> argv @ [ "--shortstat" ]
           | Some `Numstat -> argv @ [ "--numstat" ]
@@ -237,13 +240,7 @@ let parse_diff tokens =
         let argv =
           match pathspecs with [] -> argv | values -> argv @ ("--" :: values)
         in
-        Ok
-          {
-            subcommand = Diff;
-            mutating = false;
-            argv;
-            commit_message = None;
-          }
+        Ok { subcommand = Diff; mutating = false; argv; commit_message = None }
 
 let parse_count_token token =
   if String.starts_with ~prefix:"-n" token && String.length token > 2 then
@@ -266,26 +263,19 @@ let parse_log tokens =
   let rec loop count detail oneline graph decorate first_parent reverse rev =
     function
     | [] ->
-        Ok
-          ( count,
-            detail,
-            oneline,
-            graph,
-            decorate,
-            first_parent,
-            reverse,
-            rev )
+        Ok (count, detail, oneline, graph, decorate, first_parent, reverse, rev)
     | token :: _ when rev <> None && String.starts_with ~prefix:"-" token ->
-        Error (Invalid_arguments "git log options must precede revision operands")
-    | "--oneline" :: rest when not oneline && rev = None ->
+        Error
+          (Invalid_arguments "git log options must precede revision operands")
+    | "--oneline" :: rest when (not oneline) && rev = None ->
         loop count detail true graph decorate first_parent reverse rev rest
-    | "--graph" :: rest when not graph && rev = None ->
+    | "--graph" :: rest when (not graph) && rev = None ->
         loop count detail oneline true decorate first_parent reverse rev rest
-    | "--decorate=short" :: rest when not decorate && rev = None ->
+    | "--decorate=short" :: rest when (not decorate) && rev = None ->
         loop count detail oneline graph true first_parent reverse rev rest
-    | "--first-parent" :: rest when not first_parent && rev = None ->
+    | "--first-parent" :: rest when (not first_parent) && rev = None ->
         loop count detail oneline graph decorate true reverse rev rest
-    | "--reverse" :: rest when not reverse && rev = None ->
+    | "--reverse" :: rest when (not reverse) && rev = None ->
         loop count detail oneline graph decorate first_parent true rev rest
     | token :: rest
       when parse_count_token token <> None && count = None && rev = None -> (
@@ -293,8 +283,8 @@ let parse_log tokens =
         | Some n when n >= 1 && n <= 1000 ->
             loop (Some n) detail oneline graph decorate first_parent reverse rev
               rest
-        | _ ->
-            Error (Invalid_arguments ("unsupported git log count: " ^ token)))
+        | _ -> Error (Invalid_arguments ("unsupported git log count: " ^ token))
+        )
     | "-n" :: value :: rest when count = None && rev = None -> (
         match int_of_string_opt value with
         | Some n when n >= 1 && n <= 1000 ->
@@ -302,7 +292,8 @@ let parse_log tokens =
               rest
         | _ -> Error (Invalid_arguments "git log count must be 1..1000"))
     | token :: rest
-      when List.mem token [ "--patch"; "--stat"; "--name-only"; "--name-status" ]
+      when List.mem token
+             [ "--patch"; "--stat"; "--name-only"; "--name-status" ]
            && detail = None && rev = None ->
         loop count (Some token) oneline graph decorate first_parent reverse rev
           rest
@@ -322,12 +313,8 @@ let parse_log tokens =
         match detail with None -> argv | Some token -> argv @ [ token ]
       in
       let argv = if graph then argv @ [ "--graph" ] else argv in
-      let argv =
-        if decorate then argv @ [ "--decorate=short" ] else argv
-      in
-      let argv =
-        if first_parent then argv @ [ "--first-parent" ] else argv
-      in
+      let argv = if decorate then argv @ [ "--decorate=short" ] else argv in
+      let argv = if first_parent then argv @ [ "--first-parent" ] else argv in
       let argv = if reverse then argv @ [ "--reverse" ] else argv in
       let argv =
         match rev with None -> argv | Some value -> argv @ [ value ]
@@ -335,13 +322,7 @@ let parse_log tokens =
       let argv =
         match pathspecs with [] -> argv | values -> argv @ ("--" :: values)
       in
-      Ok
-        {
-          subcommand = Log;
-          mutating = false;
-          argv;
-          commit_message = None;
-        }
+      Ok { subcommand = Log; mutating = false; argv; commit_message = None }
 
 let parse_show tokens =
   let ( let* ) = Result.bind in
@@ -349,16 +330,21 @@ let parse_show tokens =
   let* pathspecs = validate_pathspecs pathspecs in
   let rec loop oneline detail object_selector = function
     | [] -> Ok (oneline, detail, object_selector)
-    | token :: _ when object_selector <> None && String.starts_with ~prefix:"-" token ->
-        Error (Invalid_arguments "git show options must precede object operands")
-    | "--oneline" :: rest when not oneline && object_selector = None ->
+    | token :: _
+      when object_selector <> None && String.starts_with ~prefix:"-" token ->
+        Error
+          (Invalid_arguments "git show options must precede object operands")
+    | "--oneline" :: rest when (not oneline) && object_selector = None ->
         loop true detail object_selector rest
     | token :: rest
       when List.mem token
-             [ "--patch"; "--no-patch"; "--stat"; "--name-only"; "--name-status" ]
+             [
+               "--patch"; "--no-patch"; "--stat"; "--name-only"; "--name-status";
+             ]
            && detail = None && object_selector = None ->
         loop oneline (Some token) object_selector rest
-    | token :: rest when object_selector = None && is_revision_or_object token ->
+    | token :: rest when object_selector = None && is_revision_or_object token
+      ->
         loop oneline detail (Some token) rest
     | token :: _ ->
         Error (Invalid_arguments ("unsupported git show option: " ^ token))
@@ -379,13 +365,7 @@ let parse_show tokens =
       let argv =
         match pathspecs with [] -> argv | values -> argv @ ("--" :: values)
       in
-      Ok
-        {
-          subcommand = Show;
-          mutating = false;
-          argv;
-          commit_message = None;
-        }
+      Ok { subcommand = Show; mutating = false; argv; commit_message = None }
 
 let parse_add tokens =
   let ( let* ) = Result.bind in
@@ -405,13 +385,7 @@ let parse_add tokens =
           | [] -> [ "add"; "--all" ]
           | values -> [ "add"; "--all"; "--" ] @ values
         in
-        Ok
-          {
-            subcommand = Add;
-            mutating = true;
-            argv;
-            commit_message = None;
-          }
+        Ok { subcommand = Add; mutating = true; argv; commit_message = None }
   | "--" :: pathspecs ->
       let* pathspecs = validate_pathspecs (Some pathspecs) in
       if pathspecs = [] then
@@ -436,7 +410,8 @@ let parse_restore tokens =
       let* pathspecs = validate_pathspecs (Some pathspecs) in
       if pathspecs = [] then
         Error
-          (Invalid_arguments "git restore --staged requires at least one pathspec")
+          (Invalid_arguments
+             "git restore --staged requires at least one pathspec")
       else
         Ok
           {
@@ -447,30 +422,26 @@ let parse_restore tokens =
           }
   | _ ->
       Error
-        (Invalid_arguments
-           "git restore accepts only --staged -- PATHSPEC...")
+        (Invalid_arguments "git restore accepts only --staged -- PATHSPEC...")
 
 let parse_commit tokens =
   let message =
     match tokens with
-    | "-m" :: message :: [] -> Some message
-    | "--message" :: message :: [] -> Some message
+    | [ "-m"; message ] -> Some message
+    | [ "--message"; message ] -> Some message
     | token :: [] when String.starts_with ~prefix:"--message=" token ->
         Some (String.sub token 10 (String.length token - 10))
     | _ -> None
   in
   match message with
   | None ->
-      Error
-        (Invalid_arguments
-           "git commit accepts only -m/--message MESSAGE")
+      Error (Invalid_arguments "git commit accepts only -m/--message MESSAGE")
   | Some message ->
       let trimmed = String.trim message in
       if trimmed = "" then
         Error (Invalid_arguments "git commit message must be non-whitespace")
       else if String.length message > max_commit_message_bytes then
-        Error
-          (Limits_exceeded "git commit message exceeds 16384 bytes")
+        Error (Limits_exceeded "git commit message exceeds 16384 bytes")
       else if String.contains message '\n' then
         Error
           (Invalid_arguments "git commit accepts only one non-multiline message")
@@ -502,10 +473,10 @@ let parse_commit tokens =
 let parse_tokens tokens =
   let ( let* ) = Result.bind in
   match tokens with
-  | "git" :: subcommand :: rest ->
+  | "git" :: subcommand :: rest -> (
       let* () = ensure_limits (subcommand :: rest) in
       if subcommand = "" || subcommand.[0] = '-' then Error Not_simple_git
-      else (
+      else
         match subcommand with
         | "status" -> parse_status rest
         | "diff" -> parse_diff rest
@@ -522,7 +493,7 @@ let authorize ~read_only parsed =
     Error
       (Permission_denied
          ("brokered agent Git subcommand is not allowed while read-only: "
-        ^ subcommand_to_string parsed.subcommand))
+         ^ subcommand_to_string parsed.subcommand))
   else Ok parsed
 
 (* Per-identity broker lease: one active brokered Git process at a time. *)
@@ -561,7 +532,8 @@ let normalize_static_shell_word value =
       | `Single, '\'' -> loop `Unquoted (index + 1)
       | `Double, '"' -> loop `Unquoted (index + 1)
       | `Unquoted, '\\' when index + 1 < String.length value ->
-          if value.[index + 1] <> '\n' then Buffer.add_char output value.[index + 1];
+          if value.[index + 1] <> '\n' then
+            Buffer.add_char output value.[index + 1];
           loop `Unquoted (index + 2)
       | quote, character ->
           Buffer.add_char output character;
@@ -574,16 +546,17 @@ let is_git_word value =
 
 let dynamic_git_command_name node =
   node.Exec_policy.kind = "command_name"
-  && List.mem (String.trim node.text) [ "$GIT"; "${GIT}"; "\"$GIT\""; "\"${GIT}\"" ]
+  && List.mem (String.trim node.text)
+       [ "$GIT"; "${GIT}"; "\"$GIT\""; "\"${GIT}\"" ]
 
 let command_words node =
   node.Exec_policy.children
   |> List.filter_map (fun child ->
-         if
-           List.mem child.Exec_policy.kind
-             [ "command_name"; "word"; "number"; "raw_string"; "string" ]
-         then Some (normalize_static_shell_word child.text)
-         else None)
+      if
+        List.mem child.Exec_policy.kind
+          [ "command_name"; "word"; "number"; "raw_string"; "string" ]
+      then Some (normalize_static_shell_word child.text)
+      else None)
 
 let starts_with_dash value = String.length value > 0 && value.[0] = '-'
 
@@ -596,13 +569,14 @@ let rec first_command = function
 let rec env_command = function
   | [] -> None
   | "--" :: command :: _ -> Some command
-  | ("-u" | "--unset" | "-C" | "--chdir") :: _value :: rest ->
-      env_command rest
+  | ("-u" | "--unset" | "-C" | "--chdir") :: _value :: rest -> env_command rest
   | assignment :: rest when String.contains assignment '=' -> env_command rest
   | option :: rest when starts_with_dash option -> env_command rest
   | command :: _ -> Some command
 
-let option_is_git = function Some command -> is_git_word command | None -> false
+let option_is_git = function
+  | Some command -> is_git_word command
+  | None -> false
 
 let wrapper_invokes_git ~shell_source_classifier node =
   match command_words node with
@@ -622,8 +596,8 @@ let wrapper_invokes_git ~shell_source_classifier node =
   | [] -> false
 
 let rec ast_invokes_git ?(shell_source_classifier = fun _ -> false) node =
-  (node.Exec_policy.kind = "command_name"
-  && (is_git_word node.text || dynamic_git_command_name node))
+  node.Exec_policy.kind = "command_name"
+  && (is_git_word node.text || dynamic_git_command_name node)
   || wrapper_invokes_git ~shell_source_classifier node
   || List.exists (ast_invokes_git ~shell_source_classifier) node.children
 
@@ -633,9 +607,7 @@ let simple_git_tokens_from_ast root =
   | Ok [] -> Error Not_simple_git
   | Ok (_ :: _ :: _) -> Error Not_simple_git
   | Ok [ tokens ] -> (
-      match tokens with
-      | "git" :: _ -> Ok tokens
-      | _ -> Error Not_simple_git)
+      match tokens with "git" :: _ -> Ok tokens | _ -> Error Not_simple_git)
 
 let parse_simple_git_ast root =
   match simple_git_tokens_from_ast root with

@@ -24,8 +24,7 @@ let process_start_token pid =
           String.sub raw (index + 1) (String.length raw - index - 1)
           |> String.split_on_char ' '
           |> List.filter (fun value -> value <> "")
-          |> fun fields -> List.nth_opt fields 19
-          |> Option.value ~default:"")
+          |> fun fields -> List.nth_opt fields 19 |> Option.value ~default:"")
 
 let process_is_alive pid expected_start =
   if pid <= 0 then false
@@ -98,7 +97,7 @@ let acquire ~owner_session_id =
   | None -> (
       match Node_files.mkdir_p (owner_directory owner_session_id) with
       | Error message -> Error (Lease_error message)
-      | Ok () ->
+      | Ok () -> (
           let owner_path = owner_directory owner_session_id in
           let owner_valid =
             Host.validate_exact_directory ~owner_session_id ~agent_id:""
@@ -122,21 +121,22 @@ let acquire ~owner_session_id =
                 Ok candidate
             | Error _ when attempts < 3 -> (
                 match read path with
-                | Error _ when not (Node_files.path_exists path) -> loop (attempts + 1)
+                | Error _ when not (Node_files.path_exists path) ->
+                    loop (attempts + 1)
                 | Error message -> Error (Lease_error message)
                 | Ok current
                   when process_is_alive current.pid current.process_start ->
                     Error Lease_held
-                | Ok _ ->
+                | Ok _ -> (
                     let quarantine = path ^ ".reclaim-" ^ Host.fresh_nonce () in
-                    (match Node_files.rename path quarantine with
+                    match Node_files.rename path quarantine with
                     | Error _ -> loop (attempts + 1)
                     | Ok () ->
                         ignore (Host.unlink_file quarantine);
                         loop (attempts + 1)))
             | Error message -> Error (Lease_error message)
           in
-          (match owner_valid with
+          match owner_valid with
           | Error message -> Error (Lease_error message)
           | Ok None -> Error (Lease_error "ephemeral cleanup owner is missing")
           | Ok (Some _) -> loop 0))
@@ -171,7 +171,7 @@ let register ~owner_session_id ~agent_id =
   | Ok _lease -> (
       match Host.cleanup_envelope ~owner_session_id ~agent_id with
       | Error _ as error -> error
-      | Ok envelope_path ->
+      | Ok envelope_path -> (
           let marker_path =
             Node_path.join [ envelope_path; "cleanup-marker.json" ]
           in
@@ -192,29 +192,29 @@ let register ~owner_session_id ~agent_id =
             | Ok () ->
                 Host.write_envelope_marker ~scope:"ephemeral" ~marker_path
                   ~owner_session_id ~agent_id
-                  ~cleanup_nonce:(Host.fresh_nonce ()))
+                  ~cleanup_nonce:(Host.fresh_nonce ())))
 
 let deferred_candidates () =
   let root = Host.private_root () in
   Node_files.list_directory root
   |> List.concat_map (fun owner_name ->
-         let owner_path = Node_path.join [ root; owner_name ] in
-         if not (Node_files.is_directory owner_path) then []
-         else
-           Node_files.list_directory owner_path
-           |> List.filter_map (fun name ->
-                  if not (String.starts_with ~prefix:".cleanup-" name) then None
-                  else
-                    let envelope_path = Node_path.join [ owner_path; name ] in
-                    let marker_path =
-                      Node_path.join [ envelope_path; "cleanup-marker.json" ]
-                    in
-                    match Host.read_envelope_marker marker_path with
-                    | Ok marker
-                      when marker.marker_scope = "ephemeral"
-                           && marker.marker_phase = "prepared" ->
-                        Some (envelope_path, marker)
-                    | _ -> None))
+      let owner_path = Node_path.join [ root; owner_name ] in
+      if not (Node_files.is_directory owner_path) then []
+      else
+        Node_files.list_directory owner_path
+        |> List.filter_map (fun name ->
+            if not (String.starts_with ~prefix:".cleanup-" name) then None
+            else
+              let envelope_path = Node_path.join [ owner_path; name ] in
+              let marker_path =
+                Node_path.join [ envelope_path; "cleanup-marker.json" ]
+              in
+              match Host.read_envelope_marker marker_path with
+              | Ok marker
+                when marker.marker_scope = "ephemeral"
+                     && marker.marker_phase = "prepared" ->
+                  Some (envelope_path, marker)
+              | _ -> None))
 
 let validate_deferred_path envelope_path marker =
   let owner_session_id = marker.Host.marker_owner_session_id in
@@ -225,8 +225,8 @@ let validate_deferred_path envelope_path marker =
       Error "deferred ephemeral cleanup envelope is not at its derived path"
   | Ok expected -> (
       match
-        Host.validate_exact_directory ~owner_session_id ~agent_id
-          ~expected envelope_path
+        Host.validate_exact_directory ~owner_session_id ~agent_id ~expected
+          envelope_path
       with
       | Error _ as error -> error
       | Ok None -> Error "deferred ephemeral cleanup envelope is missing"
@@ -243,49 +243,50 @@ let promote_deferred envelope_path marker =
     | Ok expected when expected <> envelope_path ->
         Error "deferred ephemeral cleanup envelope is not at its derived path"
     | Ok _ -> (
-      match Host.private_directory ~owner_session_id ~agent_id with
-      | Error _ as error -> error
-      | Ok live_path ->
-          let payload_path = Node_path.join [ envelope_path; "session" ] in
-          let live_exists = Node_files.path_exists live_path in
-          let payload_exists = Node_files.path_exists payload_path in
-          if live_exists && payload_exists then
-            Error "deferred ephemeral cleanup has both live and staged sessions"
-          else
-            let stage_result =
-              if payload_exists || not live_exists then Ok ()
-              else
-                match
-                  Host.validate_exact_directory ~require_child_marker:true
-                    ~owner_session_id ~agent_id ~expected:live_path live_path
-                with
-                | Error _ as error -> error
-                | Ok None -> Ok ()
-                | Ok (Some canonical_live) ->
-                    Node_files.rename canonical_live payload_path
-            in
-            match stage_result with
-            | Error _ as error -> error
-            | Ok () ->
-                let pending =
-                  {
-                    Taumel.Agents.cleanup_owner_session_id = owner_session_id;
-                    cleanup_agent_id = agent_id;
-                    cleanup_nonce;
-                    cleanup_remaining_artifacts = [ "private_session" ];
-                  }
-                in
-                (match
-                   Host.append_cleanup_journal_record ~owner_session_id ~agent_id
-                     ~cleanup_nonce
-                 with
-                | Error _ as error -> error
-                | Ok () -> (
-                    match Host.finalize_cleanup_pending pending with
-                    | Error _ as error -> error
-                    | Ok () ->
-                        Host.remove_cleanup_journal_record ~owner_session_id
-                          ~agent_id ~cleanup_nonce)))
+        match Host.private_directory ~owner_session_id ~agent_id with
+        | Error _ as error -> error
+        | Ok live_path -> (
+            let payload_path = Node_path.join [ envelope_path; "session" ] in
+            let live_exists = Node_files.path_exists live_path in
+            let payload_exists = Node_files.path_exists payload_path in
+            if live_exists && payload_exists then
+              Error
+                "deferred ephemeral cleanup has both live and staged sessions"
+            else
+              let stage_result =
+                if payload_exists || not live_exists then Ok ()
+                else
+                  match
+                    Host.validate_exact_directory ~require_child_marker:true
+                      ~owner_session_id ~agent_id ~expected:live_path live_path
+                  with
+                  | Error _ as error -> error
+                  | Ok None -> Ok ()
+                  | Ok (Some canonical_live) ->
+                      Node_files.rename canonical_live payload_path
+              in
+              match stage_result with
+              | Error _ as error -> error
+              | Ok () -> (
+                  let pending =
+                    {
+                      Taumel.Agents.cleanup_owner_session_id = owner_session_id;
+                      cleanup_agent_id = agent_id;
+                      cleanup_nonce;
+                      cleanup_remaining_artifacts = [ "private_session" ];
+                    }
+                  in
+                  match
+                    Host.append_cleanup_journal_record ~owner_session_id
+                      ~agent_id ~cleanup_nonce
+                  with
+                  | Error _ as error -> error
+                  | Ok () -> (
+                      match Host.finalize_cleanup_pending pending with
+                      | Error _ as error -> error
+                      | Ok () ->
+                          Host.remove_cleanup_journal_record ~owner_session_id
+                            ~agent_id ~cleanup_nonce))))
 
 let reconcile_deferred () =
   List.fold_left
@@ -293,22 +294,24 @@ let reconcile_deferred () =
       let current =
         match validate_deferred_path envelope_path marker with
         | Error _ as error -> error
-        | Ok ()
-          when held_by_current_process marker.Host.marker_owner_session_id ->
+        | Ok () when held_by_current_process marker.Host.marker_owner_session_id
+          ->
             Ok ()
         | Ok () -> (
-          match acquire ~owner_session_id:marker.Host.marker_owner_session_id with
-          | Error Lease_held -> Ok ()
-          | Error error -> Error (lease_error_message error)
-          | Ok lease ->
-              let promoted = promote_deferred envelope_path marker in
-              let released = release lease in
-              (match (promoted, released) with
-              | Error _ as error, _ -> error
-              | Ok (), Error message -> Error message
-              | Ok (), Ok () -> Ok ()))
+            match
+              acquire ~owner_session_id:marker.Host.marker_owner_session_id
+            with
+            | Error Lease_held -> Ok ()
+            | Error error -> Error (lease_error_message error)
+            | Ok lease -> (
+                let promoted = promote_deferred envelope_path marker in
+                let released = release lease in
+                match (promoted, released) with
+                | (Error _ as error), _ -> error
+                | Ok (), Error message -> Error message
+                | Ok (), Ok () -> Ok ()))
       in
       match (result, current) with
-      | Error _ as first, _ -> first
+      | (Error _ as first), _ -> first
       | Ok (), current -> current)
     (Ok ()) (deferred_candidates ())

@@ -2,8 +2,7 @@ module Skill = Taumel.Skill_resolver
 
 let assert_equal label expected actual =
   if expected <> actual then
-    failwith
-      (Printf.sprintf "%s: expected %s, got %s" label expected actual)
+    failwith (Printf.sprintf "%s: expected %s, got %s" label expected actual)
 
 let assert_list label expected actual =
   assert_equal label (String.concat "," expected) (String.concat "," actual)
@@ -26,7 +25,10 @@ let test_block () =
       ~base_dir:"/skills/foo" ~body:"\nDo the thing.\n"
   in
   assert_equal "block form"
-    "<skill name=\"foo\" location=\"/skills/foo/SKILL.md\">\nReferences are relative to /skills/foo.\n\nDo the thing.\n</skill>"
+    "<skill name=\"foo\" location=\"/skills/foo/SKILL.md\">\n\
+     References are relative to /skills/foo.\n\n\
+     Do the thing.\n\
+     </skill>"
     block
 
 let () =

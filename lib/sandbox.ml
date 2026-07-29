@@ -1,5 +1,4 @@
 module String_set = Shared.String_set
-
 include Sandbox_types
 
 let filesystem_mode_to_string = function
@@ -30,12 +29,19 @@ let validated_config ~filesystem_mode ~workspace_roots ~network_mode
     Error "isolated child sessions cannot enable --no-sandbox"
   else if isolated_child && filesystem_mode = Danger_full_access then
     Error "danger-full-access is not allowed for isolated children"
-  else if filesystem_mode = Danger_full_access && network_mode = Network_disabled then
-    Error "danger-full-access requires network access"
+  else if
+    filesystem_mode = Danger_full_access && network_mode = Network_disabled
+  then Error "danger-full-access requires network access"
   else
     Ok
-      { filesystem_mode; workspace_roots; network_mode; approval_policy;
-        no_sandbox; isolated_child }
+      {
+        filesystem_mode;
+        workspace_roots;
+        network_mode;
+        approval_policy;
+        no_sandbox;
+        isolated_child;
+      }
 
 let config_of_profile ?(workspace_roots = []) ?(network_mode = Network_disabled)
     ?(no_sandbox = false) ?(isolated_child = false)
@@ -43,9 +49,11 @@ let config_of_profile ?(workspace_roots = []) ?(network_mode = Network_disabled)
   let network_mode =
     match profile.Capability_profile.sandbox_preset with
     | Capability_profile.Danger_full_access -> Network_enabled
-    | Capability_profile.Read_only | Capability_profile.Workspace_write -> network_mode
+    | Capability_profile.Read_only | Capability_profile.Workspace_write ->
+        network_mode
   in
-  if isolated_child && no_sandbox then Error "isolated child sessions cannot enable --no-sandbox"
+  if isolated_child && no_sandbox then
+    Error "isolated child sessions cannot enable --no-sandbox"
   else if
     isolated_child
     && profile.Capability_profile.sandbox_preset
@@ -63,7 +71,8 @@ let config_of_profile ?(workspace_roots = []) ?(network_mode = Network_disabled)
 let fail_closed_config ~workspace_roots ~isolated_child =
   match
     config_of_profile ~workspace_roots ~isolated_child
-      (Capability_profile.resolve ~sandbox_preset:Capability_profile.Workspace_write
+      (Capability_profile.resolve
+         ~sandbox_preset:Capability_profile.Workspace_write
          ~approval_policy:Capability_profile.Never ~no_sandbox_allowed:false
          Capability_profile.default)
   with
@@ -71,14 +80,18 @@ let fail_closed_config ~workspace_roots ~isolated_child =
   | Error message -> invalid_arg message
 
 let split_path = Sandbox_paths.split_path
+
 let normalize_path = Sandbox_paths.normalize_path
+
 let path_within = Sandbox_paths.path_within
 
 let workspace_contains (config : config) path =
   List.exists (fun root -> path_within ~root path) config.workspace_roots
 
 let protected_workspace_dir_names = Sandbox_paths.protected_workspace_dir_names
+
 let join_path = Sandbox_paths.join_path
+
 let is_absolute_path = Sandbox_paths.is_absolute_path
 
 let resolve_workspace_path (config : config) path =
@@ -95,9 +108,7 @@ let is_protected_workspace_metadata_path (config : config) path =
     (fun root ->
       List.exists
         (fun dir_name ->
-          path_starts_with_dir
-            ~dir:(join_path root dir_name)
-            path)
+          path_starts_with_dir ~dir:(join_path root dir_name) path)
         protected_workspace_dir_names)
     config.workspace_roots
 
@@ -132,8 +143,7 @@ let is_protected_path_under ~roots path =
     roots
 
 let authorization_resolution_denied path message =
-  Deny
-    ("path authorization failed for " ^ path ^ ": " ^ message)
+  Deny ("path authorization failed for " ^ path ^ ": " ^ message)
 
 let authorization_path_message reason ~requested ~resolved =
   reason ^ " (requested path: " ^ requested ^ "; resolved target: " ^ resolved
@@ -143,21 +153,18 @@ let authorization_path_message reason ~requested ~resolved =
    caller-side enablement through [requires_resolved_workspace_mutation_validation]
    adjacent so the flag and validator do not drift. *)
 let validate_resolved_workspace_mutation_paths ~workspace_roots paths =
-  let roots =
-    workspace_roots
-    |> List.filter_map Shared.trim_non_empty
-  in
+  let roots = workspace_roots |> List.filter_map Shared.trim_non_empty in
   let rec loop = function
     | [] -> Ok ()
     | path :: rest ->
         if not (workspace_contains_roots ~roots path.resolved_path) then
           Error
             ("Sandbox: apply_patch path escapes workspace: "
-            ^ path.requested_path)
+           ^ path.requested_path)
         else if is_protected_path_under ~roots path.resolved_path then
           Error
             ("Sandbox: path is inside protected workspace metadata: "
-            ^ path.requested_path)
+           ^ path.requested_path)
         else loop rest
   in
   loop paths
@@ -178,8 +185,8 @@ let authorize_path ?auth_path ?auth_roots (config : config) access path =
             if is_protected_path_under ~roots auth then
               Deny
                 (authorization_path_message
-                   "path is inside protected workspace metadata"
-                   ~requested:path ~resolved:auth)
+                   "path is inside protected workspace metadata" ~requested:path
+                   ~resolved:auth)
             else if workspace_contains_roots ~roots auth then Allow
             else
               Deny
@@ -216,7 +223,8 @@ let approval_policy_to_codex_string = function
 let reject_exec_escalation_message policy =
   let policy = approval_policy_to_codex_string policy in
   Printf.sprintf
-    "approval policy is %s; reject command — you cannot ask for escalated permissions if the approval policy is %s"
+    "approval policy is %s; reject command — you cannot ask for escalated \
+     permissions if the approval policy is %s"
     policy policy
 
 let authorize_mutation_path ?(approved = false) ?auth_path ?auth_roots
@@ -228,7 +236,8 @@ let authorize_mutation_path ?(approved = false) ?auth_path ?auth_roots
     | Danger_full_access, _ -> Allow
     | _, Read -> Allow
     | Read_only, (Write | Delete) ->
-        if approved then Allow else approval_decision config "filesystem is read-only"
+        if approved then Allow
+        else approval_decision config "filesystem is read-only"
     | Workspace_write, (Write | Delete) -> (
         match policy_path config ?auth_path path with
         | Error message -> authorization_resolution_denied path message
@@ -236,8 +245,8 @@ let authorize_mutation_path ?(approved = false) ?auth_path ?auth_roots
             if is_protected_path_under ~roots auth then
               Deny
                 (authorization_path_message
-                   "path is inside protected workspace metadata"
-                   ~requested:path ~resolved:auth)
+                   "path is inside protected workspace metadata" ~requested:path
+                   ~resolved:auth)
             else if workspace_contains_roots ~roots auth then Allow
             else if approved then Allow
             else
@@ -266,7 +275,10 @@ let authorize_effect (config : config) = function
       | Network_enabled -> Ok ()
       | Network_disabled -> Error "network is disabled by sandbox policy")
 
-let decision_rank = function Allow -> 0 | Requires_approval _ -> 1 | Deny _ -> 2
+let decision_rank = function
+  | Allow -> 0
+  | Requires_approval _ -> 1
+  | Deny _ -> 2
 
 let strictest_decision left right =
   if decision_rank left >= decision_rank right then left else right
@@ -289,7 +301,8 @@ let authorize_exec ?policy_decision ?policy_message (config : config) request =
           Deny (reject_exec_escalation_message config.approval_policy)
         else
           approval_decision config
-            (if justification = "" then "command requested escalation" else justification)
+            (if justification = "" then "command requested escalation"
+             else justification)
     | Use_default -> (
         match request.workdir with
         | Some workdir -> authorize_path config Read workdir
@@ -298,7 +311,8 @@ let authorize_exec ?policy_decision ?policy_message (config : config) request =
   match policy_decision with
   | None -> existing
   | Some policy_decision ->
-      strictest_decision existing (exec_policy_decision ?message:policy_message config policy_decision)
+      strictest_decision existing
+        (exec_policy_decision ?message:policy_message config policy_decision)
 
 let exec_command config runner request =
   match authorize_exec config request with
@@ -309,8 +323,13 @@ let exec_command config runner request =
 let write_stdin _config writer request = writer request
 
 let write_stdin_success_message = "stdin written"
-let write_stdin_unavailable_message = "write_stdin is unavailable in this Pi host adapter"
-let write_stdin_invalid_session_message = "write_stdin preparation omitted sessionId"
+
+let write_stdin_unavailable_message =
+  "write_stdin is unavailable in this Pi host adapter"
+
+let write_stdin_invalid_session_message =
+  "write_stdin preparation omitted sessionId"
+
 let apply_patch_success_message = "Patch applied."
 
 let write_stdin_error_details ?(unavailable = false) message =
@@ -345,8 +364,8 @@ let string_contains haystack needle =
   let needle_len = String.length needle in
   let rec loop index =
     needle_len = 0
-    || (index + needle_len <= haystack_len
-       && (String.sub haystack index needle_len = needle || loop (index + 1)))
+    || index + needle_len <= haystack_len
+       && (String.sub haystack index needle_len = needle || loop (index + 1))
   in
   loop 0
 
@@ -357,8 +376,8 @@ let contains_any patterns value =
 let first_matching_line patterns output =
   output |> String.split_on_char '\n'
   |> List.find_map (fun line ->
-         let line = String.trim line in
-         if line <> "" && contains_any patterns line then Some line else None)
+      let line = String.trim line in
+      if line <> "" && contains_any patterns line then Some line else None)
 
 let failure_diagnostic ~filesystem_mode ~network_mode ~sandboxed ~exit_code
     ~stdout ~stderr =
@@ -384,7 +403,9 @@ let failure_diagnostic ~filesystem_mode ~network_mode ~sandboxed ~exit_code
           {
             kind = Network_failure;
             message =
-              "Network access is blocked by the sandbox. Retry the same command with with_escalated_permissions=true if this command requires network.";
+              "Network access is blocked by the sandbox. Retry the same \
+               command with with_escalated_permissions=true if this command \
+               requires network.";
             evidence;
             filesystem_mode;
             network_mode;
@@ -407,7 +428,9 @@ let failure_diagnostic ~filesystem_mode ~network_mode ~sandboxed ~exit_code
               {
                 kind = Filesystem_failure;
                 message =
-                  "Filesystem access is restricted by the sandbox. Retry the same command with with_escalated_permissions=true if this command needs host filesystem access.";
+                  "Filesystem access is restricted by the sandbox. Retry the \
+                   same command with with_escalated_permissions=true if this \
+                   command needs host filesystem access.";
                 evidence;
                 filesystem_mode;
                 network_mode;
@@ -423,9 +446,13 @@ let network_mode_to_string = function
   | Network_enabled -> "enabled"
 
 let system_ro_path_candidates = Sandbox_exec_host.system_ro_path_candidates
+
 let temp_root_candidates = Sandbox_exec_host.temp_root_candidates
+
 let plan_exec_invocation = Sandbox_exec_host.plan_exec_invocation
+
 let exec_shell_args = Sandbox_exec_host.exec_shell_args
+
 let plan_exec_host_call = Sandbox_exec_host.plan_exec_host_call
 
 let failure_diagnostic_to_json diagnostic =
@@ -440,7 +467,8 @@ let failure_diagnostic_to_json diagnostic =
             ( "filesystemMode",
               Shared.String
                 (filesystem_mode_to_string diagnostic.filesystem_mode) );
-            ("networkMode", Shared.String (network_mode_to_string diagnostic.network_mode));
+            ( "networkMode",
+              Shared.String (network_mode_to_string diagnostic.network_mode) );
           ] );
     ]
 
@@ -474,7 +502,8 @@ let exec_result_details ~sandboxed ~escalated ?diagnostic result =
     match diagnostic with
     | None -> fields
     | Some diagnostic ->
-        fields @ [ ("sandboxDiagnostic", failure_diagnostic_to_json diagnostic) ]
+        fields
+        @ [ ("sandboxDiagnostic", failure_diagnostic_to_json diagnostic) ]
   in
   Shared.Object fields
 
@@ -498,11 +527,7 @@ let plan_exec_approval_prompt ~ui_available prompt =
     with
     | Some title, Some prompt_text ->
         Approval_prompt_confirm
-          {
-            title;
-            prompt = prompt_text;
-            timeout_ms = max 0 prompt.timeout_ms;
-          }
+          { title; prompt = prompt_text; timeout_ms = max 0 prompt.timeout_ms }
     | _ -> Approval_prompt_unavailable
 
 let approval_prompt_outcome_to_string = function
@@ -562,17 +587,24 @@ let filesystem_approval_prompt ~tool ~path =
 
 module Patch = Sandbox_patch
 
-let authorize_patch ?(approved = false) ?(auth_paths = []) ?auth_roots config patch =
+let authorize_patch ?(approved = false) ?(auth_paths = []) ?auth_roots config
+    patch =
   let actions = Patch.affected_actions patch in
   let auth_path path = List.assoc_opt path auth_paths in
   let rec loop = function
     | [] -> Allow
     | Patch.Write_file path :: rest -> (
-        match authorize_mutation_path ~approved ?auth_path:(auth_path path) ?auth_roots config Write path with
+        match
+          authorize_mutation_path ~approved ?auth_path:(auth_path path)
+            ?auth_roots config Write path
+        with
         | Allow -> loop rest
         | decision -> decision)
     | Patch.Delete_path path :: rest -> (
-        match authorize_mutation_path ~approved ?auth_path:(auth_path path) ?auth_roots config Delete path with
+        match
+          authorize_mutation_path ~approved ?auth_path:(auth_path path)
+            ?auth_roots config Delete path
+        with
         | Allow -> loop rest
         | decision -> decision)
   in
@@ -587,10 +619,7 @@ let apply_patch_to_map config files text =
       | Requires_approval message -> Error ("approval required: " ^ message)
       | Deny message -> Error message)
 
-type edit_replacement = {
-  old_text : string;
-  new_text : string;
-}
+type edit_replacement = { old_text : string; new_text : string }
 
 type edit_match = {
   edit_index : int;
@@ -641,9 +670,9 @@ let find_substring_occurrences haystack needle =
   let needle_len = String.length needle in
   let rec matches_at haystack_index needle_index =
     needle_index = needle_len
-    || (haystack_index + needle_index < haystack_len
+    || haystack_index + needle_index < haystack_len
        && haystack.[haystack_index + needle_index] = needle.[needle_index]
-       && matches_at haystack_index (needle_index + 1))
+       && matches_at haystack_index (needle_index + 1)
   in
   let rec loop index acc =
     if index + needle_len > haystack_len then List.rev acc
@@ -654,11 +683,16 @@ let find_substring_occurrences haystack needle =
 
 let apply_edits ~display_path content edits =
   match edits with
-  | [] -> Error "Edit tool input is invalid. edits must contain at least one replacement."
+  | [] ->
+      Error
+        "Edit tool input is invalid. edits must contain at least one \
+         replacement."
   | _ ->
       let bom, text =
         if String.starts_with ~prefix:utf8_bom content then
-          (utf8_bom, String.sub content (String.length utf8_bom) (String.length content - String.length utf8_bom))
+          ( utf8_bom,
+            String.sub content (String.length utf8_bom)
+              (String.length content - String.length utf8_bom) )
         else ("", content)
       in
       let normalized_content = normalize_to_lf text in
@@ -674,26 +708,29 @@ let apply_edits ~display_path content edits =
       let edit_count = List.length normalized_edits in
       let rec collect_matches index acc = function
         | [] -> Ok (List.rev acc)
-        | edit :: rest ->
+        | edit :: rest -> (
             if edit.old_text = "" then
               Error
-                (if edit_count = 1 then "oldText must not be empty in " ^ display_path ^ "."
+                (if edit_count = 1 then
+                   "oldText must not be empty in " ^ display_path ^ "."
                  else
-                   Printf.sprintf "edits[%d].oldText must not be empty in %s." index
-                     display_path)
+                   Printf.sprintf "edits[%d].oldText must not be empty in %s."
+                     index display_path)
             else
               let occurrences =
                 find_substring_occurrences normalized_content edit.old_text
               in
-              (match occurrences with
+              match occurrences with
               | [] ->
                   Error
                     (if edit_count = 1 then
                        "Could not find the exact text in " ^ display_path
-                       ^ ". The old text must match exactly including all whitespace and newlines."
+                       ^ ". The old text must match exactly including all \
+                          whitespace and newlines."
                      else
                        Printf.sprintf
-                         "Could not find edits[%d] in %s. The oldText must match exactly including all whitespace and newlines."
+                         "Could not find edits[%d] in %s. The oldText must \
+                          match exactly including all whitespace and newlines."
                          index display_path)
               | [ match_index ] ->
                   collect_matches (index + 1)
@@ -703,28 +740,38 @@ let apply_edits ~display_path content edits =
                        match_length = String.length edit.old_text;
                        replacement = edit.new_text;
                      }
-                      :: acc)
+                    :: acc)
                     rest
               | matches ->
                   Error
                     (if edit_count = 1 then
                        Printf.sprintf
-                         "Found %d occurrences of the text in %s. The text must be unique. Please provide more context to make it unique."
+                         "Found %d occurrences of the text in %s. The text \
+                          must be unique. Please provide more context to make \
+                          it unique."
                          (List.length matches) display_path
                      else
                        Printf.sprintf
-                         "Found %d occurrences of edits[%d] in %s. Each oldText must be unique. Please provide more context to make it unique."
+                         "Found %d occurrences of edits[%d] in %s. Each \
+                          oldText must be unique. Please provide more context \
+                          to make it unique."
                          (List.length matches) index display_path))
       in
       let ( let* ) = Result.bind in
       let* matches = collect_matches 0 [] normalized_edits in
-      let matches = List.sort (fun left right -> compare left.match_index right.match_index) matches in
+      let matches =
+        List.sort
+          (fun left right -> compare left.match_index right.match_index)
+          matches
+      in
       let rec check_overlaps = function
         | previous :: current :: rest
-          when previous.match_index + previous.match_length > current.match_index ->
+          when previous.match_index + previous.match_length
+               > current.match_index ->
             Error
               (Printf.sprintf
-                 "edits[%d] and edits[%d] overlap in %s. Merge them into one edit or target disjoint regions."
+                 "edits[%d] and edits[%d] overlap in %s. Merge them into one \
+                  edit or target disjoint regions."
                  previous.edit_index current.edit_index display_path)
         | _ :: rest -> check_overlaps rest
         | [] -> Ok ()
@@ -733,7 +780,8 @@ let apply_edits ~display_path content edits =
       let next =
         List.fold_left
           (fun text edit ->
-            String.sub text 0 edit.match_index ^ edit.replacement
+            String.sub text 0 edit.match_index
+            ^ edit.replacement
             ^ String.sub text
                 (edit.match_index + edit.match_length)
                 (String.length text - edit.match_index - edit.match_length))
@@ -743,8 +791,12 @@ let apply_edits ~display_path content edits =
         Error
           (if edit_count = 1 then
              "No changes made to " ^ display_path
-             ^ ". The replacement produced identical content. This might indicate an issue with special characters or the text not existing as expected."
-           else "No changes made to " ^ display_path ^ ". The replacements produced identical content.")
+             ^ ". The replacement produced identical content. This might \
+                indicate an issue with special characters or the text not \
+                existing as expected."
+           else
+             "No changes made to " ^ display_path
+             ^ ". The replacements produced identical content.")
       else Ok (bom ^ restore_line_endings next text)
 
 let canonical_tool_specs = Sandbox_tool_specs.canonical_tool_specs

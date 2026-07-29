@@ -4,7 +4,9 @@ open App_state
 let js_require name = node_require name
 
 let direct_string_field obj name =
-  match string_value (Unsafe.get obj name) with Some value -> value | None -> ""
+  match string_value (Unsafe.get obj name) with
+  | Some value -> value
+  | None -> ""
 
 let direct_int_field obj name default =
   match float_value (Unsafe.get obj name) with
@@ -15,18 +17,19 @@ let shell_operator word = List.mem word [ "&&"; "||"; ";"; "|" ]
 
 let fallback_reflect_words script =
   let words =
-    script
-    |> String.split_on_char ' '
+    script |> String.split_on_char ' '
     |> List.concat_map (fun part ->
-           let rec split_semi value =
-             match String.index_opt value ';' with
-             | None -> [ value ]
-             | Some index ->
-                 let before = String.sub value 0 index in
-                 let after = String.sub value (index + 1) (String.length value - index - 1) in
-                 before :: ";" :: split_semi after
-           in
-           split_semi part)
+        let rec split_semi value =
+          match String.index_opt value ';' with
+          | None -> [ value ]
+          | Some index ->
+              let before = String.sub value 0 index in
+              let after =
+                String.sub value (index + 1) (String.length value - index - 1)
+              in
+              before :: ";" :: split_semi after
+        in
+        split_semi part)
     |> List.filter (fun part -> String.trim part <> "")
   in
   let rec commands current acc = function
@@ -39,22 +42,25 @@ let fallback_reflect_words script =
     let children =
       words
       |> List.mapi (fun index word ->
-             if index = 0 then
-               Taumel.Exec_policy.{
-                 kind = "command_name";
-                 text = word;
-                 children = [ { kind = "word"; text = word; children = [] } ];
-               }
-             else Taumel.Exec_policy.{ kind = "word"; text = word; children = [] })
+          if index = 0 then
+            Taumel.Exec_policy.
+              {
+                kind = "command_name";
+                text = word;
+                children = [ { kind = "word"; text = word; children = [] } ];
+              }
+          else Taumel.Exec_policy.{ kind = "word"; text = word; children = [] })
     in
-    Taumel.Exec_policy.{ kind = "command"; text = String.concat " " words; children }
+    Taumel.Exec_policy.
+      { kind = "command"; text = String.concat " " words; children }
   in
   Ok
-    Taumel.Exec_policy.{
-      kind = "program";
-      text = script;
-      children = List.map command_node (commands [] [] words);
-    }
+    Taumel.Exec_policy.
+      {
+        kind = "program";
+        text = script;
+        children = List.map command_node (commands [] [] words);
+      }
 
 let reflect_bash_script script =
   try
@@ -69,7 +75,8 @@ let reflect_bash_script script =
       let children =
         List.init child_count (fun index ->
             reflect
-              (Unsafe.meth_call node "child" [| js_number (float_of_int index) |]))
+              (Unsafe.meth_call node "child"
+                 [| js_number (float_of_int index) |]))
       in
       ({
          Taumel.Exec_policy.kind = direct_string_field node "type";
@@ -88,19 +95,23 @@ let unmatched_context (sandbox : Taumel.Sandbox.config) sandbox_permissions =
     | Taumel.Sandbox.Use_default -> false
   in
   {
-    Taumel.Exec_policy.approval_never = sandbox.approval_policy = Taumel.Sandbox.Never;
+    Taumel.Exec_policy.approval_never =
+      sandbox.approval_policy = Taumel.Sandbox.Never;
     approval_prompts_available = sandbox.approval_policy <> Taumel.Sandbox.Never;
-    sandbox_restricted = sandbox.filesystem_mode <> Taumel.Sandbox.Danger_full_access;
-    sandbox_disabled = sandbox.no_sandbox || sandbox.filesystem_mode = Taumel.Sandbox.Danger_full_access;
+    sandbox_restricted =
+      sandbox.filesystem_mode <> Taumel.Sandbox.Danger_full_access;
+    sandbox_disabled =
+      sandbox.no_sandbox
+      || sandbox.filesystem_mode = Taumel.Sandbox.Danger_full_access;
     requests_sandbox_override;
   }
 
 let policy_decision_for_command sandbox sandbox_permissions cmd =
   match reflect_bash_script cmd with
   | Error _ -> Some Taumel.Exec_policy.Prompt
-  | Ok ast ->
+  | Ok ast -> (
       let check = Taumel.Exec_policy.decide_ast !exec_policy ast in
-      (match Taumel.Exec_policy.override_decision check with
+      match Taumel.Exec_policy.override_decision check with
       | Some decision -> Some decision
       | None ->
           let fallback =
@@ -114,24 +125,31 @@ let policy_decision_for_command sandbox sandbox_permissions cmd =
 let policy_reason_for_command sandbox sandbox_permissions cmd =
   match reflect_bash_script cmd with
   | Error _ -> Some "exec policy requires approval: unsupported shell syntax"
-  | Ok ast ->
+  | Ok ast -> (
       let check = Taumel.Exec_policy.decide_ast !exec_policy ast in
       let candidates =
         check.matched_rules
         |> List.filter (fun (rule : Taumel.Exec_policy.matched_rule) ->
-               rule.decision = Taumel.Exec_policy.Prompt
-               || rule.decision = Taumel.Exec_policy.Forbidden)
+            rule.decision = Taumel.Exec_policy.Prompt
+            || rule.decision = Taumel.Exec_policy.Forbidden)
       in
-      let pattern_len (rule : Taumel.Exec_policy.matched_rule) = List.length rule.pattern in
-      match List.sort (fun left right -> compare (pattern_len right) (pattern_len left)) candidates with
+      let pattern_len (rule : Taumel.Exec_policy.matched_rule) =
+        List.length rule.pattern
+      in
+      match
+        List.sort
+          (fun left right -> compare (pattern_len right) (pattern_len left))
+          candidates
+      with
       | rule :: _ ->
           Some
             (match rule.justification with
             | Some text when String.trim text <> "" ->
                 "exec policy requires approval: " ^ text
             | _ -> "exec policy requires approval by policy")
-      | [] when check.defaulted_to_prompt -> Some "exec policy requires approval: validation error fallback"
-      | [] ->
+      | [] when check.defaulted_to_prompt ->
+          Some "exec policy requires approval: validation error fallback"
+      | [] -> (
           let fallback =
             Taumel.Exec_policy.decide_ast_with_fallback !exec_policy
               (unmatched_context sandbox sandbox_permissions)
@@ -142,14 +160,14 @@ let policy_reason_for_command sandbox sandbox_permissions cmd =
             | Error _ -> true
             | Ok _ -> false
           in
-          (match fallback.decision with
+          match fallback.decision with
           | Taumel.Exec_policy.Prompt when outside_safe_subset ->
               Some "exec policy requires approval: unsupported shell construct"
           | Taumel.Exec_policy.Prompt ->
               Some "exec policy requires approval: dangerous command"
           | Taumel.Exec_policy.Forbidden ->
               Some "exec policy forbids this command by policy"
-          | Taumel.Exec_policy.Allow -> None)
+          | Taumel.Exec_policy.Allow -> None))
 
 let allow_amendment_tokens cmd =
   match reflect_bash_script cmd with
@@ -171,17 +189,21 @@ let explicit_prompt_or_forbidden cmd =
         check.matched_rules
 
 let append_allow_rule raw_facts =
-  let facts = decode_ojs_contract Tool_contracts.ExecPolicyAllowRuleFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts =
+    decode_ojs_contract Tool_contracts.ExecPolicyAllowRuleFacts.t_of_js
+      (ojs_of_js raw_facts)
+  in
   let tokens = Tool_contracts.ExecPolicyAllowRuleFacts.get_tokens facts in
   let raw_rule =
-    Taumel.Exec_policy.{
-      raw_id = None;
-      raw_pattern = List.map (fun token -> One token) tokens;
-      raw_decision = Allow;
-      raw_justification = Some "approved from exec policy prompt";
-      raw_match_examples = [ Tokens tokens ];
-      raw_not_match_examples = [];
-    }
+    Taumel.Exec_policy.
+      {
+        raw_id = None;
+        raw_pattern = List.map (fun token -> One token) tokens;
+        raw_decision = Allow;
+        raw_justification = Some "approved from exec policy prompt";
+        raw_match_examples = [ Tokens tokens ];
+        raw_not_match_examples = [];
+      }
   in
   let existing = !exec_policy in
   let appended = Taumel.Exec_policy.compile [ ("global", [ raw_rule ]) ] in
@@ -192,10 +214,13 @@ let append_allow_rule raw_facts =
       errors = existing.errors @ appended.errors;
     };
   Tool_contracts.ExecPolicyAllowRuleResult.create
-    ~activeRuleCount:(float_of_int (Taumel.Exec_policy.active_rule_count !exec_policy)) ()
+    ~activeRuleCount:
+      (float_of_int (Taumel.Exec_policy.active_rule_count !exec_policy))
+    ()
   |> Tool_contracts.ExecPolicyAllowRuleResult.t_to_js |> inject
 
-let js_decision decision = js_string (Taumel.Exec_policy.decision_to_string decision)
+let js_decision decision =
+  js_string (Taumel.Exec_policy.decision_to_string decision)
 
 let js_matched_rule (rule : Taumel.Exec_policy.matched_rule) =
   Unsafe.obj
@@ -210,7 +235,14 @@ let js_matched_rule (rule : Taumel.Exec_policy.matched_rule) =
 let check_command cmd =
   match reflect_bash_script cmd with
   | Error message ->
-      Taumel.Exec_policy.{ decision = Prompt; matched_rules = []; tokens = []; defaulted_to_prompt = false }, Some message
+      ( Taumel.Exec_policy.
+          {
+            decision = Prompt;
+            matched_rules = [];
+            tokens = [];
+            defaulted_to_prompt = false;
+          },
+        Some message )
   | Ok ast -> (Taumel.Exec_policy.decide_ast !exec_policy ast, None)
 
 let summary_result () =
@@ -225,7 +257,10 @@ let summary_result () =
       (Unsafe.obj
          [|
            ("ok", js_bool true);
-           ("activeRuleCount", js_number (float_of_int (Taumel.Exec_policy.active_rule_count !exec_policy)));
+           ( "activeRuleCount",
+             js_number
+               (float_of_int
+                  (Taumel.Exec_policy.active_rule_count !exec_policy)) );
            ("scopes", js_array (List.map js_string scopes));
          |])
 
@@ -235,7 +270,11 @@ let check_result cmd =
     let matched =
       match check.matched_rules with
       | [] -> "none"
-      | rules -> rules |> List.map (fun (rule : Taumel.Exec_policy.matched_rule) -> rule.scope ^ ":" ^ rule.id) |> String.concat ", "
+      | rules ->
+          rules
+          |> List.map (fun (rule : Taumel.Exec_policy.matched_rule) ->
+              rule.scope ^ ":" ^ rule.id)
+          |> String.concat ", "
     in
     Printf.sprintf "Exec policy decision: %s\nMatched rules: %s"
       (Taumel.Exec_policy.decision_to_string check.decision)
@@ -247,7 +286,8 @@ let check_result cmd =
          [|
            ("ok", js_bool true);
            ("decision", js_decision check.decision);
-           ("matchedRules", js_array (List.map js_matched_rule check.matched_rules));
+           ( "matchedRules",
+             js_array (List.map js_matched_rule check.matched_rules) );
            ("tokens", js_array (List.map js_string check.tokens));
            ("defaultedToPrompt", js_bool check.defaulted_to_prompt);
            ("parseError", js_string (Option.value parse_error ~default:""));
@@ -258,16 +298,22 @@ let handle_command args =
   if args = "" then summary_result ()
   else
     let prefix = "check " in
-    if String.length args >= String.length prefix
-       && String.sub args 0 (String.length prefix) = prefix
+    if
+      String.length args >= String.length prefix
+      && String.sub args 0 (String.length prefix) = prefix
     then
-      let cmd = String.sub args (String.length prefix) (String.length args - String.length prefix) in
+      let cmd =
+        String.sub args (String.length prefix)
+          (String.length args - String.length prefix)
+      in
       check_result cmd
     else error_obj "Usage: /execpolicy [check <command>]"
 
 let token_from_js value =
   if is_js_string value then
-    match string_value value with Some value -> Ok (Taumel.Exec_policy.One value) | None -> Error "invalid token"
+    match string_value value with
+    | Some value -> Ok (Taumel.Exec_policy.One value)
+    | None -> Error "invalid token"
   else if is_js_array value then
     let values = array_items value |> List.filter_map string_value in
     if values = [] then Error "token alternatives must not be empty"
@@ -276,10 +322,13 @@ let token_from_js value =
 
 let example_from_js value =
   if is_js_string value then
-    match string_value value with Some value -> Ok (Taumel.Exec_policy.Script value) | None -> Error "invalid example"
+    match string_value value with
+    | Some value -> Ok (Taumel.Exec_policy.Script value)
+    | None -> Error "invalid example"
   else if is_js_array value then
     let values = array_items value |> List.filter_map string_value in
-    if List.length values = List.length (array_items value) then Ok (Taumel.Exec_policy.Tokens values)
+    if List.length values = List.length (array_items value) then
+      Ok (Taumel.Exec_policy.Tokens values)
     else Error "example token arrays must contain only strings"
   else Error "examples must be strings or string arrays"
 
@@ -303,25 +352,24 @@ let raw_rule_from_js obj =
     match parse_array "pattern" token_from_js obj with
     | Error _ as error -> error
     | Ok [] -> Error "rule pattern must not be empty"
-    | Ok raw_pattern ->
+    | Ok raw_pattern -> (
         let decision =
           match object_field obj "decision" with
           | None -> Error "rule decision is required"
           | Some value -> (
               match string_value value with
               | None ->
-                  Error
-                    "rule decision must be allow, prompt, or forbidden"
+                  Error "rule decision must be allow, prompt, or forbidden"
               | Some value -> (
                   match Taumel.Exec_policy.decision_of_string value with
                   | Some decision -> Ok decision
                   | None ->
-                      Error
-                        "rule decision must be allow, prompt, or forbidden"))
+                      Error "rule decision must be allow, prompt, or forbidden")
+              )
         in
-        (match decision with
+        match decision with
         | Error _ as error -> error
-        | Ok decision ->
+        | Ok decision -> (
             let match_field =
               if has_property obj "notMatch" then "notMatch" else "not_match"
             in
@@ -331,15 +379,17 @@ let raw_rule_from_js obj =
             with
             | Ok raw_match_examples, Ok raw_not_match_examples ->
                 Ok
-                  Taumel.Exec_policy.{
-                    raw_id = optional_string_field obj "id";
-                    raw_pattern;
-                    raw_decision = decision;
-                    raw_justification = optional_string_field obj "justification";
-                    raw_match_examples;
-                    raw_not_match_examples;
-                  }
-            | Error message, _ | _, Error message -> Error message)
+                  Taumel.Exec_policy.
+                    {
+                      raw_id = optional_string_field obj "id";
+                      raw_pattern;
+                      raw_decision = decision;
+                      raw_justification =
+                        optional_string_field obj "justification";
+                      raw_match_examples;
+                      raw_not_match_examples;
+                    }
+            | Error message, _ | _, Error message -> Error message))
 
 let scope_rules_from_js obj =
   if not (is_js_object obj) then Error "execPolicy must be an object"
@@ -362,7 +412,8 @@ let scope_rules_from_js obj =
 
 let compile_settings settings =
   let settings =
-    decode_ojs_contract Tool_contracts.RefreshExecPolicyFacts.t_of_js (ojs_of_js settings)
+    decode_ojs_contract Tool_contracts.RefreshExecPolicyFacts.t_of_js
+      (ojs_of_js settings)
   in
   let scopes, scope_errors =
     Tool_contracts.RefreshExecPolicyFacts.get_scopes settings
@@ -384,21 +435,28 @@ let compile_settings settings =
                in
                ((name, rules) :: scopes, errors)
            | Error message ->
-               let error = { Taumel.Exec_policy.scope = name; rule_index = -1; message } in
+               let error =
+                 { Taumel.Exec_policy.scope = name; rule_index = -1; message }
+               in
                ((name, []) :: scopes, error :: errors))
          ([], [])
   in
   let compiled = Taumel.Exec_policy.compile (List.rev scopes) in
-  let compiled = { compiled with errors = List.rev_append scope_errors compiled.errors } in
+  let compiled =
+    { compiled with errors = List.rev_append scope_errors compiled.errors }
+  in
   exec_policy := compiled;
   let errors = compiled.errors in
   let result =
     Boundary_contracts.RefreshExecPolicyResult.create
-      ~activeRuleCount:(float_of_int (Taumel.Exec_policy.active_rule_count compiled))
+      ~activeRuleCount:
+        (float_of_int (Taumel.Exec_policy.active_rule_count compiled))
       ~scopes:(Taumel.Exec_policy.contributing_scopes compiled)
-      ~errors:(List.map
-        (fun (error : Taumel.Exec_policy.compile_error) ->
-          error.scope ^ ": " ^ error.message)
-        errors) ()
+      ~errors:
+        (List.map
+           (fun (error : Taumel.Exec_policy.compile_error) ->
+             error.scope ^ ": " ^ error.message)
+           errors)
+      ()
   in
   Tool_contracts.RefreshExecPolicyResult.t_to_js result |> inject

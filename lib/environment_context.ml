@@ -1,6 +1,4 @@
-type network_access =
-  | Restricted
-  | Enabled
+type network_access = Restricted | Enabled
 
 type snapshot = {
   cwd : string;
@@ -60,10 +58,14 @@ let full (snapshot : snapshot) : t =
   }
 
 let empty context =
-  context.cwd = None && context.approval_policy = None
-  && context.sandbox_mode = None && context.network_access = None
-  && context.writable_roots = None && context.no_sandbox = None
-  && context.isolated_child = None && context.shell = None
+  context.cwd = None
+  && context.approval_policy = None
+  && context.sandbox_mode = None
+  && context.network_access = None
+  && context.writable_roots = None
+  && context.no_sandbox = None
+  && context.isolated_child = None
+  && context.shell = None
 
 let diff (before : snapshot) (after : snapshot) =
   let context =
@@ -80,13 +82,13 @@ let diff (before : snapshot) (after : snapshot) =
          else Some after.network_access);
       writable_roots =
         (if before.writable_roots = after.writable_roots then None
-         else
-           match after.writable_roots with [] -> None | roots -> Some roots);
+         else match after.writable_roots with [] -> None | roots -> Some roots);
       no_sandbox =
         (if before.no_sandbox = after.no_sandbox then None
          else Some after.no_sandbox);
       isolated_child =
-        (if before.isolated_child = after.isolated_child then None else Some after.isolated_child);
+        (if before.isolated_child = after.isolated_child then None
+         else Some after.isolated_child);
       shell = None;
     }
   in
@@ -164,17 +166,18 @@ let serialize context =
     | None -> lines
     | Some no_sandbox ->
         lines
-        @ [
-            "  <no_sandbox>"
-            ^ bool_to_string no_sandbox
-            ^ "</no_sandbox>";
-          ]
+        @ [ "  <no_sandbox>" ^ bool_to_string no_sandbox ^ "</no_sandbox>" ]
   in
   let lines =
     match context.isolated_child with
     | None -> lines
     | Some isolated_child ->
-        lines @ [ "  <isolated_child>" ^ bool_to_string isolated_child ^ "</isolated_child>" ]
+        lines
+        @ [
+            "  <isolated_child>"
+            ^ bool_to_string isolated_child
+            ^ "</isolated_child>";
+          ]
   in
   let lines =
     match context.shell with

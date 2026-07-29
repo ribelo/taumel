@@ -10,11 +10,11 @@ type json =
   | Object of (string * json) list
 
 let min_persisted_int = -2_147_483_648.
+
 let max_persisted_int = 2_147_483_647.
 
 let persisted_int_float value =
-  Float.is_finite value
-  && value >= min_persisted_int
+  Float.is_finite value && value >= min_persisted_int
   && value <= max_persisted_int
   && Float.equal value (Float.trunc value)
 
@@ -70,8 +70,7 @@ let rec of_yojson = function
         when Float.is_finite number && Int64.of_float number = exact ->
           Ok (Number number)
       | _ -> Error "JSON integer literal loses precision")
-  | `Tuple _ | `Variant _ ->
-      Error "unsupported non-standard JSON value"
+  | `Tuple _ | `Variant _ -> Error "unsupported non-standard JSON value"
 
 let encode_json value = Yojson.Safe.to_string (to_yojson value)
 
@@ -91,12 +90,12 @@ let json_int_field name = function
       match List.assoc_opt name fields with
       | Some (Number value) when persisted_int_float value ->
           let converted = int_of_float value in
-          if Float.equal value (float_of_int converted) then Some converted else None
+          if Float.equal value (float_of_int converted) then Some converted
+          else None
       | _ -> None)
   | _ -> None
 
-let json_path parent name =
-  if parent = "" then name else parent ^ "." ^ name
+let json_path parent name = if parent = "" then name else parent ^ "." ^ name
 
 let json_kind = function
   | Null -> "null"
@@ -117,8 +116,9 @@ let json_required_field path fields name =
 
 let json_exact_fields path expected fields =
   let expected =
-    List.fold_left (fun names name -> String_set.add name names) String_set.empty
-      expected
+    List.fold_left
+      (fun names name -> String_set.add name names)
+      String_set.empty expected
   in
   let rec validate seen = function
     | [] -> (
@@ -157,7 +157,8 @@ let json_array path = function
   | value -> Error (path ^ " must be an array, got " ^ json_kind value)
 
 let json_required_string path fields name =
-  Result.bind (json_required_field path fields name)
+  Result.bind
+    (json_required_field path fields name)
     (json_string (json_path path name))
 
 let json_int path value =
@@ -169,19 +170,22 @@ let json_int path value =
       else Error (path ^ " must be a representable integer"))
 
 let json_required_int path fields name =
-  Result.bind (json_required_field path fields name)
+  Result.bind
+    (json_required_field path fields name)
     (json_int (json_path path name))
 
 let json_optional_int path fields name =
   Result.bind (json_optional_field fields name) (function
     | None -> Ok None
-    | Some value -> Result.map Option.some (json_int (json_path path name) value))
+    | Some value ->
+        Result.map Option.some (json_int (json_path path name) value))
 
 let json_int_default path fields name default =
   Result.map (Option.value ~default) (json_optional_int path fields name)
 
 let json_required_bool path fields name =
-  Result.bind (json_required_field path fields name)
+  Result.bind
+    (json_required_field path fields name)
     (json_bool (json_path path name))
 
 let json_string_list path = function
@@ -196,10 +200,7 @@ let json_string_list path = function
       loop [] 0 values
   | value -> Error (path ^ " must be an array, got " ^ json_kind value)
 
-type 'a codec = {
-  encode : 'a -> json;
-  decode : json -> ('a, string) result;
-}
+type 'a codec = { encode : 'a -> json; decode : json -> ('a, string) result }
 
 let split_command input =
   let input = String.trim input in
@@ -220,15 +221,16 @@ let option_int_to_json = function
   | None -> Null
   | Some value -> Number (float_of_int value)
 
-let option_string_to_json = function
-  | None -> Null
-  | Some value -> String value
+let option_string_to_json = function None -> Null | Some value -> String value
 
 (* Short random handles shared by agent identities (^agent-id02) and plan
    tasks (^plan-tk03). Alphabet omits ambiguous characters (i/l/o/0/1). *)
 let nano_id_alphabet = "abcdefghjkmnpqrstuvwxyz23456789"
+
 let nano_id_length = 4
+
 let nano_id_radix = String.length nano_id_alphabet
+
 let nano_id_namespace_size =
   nano_id_radix * nano_id_radix * nano_id_radix * nano_id_radix
 

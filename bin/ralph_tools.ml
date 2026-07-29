@@ -32,35 +32,40 @@ let tool_result task message =
       |]
   in
   Boundary_contracts.BridgeToolResult.create ~text:message
-    ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details)) ()
+    ~details:(Ts2ocaml.unknown_of_js (ojs_of_js details))
+    ()
   |> Tool_contracts.BridgeToolResult.t_to_js |> inject
 
 let prepare_child_tool name params ctx =
   with_gateway_authorized name (fun _ ->
-      let params = decode_ojs_contract Tool_contracts.RalphTaskParams.t_of_js (ojs_of_js params) in
+      let params =
+        decode_ojs_contract Tool_contracts.RalphTaskParams.t_of_js
+          (ojs_of_js params)
+      in
       let task_id = Tool_contracts.RalphTaskParams.get_task_id params in
       match Taumel.Shared.trim_non_empty task_id with
       | None -> error_obj (name ^ ".task_id is required")
       | Some task_id -> (
-        match Taumel.Ralph_loop.find_task task_id !ralph_tasks with
-        | None -> error_obj ("unknown Ralph task: " ^ task_id)
-        | Some task -> (
-            let child_session = Session_store.session_id_from_ctx ctx in
-            let actor = Taumel.Ralph_loop.Child child_session in
-            let result =
-              match name with
-              | "ralph_continue" -> Taumel.Ralph_loop.ralph_continue actor task
-              | "ralph_finish" -> Taumel.Ralph_loop.ralph_finish actor task
-              | _ -> Error ("not a Ralph child tool: " ^ name)
-            in
-            match result with
-            | Error message -> error_obj message
-            | Ok updated ->
-                ralph_tasks :=
-                  Taumel.Ralph_loop.replace_task updated !ralph_tasks;
-                Session_sync.save_ralph_state ctx;
-                tool_result updated
-                  (Printf.sprintf "%s accepted for %s" name task_id))))
+          match Taumel.Ralph_loop.find_task task_id !ralph_tasks with
+          | None -> error_obj ("unknown Ralph task: " ^ task_id)
+          | Some task -> (
+              let child_session = Session_store.session_id_from_ctx ctx in
+              let actor = Taumel.Ralph_loop.Child child_session in
+              let result =
+                match name with
+                | "ralph_continue" ->
+                    Taumel.Ralph_loop.ralph_continue actor task
+                | "ralph_finish" -> Taumel.Ralph_loop.ralph_finish actor task
+                | _ -> Error ("not a Ralph child tool: " ^ name)
+              in
+              match result with
+              | Error message -> error_obj message
+              | Ok updated ->
+                  ralph_tasks :=
+                    Taumel.Ralph_loop.replace_task updated !ralph_tasks;
+                  Session_sync.save_ralph_state ctx;
+                  tool_result updated
+                    (Printf.sprintf "%s accepted for %s" name task_id))))
 
 let command_result ?details message =
   let details =
@@ -82,7 +87,10 @@ let handle_command args ctx =
   let command, _ = Taumel.Shared.split_command args in
   let start_denied =
     if command <> "start" then None
-    else match authorize_ralph_start () with Ok () -> None | Error message -> Some message
+    else
+      match authorize_ralph_start () with
+      | Ok () -> None
+      | Error message -> Some message
   in
   match
     Taumel.Ralph_loop.apply_command ~now:(now_seconds ())
@@ -91,13 +99,14 @@ let handle_command args ctx =
       ~start_denied !ralph_tasks args
   with
   | Error message -> error_obj message
-  | Ok plan ->
+  | Ok plan -> (
       if plan.changed then (
         ralph_tasks := plan.tasks;
         Session_sync.save_ralph_state ctx);
-      (match plan.start_details with
+      match plan.start_details with
       | None -> command_result plan.message
-      | Some details -> command_result ~details:(start_details details) plan.message)
+      | Some details ->
+          command_result ~details:(start_details details) plan.message)
 
 let persist_controller_state ctx =
   Session_sync.save_ralph_state ctx;

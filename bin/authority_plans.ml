@@ -39,14 +39,18 @@ type exec_entry = {
 }
 
 type exa_state = Exa_awaiting_approval | Exa_ready
+
 type exa_entry = {
   owner_id : string;
   owner_context : Unsafe.any;
   plan : exa_plan;
   mutable state : exa_state;
 }
+
 type agent_action_state = Agent_issued | Agent_claimed
+
 type agent_action = Agent_start | Agent_send | Agent_close
+
 type agent_action_entry = {
   owner_id : string;
   owner_context : Unsafe.any;
@@ -60,22 +64,30 @@ type agent_action_entry = {
 }
 
 let exec_entries : (string, exec_entry) Hashtbl.t = Hashtbl.create 32
+
 let exa_entries : (string, exa_entry) Hashtbl.t = Hashtbl.create 32
-let agent_action_entries : (string, agent_action_entry) Hashtbl.t = Hashtbl.create 32
+
+let agent_action_entries : (string, agent_action_entry) Hashtbl.t =
+  Hashtbl.create 32
 
 let rec fresh_id () =
   let id = "plan-" ^ Node_crypto.random_hex 16 in
   if
-    Hashtbl.mem exec_entries id || Hashtbl.mem exa_entries id
+    Hashtbl.mem exec_entries id
+    || Hashtbl.mem exa_entries id
     || Hashtbl.mem agent_action_entries id
   then fresh_id ()
   else id
 
 let invalid_plan = "authority plan is invalid or already consumed"
+
 let wrong_owner = "authority plan belongs to another session"
+
 let same_context left right =
   let object_ = Unsafe.get Unsafe.global "Object" in
-  Js.to_bool (Unsafe.coerce (Unsafe.fun_call (Unsafe.get object_ "is") [| left; right |]))
+  Js.to_bool
+    (Unsafe.coerce
+       (Unsafe.fun_call (Unsafe.get object_ "is") [| left; right |]))
 
 let issue_agent_action ~owner_id ~owner_context ~action ~agent_id ~owner_epoch
     ~permission_epoch ~expires_at_ms =
@@ -99,8 +111,7 @@ let validate_agent_action ~owner_id ~action ~agent_id ~owner_epoch
     ~permission_epoch ~now_ms id required_state =
   match Hashtbl.find_opt agent_action_entries id with
   | None -> Error invalid_plan
-  | Some entry when entry.owner_id <> owner_id ->
-      Error wrong_owner
+  | Some entry when entry.owner_id <> owner_id -> Error wrong_owner
   | Some entry when entry.action <> action || entry.agent_id <> agent_id ->
       Error "agent action capability does not match the prepared action"
   | Some entry when now_ms > entry.expires_at_ms ->
@@ -116,7 +127,8 @@ let validate_agent_action ~owner_id ~action ~agent_id ~owner_epoch
             <> Agent_state_epochs.current ~owner_id:entry.owner_id
                  ~agent_id:entry.agent_id ->
       Error "agent action capability is stale"
-  | Some entry when entry.agent_action_state <> required_state -> Error invalid_plan
+  | Some entry when entry.agent_action_state <> required_state ->
+      Error invalid_plan
   | Some entry -> Ok entry
 
 let claim_agent_action ~owner_id ~action ~agent_id ~owner_epoch
@@ -133,13 +145,15 @@ let claim_agent_action ~owner_id ~action ~agent_id ~owner_epoch
 
 let revalidate_agent_action ~owner_id ~action ~agent_id ~owner_epoch
     ~permission_epoch ~now_ms id =
-  Result.map (fun _ -> ())
+  Result.map
+    (fun _ -> ())
     (validate_agent_action ~owner_id ~action ~agent_id ~owner_epoch
        ~permission_epoch ~now_ms id Agent_claimed)
 
 let authorize_agent_cleanup ~owner_id ~action ~agent_id ~owner_epoch
     ~permission_epoch ~now_ms id =
-  Result.map (fun _ -> ())
+  Result.map
+    (fun _ -> ())
     (validate_agent_action ~owner_id ~action ~agent_id ~owner_epoch
        ~permission_epoch ~now_ms id Agent_claimed)
 
@@ -160,7 +174,8 @@ let ratchet_agent_action_state ~owner_id ~action ~agent_id ~owner_epoch
     when entry.owner_epoch <> owner_epoch
          || entry.permission_epoch <> permission_epoch ->
       Error "agent action capability is stale"
-  | Some entry when entry.agent_action_state <> Agent_claimed -> Error invalid_plan
+  | Some entry when entry.agent_action_state <> Agent_claimed ->
+      Error invalid_plan
   | Some entry ->
       let current = Agent_state_epochs.current ~owner_id ~agent_id in
       if entry.state_epoch = current then (
@@ -185,7 +200,8 @@ let adopt_agent_action_transition ~owner_id ~action ~agent_id ~owner_epoch
     when entry.owner_epoch <> owner_epoch
          || entry.permission_epoch <> permission_epoch ->
       Error "agent action capability is stale"
-  | Some entry when entry.agent_action_state <> Agent_claimed -> Error invalid_plan
+  | Some entry when entry.agent_action_state <> Agent_claimed ->
+      Error invalid_plan
   | Some entry ->
       let current = Agent_state_epochs.current ~owner_id ~agent_id in
       if entry.state_epoch + 1 = current then (
@@ -209,11 +225,9 @@ let complete_agent_action_transition ~owner_id ~action ~agent_id ~owner_epoch
 let release_agent_action ~owner_id id =
   match Hashtbl.find_opt agent_action_entries id with
   | None -> Ok ()
-  | Some entry when entry.owner_id <> owner_id ->
-      Error wrong_owner
+  | Some entry when entry.owner_id <> owner_id -> Error wrong_owner
   | Some entry ->
-      ignore
-        (Agent_state_epochs.advance ~owner_id ~agent_id:entry.agent_id);
+      ignore (Agent_state_epochs.advance ~owner_id ~agent_id:entry.agent_id);
       Hashtbl.remove agent_action_entries id;
       Ok ()
 
@@ -230,8 +244,8 @@ let agent_action_in_progress ~owner_id ~agent_id =
   Hashtbl.fold
     (fun _ entry found ->
       found
-      || (entry.owner_id = owner_id && entry.agent_id = agent_id
-         && entry.agent_action_state = Agent_claimed))
+      || entry.owner_id = owner_id && entry.agent_id = agent_id
+         && entry.agent_action_state = Agent_claimed)
     agent_action_entries false
 
 let agent_action_expired_issued ~now_ms id =
@@ -258,7 +272,8 @@ let inspect_exec ~owner_context id =
   | Error _ as error -> error
   | Ok { state = Ready force_unsandboxed; plan; _ } ->
       Ok (plan, force_unsandboxed)
-  | Ok { state = Awaiting_approval; _ } -> Error "authority plan requires approval"
+  | Ok { state = Awaiting_approval; _ } ->
+      Error "authority plan requires approval"
   | Ok { state = Claimed _; _ } -> Error invalid_plan
 
 let claim_exec ~owner_context id =
@@ -267,14 +282,17 @@ let claim_exec ~owner_context id =
   | Ok ({ state = Ready force_unsandboxed; plan; _ } as entry) ->
       entry.state <- Claimed false;
       Ok (plan, force_unsandboxed)
-  | Ok { state = Awaiting_approval; _ } -> Error "authority plan requires approval"
+  | Ok { state = Awaiting_approval; _ } ->
+      Error "authority plan requires approval"
   | Ok { state = Claimed _; _ } -> Error invalid_plan
 
 let approve_exec ~owner_context id =
   match exec_entry ~owner_context id with
   | Error _ as error -> error
   | Ok ({ state = Awaiting_approval; plan; _ } as entry) ->
-      let restricted = plan.sandbox.isolated_child || plan.brokered_git <> None in
+      let restricted =
+        plan.sandbox.isolated_child || plan.brokered_git <> None
+      in
       entry.state <- Ready (not restricted);
       Ok ()
   | Ok _ -> Error invalid_plan
@@ -294,7 +312,7 @@ let reissue_exec_retry ~owner_context id =
   match exec_entry ~owner_context id with
   | Error _ as error -> error
   | Ok { state = Claimed true; plan; owner_id; owner_context; _ }
-    when not plan.sandbox.isolated_child && plan.brokered_git = None ->
+    when (not plan.sandbox.isolated_child) && plan.brokered_git = None ->
       Hashtbl.remove exec_entries id;
       let next_id = fresh_id () in
       Hashtbl.add exec_entries next_id

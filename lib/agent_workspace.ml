@@ -1,8 +1,6 @@
 (* Immutable workspace bindings and deterministic agent-worktree derivation. *)
 
-type isolation =
-  | None
-  | Worktree
+type isolation = None | Worktree
 
 type workspace_binding =
   | Shared of { source_root : string }
@@ -36,9 +34,7 @@ type resolved_workspace =
 
 let default_isolation = None
 
-let isolation_to_string = function
-  | None -> "none"
-  | Worktree -> "worktree"
+let isolation_to_string = function None -> "none" | Worktree -> "worktree"
 
 let isolation_of_string = function
   | "none" -> Ok None
@@ -57,9 +53,7 @@ let worktree ~source_origin ~main_repository_root ~main_repository_id =
       main_repository_id = String.trim main_repository_id;
     }
 
-let isolation_of_binding = function
-  | Shared _ -> None
-  | Worktree _ -> Worktree
+let isolation_of_binding = function Shared _ -> None | Worktree _ -> Worktree
 
 let source_workspace = function
   | Shared { source_root } -> source_root
@@ -80,8 +74,7 @@ let basename path =
   match String.rindex_opt path '/' with
   | None -> path
   | Some index when index = String.length path - 1 -> path
-  | Some index ->
-      String.sub path (index + 1) (String.length path - index - 1)
+  | Some index -> String.sub path (index + 1) (String.length path - index - 1)
 
 let project_name_of_repository_root root =
   let name = basename root in
@@ -150,8 +143,7 @@ let derive ~agent_home ~owner_session_id ~agent_id binding =
               worktree_path = source_root;
               branch = "";
             }
-    | Worktree
-        { source_origin; main_repository_root; main_repository_id } ->
+    | Worktree { source_origin; main_repository_root; main_repository_id } ->
         if source_origin = "" then Error "source origin is required"
         else if main_repository_root = "" then
           Error "main repository root is required"
@@ -249,7 +241,6 @@ let binding_of_json = function
             Error "worktree binding main_repository_id is required"
           else
             Ok
-              (worktree ~source_origin ~main_repository_root
-                 ~main_repository_id)
+              (worktree ~source_origin ~main_repository_root ~main_repository_id)
       | Ok value -> Error ("unknown workspace binding variant: " ^ value))
   | _ -> Error "workspace binding must be an object"

@@ -2,14 +2,19 @@ open Jsoo_bridge
 open App_state
 
 let prepare raw_facts =
-  let facts = decode_ojs_contract Tool_contracts.PrepareToolFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts =
+    decode_ojs_contract Tool_contracts.PrepareToolFacts.t_of_js
+      (ojs_of_js raw_facts)
+  in
   let name = Tool_contracts.PrepareToolFacts.get_name facts in
   let params =
     Tool_contracts.PrepareToolFacts.get_params facts
-    |> Ts2ocaml.unknown_to_js |> Tool_param_decoders.decode name
+    |> Ts2ocaml.unknown_to_js
+    |> Tool_param_decoders.decode name
     |> require_contract |> js_of_ojs
   in
-  let ctx = Tool_contracts.PrepareToolFacts.get_ctx facts
+  let ctx =
+    Tool_contracts.PrepareToolFacts.get_ctx facts
     |> Ts2ocaml.unknown_to_js |> js_of_ojs
   in
   (* Every generic preparation may read session-scoped authority. A failed
@@ -17,7 +22,8 @@ let prepare raw_facts =
      previously loaded session projection. *)
   let host_sync =
     Session_sync.try_sync_session_from_host ~scope:"tool prepare"
-      ~reset_missing:(name <> "ralph_continue" && name <> "ralph_finish") ctx
+      ~reset_missing:(name <> "ralph_continue" && name <> "ralph_finish")
+      ctx
   in
   match host_sync with
   | Error message -> error_obj message
@@ -50,8 +56,10 @@ let prepare raw_facts =
       | "exa_agent_get_run" -> Exa_bridge.prepare_agent_get_run params ctx
       | "exa_agent_list_runs" -> Exa_bridge.prepare_agent_list_runs params ctx
       | "exa_agent_cancel_run" -> Exa_bridge.prepare_agent_cancel_run params ctx
-      | "exa_agent_list_events" -> Exa_bridge.prepare_agent_list_events params ctx
+      | "exa_agent_list_events" ->
+          Exa_bridge.prepare_agent_list_events params ctx
       | other ->
           Boundary_contracts.GatewayCommandError.create
-            ~error:("tool executor is not connected yet: " ^ other) ()
+            ~error:("tool executor is not connected yet: " ^ other)
+            ()
           |> Tool_contracts.GatewayCommandError.t_to_js |> inject)

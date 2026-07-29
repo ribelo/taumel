@@ -17,8 +17,8 @@ let assert_error label = function
   | Error _ -> ()
 
 let persisted ?(version = 1.) ?(id = "aaaaaaaa") ?(cron = "* * * * *")
-    ?(prompt = "check") ?(created_at = 0.) ?(next_due = 60.)
-    ?pending_since tasks_tail =
+    ?(prompt = "check") ?(created_at = 0.) ?(next_due = 60.) ?pending_since
+    tasks_tail =
   let task =
     let fields =
       [
@@ -47,8 +47,10 @@ let persisted ?(version = 1.) ?(id = "aaaaaaaa") ?(cron = "* * * * *")
     ]
 
 let test_cron_60bw_persisted_codec_reconstructs_task_invariants () =
-  assert_error "unsupported cron version" (Cron.decode (persisted ~version:2. []));
-  assert_error "invalid cron expression" (Cron.decode (persisted ~cron:"bad" []));
+  assert_error "unsupported cron version"
+    (Cron.decode (persisted ~version:2. []));
+  assert_error "invalid cron expression"
+    (Cron.decode (persisted ~cron:"bad" []));
   assert_error "invalid cron task id" (Cron.decode (persisted ~id:"x" []));
   assert_error "blank cron prompt" (Cron.decode (persisted ~prompt:"  " []));
   assert_error "negative cron timestamp"
@@ -61,14 +63,14 @@ let test_cron_60bw_persisted_codec_reconstructs_task_invariants () =
     (Cron.decode (persisted ~pending_since:Shared.Null []));
   let without_enabled =
     match persisted [] with
-    | Shared.Object fields ->
-        Shared.Object (List.remove_assoc "enabled" fields)
+    | Shared.Object fields -> Shared.Object (List.remove_assoc "enabled" fields)
     | _ -> failwith "expected persisted cron state"
   in
   assert_error "missing root enabled" (Cron.decode without_enabled);
   let with_unknown_root =
     match persisted [] with
-    | Shared.Object fields -> Shared.Object (("unknown", Shared.Bool true) :: fields)
+    | Shared.Object fields ->
+        Shared.Object (("unknown", Shared.Bool true) :: fields)
     | _ -> failwith "expected persisted cron state"
   in
   assert_error "unknown cron root field" (Cron.decode with_unknown_root);
@@ -102,8 +104,8 @@ let local_parts seconds =
   let tm = Unix.localtime (float_of_int seconds) in
   (tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_wday)
 
-let task ?(mode = Cron.Message) ?(recurring = true) ?(enabled = true) ?(pending_since = Some 60)
-    ?(next_due = 60) id =
+let task ?(mode = Cron.Message) ?(recurring = true) ?(enabled = true)
+    ?(pending_since = Some 60) ?(next_due = 60) id =
   {
     Cron.id;
     cron = "* * * * *";
@@ -135,13 +137,17 @@ let test_deliverable_precedence () =
 
 let test_disabled_state_holds_pending_fire () =
   let pending = task "dddddddd" ~pending_since:(Some 60) in
-  let facts = { Cron.host_idle = true; plan_driving = false; plan_slot_free = true } in
+  let facts =
+    { Cron.host_idle = true; plan_driving = false; plan_slot_free = true }
+  in
   let disabled = { Cron.enabled = false; tasks = [ pending ] } in
   assert_bool "disabled cron does not deliver pending fire"
     (Cron.pending_delivery ~now:240 facts disabled = None);
   let enabled = { disabled with enabled = true } in
   match Cron.pending_delivery ~now:240 facts enabled with
-  | Some delivery -> assert_equal_int "coalescing preserved while disabled" 4 delivery.coalesced
+  | Some delivery ->
+      assert_equal_int "coalescing preserved while disabled" 4
+        delivery.coalesced
   | None -> failwith "re-enabled cron should deliver held fire"
 
 let test_disabled_task_holds_pending_fire () =
@@ -149,29 +155,45 @@ let test_disabled_task_holds_pending_fire () =
   let state = { Cron.enabled = true; tasks = [ disabled_task ] } in
   let ticked = Cron.tick ~now:240 state in
   (match ticked.tasks with
-  | [ task ] -> assert_bool "disabled task does not become pending" (task.pending_since = None)
+  | [ task ] ->
+      assert_bool "disabled task does not become pending"
+        (task.pending_since = None)
   | _ -> failwith "expected one disabled task");
   let reenabled = Cron.set_task_enabled "eeeeeeee" true ticked in
   let ticked = Cron.tick ~now:240 reenabled in
-  let facts = { Cron.host_idle = true; plan_driving = false; plan_slot_free = true } in
+  let facts =
+    { Cron.host_idle = true; plan_driving = false; plan_slot_free = true }
+  in
   match Cron.pending_delivery ~now:240 facts ticked with
-  | Some delivery -> assert_equal_int "disabled task coalesces after re-enable" 4 delivery.coalesced
+  | Some delivery ->
+      assert_equal_int "disabled task coalesces after re-enable" 4
+        delivery.coalesced
   | None -> failwith "re-enabled task should deliver held fire"
 
 let test_coalescing_and_completion () =
   assert_equal_int "coalesced every minute" 4
     (Cron.count_occurrences "* * * * *" ~from_time:60 ~until_time:240);
   let recurring = task "aaaaaaaa" ~recurring:true ~pending_since:(Some 60) in
-  let delivery = { Cron.task = recurring; coalesced = 4; content = recurring.prompt } in
-  let state = Cron.complete_delivery ~now:240 delivery { Cron.enabled = true; tasks = [ recurring ] } in
+  let delivery =
+    { Cron.task = recurring; coalesced = 4; content = recurring.prompt }
+  in
+  let state =
+    Cron.complete_delivery ~now:240 delivery
+      { Cron.enabled = true; tasks = [ recurring ] }
+  in
   (match state.tasks with
   | [ updated ] ->
       assert_bool "pending cleared" (updated.pending_since = None);
       assert_equal_int "next due rearmed" 300 updated.next_due
   | _ -> failwith "recurring completion should keep one task");
   let one_shot = task "bbbbbbbb" ~recurring:false in
-  let delivery = { Cron.task = one_shot; coalesced = 1; content = one_shot.prompt } in
-  let state = Cron.complete_delivery ~now:60 delivery { Cron.enabled = true; tasks = [ one_shot ] } in
+  let delivery =
+    { Cron.task = one_shot; coalesced = 1; content = one_shot.prompt }
+  in
+  let state =
+    Cron.complete_delivery ~now:60 delivery
+      { Cron.enabled = true; tasks = [ one_shot ] }
+  in
   assert_bool "one-shot deleted" (state.tasks = [])
 
 let test_task_updates () =
@@ -179,13 +201,15 @@ let test_task_updates () =
   let state = { Cron.enabled = true; tasks = [ pending ] } in
 
   let prompt_updated =
-    expect_ok "update prompt" (Cron.update_task_prompt "ffffffff" "new prompt" state)
+    expect_ok "update prompt"
+      (Cron.update_task_prompt "ffffffff" "new prompt" state)
   in
   (match prompt_updated.tasks with
   | [ updated ] ->
       assert_bool "prompt updated" (updated.prompt = "new prompt");
       assert_equal_int "prompt edit preserves next due" 60 updated.next_due;
-      assert_bool "prompt edit preserves pending" (updated.pending_since = Some 60)
+      assert_bool "prompt edit preserves pending"
+        (updated.pending_since = Some 60)
   | _ -> failwith "expected one prompt-updated task");
 
   let schedule_updated =
@@ -213,12 +237,14 @@ let test_task_updates () =
   | _ -> failwith "expected one mode-updated task");
 
   let recurring_updated =
-    expect_ok "update recurring" (Cron.update_task_recurring "ffffffff" false state)
+    expect_ok "update recurring"
+      (Cron.update_task_recurring "ffffffff" false state)
   in
   match recurring_updated.tasks with
   | [ updated ] ->
       assert_bool "recurring updated" (not updated.recurring);
-      assert_bool "recurring edit preserves pending" (updated.pending_since = Some 60)
+      assert_bool "recurring edit preserves pending"
+        (updated.pending_since = Some 60)
   | _ -> failwith "expected one recurring-updated task"
 
 let test_startup_reason_matrix () =
@@ -226,15 +252,22 @@ let test_startup_reason_matrix () =
     {
       Cron.enabled = true;
       tasks =
-        [ task "cccccccc" ~pending_since:None; task "dddddddd" ~enabled:false ~pending_since:None ];
+        [
+          task "cccccccc" ~pending_since:None;
+          task "dddddddd" ~enabled:false ~pending_since:None;
+        ];
     }
   in
   let resumed = Cron.apply_startup Cron.Resume armed in
   assert_bool "resume disables" (not resumed.state.enabled);
   assert_bool "resume notifies" resumed.notify;
-  assert_bool "resume preserves task enabled flags" (List.map (fun (task : Cron.task) -> task.enabled) resumed.state.tasks = [ true; false ]);
-  assert_bool "resume notification mentions stored crons" (String.contains resumed.message '2');
-  assert_bool "resume notification tells user how to arm" (String.contains resumed.message '/');
+  assert_bool "resume preserves task enabled flags"
+    (List.map (fun (task : Cron.task) -> task.enabled) resumed.state.tasks
+    = [ true; false ]);
+  assert_bool "resume notification mentions stored crons"
+    (String.contains resumed.message '2');
+  assert_bool "resume notification tells user how to arm"
+    (String.contains resumed.message '/');
   let reloaded = Cron.apply_startup Cron.Reload armed in
   assert_bool "reload preserves enabled" reloaded.state.enabled;
   assert_bool "reload quiet" (not reloaded.notify);

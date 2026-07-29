@@ -16,10 +16,7 @@ and example = Tokens of string list | Script of string
 
 type node = { kind : string; text : string; children : node list }
 
-type compiled_rule = {
-  rule : rule;
-  matched_examples : string list;
-}
+type compiled_rule = { rule : rule; matched_examples : string list }
 
 type compile_error = { scope : string; rule_index : int; message : string }
 
@@ -64,8 +61,14 @@ type raw_rule = {
 let empty = { rules = []; scopes = []; errors = [] }
 
 let decision_rank = function Allow -> 0 | Prompt -> 1 | Forbidden -> 2
-let strictest left right = if decision_rank left >= decision_rank right then left else right
-let decision_to_string = function Allow -> "allow" | Prompt -> "prompt" | Forbidden -> "forbidden"
+
+let strictest left right =
+  if decision_rank left >= decision_rank right then left else right
+
+let decision_to_string = function
+  | Allow -> "allow"
+  | Prompt -> "prompt"
+  | Forbidden -> "forbidden"
 
 let decision_of_string = function
   | "allow" -> Some Allow
@@ -75,7 +78,8 @@ let decision_of_string = function
 
 let rec string_of_pattern = function
   | [] -> ""
-  | One token :: rest -> token ^ if rest = [] then "" else " " ^ string_of_pattern rest
+  | One token :: rest ->
+      token ^ if rest = [] then "" else " " ^ string_of_pattern rest
   | Alternatives values :: rest ->
       "[" ^ String.concat "|" values ^ "]"
       ^ if rest = [] then "" else " " ^ string_of_pattern rest
@@ -98,17 +102,17 @@ let matches_pattern pattern tokens =
 let matching_rules compiled tokens =
   compiled.rules
   |> List.filter_map (fun compiled_rule ->
-         let rule = compiled_rule.rule in
-         if matches_pattern rule.pattern tokens then
-           Some
-             {
-               id = rule.id;
-               scope = rule.scope;
-               decision = rule.decision;
-               pattern = rule.pattern;
-               justification = rule.justification;
-             }
-         else None)
+      let rule = compiled_rule.rule in
+      if matches_pattern rule.pattern tokens then
+        Some
+          {
+            id = rule.id;
+            scope = rule.scope;
+            decision = rule.decision;
+            pattern = rule.pattern;
+            justification = rule.justification;
+          }
+      else None)
 
 let decide_tokens compiled tokens =
   let matched_rules = matching_rules compiled tokens in
@@ -124,9 +128,12 @@ let decide_tokens compiled tokens =
   { decision; matched_rules; tokens; defaulted_to_prompt }
 
 let split_words script =
-  script |> String.split_on_char ' ' |> List.filter (fun part -> String.trim part <> "")
+  script |> String.split_on_char ' '
+  |> List.filter (fun part -> String.trim part <> "")
 
-let tokens_of_example = function Tokens tokens -> tokens | Script script -> split_words script
+let tokens_of_example = function
+  | Tokens tokens -> tokens
+  | Script script -> split_words script
 
 let rec has_error_node node =
   node.kind = "ERROR" || List.exists has_error_node node.children
@@ -135,10 +142,14 @@ let words_from_command children =
   let word_text child =
     match child.kind with
     | "command_name" ->
-        if List.for_all (fun grandchild -> grandchild.kind = "word" && grandchild.children = []) child.children then
-          Some child.text
+        if
+          List.for_all
+            (fun grandchild ->
+              grandchild.kind = "word" && grandchild.children = [])
+            child.children
+        then Some child.text
         else None
-    | "word" | "number" when child.children = [] -> Some child.text
+    | ("word" | "number") when child.children = [] -> Some child.text
     | "string" | "raw_string" -> Some child.text
     | _ -> None
   in
@@ -164,7 +175,8 @@ let command_token_sequences_from_ast root =
           | Some [] -> Ok acc
           | None -> Error "command contains unsupported shell syntax")
       | "&&" | "||" | ";" | "|" -> Ok acc
-      | _ when node.children = [] -> Error ("unsupported shell syntax: " ^ node.kind)
+      | _ when node.children = [] ->
+          Error ("unsupported shell syntax: " ^ node.kind)
       | _ -> Error ("unsupported shell syntax: " ^ node.kind)
     and walk_children children acc =
       match children with
@@ -181,7 +193,13 @@ let command_tokens_from_ast root =
 
 let decide_ast compiled root =
   match command_token_sequences_from_ast root with
-  | Error _ -> { decision = Prompt; matched_rules = []; tokens = []; defaulted_to_prompt = false }
+  | Error _ ->
+      {
+        decision = Prompt;
+        matched_rules = [];
+        tokens = [];
+        defaulted_to_prompt = false;
+      }
   | Ok [] -> decide_tokens compiled []
   | Ok sequences ->
       let checks = List.map (decide_tokens compiled) sequences in
@@ -194,16 +212,25 @@ let decide_ast compiled root =
         checks |> List.concat_map (fun check -> check.matched_rules)
       in
       let defaulted_to_prompt =
-        matched_rules = [] && List.exists (fun check -> check.defaulted_to_prompt) checks
+        matched_rules = []
+        && List.exists (fun check -> check.defaulted_to_prompt) checks
       in
-      { decision; matched_rules; tokens = List.concat sequences; defaulted_to_prompt }
+      {
+        decision;
+        matched_rules;
+        tokens = List.concat sequences;
+        defaulted_to_prompt;
+      }
 
 let override_decision check =
-  if check.matched_rules <> [] || check.defaulted_to_prompt then Some check.decision
+  if check.matched_rules <> [] || check.defaulted_to_prompt then
+    Some check.decision
   else None
 
 let validate_rule scope rule_index rule =
-  let rule_id = Option.value rule.raw_id ~default:(Printf.sprintf "%s#%d" scope rule_index) in
+  let rule_id =
+    Option.value rule.raw_id ~default:(Printf.sprintf "%s#%d" scope rule_index)
+  in
   let full_rule =
     {
       id = rule_id;
@@ -215,7 +242,9 @@ let validate_rule scope rule_index rule =
       not_match_examples = rule.raw_not_match_examples;
     }
   in
-  let singleton = { empty with rules = [ { rule = full_rule; matched_examples = [] } ] } in
+  let singleton =
+    { empty with rules = [ { rule = full_rule; matched_examples = [] } ] }
+  in
   let validate_match example =
     let tokens = tokens_of_example example in
     let result = decide_tokens singleton tokens in
@@ -226,16 +255,37 @@ let validate_rule scope rule_index rule =
     let result = decide_tokens singleton tokens in
     result.matched_rules = []
   in
-  match List.find_opt (fun example -> not (validate_match example)) rule.raw_match_examples with
-  | Some _ -> Error { scope; rule_index; message = "match example does not resolve to this rule" }
+  match
+    List.find_opt
+      (fun example -> not (validate_match example))
+      rule.raw_match_examples
+  with
+  | Some _ ->
+      Error
+        {
+          scope;
+          rule_index;
+          message = "match example does not resolve to this rule";
+        }
   | None -> (
-      match List.find_opt (fun example -> not (validate_not_match example)) rule.raw_not_match_examples with
-      | Some _ -> Error { scope; rule_index; message = "not_match example resolves to this rule" }
+      match
+        List.find_opt
+          (fun example -> not (validate_not_match example))
+          rule.raw_not_match_examples
+      with
+      | Some _ ->
+          Error
+            {
+              scope;
+              rule_index;
+              message = "not_match example resolves to this rule";
+            }
       | None -> Ok { rule = full_rule; matched_examples = [] })
 
 let compile scoped_rules =
   let scopes =
-    scoped_rules |> List.map fst |> List.filter (fun scope -> scope <> "")
+    scoped_rules |> List.map fst
+    |> List.filter (fun scope -> scope <> "")
     |> List.sort_uniq String.compare
   in
   let rules, errors =
@@ -255,6 +305,7 @@ let compile scoped_rules =
   { rules = List.rev rules; scopes; errors = List.rev errors }
 
 let active_rule_count compiled = List.length compiled.rules
+
 let contributing_scopes compiled = compiled.scopes
 
 let basename path =
@@ -270,14 +321,24 @@ let command_name command =
   | first :: _ -> Some (executable_name_lookup_key first)
 
 let git_global_option_with_value = function
-  | "-C" | "-c" | "--config-env" | "--exec-path" | "--git-dir"
-  | "--namespace" | "--super-prefix" | "--work-tree" -> true
+  | "-C" | "-c" | "--config-env" | "--exec-path" | "--git-dir" | "--namespace"
+  | "--super-prefix" | "--work-tree" ->
+      true
   | _ -> false
 
 let git_global_option_with_inline_value arg =
-  List.exists (fun prefix -> String.starts_with ~prefix arg)
-    [ "--config-env="; "--exec-path="; "--git-dir="; "--namespace="; "--super-prefix="; "--work-tree=" ]
-  || ((String.starts_with ~prefix:"-C" arg || String.starts_with ~prefix:"-c" arg) && String.length arg > 2)
+  List.exists
+    (fun prefix -> String.starts_with ~prefix arg)
+    [
+      "--config-env=";
+      "--exec-path=";
+      "--git-dir=";
+      "--namespace=";
+      "--super-prefix=";
+      "--work-tree=";
+    ]
+  || (String.starts_with ~prefix:"-C" arg || String.starts_with ~prefix:"-c" arg)
+     && String.length arg > 2
 
 let find_git_subcommand command subcommands =
   match command_name command with
@@ -287,9 +348,12 @@ let find_git_subcommand command subcommands =
         | _ :: rest when index = 0 -> loop 1 false rest
         | _ :: rest when skip_next -> loop (index + 1) false rest
         | arg :: rest ->
-            if git_global_option_with_inline_value arg then loop (index + 1) false rest
-            else if git_global_option_with_value arg then loop (index + 1) true rest
-            else if arg = "--" || String.starts_with ~prefix:"-" arg then loop (index + 1) false rest
+            if git_global_option_with_inline_value arg then
+              loop (index + 1) false rest
+            else if git_global_option_with_value arg then
+              loop (index + 1) true rest
+            else if arg = "--" || String.starts_with ~prefix:"-" arg then
+              loop (index + 1) false rest
             else if List.mem arg subcommands then Some (index, arg)
             else None
       in
@@ -305,11 +369,14 @@ let git_has_config_override_global_option command =
     command
 
 let git_subcommand_args_are_read_only args =
-  let unsafe_flags = [ "--output"; "--ext-diff"; "--textconv"; "--exec"; "--paginate" ] in
+  let unsafe_flags =
+    [ "--output"; "--ext-diff"; "--textconv"; "--exec"; "--paginate" ]
+  in
   not
     (List.exists
        (fun arg ->
-         List.mem arg unsafe_flags || String.starts_with ~prefix:"--output=" arg
+         List.mem arg unsafe_flags
+         || String.starts_with ~prefix:"--output=" arg
          || String.starts_with ~prefix:"--exec=" arg)
        args)
 
@@ -337,32 +404,46 @@ let is_valid_sed_n_arg = function
   | Some arg -> (
       match String.ends_with ~suffix:"p" arg with
       | false -> false
-      | true ->
+      | true -> (
           let core = String.sub arg 0 (String.length arg - 1) in
-          let numeric value = value <> "" && String.for_all (fun ch -> ch >= '0' && ch <= '9') value in
+          let numeric value =
+            value <> ""
+            && String.for_all (fun ch -> ch >= '0' && ch <= '9') value
+          in
           match String.split_on_char ',' core with
           | [ one ] -> numeric one
           | [ left; right ] -> numeric left && numeric right
-          | _ -> false)
+          | _ -> false))
 
 let is_safe_to_call_with_exec command =
   match command_name command with
   | Some ("numfmt" | "tac") -> true
   | Some
       ( "cat" | "cd" | "cut" | "echo" | "expr" | "false" | "grep" | "head"
-      | "id" | "ls" | "nl" | "paste" | "pwd" | "rev" | "seq" | "stat"
-      | "tail" | "tr" | "true" | "uname" | "uniq" | "wc" | "which" | "whoami" ) ->
+      | "id" | "ls" | "nl" | "paste" | "pwd" | "rev" | "seq" | "stat" | "tail"
+      | "tr" | "true" | "uname" | "uniq" | "wc" | "which" | "whoami" ) ->
       true
   | Some "base64" ->
       not
         (List.exists
            (fun arg ->
-             arg = "-o" || arg = "--output" || String.starts_with ~prefix:"--output=" arg
+             arg = "-o" || arg = "--output"
+             || String.starts_with ~prefix:"--output=" arg
              || (String.starts_with ~prefix:"-o" arg && arg <> "-o"))
            (List.tl command))
   | Some "find" ->
       let unsafe_options =
-        [ "-exec"; "-execdir"; "-ok"; "-okdir"; "-delete"; "-fls"; "-fprint"; "-fprint0"; "-fprintf" ]
+        [
+          "-exec";
+          "-execdir";
+          "-ok";
+          "-okdir";
+          "-delete";
+          "-fls";
+          "-fprint";
+          "-fprint0";
+          "-fprintf";
+        ]
       in
       not (List.exists (fun arg -> List.mem arg unsafe_options) command)
   | Some "rg" ->
@@ -373,19 +454,31 @@ let is_safe_to_call_with_exec command =
            (fun arg ->
              List.mem arg unsafe_without_args
              || List.exists
-                  (fun opt -> arg = opt || String.starts_with ~prefix:(opt ^ "=") arg)
+                  (fun opt ->
+                    arg = opt || String.starts_with ~prefix:(opt ^ "=") arg)
                   unsafe_with_args)
            command)
   | Some "git" -> (
       if git_has_config_override_global_option command then false
       else
-        match find_git_subcommand command [ "status"; "log"; "diff"; "show"; "branch" ] with
+        match
+          find_git_subcommand command
+            [ "status"; "log"; "diff"; "show"; "branch" ]
+        with
         | None -> false
-        | Some (index, subcommand) ->
-            let args = command |> List.mapi (fun i value -> (i, value)) |> List.filter_map (fun (i, value) -> if i > index then Some value else None) in
-            (match subcommand with
-            | "status" | "log" | "diff" | "show" -> git_subcommand_args_are_read_only args
-            | "branch" -> git_subcommand_args_are_read_only args && git_branch_is_read_only args
+        | Some (index, subcommand) -> (
+            let args =
+              command
+              |> List.mapi (fun i value -> (i, value))
+              |> List.filter_map (fun (i, value) ->
+                  if i > index then Some value else None)
+            in
+            match subcommand with
+            | "status" | "log" | "diff" | "show" ->
+                git_subcommand_args_are_read_only args
+            | "branch" ->
+                git_subcommand_args_are_read_only args
+                && git_branch_is_read_only args
             | _ -> false))
   | Some "sed" ->
       List.length command <= 4
@@ -400,6 +493,7 @@ let rec is_dangerous_to_call_with_exec command =
   | _ -> false
 
 let is_known_safe_command = is_safe_to_call_with_exec
+
 let command_might_be_dangerous = is_dangerous_to_call_with_exec
 
 let decision_for_unmatched_command context command =
@@ -407,9 +501,11 @@ let decision_for_unmatched_command context command =
     if context.approval_prompts_available then Prompt else Allow
   else if is_known_safe_command command then Allow
   else if context.sandbox_restricted then
-    if context.requests_sandbox_override && context.approval_prompts_available then Prompt
+    if context.requests_sandbox_override && context.approval_prompts_available
+    then Prompt
     else Allow
-  else if context.approval_never || not context.approval_prompts_available then Allow
+  else if context.approval_never || not context.approval_prompts_available then
+    Allow
   else Allow
 
 let decide_ast_with_fallback compiled context root =
@@ -420,10 +516,20 @@ let decide_ast_with_fallback compiled context root =
          the sandbox/approval context, matching codex: the sandbox is the
          safety net rather than a blanket prompt. *)
       let decision = decision_for_unmatched_command context [] in
-      { decision; matched_rules = []; tokens = []; defaulted_to_prompt = decision = Prompt }
+      {
+        decision;
+        matched_rules = [];
+        tokens = [];
+        defaulted_to_prompt = decision = Prompt;
+      }
   | Ok [] ->
       let decision = decision_for_unmatched_command context [] in
-      { decision; matched_rules = []; tokens = []; defaulted_to_prompt = decision = Prompt }
+      {
+        decision;
+        matched_rules = [];
+        tokens = [];
+        defaulted_to_prompt = decision = Prompt;
+      }
   | Ok sequences ->
       let checks = List.map (decide_tokens compiled) sequences in
       let command_checks = List.combine sequences checks in
@@ -431,20 +537,28 @@ let decide_ast_with_fallback compiled context root =
         List.fold_left
           (fun acc (tokens, check) ->
             let command_decision =
-              if check.matched_rules = [] then decision_for_unmatched_command context tokens
+              if check.matched_rules = [] then
+                decision_for_unmatched_command context tokens
               else check.decision
             in
             strictest acc command_decision)
           Allow command_checks
       in
-      let matched_rules = checks |> List.concat_map (fun check -> check.matched_rules) in
+      let matched_rules =
+        checks |> List.concat_map (fun check -> check.matched_rules)
+      in
       let defaulted_to_prompt =
         matched_rules = []
         && List.exists
              (fun (tokens, check) ->
                check.defaulted_to_prompt
-               || (check.matched_rules = []
-                  && decision_for_unmatched_command context tokens = Prompt))
+               || check.matched_rules = []
+                  && decision_for_unmatched_command context tokens = Prompt)
              command_checks
       in
-      { decision; matched_rules; tokens = List.concat sequences; defaulted_to_prompt }
+      {
+        decision;
+        matched_rules;
+        tokens = List.concat sequences;
+        defaulted_to_prompt;
+      }

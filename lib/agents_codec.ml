@@ -28,7 +28,8 @@ let required_nullable_int path fields name =
   | None -> Error (Shared.json_path path name ^ " is required")
   | Some Shared.Null -> Ok None
   | Some value ->
-      Result.map Option.some (Shared.json_int (Shared.json_path path name) value)
+      Result.map Option.some
+        (Shared.json_int (Shared.json_path path name) value)
 
 let string_list values =
   Shared.Array (List.map (fun value -> Shared.String value) values)
@@ -47,7 +48,8 @@ let encode_identity (identity : identity) =
     [
       ("agent_id", Shared.String identity.identity_agent_id);
       ("owner_session_id", Shared.String identity.identity_owner_session_id);
-      ("issued_run_count", Shared.Number (float_of_int identity.identity_issued_run_count));
+      ( "issued_run_count",
+        Shared.Number (float_of_int identity.identity_issued_run_count) );
       ("kind", Shared.String (agent_kind_to_string identity.identity_kind));
       ("effort", option_effort identity.identity_effort);
       ("model", Shared.String identity.identity_model);
@@ -72,7 +74,8 @@ let encode_run (run : agent_run) =
       ("reason_code", option_reason run.run_reason_code);
       ("error", option_string run.run_error);
       ("output_available", Shared.Bool run.run_output_available);
-      ("announcement", Shared.String (announcement_to_string run.run_announcement));
+      ( "announcement",
+        Shared.String (announcement_to_string run.run_announcement) );
       ("started_at", Shared.Number (float_of_int run.run_started_at));
       ( "ended_at",
         match run.run_ended_at with
@@ -81,12 +84,15 @@ let encode_run (run : agent_run) =
       ("suspended_at", option_number run.run_suspended_at);
       ("submission_id", Shared.String run.run_submission_id);
       ("result_entry_id", option_string run.run_result_entry_id);
-      ("previous_assistant_entry_id", option_string run.run_previous_assistant_entry_id);
+      ( "previous_assistant_entry_id",
+        option_string run.run_previous_assistant_entry_id );
       ("description", Shared.String run.run_description);
       ("turn_count", Shared.Number (float_of_int run.run_turn_count));
       ("last_activity_at", option_number run.run_last_activity_at);
-      ("activity_state", Shared.String (activity_state_to_string run.run_activity_state));
-      ("active_tool_count", Shared.Number (float_of_int run.run_active_tool_count));
+      ( "activity_state",
+        Shared.String (activity_state_to_string run.run_activity_state) );
+      ( "active_tool_count",
+        Shared.Number (float_of_int run.run_active_tool_count) );
     ]
 
 let encode_cleanup_pending (pending : cleanup_pending) =
@@ -106,7 +112,8 @@ let encode (state : session_state) =
   Shared.Object
     [
       ("version", Shared.Number (float_of_int schema_version));
-      ("issued_identity_counts", encode_issued_identity_counts state.issued_identity_counts);
+      ( "issued_identity_counts",
+        encode_issued_identity_counts state.issued_identity_counts );
       ("identities", Shared.Array (List.map encode_identity state.identities));
       ("runs", Shared.Array (List.map encode_run state.runs));
       ( "cleanup_pending",
@@ -127,15 +134,31 @@ let decode_identity path fields =
   let ( let* ) = Result.bind in
   let* () =
     Shared.json_exact_fields path
-      [ "agent_id"; "owner_session_id"; "issued_run_count"; "kind"; "effort";
-        "model"; "thinking"; "active_tools"; "permission_ceiling";
-        "network_allowed"; "workspace_binding"; "child_session_file";
-        "child_session_id"; "created_at" ]
+      [
+        "agent_id";
+        "owner_session_id";
+        "issued_run_count";
+        "kind";
+        "effort";
+        "model";
+        "thinking";
+        "active_tools";
+        "permission_ceiling";
+        "network_allowed";
+        "workspace_binding";
+        "child_session_file";
+        "child_session_id";
+        "created_at";
+      ]
       fields
   in
   let* agent_id = Shared.json_required_string path fields "agent_id" in
-  let* owner_session_id = Shared.json_required_string path fields "owner_session_id" in
-  let* issued_run_count = Shared.json_required_int path fields "issued_run_count" in
+  let* owner_session_id =
+    Shared.json_required_string path fields "owner_session_id"
+  in
+  let* issued_run_count =
+    Shared.json_required_int path fields "issued_run_count"
+  in
   let* () =
     if issued_run_count > 0 then Ok ()
     else Error (Shared.json_path path "issued_run_count" ^ " must be positive")
@@ -144,7 +167,10 @@ let decode_identity path fields =
   let* kind = agent_kind_of_string kind_raw in
   let* () =
     if valid_agent_id kind agent_id then Ok ()
-    else Error (Shared.json_path path "agent_id" ^ " does not match the current handle grammar")
+    else
+      Error
+        (Shared.json_path path "agent_id"
+        ^ " does not match the current handle grammar")
   in
   let* effort =
     match required_nullable_string path fields "effort" with
@@ -157,21 +183,28 @@ let decode_identity path fields =
   let* active_tools =
     match List.assoc_opt "active_tools" fields with
     | None -> Error (Shared.json_path path "active_tools" ^ " is required")
-    | Some value -> decode_string_list (Shared.json_path path "active_tools") value
+    | Some value ->
+        decode_string_list (Shared.json_path path "active_tools") value
   in
   let* permission_ceiling =
     match List.assoc_opt "permission_ceiling" fields with
     | None -> Error (Shared.json_path path "permission_ceiling" ^ " is required")
     | Some value -> Capability_profile.of_json value
   in
-  let* network_allowed = Shared.json_required_bool path fields "network_allowed" in
+  let* network_allowed =
+    Shared.json_required_bool path fields "network_allowed"
+  in
   let* workspace_binding =
     match List.assoc_opt "workspace_binding" fields with
     | None -> Error (Shared.json_path path "workspace_binding" ^ " is required")
     | Some value -> Agent_workspace.binding_of_json value
   in
-  let* child_session_file = required_nullable_string path fields "child_session_file" in
-  let* child_session_id = required_nullable_string path fields "child_session_id" in
+  let* child_session_file =
+    required_nullable_string path fields "child_session_file"
+  in
+  let* child_session_id =
+    required_nullable_string path fields "child_session_id"
+  in
   let* created_at = Shared.json_required_int path fields "created_at" in
   Ok
     {
@@ -195,11 +228,26 @@ let decode_run path fields =
   let ( let* ) = Result.bind in
   let* () =
     Shared.json_exact_fields path
-      [ "run_id"; "agent_id"; "status"; "reason_code"; "error";
-        "output_available"; "announcement"; "started_at"; "ended_at";
-        "suspended_at"; "submission_id"; "result_entry_id";
-        "previous_assistant_entry_id"; "description"; "turn_count";
-        "last_activity_at"; "activity_state"; "active_tool_count" ]
+      [
+        "run_id";
+        "agent_id";
+        "status";
+        "reason_code";
+        "error";
+        "output_available";
+        "announcement";
+        "started_at";
+        "ended_at";
+        "suspended_at";
+        "submission_id";
+        "result_entry_id";
+        "previous_assistant_entry_id";
+        "description";
+        "turn_count";
+        "last_activity_at";
+        "activity_state";
+        "active_tool_count";
+      ]
       fields
   in
   let* run_id = Shared.json_required_string path fields "run_id" in
@@ -207,14 +255,20 @@ let decode_run path fields =
   let run_prefix = agent_id ^ "-run-" in
   let* () =
     let prefix_length = String.length run_prefix in
-    if String.length run_id <= prefix_length
-       || String.sub run_id 0 prefix_length <> run_prefix
-    then Error (Shared.json_path path "run_id" ^ " does not match its agent handle")
+    if
+      String.length run_id <= prefix_length
+      || String.sub run_id 0 prefix_length <> run_prefix
+    then
+      Error (Shared.json_path path "run_id" ^ " does not match its agent handle")
     else
-      let suffix = String.sub run_id prefix_length (String.length run_id - prefix_length) in
+      let suffix =
+        String.sub run_id prefix_length (String.length run_id - prefix_length)
+      in
       match int_of_string_opt suffix with
       | Some value when value > 0 && suffix = string_of_int value -> Ok ()
-      | _ -> Error (Shared.json_path path "run_id" ^ " must end in a positive integer")
+      | _ ->
+          Error
+            (Shared.json_path path "run_id" ^ " must end in a positive integer")
   in
   let* status_raw = Shared.json_required_string path fields "status" in
   let* status = run_status_of_string status_raw in
@@ -225,10 +279,14 @@ let decode_run path fields =
     | Ok (Some value) -> Result.map Option.some (reason_code_of_string value)
   in
   let* error = required_nullable_string path fields "error" in
-  let* output_available = Shared.json_required_bool path fields "output_available" in
+  let* output_available =
+    Shared.json_required_bool path fields "output_available"
+  in
   let final_output = None in
   let partial_output = None in
-  let* announcement_raw = Shared.json_required_string path fields "announcement" in
+  let* announcement_raw =
+    Shared.json_required_string path fields "announcement"
+  in
   let* announcement = announcement_of_string announcement_raw in
   let* started_at = Shared.json_required_int path fields "started_at" in
   let* ended_at =
@@ -243,8 +301,12 @@ let decode_run path fields =
     | Ok None -> Ok None
     | Ok (Some value) -> Ok (Some value)
   in
-  let* submission_id = Shared.json_required_string path fields "submission_id" in
-  let* result_entry_id = required_nullable_string path fields "result_entry_id" in
+  let* submission_id =
+    Shared.json_required_string path fields "submission_id"
+  in
+  let* result_entry_id =
+    required_nullable_string path fields "result_entry_id"
+  in
   let* previous_assistant_entry_id =
     required_nullable_string path fields "previous_assistant_entry_id"
   in
@@ -256,9 +318,13 @@ let decode_run path fields =
     | Ok None -> Ok None
     | Ok (Some value) -> Ok (Some value)
   in
-  let* activity_state_raw = Shared.json_required_string path fields "activity_state" in
+  let* activity_state_raw =
+    Shared.json_required_string path fields "activity_state"
+  in
   let* activity_state = activity_state_of_string activity_state_raw in
-  let* active_tool_count = Shared.json_required_int path fields "active_tool_count" in
+  let* active_tool_count =
+    Shared.json_required_int path fields "active_tool_count"
+  in
   let* () =
     if turn_count >= 0 && active_tool_count >= 0 then Ok ()
     else Error (path ^ " activity counters must be non-negative")
@@ -295,10 +361,16 @@ let decode_list path decode_item = function
       let rec loop acc index = function
         | [] -> Ok (List.rev acc)
         | value :: rest -> (
-            match Shared.json_object_fields (Printf.sprintf "%s[%d]" path index) value with
+            match
+              Shared.json_object_fields
+                (Printf.sprintf "%s[%d]" path index)
+                value
+            with
             | Error _ as error -> error
             | Ok fields -> (
-                match decode_item (Printf.sprintf "%s[%d]" path index) fields with
+                match
+                  decode_item (Printf.sprintf "%s[%d]" path index) fields
+                with
                 | Error _ as error -> error
                 | Ok item -> loop (item :: acc) (index + 1) rest))
       in
@@ -337,7 +409,8 @@ let validate_state state =
               (fun identity -> identity.identity_agent_id = run.run_agent_id)
               identities
           then loop rest
-          else Error ("agent run references unknown identity: " ^ run.run_agent_id)
+          else
+            Error ("agent run references unknown identity: " ^ run.run_agent_id)
     in
     loop runs
   in
@@ -349,11 +422,13 @@ let validate_state state =
             match (run.run_status, run.run_activity_state) with
             | Running, (Starting | Reasoning | Using_tool | Orphaned)
             | Suspended, Inactive
-            | (Completed | Failed | Cancelled | Lost), Inactive -> true
+            | (Completed | Failed | Cancelled | Lost), Inactive ->
+                true
             | _ -> false
           in
           if compatible then loop rest
-          else Error ("agent run has incompatible status/activity: " ^ run.run_id)
+          else
+            Error ("agent run has incompatible status/activity: " ^ run.run_id)
     in
     loop runs
   in
@@ -362,34 +437,58 @@ let validate_state state =
       | [] -> Ok ()
       | identity :: rest ->
           let specialist =
-            match identity.identity_kind with Generic -> false | Finder | Oracle -> true
+            match identity.identity_kind with
+            | Generic -> false
+            | Finder | Oracle -> true
           in
           if
-            List.exists (fun name -> List.mem name agent_tools)
+            List.exists
+              (fun name -> List.mem name agent_tools)
               identity.identity_active_tools
-          then Error ("persisted identity has prohibited agent tools: " ^ identity.identity_agent_id)
+          then
+            Error
+              ("persisted identity has prohibited agent tools: "
+             ^ identity.identity_agent_id)
           else if
             List.exists
               (fun name ->
                 match (identity.identity_kind, tool_effect name) with
                 | Finder, Some (Tool_gateway.Pure | Tool_gateway.Execute)
-                | Oracle, Some (Tool_gateway.Pure | Tool_gateway.Execute | Tool_gateway.Network)
-                | (Generic | Finder | Oracle), None | Generic, Some _ -> false
+                | ( Oracle,
+                    Some
+                      ( Tool_gateway.Pure | Tool_gateway.Execute
+                      | Tool_gateway.Network ) )
+                | (Generic | Finder | Oracle), None
+                | Generic, Some _ ->
+                    false
                 | (Finder | Oracle), Some _ -> true)
               identity.identity_active_tools
-          then Error ("persisted specialist has prohibited tools: " ^ identity.identity_agent_id)
+          then
+            Error
+              ("persisted specialist has prohibited tools: "
+             ^ identity.identity_agent_id)
           else if
             specialist
             && (identity.identity_permission_ceiling.sandbox_preset
-                  <> Capability_profile.Read_only
+                <> Capability_profile.Read_only
                || identity.identity_permission_ceiling.no_sandbox_allowed)
-          then Error ("persisted specialist has prohibited sandbox authority: " ^ identity.identity_agent_id)
-          else if identity.identity_kind = Finder && identity.identity_network_allowed
-          then Error ("persisted Finder has prohibited network authority: " ^ identity.identity_agent_id)
+          then
+            Error
+              ("persisted specialist has prohibited sandbox authority: "
+             ^ identity.identity_agent_id)
+          else if
+            identity.identity_kind = Finder && identity.identity_network_allowed
+          then
+            Error
+              ("persisted Finder has prohibited network authority: "
+             ^ identity.identity_agent_id)
           else if
             (identity.identity_kind = Generic && identity.identity_effort = None)
             || (specialist && identity.identity_effort <> None)
-          then Error ("persisted effort is incompatible with identity kind: " ^ identity.identity_agent_id)
+          then
+            Error
+              ("persisted effort is incompatible with identity kind: "
+             ^ identity.identity_agent_id)
           else loop rest
     in
     loop identities
@@ -398,9 +497,12 @@ let validate_state state =
     let rec loop seen = function
       | [] -> Ok ()
       | run :: rest ->
-          if run.run_status <> Running && run.run_status <> Suspended then loop seen rest
+          if run.run_status <> Running && run.run_status <> Suspended then
+            loop seen rest
           else if List.mem run.run_agent_id seen then
-            Error ("agent has multiple active or suspended runs: " ^ run.run_agent_id)
+            Error
+              ("agent has multiple active or suspended runs: "
+             ^ run.run_agent_id)
           else loop (run.run_agent_id :: seen) rest
     in
     loop [] runs
@@ -411,8 +513,11 @@ let validate_state state =
       | identity :: rest ->
           let highest_run =
             runs
-            |> List.filter (fun run -> run.run_agent_id = identity.identity_agent_id)
-            |> List.fold_left (fun highest run -> max highest (run_number run)) 0
+            |> List.filter (fun run ->
+                run.run_agent_id = identity.identity_agent_id)
+            |> List.fold_left
+                 (fun highest run -> max highest (run_number run))
+                 0
           in
           if identity.identity_issued_run_count < highest_run then
             Error
@@ -437,7 +542,7 @@ let validate_state state =
   let* () =
     let rec loop = function
       | [] -> Ok ()
-      | pending :: rest ->
+      | pending :: rest -> (
           if
             List.exists
               (fun identity ->
@@ -447,7 +552,7 @@ let validate_state state =
             Error
               ("agent handle is both active and pending cleanup: "
              ^ pending.cleanup_agent_id)
-          else (
+          else
             match kind_for_agent_id pending.cleanup_agent_id with
             | None ->
                 Error
@@ -462,7 +567,8 @@ let validate_state state =
       List.map (fun identity -> identity.identity_agent_id) identities
       @ List.map (fun pending -> pending.cleanup_agent_id) state.cleanup_pending
     in
-    if List.for_all (fun id -> List.mem id counts.issued_ids) retained_ids then Ok ()
+    if List.for_all (fun id -> List.mem id counts.issued_ids) retained_ids then
+      Ok ()
     else Error "persisted agent handle is absent from issued_ids"
   in
   let issued_count_for kind =
@@ -493,8 +599,13 @@ let decode = function
       match
         Result.bind
           (Shared.json_exact_fields ""
-             [ "version"; "issued_identity_counts"; "identities"; "runs";
-               "cleanup_pending" ]
+             [
+               "version";
+               "issued_identity_counts";
+               "identities";
+               "runs";
+               "cleanup_pending";
+             ]
              fields)
           (fun () -> Shared.json_required_int "" fields "version")
       with
@@ -502,7 +613,9 @@ let decode = function
       | Ok version when version <> schema_version ->
           Error
             ("unsupported agents schema version: " ^ string_of_int version
-           ^ " (expected " ^ string_of_int schema_version ^ ")")
+           ^ " (expected "
+            ^ string_of_int schema_version
+            ^ ")")
       | Ok _ ->
           let ( let* ) = Result.bind in
           let* issued_identity_counts =
@@ -510,15 +623,28 @@ let decode = function
             | Some (Shared.Object count_fields) ->
                 let* () =
                   Shared.json_exact_fields "issued_identity_counts"
-                    [ "agent"; "finder"; "oracle"; "issued_ids" ] count_fields
+                    [ "agent"; "finder"; "oracle"; "issued_ids" ]
+                    count_fields
                 in
-                let* generic = Shared.json_required_int "issued_identity_counts" count_fields "agent" in
-                let* finder = Shared.json_required_int "issued_identity_counts" count_fields "finder" in
-                let* oracle = Shared.json_required_int "issued_identity_counts" count_fields "oracle" in
+                let* generic =
+                  Shared.json_required_int "issued_identity_counts" count_fields
+                    "agent"
+                in
+                let* finder =
+                  Shared.json_required_int "issued_identity_counts" count_fields
+                    "finder"
+                in
+                let* oracle =
+                  Shared.json_required_int "issued_identity_counts" count_fields
+                    "oracle"
+                in
                 let* issued_ids =
                   match List.assoc_opt "issued_ids" count_fields with
-                  | Some value -> decode_string_list "issued_identity_counts.issued_ids" value
-                  | None -> Error "issued_identity_counts.issued_ids is required"
+                  | Some value ->
+                      decode_string_list "issued_identity_counts.issued_ids"
+                        value
+                  | None ->
+                      Error "issued_identity_counts.issued_ids is required"
                 in
                 if generic < 0 || finder < 0 || oracle < 0 then
                   Error "issued_identity_counts must be non-negative"
@@ -545,8 +671,12 @@ let decode = function
                     let ( let* ) = Result.bind in
                     let* () =
                       Shared.json_exact_fields path
-                        [ "owner_session_id"; "agent_id"; "cleanup_nonce";
-                          "remaining_artifacts" ]
+                        [
+                          "owner_session_id";
+                          "agent_id";
+                          "cleanup_nonce";
+                          "remaining_artifacts";
+                        ]
                         fields
                     in
                     let* owner_session_id =
@@ -575,5 +705,6 @@ let decode = function
                       })
                   value
           in
-          validate_state { identities; runs; issued_identity_counts; cleanup_pending })
+          validate_state
+            { identities; runs; issued_identity_counts; cleanup_pending })
   | _ -> Error "agents state must be an object"

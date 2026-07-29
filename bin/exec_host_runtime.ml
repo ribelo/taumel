@@ -1,9 +1,7 @@
 open Jsoo_bridge
 
 let exists candidate =
-  candidate <> ""
-  &&
-  try Node_fs.exists_sync candidate with _ -> false
+  candidate <> "" && try Node_fs.exists_sync candidate with _ -> false
 
 let canonical candidate =
   if not (exists candidate) then None
@@ -25,22 +23,26 @@ let path_candidates name =
   in
   if delimiter = "" then []
   else
-    value |> String.split_on_char delimiter.[0]
+    value
+    |> String.split_on_char delimiter.[0]
     |> List.filter_map (fun directory ->
-           if directory = "" then None
-           else Some (Node_path.join [ directory; name ]))
+        if directory = "" then None
+        else Some (Node_path.join [ directory; name ]))
 
 let resolve_shell () =
   let rec first = function
     | [] -> Error "bash or sh executable is unavailable"
     | candidate :: rest -> (
-        match executable candidate with Some value -> Ok value | None -> first rest)
+        match executable candidate with
+        | Some value -> Ok value
+        | None -> first rest)
   in
   first ([ "/bin/bash" ] @ path_candidates "bash" @ path_candidates "sh")
 
 let unique values = List.sort_uniq String.compare values
 
 let existing_real_paths values = values |> List.filter_map canonical |> unique
+
 let existing_paths values = values |> List.filter exists |> unique
 
 let metadata_listing root metadata_dir =
@@ -57,14 +59,14 @@ let facts ~workspace_roots ~authorization_cwd =
   | Error _ as error -> error
   | Ok shell ->
       let tmp_dir = Node_os.tmpdir () in
-      let env_tmp_dir = Option.value (Node_process.env_get "TMPDIR") ~default:"" in
+      let env_tmp_dir =
+        Option.value (Node_process.env_get "TMPDIR") ~default:""
+      in
       let home =
         let home = try Node_os.homedir () with _ -> "" in
         Option.value (canonical home) ~default:home
       in
-      let home_parent =
-        if home = "" then "" else Node_path.dirname home
-      in
+      let home_parent = if home = "" then "" else Node_path.dirname home in
       let home_mount =
         if home_parent <> "" && home_parent <> "/" && exists home_parent then
           home_parent
@@ -73,8 +75,8 @@ let facts ~workspace_roots ~authorization_cwd =
       let workspace_metadata_listings =
         workspace_roots
         |> List.concat_map (fun root ->
-               Taumel.Sandbox.protected_workspace_dir_names
-               |> List.filter_map (metadata_listing root))
+            Taumel.Sandbox.protected_workspace_dir_names
+            |> List.filter_map (metadata_listing root))
       in
       let host =
         {

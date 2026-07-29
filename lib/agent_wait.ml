@@ -12,7 +12,9 @@ let wait_item_of_run identity run =
     wait_error = run.run_error;
     wait_output_available = run.run_output_available;
     wait_output =
-      (match run.run_status with Completed -> run.run_final_output | _ -> None);
+      (match run.run_status with
+      | Completed -> run.run_final_output
+      | _ -> None);
     wait_partial_output =
       (match run.run_status with
       | Failed | Cancelled | Lost -> run.run_partial_output
@@ -36,7 +38,8 @@ let validate_wait_selection state ~owner_session_id run_ids =
               | Some run -> (
                   match find_identity state run.run_agent_id with
                   | Some identity
-                    when identity.identity_owner_session_id = owner_session_id ->
+                    when identity.identity_owner_session_id = owner_session_id
+                    ->
                       loop rest
                   | Some _ | None ->
                       Error ("run is not owned by this session: " ^ run_id)))
@@ -63,7 +66,7 @@ let wait_for_run_ids state ~owner_session_id run_ids =
                       state_ref :=
                         {
                           !state_ref with
-                          runs = replace_run observed (!state_ref).runs;
+                          runs = replace_run observed !state_ref.runs;
                         };
                     Some (wait_item_of_run identity observed)))
           (List.map String.trim run_ids)

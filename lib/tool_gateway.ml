@@ -1,15 +1,6 @@
-type effect_kind =
-  | Pure
-  | Execute
-  | Mutate
-  | Network
-  | Spawn_agent
-  | Ask_user
+type effect_kind = Pure | Execute | Mutate | Network | Spawn_agent | Ask_user
 
-type spec = {
-  name : string;
-  effect_kind : effect_kind;
-}
+type spec = { name : string; effect_kind : effect_kind }
 
 type error =
   | Unknown_tool of string
@@ -24,7 +15,9 @@ type call_context = {
 }
 
 let empty = Shared.String_map.empty
+
 let register spec registry = Shared.String_map.add spec.name spec registry
+
 let specs registry = registry |> Shared.String_map.bindings |> List.map snd
 
 let effect_requires_sandbox = function
@@ -38,10 +31,7 @@ let text_result_json ?(details = Shared.Null) text =
         Shared.Array
           [
             Shared.Object
-              [
-                ("type", Shared.String "text");
-                ("text", Shared.String text);
-              ];
+              [ ("type", Shared.String "text"); ("text", Shared.String text) ];
           ] );
       ("details", details);
     ]
@@ -49,7 +39,7 @@ let text_result_json ?(details = Shared.Null) text =
 let authorize registry context ~name =
   match Shared.String_map.find_opt name registry with
   | None -> Error (Unknown_tool name)
-  | Some spec ->
+  | Some spec -> (
       if not (Capability_profile.allow_tool context.profile name) then
         Error (Denied_tool name)
       else
@@ -58,7 +48,7 @@ let authorize registry context ~name =
             context.authorize_effect spec.effect_kind
           else Ok ()
         in
-        (match effect_result with
+        match effect_result with
         | Error message -> Error (Denied_effect (spec.effect_kind, message))
         | Ok () -> Ok ())
 

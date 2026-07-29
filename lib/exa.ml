@@ -16,6 +16,7 @@ let tool_specs =
     (core_tool_names @ agent_tool_names)
 
 let create_run_tool_name = "exa_agent_create_run"
+
 let api_key_env = "EXA_API_KEY"
 
 let json_field name = function
@@ -23,10 +24,14 @@ let json_field name = function
   | _ -> None
 
 let json_string name json =
-  match json_field name json with Some (Shared.String value) -> Some value | _ -> None
+  match json_field name json with
+  | Some (Shared.String value) -> Some value
+  | _ -> None
 
 let json_array name json =
-  match json_field name json with Some (Shared.Array values) -> values | _ -> []
+  match json_field name json with
+  | Some (Shared.Array values) -> values
+  | _ -> []
 
 let truncate max value =
   if String.length value <= max then value
@@ -46,7 +51,9 @@ let non_empty_block label value =
   if String.trim value = "" then None else Some (label ^ ":\n" ^ value)
 
 let result_blocks item =
-  let summary = Option.bind (json_string "summary" item) (non_empty_block "Summary") in
+  let summary =
+    Option.bind (json_string "summary" item) (non_empty_block "Summary")
+  in
   let highlights =
     match json_strings "highlights" item with
     | [] -> None
@@ -76,9 +83,7 @@ let render_agent_run payload =
   let status = Option.value (json_string "status" payload) ~default:"unknown" in
   let output = json_field "output" payload in
   let output_text =
-    match output with
-    | Some output -> json_string "text" output
-    | None -> None
+    match output with Some output -> json_string "text" output | None -> None
   in
   match output_text with
   | Some text when String.trim text <> "" ->
@@ -97,7 +102,9 @@ let render_list noun payload =
     Printf.sprintf "Exa returned %d %s%s." count noun
       (if count = 1 then "" else "s")
   in
-  match data with [] -> summary | _ -> summary ^ "\n\n" ^ Shared.encode_json payload
+  match data with
+  | [] -> summary
+  | _ -> summary ^ "\n\n" ^ Shared.encode_json payload
 
 let render_success tool_name payload =
   match tool_name with
@@ -112,10 +119,7 @@ let render_success tool_name payload =
 
 let details ~tool_name ~ok ?status payload =
   Shared.Object
-    ([
-       ("ok", Shared.Bool ok);
-       ("tool", Shared.String tool_name);
-     ]
+    ([ ("ok", Shared.Bool ok); ("tool", Shared.String tool_name) ]
     @ (match status with
       | None -> []
       | Some status -> [ ("status", Shared.Number (float_of_int status)) ])

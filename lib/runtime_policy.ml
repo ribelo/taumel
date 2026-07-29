@@ -15,8 +15,8 @@ let active_sandbox ~cwd ~network_mode ~no_sandbox ~isolated_child
     (profile : Capability_profile.t) =
   let workspace_roots = workspace_roots_of_cwd cwd in
   match
-    Sandbox.config_of_profile ~workspace_roots ~network_mode ~no_sandbox ~isolated_child
-      profile
+    Sandbox.config_of_profile ~workspace_roots ~network_mode ~no_sandbox
+      ~isolated_child profile
   with
   | Ok config -> config
   | Error _ -> fallback_sandbox ~workspace_roots ~isolated_child
@@ -31,7 +31,9 @@ let authorize_tool ~authorize_effect ~profile name =
   Tool_gateway.authorize gateway_registry context ~name
 
 let gateway_authorized ~profile ~sandbox name =
-  authorize_tool ~profile ~authorize_effect:(Sandbox.authorize_effect sandbox) name
+  authorize_tool ~profile
+    ~authorize_effect:(Sandbox.authorize_effect sandbox)
+    name
   |> Result.map (fun _ -> sandbox)
 
 let gateway_profile_authorized ~profile ~sandbox name =

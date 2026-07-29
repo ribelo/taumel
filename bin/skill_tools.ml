@@ -1,7 +1,12 @@
 open Jsoo_bridge
 open App_state
 
-type skill = { name : string; path : string; base_dir : string; description : string }
+type skill = {
+  name : string;
+  path : string;
+  base_dir : string;
+  description : string;
+}
 
 let exists path = try Node_fs.exists_sync path with _ -> false
 
@@ -12,6 +17,7 @@ let is_dir path =
   try Node_fs.is_directory (Node_fs.stat_sync path) with _ -> false
 
 let dirname path = Node_path.dirname path
+
 let basename path = Node_path.basename path
 
 let resolve_path base raw =
@@ -31,7 +37,7 @@ let trim_quotes value =
   let len = String.length value in
   if len >= 2 then
     match (value.[0], value.[len - 1]) with
-    | ('"', '"') | ('\'', '\'') -> String.sub value 1 (len - 2)
+    | '"', '"' | '\'', '\'' -> String.sub value 1 (len - 2)
     | _ -> value
   else value
 
@@ -45,7 +51,10 @@ let frontmatter_field key text =
         | line :: rest -> (
             match String.index_opt line ':' with
             | Some index when String.trim (String.sub line 0 index) = key ->
-                let value = String.sub line (index + 1) (String.length line - index - 1) |> trim_quotes in
+                let value =
+                  String.sub line (index + 1) (String.length line - index - 1)
+                  |> trim_quotes
+                in
                 if value = "" then None else Some value
             | _ -> loop rest)
       in
@@ -53,6 +62,7 @@ let frontmatter_field key text =
   | _ -> None
 
 let frontmatter_name text = frontmatter_field "name" text
+
 let frontmatter_description text = frontmatter_field "description" text
 
 let skill_from_file path base_dir default_name =
@@ -60,36 +70,40 @@ let skill_from_file path base_dir default_name =
   | None -> { name = default_name; path; base_dir; description = "" }
   | Some text ->
       let name = frontmatter_name text |> Option.value ~default:default_name in
-      let description = frontmatter_description text |> Option.value ~default:"" in
+      let description =
+        frontmatter_description text |> Option.value ~default:""
+      in
       { name; path; base_dir; description }
 
 let strip_frontmatter text =
   let lines = String.split_on_char '\n' text in
   match lines with
-  | first :: rest when String.trim first = "---" ->
-      (match List.find_index (fun line -> String.trim line = "---") rest with
-       | None -> text
-       | Some index -> String.concat "\n" (List.drop (index + 1) rest))
+  | first :: rest when String.trim first = "---" -> (
+      match List.find_index (fun line -> String.trim line = "---") rest with
+      | None -> text
+      | Some index -> String.concat "\n" (List.drop (index + 1) rest))
   | _ -> text
 
 let readdir path =
   try
     Node_fs.readdir_sync_with_file_types path
-    |> List.sort (fun a b -> compare (Node_fs.dirent_name a) (Node_fs.dirent_name b))
+    |> List.sort (fun a b ->
+        compare (Node_fs.dirent_name a) (Node_fs.dirent_name b))
   with _ -> []
 
-let add_skill table skill = if Hashtbl.mem table skill.name then () else Hashtbl.add table skill.name skill
+let add_skill table skill =
+  if Hashtbl.mem table skill.name then ()
+  else Hashtbl.add table skill.name skill
 
 let rec discover_dir table dir =
   let file = skill_file dir in
-  if exists file then
-    add_skill table (skill_from_file file dir (basename dir))
+  if exists file then add_skill table (skill_from_file file dir (basename dir))
   else
     readdir dir
     |> List.iter (fun entry ->
-           let name = Node_fs.dirent_name entry in
-           let full = Node_path.join [ dir; name ] in
-           if Node_fs.dirent_is_directory entry then discover_dir table full)
+        let name = Node_fs.dirent_name entry in
+        let full = Node_path.join [ dir; name ] in
+        if Node_fs.dirent_is_directory entry then discover_dir table full)
 
 let discover_path table path =
   if exists path then
@@ -102,11 +116,17 @@ let json_file path =
   match read_file path with
   | None -> None
   | Some text -> (
-      try Some (Unsafe.fun_call (Unsafe.get (Unsafe.js_expr "JSON") "parse") [| js_string text |])
+      try
+        Some
+          (Unsafe.fun_call
+             (Unsafe.get (Unsafe.js_expr "JSON") "parse")
+             [| js_string text |])
       with _ -> None)
 
 let settings_paths settings base =
-  let arrays = get_string_array settings "skillPaths" @ get_string_array settings "skills" in
+  let arrays =
+    get_string_array settings "skillPaths" @ get_string_array settings "skills"
+  in
   List.map (resolve_path base) arrays
 
 let argv_skill_paths cwd =
@@ -115,7 +135,9 @@ let argv_skill_paths cwd =
     | [] -> List.rev acc
     | "--skill" :: value :: rest -> loop (resolve_path cwd value :: acc) rest
     | arg :: rest when String.starts_with ~prefix:"--skill=" arg ->
-        loop (resolve_path cwd (String.sub arg 8 (String.length arg - 8)) :: acc) rest
+        loop
+          (resolve_path cwd (String.sub arg 8 (String.length arg - 8)) :: acc)
+          rest
     | _ :: rest -> loop acc rest
   in
   loop [] argv
@@ -126,8 +148,12 @@ let source_paths cwd =
   let global_settings = resolve_path agent_dir "settings.json" in
   let project_settings = resolve_path cwd ".pi/settings.json" in
   [ resolve_path agent_dir "skills"; resolve_path cwd ".pi/skills" ]
-  @ (json_file global_settings |> Option.map (fun json -> settings_paths json (dirname global_settings)) |> Option.value ~default:[])
-  @ (json_file project_settings |> Option.map (fun json -> settings_paths json (dirname project_settings)) |> Option.value ~default:[])
+  @ (json_file global_settings
+    |> Option.map (fun json -> settings_paths json (dirname global_settings))
+    |> Option.value ~default:[])
+  @ (json_file project_settings
+    |> Option.map (fun json -> settings_paths json (dirname project_settings))
+    |> Option.value ~default:[])
   @ argv_skill_paths cwd
 
 let warning message = Tool_contracts.BridgeWarning.create ~message ()
@@ -150,10 +176,13 @@ let skill_enabled name =
   Taumel.Visibility.is_enabled !visibility_state Taumel.Visibility.Skills name
 
 let list_skills params =
-  let params = decode_ojs_contract Tool_contracts.SkillListFacts.t_of_js (ojs_of_js params) in
+  let params =
+    decode_ojs_contract Tool_contracts.SkillListFacts.t_of_js (ojs_of_js params)
+  in
   let cwd = Tool_contracts.SkillListFacts.get_cwd params in
   let include_disabled =
-    Option.value (Tool_contracts.SkillListFacts.get_includeDisabled params)
+    Option.value
+      (Tool_contracts.SkillListFacts.get_includeDisabled params)
       ~default:false
   in
   let skills =
@@ -165,7 +194,10 @@ let list_skills params =
   Tool_contracts.SkillListResult.t_to_js result |> inject
 
 let resolve_mentions params =
-  let params = decode_ojs_contract Tool_contracts.SkillResolveFacts.t_of_js (ojs_of_js params) in
+  let params =
+    decode_ojs_contract Tool_contracts.SkillResolveFacts.t_of_js
+      (ojs_of_js params)
+  in
   (match Tool_contracts.SkillResolveFacts.get_ctx params with
   | None -> ()
   | Some ctx ->
@@ -174,7 +206,9 @@ let resolve_mentions params =
   let prompt = Tool_contracts.SkillResolveFacts.get_prompt params in
   let names = Taumel.Skill_resolver.mentions prompt in
   if names = [] then
-    let result = Tool_contracts.SkillResolveResult.create ~blocks:[] ~warnings:[] () in
+    let result =
+      Tool_contracts.SkillResolveResult.create ~blocks:[] ~warnings:[] ()
+    in
     Tool_contracts.SkillResolveResult.t_to_js result |> inject
   else
     let cwd = Tool_contracts.SkillResolveFacts.get_cwd params in
@@ -189,10 +223,15 @@ let resolve_mentions params =
         | Some skill when not (skill_enabled skill.name) -> ()
         | Some skill -> (
             match read_file skill.path with
-            | None -> warnings := warning ("Could not read skill: " ^ name) :: !warnings
+            | None ->
+                warnings :=
+                  warning ("Could not read skill: " ^ name) :: !warnings
             | Some text ->
                 let body = strip_frontmatter text in
-                let block = Taumel.Skill_resolver.skill_block ~name:skill.name ~location:skill.path ~base_dir:skill.base_dir ~body in
+                let block =
+                  Taumel.Skill_resolver.skill_block ~name:skill.name
+                    ~location:skill.path ~base_dir:skill.base_dir ~body
+                in
                 blocks := block_payload skill block :: !blocks))
       names;
     let result =

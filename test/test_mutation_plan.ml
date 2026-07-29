@@ -40,8 +40,9 @@ let sandbox_with ?(filesystem_mode = Sandbox.Workspace_write)
     else Sandbox.Network_disabled
   in
   Sandbox.validated_config ~filesystem_mode ~workspace_roots:[ "/repo" ]
-    ~network_mode ~approval_policy:Sandbox.On_request
-    ~no_sandbox ~isolated_child:false |> Result.get_ok
+    ~network_mode ~approval_policy:Sandbox.On_request ~no_sandbox
+    ~isolated_child:false
+  |> Result.get_ok
 
 let test_exec_plan () =
   (match
@@ -88,9 +89,10 @@ let test_exec_plan () =
   let expect_escalation_rejected label policy expected =
     let policy_sandbox =
       Sandbox.validated_config ~filesystem_mode:sandbox.filesystem_mode
-        ~workspace_roots:sandbox.workspace_roots ~network_mode:sandbox.network_mode
-        ~approval_policy:policy ~no_sandbox:sandbox.no_sandbox
-        ~isolated_child:sandbox.isolated_child |> Result.get_ok
+        ~workspace_roots:sandbox.workspace_roots
+        ~network_mode:sandbox.network_mode ~approval_policy:policy
+        ~no_sandbox:sandbox.no_sandbox ~isolated_child:sandbox.isolated_child
+      |> Result.get_ok
     in
     expect_error label expected
       (Mutation.plan_exec policy_sandbox
@@ -106,15 +108,15 @@ let test_exec_plan () =
            tty = false;
          })
   in
-  expect_escalation_rejected "exec escalation never"
-    Sandbox.Never
-    "approval policy is Never; reject command — you cannot ask for escalated permissions if the approval policy is Never";
-  expect_escalation_rejected "exec escalation on-failure"
-    Sandbox.On_failure
-    "approval policy is OnFailure; reject command — you cannot ask for escalated permissions if the approval policy is OnFailure";
-  expect_escalation_rejected "exec escalation untrusted"
-    Sandbox.Untrusted
-    "approval policy is UnlessTrusted; reject command — you cannot ask for escalated permissions if the approval policy is UnlessTrusted"
+  expect_escalation_rejected "exec escalation never" Sandbox.Never
+    "approval policy is Never; reject command — you cannot ask for escalated \
+     permissions if the approval policy is Never";
+  expect_escalation_rejected "exec escalation on-failure" Sandbox.On_failure
+    "approval policy is OnFailure; reject command — you cannot ask for \
+     escalated permissions if the approval policy is OnFailure";
+  expect_escalation_rejected "exec escalation untrusted" Sandbox.Untrusted
+    "approval policy is UnlessTrusted; reject command — you cannot ask for \
+     escalated permissions if the approval policy is UnlessTrusted"
 
 let test_write_edit_plan () =
   expect_error "write mode" "write mode must be overwrite or append"
@@ -132,10 +134,11 @@ let test_write_edit_plan () =
   in
   assert_equal "write display path" "/outside/file.txt" write.display_path;
   assert_bool "write validates workspace paths" write.validate_workspace_paths;
-  (match write.approval with
+  match write.approval with
   | Some approval ->
-      assert_equal "write approval title" "write: path outside workspace" approval.title
-  | None -> fail "write approval" "expected approval")
+      assert_equal "write approval title" "write: path outside workspace"
+        approval.title
+  | None -> fail "write approval" "expected approval"
 
 let test_write_stdin_plan () =
   let status =
@@ -179,8 +182,7 @@ let test_apply_patch_plan () =
     "*** Begin Patch\n*** Add File: inside.txt\n+hello\n*** End Patch\n"
   in
   let request =
-    expect_ok "apply patch decode"
-      (Mutation.patch_request_of_values patch)
+    expect_ok "apply patch decode" (Mutation.patch_request_of_values patch)
   in
   let plan =
     match Mutation.plan_apply_patch sandbox request with
@@ -204,8 +206,7 @@ let test_apply_patch_plan () =
   let path, contents = List.hd output.writes in
   assert_equal "patch write path" "/repo/inside.txt" path;
   assert_equal "patch write contents" "hello\n" contents;
-  expect_error "apply patch missing input"
-    "apply_patch.input is required"
+  expect_error "apply patch missing input" "apply_patch.input is required"
     (Mutation.patch_request_of_values "")
 
 let () =

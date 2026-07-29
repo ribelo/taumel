@@ -1,4 +1,5 @@
 let max_lines = 2000
+
 let max_bytes = 50 * 1024
 
 let owner_token value = Node_crypto.sha256_hex value

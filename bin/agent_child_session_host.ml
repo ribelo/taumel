@@ -4,11 +4,12 @@ let owner_component owner_session_id = Node_crypto.sha256_hex owner_session_id
 
 let valid_agent_component agent_id =
   agent_id <> "" && agent_id <> "." && agent_id <> ".."
-  && not (String.contains agent_id '/')
+  && (not (String.contains agent_id '/'))
   && not (String.contains agent_id '\\')
 
 let private_root () =
-  Node_path.join [ Agent_worktree_host.pi_agent_dir (); "taumel"; "agents"; "owners" ]
+  Node_path.join
+    [ Agent_worktree_host.pi_agent_dir (); "taumel"; "agents"; "owners" ]
 
 let private_directory ~owner_session_id ~agent_id =
   let owner_session_id = String.trim owner_session_id in
@@ -36,19 +37,6 @@ let cleanup_envelope ~owner_session_id ~agent_id =
            ".cleanup-" ^ agent_id;
          ])
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 (* Recursive and single-entry cleanup deletion is descriptor-anchored in
    Agent_anchored_fs (ADR 0003): ancestor and component swaps cannot redirect
    deletion outside the pinned tree, and symlinks are never traversed. *)
@@ -69,9 +57,9 @@ let child_marker_counts ~owner_session_id ~agent_id raw =
                  List.assoc_opt "customType" fields,
                  List.assoc_opt "data" fields )
              with
-             | Some (Taumel.Shared.String "custom"),
-               Some (Taumel.Shared.String "taumel.childSession"),
-               Some (Taumel.Shared.Object data) ->
+             | ( Some (Taumel.Shared.String "custom"),
+                 Some (Taumel.Shared.String "taumel.childSession"),
+                 Some (Taumel.Shared.Object data) ) ->
                  let string name =
                    match List.assoc_opt name data with
                    | Some (Taumel.Shared.String value) -> value
@@ -87,9 +75,7 @@ let child_marker_counts ~owner_session_id ~agent_id raw =
        (0, 0)
 
 let directory_has_marker ~owner_session_id ~agent_id directory =
-  let names =
-    try Node_fs.readdir_sync directory with _ -> []
-  in
+  let names = try Node_fs.readdir_sync directory with _ -> [] in
   let marker_count, matching_count =
     List.fold_left
       (fun (marker_count, matching_count) name ->
@@ -117,19 +103,22 @@ let validate_exact_directory ?(require_child_marker = false) ~owner_session_id
   else if not (Node_files.is_directory directory) then
     Error "private child-session target is not a directory"
   else
-    match (Node_files.realpath (private_root ()), Node_files.realpath directory) with
+    match
+      (Node_files.realpath (private_root ()), Node_files.realpath directory)
+    with
     | Error _, _ | _, Error _ ->
         Error "private child-session target cannot be resolved canonically"
     | Ok canonical_root, Ok canonical_directory ->
         if canonical_directory <> expected then
-          Error "private child-session target escapes its derived owner directory"
+          Error
+            "private child-session target escapes its derived owner directory"
         else if
           not
-            (Taumel.Sandbox.path_within ~root:canonical_root
-               canonical_directory)
+            (Taumel.Sandbox.path_within ~root:canonical_root canonical_directory)
         then
           Error
-            "private child-session target escapes Taumel's private agent directory"
+            "private child-session target escapes Taumel's private agent \
+             directory"
         else if
           require_child_marker
           && not
@@ -210,22 +199,23 @@ let read_envelope_marker marker_path =
 
 let remove_envelope_shell ~marker_path ~envelope_path =
   (match Node_files.path_exists marker_path with
-  | false -> Ok ()
-  | true -> (
-      match unlink_file marker_path with
-      | Ok () -> Ok ()
-      | Error message ->
-          Error ("private child-session envelope marker removal failed: " ^ message)))
+    | false -> Ok ()
+    | true -> (
+        match unlink_file marker_path with
+        | Ok () -> Ok ()
+        | Error message ->
+            Error
+              ("private child-session envelope marker removal failed: "
+             ^ message)))
   |> function
   | Error _ as error -> error
-  | Ok () ->
+  | Ok () -> (
       if not (Node_files.path_exists envelope_path) then Ok ()
       else
         match rmdir envelope_path with
         | Ok () -> Ok ()
         | Error message ->
-            Error
-              ("private child-session envelope removal failed: " ^ message)
+            Error ("private child-session envelope removal failed: " ^ message))
 
 let stage_authorized_private_session ?(ephemeral = false)
     ~(identity : Taumel.Agents.identity) authorized =
@@ -235,13 +225,18 @@ let stage_authorized_private_session ?(ephemeral = false)
     ( private_directory ~owner_session_id ~agent_id,
       cleanup_envelope ~owner_session_id ~agent_id )
   with
-  | Error _ as error, _ | _, (Error _ as error) -> error
+  | (Error _ as error), _ | _, (Error _ as error) -> error
   | Ok live_path, Ok envelope_path -> (
       let payload_path = Node_path.join [ envelope_path; "session" ] in
-      let marker_path = Node_path.join [ envelope_path; "cleanup-marker.json" ] in
+      let marker_path =
+        Node_path.join [ envelope_path; "cleanup-marker.json" ]
+      in
       match authorized with
       | None ->
-          if Node_files.path_exists envelope_path || Node_files.path_exists payload_path then
+          if
+            Node_files.path_exists envelope_path
+            || Node_files.path_exists payload_path
+          then
             match read_envelope_marker marker_path with
             | Error message -> Error message
             | Ok marker ->
@@ -262,7 +257,7 @@ let stage_authorized_private_session ?(ephemeral = false)
                          cleanup_nonce = marker.marker_cleanup_nonce;
                        })
           else Ok No_private_session
-      | Some current_path ->
+      | Some current_path -> (
           let staged cleanup_nonce =
             Staged
               {
@@ -286,7 +281,8 @@ let stage_authorized_private_session ?(ephemeral = false)
             let cleanup_nonce = fresh_nonce () in
             match Node_files.mkdir_p envelope_path with
             | Error message ->
-                Error ("private child-session envelope create failed: " ^ message)
+                Error
+                  ("private child-session envelope create failed: " ^ message)
             | Ok () -> (
                 match
                   write_envelope_marker
@@ -322,27 +318,30 @@ let stage_authorized_private_session ?(ephemeral = false)
                    final shell removal was interrupted. Remove it before retry. *)
                 match remove_envelope_shell ~marker_path ~envelope_path with
                 | Error _ as error -> error
-                | Ok () -> create_and_stage ()))
+                | Ok () -> create_and_stage ())))
 
 let try_recover_uncommitted_envelope ~owner_session_id ~agent_id ~live_path =
   match cleanup_envelope ~owner_session_id ~agent_id with
   | Error _ -> Ok None
-  | Ok envelope_path ->
+  | Ok envelope_path -> (
       let payload_path = Node_path.join [ envelope_path; "session" ] in
-      let marker_path = Node_path.join [ envelope_path; "cleanup-marker.json" ] in
-      if not (Node_files.path_exists envelope_path) && not (Node_files.path_exists payload_path) then
-        Ok None
+      let marker_path =
+        Node_path.join [ envelope_path; "cleanup-marker.json" ]
+      in
+      if
+        (not (Node_files.path_exists envelope_path))
+        && not (Node_files.path_exists payload_path)
+      then Ok None
       else
         match read_envelope_marker marker_path with
         | Error _ -> Ok None
-        | Ok marker ->
+        | Ok marker -> (
             if
               marker.marker_owner_session_id <> owner_session_id
               || marker.marker_agent_id <> agent_id
-            then
-              Ok None
+            then Ok None
             else if Node_files.path_exists live_path then Ok None
-            else if not (Node_files.path_exists payload_path) then (
+            else if not (Node_files.path_exists payload_path) then
               match
                 if
                   marker.marker_scope = "ephemeral"
@@ -351,7 +350,7 @@ let try_recover_uncommitted_envelope ~owner_session_id ~agent_id ~live_path =
                 else remove_envelope_shell ~marker_path ~envelope_path
               with
               | Error message -> Error message
-              | Ok () -> Ok None)
+              | Ok () -> Ok None
             else
               match Node_files.rename payload_path live_path with
               | Error _ -> Ok None
@@ -364,7 +363,7 @@ let try_recover_uncommitted_envelope ~owner_session_id ~agent_id ~live_path =
                     else remove_envelope_shell ~marker_path ~envelope_path
                   with
                   | Error message -> Error message
-                  | Ok () -> Ok (Some live_path))
+                  | Ok () -> Ok (Some live_path))))
 
 let recover_uncommitted_envelope_for_identity
     ~(identity : Taumel.Agents.identity) =
@@ -420,35 +419,40 @@ let finalize_private_session = function
       | Ok expected_envelope -> (
           match
             ( Node_files.realpath (private_root ()),
-              if Node_files.path_exists envelope_path then Node_files.realpath envelope_path
+              if Node_files.path_exists envelope_path then
+                Node_files.realpath envelope_path
               else Ok expected_envelope )
           with
           | Error message, _ | _, Error message ->
               Error
                 ("private child-session finalization resolve failed: " ^ message)
-          | Ok canonical_root, Ok canonical_envelope ->
+          | Ok canonical_root, Ok canonical_envelope -> (
               if canonical_envelope <> expected_envelope then
                 Error
-                  "private child-session finalization envelope escapes its derived location"
+                  "private child-session finalization envelope escapes its \
+                   derived location"
               else if
                 not
                   (Taumel.Sandbox.path_within ~root:canonical_root
                      canonical_envelope)
               then
                 Error
-                  "private child-session finalization envelope escapes Taumel's private agent directory"
+                  "private child-session finalization envelope escapes \
+                   Taumel's private agent directory"
               else
                 match read_envelope_marker marker_path with
-                | Error message when Node_files.path_exists marker_path -> Error message
+                | Error message when Node_files.path_exists marker_path ->
+                    Error message
                 | Error _ when not (Node_files.path_exists payload_path) ->
                     remove_envelope_shell ~marker_path ~envelope_path
                 | Error message -> Error message
-                | Ok marker ->
+                | Ok marker -> (
                     if
                       marker.marker_owner_session_id <> owner_session_id
                       || marker.marker_agent_id <> agent_id
                       || marker.marker_cleanup_nonce <> cleanup_nonce
-                    then Error "private child-session finalization marker mismatch"
+                    then
+                      Error "private child-session finalization marker mismatch"
                     else if not (Node_files.path_exists payload_path) then
                       remove_envelope_shell ~marker_path ~envelope_path
                     else
@@ -460,7 +464,8 @@ let finalize_private_session = function
                           ~expected:payload_path payload_path
                       with
                       | Error _ as error -> error
-                      | Ok None -> remove_envelope_shell ~marker_path ~envelope_path
+                      | Ok None ->
+                          remove_envelope_shell ~marker_path ~envelope_path
                       | Ok (Some canonical_payload) -> (
                           match unlink_tree canonical_payload with
                           | Error message ->
@@ -468,7 +473,8 @@ let finalize_private_session = function
                                 ("private child-session finalization failed: "
                                ^ message)
                           | Ok () ->
-                              remove_envelope_shell ~marker_path ~envelope_path)))
+                              remove_envelope_shell ~marker_path ~envelope_path)
+                    ))))
 
 let stage_authorized_private_sessions
     (items : (Taumel.Agents.identity * string option) list) =
@@ -556,7 +562,8 @@ let finalize_cleanup_pending (pending : Taumel.Agents.cleanup_pending) =
                 | Error _ -> "");
               envelope_path;
               payload_path = Node_path.join [ envelope_path; "session" ];
-              marker_path = Node_path.join [ envelope_path; "cleanup-marker.json" ];
+              marker_path =
+                Node_path.join [ envelope_path; "cleanup-marker.json" ];
               cleanup_nonce = pending.cleanup_nonce;
             }
       in
@@ -570,8 +577,7 @@ let restore_failure_detail ~primary ~unstage_error ~restore_error =
       (fun message -> "identity restore persist failed: " ^ message)
       restore_error;
   ]
-  |> List.filter_map Fun.id
-  |> String.concat "; "
+  |> List.filter_map Fun.id |> String.concat "; "
 
 let cleanup_journal_path () =
   Node_path.join [ private_root (); "cleanup-journal.jsonl" ]
@@ -592,16 +598,15 @@ let append_cleanup_journal_lines lines =
   | [] -> Ok ()
   | _ -> (
       match Node_files.mkdir_p (private_root ()) with
-      | Error message ->
-          Error ("cleanup journal root create failed: " ^ message)
+      | Error message -> Error ("cleanup journal root create failed: " ^ message)
       | Ok () -> (
           try
             Node_fs.append_file_sync (cleanup_journal_path ())
               (String.concat "" lines);
             Ok ()
           with error ->
-            Error
-              ("cleanup journal append failed: " ^ Printexc.to_string error)))
+            Error ("cleanup journal append failed: " ^ Printexc.to_string error)
+          ))
 
 let append_cleanup_journal_op ~op ~owner_session_id ~agent_id ~cleanup_nonce =
   append_cleanup_journal_lines
@@ -624,7 +629,8 @@ let append_cleanup_journal_records
 
 let remove_cleanup_journal_record ~owner_session_id ~agent_id ~cleanup_nonce =
   (* Append-only completion record; never rewrite the journal. *)
-  append_cleanup_journal_op ~op:"done" ~owner_session_id ~agent_id ~cleanup_nonce
+  append_cleanup_journal_op ~op:"done" ~owner_session_id ~agent_id
+    ~cleanup_nonce
 
 let read_cleanup_journal () =
   if not (Node_files.path_exists (cleanup_journal_path ())) then Ok []
@@ -637,32 +643,32 @@ let read_cleanup_journal () =
         let key owner agent nonce = owner ^ "\000" ^ agent ^ "\000" ^ nonce in
         raw |> String.split_on_char '\n'
         |> List.iter (fun line ->
-               let line = String.trim line in
-               if line <> "" then
-                 match Taumel.Shared.decode_json_string line with
-                 | Ok (Taumel.Shared.Object fields) ->
-                     let string name =
-                       match List.assoc_opt name fields with
-                       | Some (Taumel.Shared.String value) -> value
-                       | _ -> ""
-                     in
-                     let op = string "op" in
-                     let owner = string "owner_session_id" in
-                     let agent = string "agent_id" in
-                     let nonce = string "cleanup_nonce" in
-                     if owner = "" || agent = "" || nonce = "" then ()
-                     else
-                       let k = key owner agent nonce in
-                       if op = "done" then Hashtbl.replace done_keys k true
-                       else if op = "pending" || op = "" then
-                         Hashtbl.replace pending k
-                           {
-                             Taumel.Agents.cleanup_owner_session_id = owner;
-                             cleanup_agent_id = agent;
-                             cleanup_nonce = nonce;
-                             cleanup_remaining_artifacts = [ "private_session" ];
-                           }
-                 | _ -> ());
+            let line = String.trim line in
+            if line <> "" then
+              match Taumel.Shared.decode_json_string line with
+              | Ok (Taumel.Shared.Object fields) ->
+                  let string name =
+                    match List.assoc_opt name fields with
+                    | Some (Taumel.Shared.String value) -> value
+                    | _ -> ""
+                  in
+                  let op = string "op" in
+                  let owner = string "owner_session_id" in
+                  let agent = string "agent_id" in
+                  let nonce = string "cleanup_nonce" in
+                  if owner = "" || agent = "" || nonce = "" then ()
+                  else
+                    let k = key owner agent nonce in
+                    if op = "done" then Hashtbl.replace done_keys k true
+                    else if op = "pending" || op = "" then
+                      Hashtbl.replace pending k
+                        {
+                          Taumel.Agents.cleanup_owner_session_id = owner;
+                          cleanup_agent_id = agent;
+                          cleanup_nonce = nonce;
+                          cleanup_remaining_artifacts = [ "private_session" ];
+                        }
+              | _ -> ());
         let records =
           Hashtbl.fold
             (fun k pending acc ->

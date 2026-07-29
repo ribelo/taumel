@@ -1,11 +1,6 @@
-type category =
-  | Tools
-  | Skills
+type category = Tools | Skills
 
-type t = {
-  tools_disabled : string list;
-  skills_disabled : string list;
-}
+type t = { tools_disabled : string list; skills_disabled : string list }
 
 type row = {
   name : string;
@@ -14,27 +9,17 @@ type row = {
   description : string;
 }
 
-type warning_flags = {
-  tools_warned : bool;
-  skills_warned : bool;
-}
+type warning_flags = { tools_warned : bool; skills_warned : bool }
 
 let empty = { tools_disabled = []; skills_disabled = [] }
 
-let empty_warning_flags =
-  { tools_warned = false; skills_warned = false }
+let empty_warning_flags = { tools_warned = false; skills_warned = false }
 
-let category_key = function
-  | Tools -> "tools"
-  | Skills -> "skills"
+let category_key = function Tools -> "tools" | Skills -> "skills"
 
-let category_label = function
-  | Tools -> "tool"
-  | Skills -> "skill"
+let category_label = function Tools -> "tool" | Skills -> "skill"
 
-let category_plural = function
-  | Tools -> "tools"
-  | Skills -> "skills"
+let category_plural = function Tools -> "tools" | Skills -> "skills"
 
 let disabled category state =
   match category with
@@ -58,7 +43,8 @@ let rec unique acc = function
 let normalize_list values = unique [] values
 
 let string_list_json values =
-  Shared.Array (List.map (fun value -> Shared.String value) (normalize_list values))
+  Shared.Array
+    (List.map (fun value -> Shared.String value) (normalize_list values))
 
 let category_json values =
   Shared.Object [ ("disabled", string_list_json values) ]
@@ -76,14 +62,19 @@ let decode_category path fields name =
   match Shared.json_required_field path fields name with
   | Error _ as error -> error
   | Ok value ->
-      let* category_fields = Shared.json_object_fields (Shared.json_path path name) value in
+      let* category_fields =
+        Shared.json_object_fields (Shared.json_path path name) value
+      in
       let category_path = Shared.json_path path name in
-      let* () = Shared.json_exact_fields category_path [ "disabled" ] category_fields in
+      let* () =
+        Shared.json_exact_fields category_path [ "disabled" ] category_fields
+      in
       let* disabled_value =
         Shared.json_required_field category_path category_fields "disabled"
       in
       let* disabled =
-        Shared.json_string_list (Shared.json_path category_path "disabled")
+        Shared.json_string_list
+          (Shared.json_path category_path "disabled")
           disabled_value
       in
       Ok (normalize_list disabled)
@@ -93,12 +84,14 @@ let decode json =
   let* fields = Shared.json_object_fields "taumel.visibility" json in
   let* () =
     Shared.json_exact_fields "taumel.visibility"
-      [ "version"; "tools"; "skills" ] fields
+      [ "version"; "tools"; "skills" ]
+      fields
   in
-  let* version = Shared.json_required_int "taumel.visibility" fields "version" in
+  let* version =
+    Shared.json_required_int "taumel.visibility" fields "version"
+  in
   let* () =
-    if version = 1 then Ok ()
-    else Error "unsupported visibility state version"
+    if version = 1 then Ok () else Error "unsupported visibility state version"
   in
   let* tools_disabled = decode_category "taumel.visibility" fields "tools" in
   let* skills_disabled = decode_category "taumel.visibility" fields "skills" in
@@ -130,11 +123,9 @@ let set_disabled ~available state category name value =
   let name = normalize_name name in
   if name = "" then Error (category_label category ^ " name is required")
   else if
-    not (List.mem name available)
+    (not (List.mem name available))
     && (value || not (is_disabled state category name))
-  then
-    Error
-      (Printf.sprintf "Unknown %s: %s" (category_label category) name)
+  then Error (Printf.sprintf "Unknown %s: %s" (category_label category) name)
   else Ok (set_disabled_unchecked state category name value)
 
 let toggle_row state category name =
@@ -150,10 +141,8 @@ let unavailable_warning state category ~available =
   | [] -> None
   | names ->
       Some
-        (Printf.sprintf
-           "Taumel visibility has unavailable disabled %s: %s"
-           (category_plural category)
-           (String.concat ", " names))
+        (Printf.sprintf "Taumel visibility has unavailable disabled %s: %s"
+           (category_plural category) (String.concat ", " names))
 
 let maybe_warn_once state flags category ~available =
   let already =
@@ -182,11 +171,12 @@ let rows state category available =
   let available_names = List.map fst available in
   let available_rows =
     available
-    |> List.map (fun (name, description) -> row ~description state category name)
+    |> List.map (fun (name, description) ->
+        row ~description state category name)
   in
   let unavailable_rows =
     unavailable_disabled state category ~available:available_names
     |> List.map (fun name ->
-           { name; state = "unavailable"; available = false; description = "" })
+        { name; state = "unavailable"; available = false; description = "" })
   in
   available_rows @ unavailable_rows

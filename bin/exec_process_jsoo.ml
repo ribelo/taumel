@@ -1,9 +1,6 @@
 open Jsoo_bridge
 
-type t = {
-  child : Unsafe.any;
-  tty : bool;
-}
+type t = { child : Unsafe.any; tty : bool }
 
 let data_to_string data = Node_buffer.data_to_string (ojs_of_js data)
 
@@ -31,9 +28,7 @@ let process_pid process =
   | _ -> None
 
 let request_sigterm process =
-  let kill pid =
-    try Node_process.kill pid "SIGTERM" with _ -> ()
-  in
+  let kill pid = try Node_process.kill pid "SIGTERM" with _ -> () in
   (match process_pid process with
   | Some pid when Node_process.platform () <> "win32" ->
       kill (-pid);
@@ -66,7 +61,8 @@ let spawn ~file ~args ~cwd ?env ~tty ~on_data ~on_exit () =
       |]
   in
   let child =
-    Unsafe.fun_call (Unsafe.get node_pty "spawn")
+    Unsafe.fun_call
+      (Unsafe.get node_pty "spawn")
       [| js_string file; js_array (List.map js_string args); inject options |]
   in
   let process = { child; tty } in

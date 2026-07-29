@@ -12,13 +12,14 @@ let range a b =
   let rec loop acc n = if n < a then acc else loop (n :: acc) (n - 1) in
   if a > b then [] else loop [] b
 
-let unique_sorted values =
-  values |> List.sort_uniq compare
+let unique_sorted values = values |> List.sort_uniq compare
 
 let parse_int label min_v max_v value =
   match int_of_string_opt value with
   | Some n when n >= min_v && n <= max_v -> Ok n
-  | _ -> Error (Printf.sprintf "%s value must be between %d and %d" label min_v max_v)
+  | _ ->
+      Error
+        (Printf.sprintf "%s value must be between %d and %d" label min_v max_v)
 
 let parse_atom label min_v max_v text =
   match String.split_on_char '-' text with
@@ -65,7 +66,9 @@ let parse_field label min_v max_v text =
 
 let parse expression =
   let ( let* ) = Result.bind in
-  match String.split_on_char ' ' (String.trim expression) |> List.filter (( <> ) "") with
+  match
+    String.split_on_char ' ' (String.trim expression) |> List.filter (( <> ) "")
+  with
   | [ minute; hour; dom; month; dow ] ->
       let* minutes = parse_field "minute" 0 59 minute in
       let* hours = parse_field "hour" 0 23 hour in

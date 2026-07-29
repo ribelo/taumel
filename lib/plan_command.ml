@@ -28,20 +28,24 @@ let parse_duration value =
   else
     let last = value.[String.length value - 1] in
     let multiplier =
-      match last with 's' -> Some 1 | 'm' -> Some 60 | 'h' -> Some 3600 | _ -> None
+      match last with
+      | 's' -> Some 1
+      | 'm' -> Some 60
+      | 'h' -> Some 3600
+      | _ -> None
     in
     match multiplier with
     | None -> Error "time limit must use s, m, or h"
-    | Some multiplier ->
+    | Some multiplier -> (
         let number = String.sub value 0 (String.length value - 1) in
-        (try
-           let parsed = int_of_string number in
-           if parsed <= 0 then Error "time limit must be positive"
-           else if parsed > 2_147_483_647 / multiplier then
-             Error "time limit is too large"
-           else Ok (parsed * multiplier)
-         with Failure _ ->
-           Error "time limit must be a duration like 90s, 30m, or 2h")
+        try
+          let parsed = int_of_string number in
+          if parsed <= 0 then Error "time limit must be positive"
+          else if parsed > 2_147_483_647 / multiplier then
+            Error "time limit is too large"
+          else Ok (parsed * multiplier)
+        with Failure _ ->
+          Error "time limit must be a duration like 90s, 30m, or 2h")
 
 let parse_time_limit_args args =
   let words =

@@ -66,7 +66,7 @@ let resolve_routing ~kind ?effort () =
       (fun message ->
         String.starts_with ~prefix:key message
         || String.starts_with ~prefix:"taumel.agents must" message
-        || not (String.starts_with ~prefix:"taumel." message)
+        || (not (String.starts_with ~prefix:"taumel." message))
         ||
         match kind with
         | Taumel.Agents.Generic ->

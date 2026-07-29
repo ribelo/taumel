@@ -10,7 +10,8 @@ let accept_worktree_start facts ctx =
   Session_sync.require_agent_owner ctx;
   match
     Taumel.Agents.owned_identity !agent_state
-      ~owner_session_id:(Session_store.session_id_from_ctx ctx) agent_id
+      ~owner_session_id:(Session_store.session_id_from_ctx ctx)
+      agent_id
   with
   | Error message -> error_obj message
   | Ok identity -> (
@@ -24,12 +25,14 @@ let accept_worktree_start facts ctx =
           with
           | Ok () -> core_ack ()
           | Error message -> error_obj message))
+
 let rollback_worktree_start facts ctx =
   let agent_id = agent_id_from_facts facts in
   Session_sync.require_agent_owner ctx;
   match
     Taumel.Agents.owned_identity !agent_state
-      ~owner_session_id:(Session_store.session_id_from_ctx ctx) agent_id
+      ~owner_session_id:(Session_store.session_id_from_ctx ctx)
+      agent_id
   with
   | Error message -> error_obj message
   | Ok identity -> (
@@ -39,7 +42,8 @@ let rollback_worktree_start facts ctx =
           match
             Taumel.Agent_workspace.derive
               ~agent_home:(Agent_worktree_host.pi_agent_dir ())
-              ~owner_session_id:identity.identity_owner_session_id ~agent_id binding
+              ~owner_session_id:identity.identity_owner_session_id ~agent_id
+              binding
           with
           | Error message -> error_obj message
           | Ok derived -> (
@@ -52,12 +56,14 @@ let rollback_worktree_start facts ctx =
               with
               | Ok () -> core_ack ()
               | Error (_code, message) -> error_obj message)))
+
 let delete_worktree facts ctx =
   let agent_id = agent_id_from_facts facts in
   Session_sync.require_agent_owner ctx;
   match
     Taumel.Agents.owned_identity !agent_state
-      ~owner_session_id:(Session_store.session_id_from_ctx ctx) agent_id
+      ~owner_session_id:(Session_store.session_id_from_ctx ctx)
+      agent_id
   with
   | Error message -> error_obj ("cleanup_failed: " ^ message)
   | Ok identity -> (
@@ -70,41 +76,50 @@ let delete_worktree facts ctx =
       | Error message -> error_obj ("cleanup_failed: " ^ message)
       | Ok derived when derived.isolation = Taumel.Agent_workspace.None ->
           error_obj "cleanup_failed: identity does not own an agent worktree"
-      | Ok derived ->
-    let worktree_path = derived.worktree_path in
-    let main_repository_root = derived.main_repository_root in
-    let main_repository_id = derived.main_repository_id in
-    let branch = derived.branch in
-    let path_present = Agent_worktree_host.path_exists worktree_path in
-    match
-      Agent_worktree_host.registration_present ~main_repository_root
-        ~worktree_path
-    with
-    | Error message -> error_obj ("cleanup_failed: " ^ message)
-    | Ok registered -> (
-    match (path_present, registered) with
-    | false, false -> core_ack ()
-    | false, true ->
-        error_obj "cleanup_failed: worktree path missing but registration remains"
-    | true, false ->
-        error_obj "cleanup_failed: worktree path exists without native registration"
-    | true, true -> (
-        match
-          Agent_worktree_host.verify_broker_registration ~worktree_path
-            ~main_repository_root ~main_repository_id ~branch
-        with
-        | Error message -> error_obj ("cleanup_failed: " ^ message)
-        | Ok _ -> (
-            match Agent_worktree_host.worktree_is_clean ~worktree_path with
-            | Error message -> error_obj ("cleanup_failed: " ^ message)
-            | Ok () -> (
-                match
-                  Agent_worktree_host.remove_worktree ~main_repository_root
-                    ~worktree_path ~main_repository_id
-                    ~branch
-                with
-                | Ok () -> core_ack ()
-                | Error message -> error_obj ("cleanup_failed: " ^ message))))))
+      | Ok derived -> (
+          let worktree_path = derived.worktree_path in
+          let main_repository_root = derived.main_repository_root in
+          let main_repository_id = derived.main_repository_id in
+          let branch = derived.branch in
+          let path_present = Agent_worktree_host.path_exists worktree_path in
+          match
+            Agent_worktree_host.registration_present ~main_repository_root
+              ~worktree_path
+          with
+          | Error message -> error_obj ("cleanup_failed: " ^ message)
+          | Ok registered -> (
+              match (path_present, registered) with
+              | false, false -> core_ack ()
+              | false, true ->
+                  error_obj
+                    "cleanup_failed: worktree path missing but registration \
+                     remains"
+              | true, false ->
+                  error_obj
+                    "cleanup_failed: worktree path exists without native \
+                     registration"
+              | true, true -> (
+                  match
+                    Agent_worktree_host.verify_broker_registration
+                      ~worktree_path ~main_repository_root ~main_repository_id
+                      ~branch
+                  with
+                  | Error message -> error_obj ("cleanup_failed: " ^ message)
+                  | Ok _ -> (
+                      match
+                        Agent_worktree_host.worktree_is_clean ~worktree_path
+                      with
+                      | Error message -> error_obj ("cleanup_failed: " ^ message)
+                      | Ok () -> (
+                          match
+                            Agent_worktree_host.remove_worktree
+                              ~main_repository_root ~worktree_path
+                              ~main_repository_id ~branch
+                          with
+                          | Ok () -> core_ack ()
+                          | Error message ->
+                              error_obj ("cleanup_failed: " ^ message)))))))
+
 let reconcile_provisional_worktrees () =
   Agent_worktree_host.reconcile_provisional_markers ();
   ignore (Agent_ephemeral_cleanup.reconcile_deferred ());
@@ -121,7 +136,7 @@ let identity_metadata ~(identity : Taumel.Agents.identity) ?child_session_file
   let effective, derived =
     match Agent_worktree_host.effective_workspace_for_identity ~identity with
     | Ok (path, derived) -> (path, Some derived)
-    | Error _ ->
+    | Error _ -> (
         match identity.identity_workspace_binding with
         | Taumel.Agent_workspace.Shared { source_root } -> (source_root, None)
         | Taumel.Agent_workspace.Worktree _ as binding when planned -> (
@@ -133,7 +148,7 @@ let identity_metadata ~(identity : Taumel.Agents.identity) ?child_session_file
             with
             | Ok derived -> (derived.worktree_path, Some derived)
             | Error _ -> ("", None))
-        | Taumel.Agent_workspace.Worktree _ -> ("", None)
+        | Taumel.Agent_workspace.Worktree _ -> ("", None))
   in
   let fields =
     [
@@ -150,16 +165,19 @@ let identity_metadata ~(identity : Taumel.Agents.identity) ?child_session_file
              (fun value -> Taumel.Shared.String value)
              identity.identity_active_tools) );
       ( "capabilityProfile",
-        Taumel.Capability_profile.to_json identity.identity_permission_ceiling );
+        Taumel.Capability_profile.to_json identity.identity_permission_ceiling
+      );
       ( "networkMode",
         Taumel.Shared.String
-          (if identity.identity_network_allowed then "enabled" else "disabled") );
+          (if identity.identity_network_allowed then "enabled" else "disabled")
+      );
       ("isolated_child", Taumel.Shared.Bool true);
       ("workspaceDirectory", Taumel.Shared.String effective);
       ("sourceWorkspace", Taumel.Shared.String source);
       ("isolation", Taumel.Shared.String isolation);
       ( "workspaceBinding",
-        Taumel.Agent_workspace.binding_to_json identity.identity_workspace_binding );
+        Taumel.Agent_workspace.binding_to_json
+          identity.identity_workspace_binding );
     ]
   in
   let fields =
@@ -176,7 +194,8 @@ let identity_metadata ~(identity : Taumel.Agents.identity) ?child_session_file
   in
   let fields =
     match child_session_file with
-    | Some value -> fields @ [ ("childSessionFile", Taumel.Shared.String value) ]
+    | Some value ->
+        fields @ [ ("childSessionFile", Taumel.Shared.String value) ]
     | None -> fields
   in
   Taumel.Shared.Object fields

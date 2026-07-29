@@ -1,7 +1,4 @@
-type custom_entry = {
-  custom_type : string;
-  data : Shared.json;
-}
+type custom_entry = { custom_type : string; data : Shared.json }
 
 type agent_kind = Generic | Finder | Oracle
 
@@ -58,11 +55,10 @@ let missing_session_identifier_error =
 
 let option_string_list_to_json = function
   | None -> Shared.Null
-  | Some values -> Shared.Array (List.map (fun value -> Shared.String value) values)
+  | Some values ->
+      Shared.Array (List.map (fun value -> Shared.String value) values)
 
-let object_fields = function
-  | Shared.Object fields -> fields
-  | _ -> []
+let object_fields = function Shared.Object fields -> fields | _ -> []
 
 let replace_field name value fields =
   (name, value) :: List.remove_assoc name fields
@@ -83,8 +79,8 @@ let string_array_field name fields =
       let values =
         values
         |> List.filter_map (function
-             | Shared.String value -> Shared.trim_non_empty value
-             | _ -> None)
+          | Shared.String value -> Shared.trim_non_empty value
+          | _ -> None)
       in
       Some values
   | _ -> None
@@ -104,14 +100,16 @@ let decode_agent_kind = function
 let validate_optional_positive_int fields name =
   match List.assoc_opt name fields with
   | Some Shared.Null -> Ok ()
-  | Some (Shared.Number value)
-    when value >= 1. && Float.floor value = value -> Ok ()
+  | Some (Shared.Number value) when value >= 1. && Float.floor value = value ->
+      Ok ()
   | Some _ ->
-      Error ("child session metadata." ^ name ^ " must be null or a positive integer")
+      Error
+        ("child session metadata." ^ name
+       ^ " must be null or a positive integer")
   | None -> Error ("child session metadata." ^ name ^ " is required")
 
 let decode_persisted_metadata = function
-  | Shared.Object fields ->
+  | Shared.Object fields -> (
       let ( let* ) = Result.bind in
       let* kind = required_string fields "kind" in
       if kind = "ralph" then
@@ -127,7 +125,9 @@ let decode_persisted_metadata = function
           let* value = required_string fields "agentKind" in
           decode_agent_kind value
         in
-        let* workspace_directory = required_string fields "workspaceDirectory" in
+        let* workspace_directory =
+          required_string fields "workspaceDirectory"
+        in
         let* source_workspace = required_string fields "sourceWorkspace" in
         let* isolation = required_string fields "isolation" in
         let* binding =
@@ -135,9 +135,10 @@ let decode_persisted_metadata = function
           | Some value -> Agent_workspace.binding_of_json value
           | None -> Error "child session metadata.workspaceBinding is required"
         in
-        (match (isolation, binding) with
+        match (isolation, binding) with
         | "none", Agent_workspace.Shared { source_root }
-          when workspace_directory = source_root && source_workspace = source_root ->
+          when workspace_directory = source_root
+               && source_workspace = source_root ->
             Ok
               (Agent_metadata
                  {
@@ -145,9 +146,9 @@ let decode_persisted_metadata = function
                    agent_kind;
                    workspace = Shared_workspace { root = source_root };
                  })
-        | "worktree",
-          Agent_workspace.Worktree
-            { source_origin; main_repository_root; main_repository_id }
+        | ( "worktree",
+            Agent_workspace.Worktree
+              { source_origin; main_repository_root; main_repository_id } )
           when source_workspace = source_origin ->
             let* worktree_path = required_string fields "worktreePath" in
             let* branch = required_string fields "worktreeBranch" in
@@ -185,12 +186,12 @@ let decode_persisted_metadata = function
 let effective_workspace = function
   | Ralph_metadata -> None
   | Agent_metadata { workspace = Shared_workspace { root }; _ } -> Some root
-  | Agent_metadata
-      { workspace = Worktree_workspace { worktree_path; _ }; _ } ->
+  | Agent_metadata { workspace = Worktree_workspace { worktree_path; _ }; _ } ->
       Some worktree_path
 
 let worktree_agent = function
-  | Agent_metadata { workspace = Worktree_workspace worktree; _ } -> Some worktree
+  | Agent_metadata { workspace = Worktree_workspace worktree; _ } ->
+      Some worktree
   | Ralph_metadata | Agent_metadata _ -> None
 
 let persisted_agent_id = function
@@ -203,42 +204,51 @@ let rejects_escalation = function
   | Agent_metadata { workspace = Worktree_workspace _; _ } -> true
   | Agent_metadata _ -> false
 
-let ralph_child_capability_profile (parent : Capability_profile.t) active_tools =
+let ralph_child_capability_profile (parent : Capability_profile.t) active_tools
+    =
   let tools =
     Capability_profile.allowlist_intersection parent.Capability_profile.tools
       (Capability_profile.of_list active_tools)
   in
   let sandbox_preset =
     match parent.sandbox_preset with
-    | Capability_profile.Danger_full_access -> Capability_profile.Workspace_write
+    | Capability_profile.Danger_full_access ->
+        Capability_profile.Workspace_write
     | sandbox_preset -> sandbox_preset
   in
-  Capability_profile.resolve ~sandbox_preset ~tools ~no_sandbox_allowed:false parent
+  Capability_profile.resolve ~sandbox_preset ~tools ~no_sandbox_allowed:false
+    parent
 
-let enrich_command_child_metadata ~parent_profile ~current_active_tools_available
-    ~current_active_tools ~active_tools_mode metadata =
+let enrich_command_child_metadata ~parent_profile
+    ~current_active_tools_available ~current_active_tools ~active_tools_mode
+    metadata =
   if not current_active_tools_available then metadata
   else
     match active_tools_mode with
     | "ralph_child" ->
         let active_tools =
-          Tool_catalog.rewrite_active_tools ~ralph_child:true current_active_tools
+          Tool_catalog.rewrite_active_tools ~ralph_child:true
+            current_active_tools
         in
         let profile =
           ralph_child_capability_profile parent_profile active_tools
         in
         metadata |> object_fields
         |> replace_field "activeTools"
-             (Shared.Array (List.map (fun value -> Shared.String value) active_tools))
-        |> replace_field "capabilityProfile" (Capability_profile.to_json profile)
+             (Shared.Array
+                (List.map (fun value -> Shared.String value) active_tools))
+        |> replace_field "capabilityProfile"
+             (Capability_profile.to_json profile)
         |> fun fields -> Shared.Object fields
     | _ -> metadata
 
 let child_entry ~metadata ~parent_session_id ~parent_session_file =
   let fields =
     metadata |> object_fields
-    |> replace_field "parentSessionId" (Shared.option_string_to_json parent_session_id)
-    |> replace_field "parentSessionFile" (Shared.option_string_to_json parent_session_file)
+    |> replace_field "parentSessionId"
+         (Shared.option_string_to_json parent_session_id)
+    |> replace_field "parentSessionFile"
+         (Shared.option_string_to_json parent_session_file)
   in
   { custom_type = "taumel.childSession"; data = Shared.Object fields }
 
@@ -302,7 +312,7 @@ let refresh_permissions_entry ~host_sandbox_preset ~host_network_mode
   in
   match decoded_ceiling with
   | Error _ -> fail_closed_child_permissions_entry ()
-  | Ok (ceiling, ceiling_network) ->
+  | Ok (ceiling, ceiling_network) -> (
       let persisted_parent =
         match parent_permissions with
         | None | Some Shared.Null -> Permissions.Missing
@@ -338,10 +348,10 @@ let refresh_permissions_entry ~host_sandbox_preset ~host_network_mode
         Capability_profile.resolve ~sandbox_preset ~approval_policy
           ~no_sandbox_allowed:false ceiling
       in
-      (match
-         Permissions.create ~network_mode ~no_sandbox:false ~isolated_child:true
-           profile
-       with
+      match
+        Permissions.create ~network_mode ~no_sandbox:false ~isolated_child:true
+          profile
+      with
       | Ok permissions -> Permissions.codec.encode permissions
       | Error _ -> fail_closed_child_permissions_entry ())
 
@@ -349,7 +359,9 @@ let initial_plan_entries fields =
   match string_field "initialPlanTask" fields with
   | None -> []
   | Some objective -> (
-      let worker_id = string_field "agentId" fields |> Option.value ~default:"agent" in
+      let worker_id =
+        string_field "agentId" fields |> Option.value ~default:"agent"
+      in
       let thread_id = "agent:" ^ worker_id in
       match Plan.add_user_task ~session_id:thread_id ~now:0 objective None with
       | Error _ -> []
@@ -383,7 +395,8 @@ let start_plan ~metadata ~parent_session_id ~parent_session_file =
     model_id = string_field "modelId" fields;
     thinking_level = string_field "thinkingLevel" fields;
     active_tools = string_array_field "activeTools" fields;
-    setup_entries = setup_entries ~metadata ~parent_session_id ~parent_session_file;
+    setup_entries =
+      setup_entries ~metadata ~parent_session_id ~parent_session_file;
   }
 
 let bridge_details = function
@@ -399,7 +412,8 @@ let bridge_details = function
         ]
   | Some bridge ->
       let created =
-        bridge.error = None && (not bridge.cancelled) && bridge.session_id <> None
+        bridge.error = None && (not bridge.cancelled)
+        && bridge.session_id <> None
       in
       Shared.Object
         [
@@ -415,7 +429,8 @@ let bridge_details = function
                 ("activeToolsApplied", Shared.Bool bridge.active_tools_applied);
                 ("modelId", Shared.option_string_to_json bridge.model_id);
                 ("modelApplied", Shared.Bool bridge.model_applied);
-                ("thinkingLevel", Shared.option_string_to_json bridge.thinking_level);
+                ( "thinkingLevel",
+                  Shared.option_string_to_json bridge.thinking_level );
                 ("thinkingApplied", Shared.Bool bridge.thinking_applied);
               ] );
         ]
@@ -438,9 +453,7 @@ let dispatch_plan ?(empty_reason = "empty prompt") ?(deliver_as = "followUp")
     ?bridge ~prompt ~send_available () =
   let prompt = String.trim prompt in
   let deliver_as =
-    match deliver_as with
-    | "steer" -> "steer"
-    | _ -> "followUp"
+    match deliver_as with "steer" -> "steer" | _ -> "followUp"
   in
   let session_id = Option.bind bridge (fun bridge -> bridge.session_id) in
   let immediate ?session_id reason =

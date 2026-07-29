@@ -4,8 +4,11 @@
    footer. All I/O lives in the bin/ wrapper; this module is pure and tested. *)
 
 let max_lines = 2000
+
 let max_bytes = 50 * 1024
+
 let max_line_length = 2000
+
 let binary_sniff_bytes = 8000
 
 type rendered = {
@@ -37,12 +40,12 @@ let detect_line_ending content =
   let has_crlf = ref false and has_lf = ref false and has_lone_cr = ref false in
   let i = ref 0 in
   while !i < n do
-    (if content.[!i] = '\r' then
-       if !i + 1 < n && content.[!i + 1] = '\n' then (
-         has_crlf := true;
-         incr i)
-       else has_lone_cr := true
-     else if content.[!i] = '\n' then has_lf := true);
+    if content.[!i] = '\r' then
+      if !i + 1 < n && content.[!i + 1] = '\n' then (
+        has_crlf := true;
+        incr i)
+      else has_lone_cr := true
+    else if content.[!i] = '\n' then has_lf := true;
     incr i
   done;
   if !has_lone_cr || (!has_crlf && !has_lf) then Mixed
@@ -100,7 +103,9 @@ let format ~content ~offset ~limit =
     in
     let lines = split_lines normalized in
     let lines =
-      match style with Mixed -> Array.map make_cr_visible lines | Lf | Crlf -> lines
+      match style with
+      | Mixed -> Array.map make_cr_visible lines
+      | Lf | Crlf -> lines
     in
     let total = Array.length lines in
     let raw_start =
@@ -110,7 +115,8 @@ let format ~content ~offset ~limit =
       | Some o -> o - 1
     in
     if total > 0 && raw_start >= total then
-      Out_of_bounds { offset = (match offset with Some o -> o | None -> 1); total }
+      Out_of_bounds
+        { offset = (match offset with Some o -> o | None -> 1); total }
     else begin
       let start_index = max 0 raw_start in
       let end_index =
@@ -157,11 +163,13 @@ let format ~content ~offset ~limit =
       let continuation =
         if shown_lines = 0 then ""
         else if !truncated_by_lines then
-          Printf.sprintf "[Showing lines %d-%d of %d. Use offset=%d to continue.]"
-            start_line end_line total next_offset
+          Printf.sprintf
+            "[Showing lines %d-%d of %d. Use offset=%d to continue.]" start_line
+            end_line total next_offset
         else if !truncated_by_bytes then
           Printf.sprintf
-            "[Showing lines %d-%d of %d (50KB limit). Use offset=%d to continue.]"
+            "[Showing lines %d-%d of %d (50KB limit). Use offset=%d to \
+             continue.]"
             start_line end_line total next_offset
         else if end_line < total then
           Printf.sprintf "[%d more lines in file. Use offset=%d to continue.]"

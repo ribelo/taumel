@@ -19,16 +19,20 @@ let spawn ?(kind = Agents.Generic) ?effort state =
   match effort with
   | None ->
       Agents.record_spawn state ~now:1 ~owner_session_id:"parent-1" ~kind
-        ~model:"anthropic/claude" ~thinking:"medium" ~description:"Investigate agent work"
+        ~model:"anthropic/claude" ~thinking:"medium"
+        ~description:"Investigate agent work"
         ~active_tools:[ "read"; "bash"; "edit"; "agent_spawn" ]
         ~permission_ceiling:ceiling
-        ~workspace_binding:(Agent_workspace.shared ~source_root:"/tmp/project") ()
+        ~workspace_binding:(Agent_workspace.shared ~source_root:"/tmp/project")
+        ()
   | Some effort ->
-      Agents.record_spawn state ~now:1 ~owner_session_id:"parent-1" ~kind ~effort
-        ~model:"anthropic/claude" ~thinking:"medium" ~description:"Investigate agent work"
+      Agents.record_spawn state ~now:1 ~owner_session_id:"parent-1" ~kind
+        ~effort ~model:"anthropic/claude" ~thinking:"medium"
+        ~description:"Investigate agent work"
         ~active_tools:[ "read"; "bash"; "edit"; "agent_spawn" ]
         ~permission_ceiling:ceiling
-        ~workspace_binding:(Agent_workspace.shared ~source_root:"/tmp/project") ()
+        ~workspace_binding:(Agent_workspace.shared ~source_root:"/tmp/project")
+        ()
 
 let starts_with ~prefix value =
   let prefix_length = String.length prefix in
@@ -37,7 +41,8 @@ let starts_with ~prefix value =
 
 let assert_handle_shape label ~prefix agent_id =
   assert_true (label ^ " has prefix " ^ prefix) (starts_with ~prefix agent_id);
-  assert_true (label ^ " is valid") (Agents.valid_agent_id Agents.Generic agent_id
+  assert_true (label ^ " is valid")
+    (Agents.valid_agent_id Agents.Generic agent_id
     || Agents.valid_agent_id Agents.Finder agent_id
     || Agents.valid_agent_id Agents.Oracle agent_id)
 
@@ -48,14 +53,19 @@ let test_tiered_generic_handles_and_specialist_unchanged () =
     | Ok (_, identity, run) ->
         assert_true expected_prefix
           (starts_with ~prefix:expected_prefix identity.identity_agent_id);
-        assert_true (expected_prefix ^ " validates")
+        assert_true
+          (expected_prefix ^ " validates")
           (Agents.valid_agent_id kind identity.identity_agent_id);
-        assert_equal (expected_prefix ^ " run id")
-          (identity.identity_agent_id ^ "-run-1") run.run_id;
+        assert_equal
+          (expected_prefix ^ " run id")
+          (identity.identity_agent_id ^ "-run-1")
+          run.run_id;
         identity
   in
   let low = mint ~effort:Agents.Low ~kind:Agents.Generic "agent-low-" in
-  let medium = mint ~effort:Agents.Medium ~kind:Agents.Generic "agent-medium-" in
+  let medium =
+    mint ~effort:Agents.Medium ~kind:Agents.Generic "agent-medium-"
+  in
   let high = mint ~effort:Agents.High ~kind:Agents.Generic "agent-high-" in
   let defaulted = mint ~kind:Agents.Generic "agent-medium-" in
   assert_equal "omitted tier defaults effort" "medium"
@@ -88,8 +98,8 @@ let test_tiered_generic_handles_and_specialist_unchanged () =
     }
   in
   let legacy_run =
-    Agents.create_run ~now:1 ~agent_id:legacy_id
-      ~run_id:(legacy_id ^ "-run-1") ~description:"legacy"
+    Agents.create_run ~now:1 ~agent_id:legacy_id ~run_id:(legacy_id ^ "-run-1")
+      ~description:"legacy"
   in
   let legacy_state =
     {
@@ -119,7 +129,8 @@ let test_spawn_default_medium_handle () =
       assert_handle_shape "default generic" ~prefix:"agent-medium-"
         identity.identity_agent_id;
       assert_equal "default run id"
-        (identity.identity_agent_id ^ "-run-1") run.run_id
+        (identity.identity_agent_id ^ "-run-1")
+        run.run_id
 
 let test_spawn_strips_agent_tools_and_returns_running () =
   match spawn Agents.empty_session_state with
@@ -155,9 +166,8 @@ let test_unaccepted_spawn_rolls_back_identity_and_run () =
             (string_of_int (List.length rolled_back.runs));
           assert_error "stale callback cannot roll back again"
             (Agents.rollback_unaccepted_spawn rolled_back
-               ~owner_session_id:"parent-1"
-               ~agent_id:identity.identity_agent_id ~run_id:run.run_id
-               ~submission_id:run.run_submission_id))
+               ~owner_session_id:"parent-1" ~agent_id:identity.identity_agent_id
+               ~run_id:run.run_id ~submission_id:run.run_submission_id))
 
 let test_closed_identity_id_is_never_reused () =
   match spawn Agents.empty_session_state with
@@ -188,12 +198,13 @@ let test_agent_zwxp_pending_cleanup_handle_is_never_reused () =
       | Error message -> failwith message
       | Ok (closed, _, _) -> (
           let underflow =
-            { closed with
-              issued_identity_counts = Agents.empty_issued_identity_counts }
+            {
+              closed with
+              issued_identity_counts = Agents.empty_issued_identity_counts;
+            }
           in
           assert_error "agent-zwxp pending cleanup counter underflow rejected"
-            (Agents_codec.decode
-               (Agents_codec.encode underflow));
+            (Agents_codec.decode (Agents_codec.encode underflow));
           match spawn underflow with
           | Error message -> failwith message
           | Ok (_, second, _) ->
@@ -231,9 +242,11 @@ let test_agent_zwxp_counter_must_cover_retained_handle_position () =
     | Error message -> failwith message
   in
   let behind =
-    { closed with
+    {
+      closed with
       issued_identity_counts =
-        { closed.issued_identity_counts with generic = 1 } }
+        { closed.issued_identity_counts with generic = 1 };
+    }
   in
   assert_error "agent-zwxp counter behind third retained handle rejected"
     (Agents_codec.decode (Agents_codec.encode behind))
@@ -250,7 +263,8 @@ let test_specialist_tool_effect_clamps () =
   assert_true "finder removes network" (not (List.mem "web_search_exa" finder));
   assert_true "oracle keeps network" (List.mem "web_search_exa" oracle);
   assert_true "oracle removes mutation" (not (List.mem "edit" oracle));
-  assert_true "oracle removes nested agents" (not (List.mem "agent_spawn" oracle))
+  assert_true "oracle removes nested agents"
+    (not (List.mem "agent_spawn" oracle))
 
 let test_send_preflight_rollback_restores_state () =
   match spawn Agents.empty_session_state with
@@ -267,7 +281,7 @@ let test_send_preflight_rollback_restores_state () =
               ~agent_id:identity.identity_agent_id "again"
           with
           | Error message -> failwith message
-          | Ok delivery ->
+          | Ok delivery -> (
               let run_id = Option.value delivery.delivery_run_id ~default:"" in
               let submission_id =
                 Option.value delivery.delivery_submission_id ~default:""
@@ -280,14 +294,14 @@ let test_send_preflight_rollback_restores_state () =
                   ~previous_reason_code:None
               with
               | Error message -> failwith message
-              | Ok restored ->
+              | Ok restored -> (
                   assert_true "unaccepted idle send removes allocated run"
                     (Agents.find_run restored run_id = None);
-                  (match
-                     Agents.record_send restored ~now:4
-                       ~owner_session_id:"parent-1"
-                       ~agent_id:identity.identity_agent_id "third"
-                   with
+                  match
+                    Agents.record_send restored ~now:4
+                      ~owner_session_id:"parent-1"
+                      ~agent_id:identity.identity_agent_id "third"
+                  with
                   | Error message -> failwith message
                   | Ok retried ->
                       let retried_run_id =
@@ -296,7 +310,8 @@ let test_send_preflight_rollback_restores_state () =
                       assert_true "rolled-back run id remains retired"
                         (retried_run_id <> run_id);
                       assert_equal "run numbering remains monotonic"
-                        (identity.identity_agent_id ^ "-run-3") retried_run_id)))
+                        (identity.identity_agent_id ^ "-run-3")
+                        retried_run_id))))
 
 let test_send_matrix () =
   match spawn Agents.empty_session_state with
@@ -307,7 +322,7 @@ let test_send_matrix () =
           ~agent_id:identity.identity_agent_id ~interrupt:true ""
       with
       | Error message -> failwith message
-      | Ok suspended ->
+      | Ok suspended -> (
           assert_equal "suspend outcome" "suspended"
             (Agents.send_outcome_to_string suspended.delivery_outcome);
           assert_equal "same run" run.run_id
@@ -318,7 +333,7 @@ let test_send_matrix () =
               "continue"
           with
           | Error message -> failwith message
-          | Ok resumed ->
+          | Ok resumed -> (
               assert_equal "resume outcome" "resumed"
                 (Agents.send_outcome_to_string resumed.delivery_outcome);
               assert_equal "resume same run" run.run_id
@@ -349,7 +364,7 @@ let test_send_matrix () =
                           assert_equal "new run outcome" "started"
                             (Agents.send_outcome_to_string next.delivery_outcome);
                           assert_true "new run id"
-                            (next.delivery_run_id <> Some run.run_id))))
+                            (next.delivery_run_id <> Some run.run_id))))))
 
 let test_wait_is_idempotent_and_observes_announcement () =
   match spawn Agents.empty_session_state with
@@ -387,7 +402,8 @@ let test_wait_is_idempotent_and_observes_announcement () =
                   | None -> failwith "run missing"
                   | Some observed ->
                       assert_equal "observed" "observed_by_agent_wait"
-                        (Agents.announcement_to_string observed.run_announcement)))))
+                        (Agents.announcement_to_string observed.run_announcement)
+                  ))))
 
 let test_wait_rejects_unknown_before_claiming () =
   match spawn Agents.empty_session_state with
@@ -445,7 +461,7 @@ let test_close_cleanup_failure_suspends_only_selected_agent () =
       | Ok suspended -> (
           match Agents.find_run suspended run.run_id with
           | None -> failwith "run missing"
-          | Some run ->
+          | Some run -> (
               assert_equal "close cleanup status" "suspended"
                 (Agents.run_status_to_string run.run_status);
               assert_equal "close cleanup reason" "close_cleanup_failed"
@@ -458,13 +474,13 @@ let test_close_cleanup_failure_suspends_only_selected_agent () =
                     "close_cleanup_failed"
                     (Option.bind (Agents.find_run decoded run.run_id)
                        (fun item -> item.run_reason_code)
-                    |> Option.fold ~none:""
-                         ~some:Agents.reason_code_to_string)))
+                    |> Option.fold ~none:"" ~some:Agents.reason_code_to_string))
+          ))
 
 let test_process_loss_uses_child_session_availability () =
   match spawn Agents.empty_session_state with
   | Error message -> failwith message
-  | Ok (state, identity, run) ->
+  | Ok (state, identity, run) -> (
       let with_file =
         match
           Agents.record_child_session state ~agent_id:identity.identity_agent_id
@@ -474,8 +490,7 @@ let test_process_loss_uses_child_session_availability () =
         | Error message -> failwith message
       in
       let available =
-        Agents.mark_running_after_process_loss with_file
-          ~now:10
+        Agents.mark_running_after_process_loss with_file ~now:10
           ~child_session_available:(fun _ -> true)
       in
       (match Agents.find_run available run.run_id with
@@ -485,17 +500,17 @@ let test_process_loss_uses_child_session_availability () =
             (Option.fold ~none:"" ~some:Agents.reason_code_to_string
                run.run_reason_code));
       let lost =
-        Agents.mark_running_after_process_loss with_file
-          ~now:10
+        Agents.mark_running_after_process_loss with_file ~now:10
           ~child_session_available:(fun _ -> false)
       in
       match Agents.find_run lost run.run_id with
       | None -> failwith "run missing"
       | Some run ->
-          assert_equal "lost" "lost" (Agents.run_status_to_string run.run_status);
+          assert_equal "lost" "lost"
+            (Agents.run_status_to_string run.run_status);
           assert_equal "child session lost" "child_session_lost"
             (Option.fold ~none:"" ~some:Agents.reason_code_to_string
-               run.run_reason_code)
+               run.run_reason_code))
 
 let test_identity_limit () =
   let rec fill state count =
@@ -521,8 +536,12 @@ let test_codec_roundtrip_and_legacy_rejection () =
             match Agents_codec.encode state with
             | Shared.Object root_fields -> (
                 match List.assoc_opt "identities" root_fields with
-                | Some (Shared.Array (Shared.Object identity_fields :: identities)) -> (
-                    match List.assoc_opt "permission_ceiling" identity_fields with
+                | Some
+                    (Shared.Array (Shared.Object identity_fields :: identities))
+                  -> (
+                    match
+                      List.assoc_opt "permission_ceiling" identity_fields
+                    with
                     | Some (Shared.Object ceiling_fields) ->
                         Shared.Object
                           (( "identities",
@@ -554,7 +573,8 @@ let test_codec_roundtrip_and_legacy_rejection () =
             (Agents_codec.decode
                (Shared.Object
                   [
-                    ("version", Shared.Number (float_of_int Agents.schema_version));
+                    ( "version",
+                      Shared.Number (float_of_int Agents.schema_version) );
                     ( "issued_identity_counts",
                       Shared.Object
                         [
@@ -592,11 +612,17 @@ let test_codec_roundtrip_and_legacy_rejection () =
           assert_error "incompatible run status and activity rejected"
             (Agents_codec.decode
                (Agents_codec.encode
-                  { state with runs = [ { run with run_status = Agents.Suspended } ] }));
+                  {
+                    state with
+                    runs = [ { run with run_status = Agents.Suspended } ];
+                  }));
           let aliased_run =
-            { run with
+            {
+              run with
               run_id = identity.identity_agent_id ^ "-run-01";
-              run_submission_id = identity.identity_agent_id ^ "-run-01-submission-1" }
+              run_submission_id =
+                identity.identity_agent_id ^ "-run-01-submission-1";
+            }
           in
           assert_error "agent-zwxp noncanonical run ordinal rejected"
             (Agents_codec.decode
@@ -604,18 +630,24 @@ let test_codec_roundtrip_and_legacy_rejection () =
           assert_error "orphan runs rejected"
             (Agents_codec.decode
                (Agents_codec.encode
-                  { state with
-                    runs = [ { run with run_agent_id = "agent-zzzz" } ] }));
+                  {
+                    state with
+                    runs = [ { run with run_agent_id = "agent-zzzz" } ];
+                  }));
           assert_error "identity issuance counters reject active underflow"
             (Agents_codec.decode
                (Agents_codec.encode
-                  { state with
-                    issued_identity_counts = Agents.empty_issued_identity_counts }));
+                  {
+                    state with
+                    issued_identity_counts = Agents.empty_issued_identity_counts;
+                  }));
           let second_run =
-            { run with
+            {
+              run with
               run_id = identity.identity_agent_id ^ "-run-2";
               run_submission_id =
-                identity.identity_agent_id ^ "-run-2-submission-1" }
+                identity.identity_agent_id ^ "-run-2-submission-1";
+            }
           in
           assert_error "run issuance counters reject persisted underflow"
             (Agents_codec.decode
@@ -644,7 +676,8 @@ let test_codec_persists_locator_not_assistant_output () =
                   assert_true "assistant output not duplicated in parent state"
                     (decoded_run.run_final_output = None);
                   assert_equal "result locator persisted" "entry-1"
-                  (Option.value decoded_run.run_result_entry_id ~default:""))))
+                    (Option.value decoded_run.run_result_entry_id ~default:"")))
+      )
 
 let test_agent_zwxp_run_counter_exhaustion_is_rejected () =
   match spawn Agents.empty_session_state with
@@ -660,64 +693,87 @@ let test_agent_zwxp_run_counter_exhaustion_is_rejected () =
             { identity with identity_issued_run_count = 2_147_483_647 }
           in
           let exhausted =
-            { completed with
+            {
+              completed with
               identities =
-                Agents.replace_identity exhausted_identity completed.identities }
+                Agents.replace_identity exhausted_identity completed.identities;
+            }
           in
           assert_error "agent-zwxp exhausted run counter rejected"
             (Agents.record_send exhausted ~now:3 ~owner_session_id:"parent-1"
                ~agent_id:identity.identity_agent_id "continue"))
 
-let test_agent_zwxp_codec_rejects_specialist_escalation_and_parallel_active_runs () =
+let test_agent_zwxp_codec_rejects_specialist_escalation_and_parallel_active_runs
+    () =
   match spawn ~kind:Agents.Finder Agents.empty_session_state with
   | Error message -> failwith message
   | Ok (state, identity, run) ->
       let identity =
-        { identity with
+        {
+          identity with
           identity_permission_ceiling =
-            Capability_profile.resolve ~sandbox_preset:Capability_profile.Read_only
-              identity.identity_permission_ceiling }
+            Capability_profile.resolve
+              ~sandbox_preset:Capability_profile.Read_only
+              identity.identity_permission_ceiling;
+        }
       in
       let state = { state with identities = [ identity ] } in
       let escalated_ceiling =
-        Capability_profile.resolve ~sandbox_preset:Capability_profile.Workspace_write
+        Capability_profile.resolve
+          ~sandbox_preset:Capability_profile.Workspace_write
           identity.identity_permission_ceiling
       in
       let escalated =
-        { identity with
-          identity_active_tools = "apply_patch" :: identity.identity_active_tools;
+        {
+          identity with
+          identity_active_tools =
+            "apply_patch" :: identity.identity_active_tools;
           identity_network_allowed = true;
-          identity_permission_ceiling = escalated_ceiling }
+          identity_permission_ceiling = escalated_ceiling;
+        }
       in
       assert_error "agent-zwxp persisted Finder escalation rejected"
         (Agents_codec.decode
            (Agents_codec.encode { state with identities = [ escalated ] }));
       let unavailable_tool =
-        { identity with identity_active_tools = "retired_tool" :: identity.identity_active_tools }
+        {
+          identity with
+          identity_active_tools =
+            "retired_tool" :: identity.identity_active_tools;
+        }
       in
       (match
          Agents_codec.decode
-           (Agents_codec.encode { state with identities = [ unavailable_tool ] })
+           (Agents_codec.encode
+              { state with identities = [ unavailable_tool ] })
        with
       | Ok _ -> ()
-      | Error message -> failwith ("unavailable assigned tool must remain loadable: " ^ message));
+      | Error message ->
+          failwith ("unavailable assigned tool must remain loadable: " ^ message));
       assert_error "agent-zwxp specialist effort rejected"
         (Agents_codec.decode
            (Agents_codec.encode
-              { state with
-                identities = [ { identity with identity_effort = Some Agents.Low } ] }));
+              {
+                state with
+                identities =
+                  [ { identity with identity_effort = Some Agents.Low } ];
+              }));
       let second_run =
-        { run with
+        {
+          run with
           run_id = identity.identity_agent_id ^ "-run-2";
-          run_submission_id = identity.identity_agent_id ^ "-run-2-submission-1" }
+          run_submission_id = identity.identity_agent_id ^ "-run-2-submission-1";
+        }
       in
-      let advanced =
-        { identity with identity_issued_run_count = 2 }
-      in
+      let advanced = { identity with identity_issued_run_count = 2 } in
       assert_error "agent-zwxp parallel active runs rejected"
         (Agents_codec.decode
            (Agents_codec.encode
-              { state with identities = [ advanced ]; runs = [ run; second_run ] }))
+              {
+                state with
+                identities = [ advanced ];
+                runs = [ run; second_run ];
+              }))
 
 let test_agent_zwxp_codec_rejects_generic_agent_tools_and_missing_effort () =
   match spawn Agents.empty_session_state with
@@ -726,14 +782,24 @@ let test_agent_zwxp_codec_rejects_generic_agent_tools_and_missing_effort () =
       assert_error "agent-zwxp Generic agent tool rejected"
         (Agents_codec.decode
            (Agents_codec.encode
-              { state with
+              {
+                state with
                 identities =
-                  [ { identity with
-                        identity_active_tools = "agent_spawn" :: identity.identity_active_tools } ] }));
+                  [
+                    {
+                      identity with
+                      identity_active_tools =
+                        "agent_spawn" :: identity.identity_active_tools;
+                    };
+                  ];
+              }));
       assert_error "agent-zwxp Generic missing effort rejected"
         (Agents_codec.decode
            (Agents_codec.encode
-              { state with identities = [ { identity with identity_effort = None } ] }))
+              {
+                state with
+                identities = [ { identity with identity_effort = None } ];
+              }))
 
 let test_routing_merge_and_validation () =
   let base =
@@ -781,7 +847,10 @@ let test_routing_merge_and_validation () =
     | Error message -> failwith message
   in
   let merged = Agent_routing.merge ~base ~override in
-  (match Agent_routing.entry_for merged ~kind:Agents.Generic ~effort:(Some Agents.Low) with
+  (match
+     Agent_routing.entry_for merged ~kind:Agents.Generic
+       ~effort:(Some Agents.Low)
+   with
   | Some entry ->
       assert_equal "generic low model" "inherit" entry.model;
       assert_equal "generic low thinking" "low" entry.thinking
@@ -859,9 +928,10 @@ let current_to_v5_parent_snapshot state =
   | Shared.Object v4_fields, Shared.Object current_fields ->
       Shared.Object
         (("version", Shared.Number 5.)
-        :: ("cleanup_pending",
-            Option.value (List.assoc_opt "cleanup_pending" current_fields)
-              ~default:(Shared.Array []))
+        :: ( "cleanup_pending",
+             Option.value
+               (List.assoc_opt "cleanup_pending" current_fields)
+               ~default:(Shared.Array []) )
         :: List.remove_assoc "version" v4_fields)
   | _ -> failwith "expected encoded agents state"
 
@@ -928,7 +998,8 @@ let test_agent_state_store_memory_and_bootstrap () =
        with
       | Error message -> failwith message
       | Ok () -> ());
-      assert_equal "semantic rewrite still counts physical write when forced" "2"
+      assert_equal "semantic rewrite still counts physical write when forced"
+        "2"
         (string_of_int memory.write_count);
       assert_true "durable_change detects equality"
         (not (Agent_state_store.durable_change ~previous:state ~next:state));
@@ -949,16 +1020,15 @@ let test_agent_state_store_memory_and_bootstrap () =
       | Error message -> failwith message
       | Ok completed ->
           assert_true "terminal lifecycle change is durable"
-            (Agent_state_store.durable_change ~previous:activity
-               ~next:completed));
+            (Agent_state_store.durable_change ~previous:activity ~next:completed));
       let marker =
         Agent_state_store.encode_presence_marker
           (Agent_state_store.presence_marker ~owner_session_id:"parent-1")
       in
       (match
          Agent_state_store.resolve_load ~owner_session_id:"parent-1"
-           ~allow_parent_snapshots:true
-           ~marker:(Some marker) ~sidecar_raw:None ~parent_snapshots:[]
+           ~allow_parent_snapshots:true ~marker:(Some marker) ~sidecar_raw:None
+           ~parent_snapshots:[]
        with
       | Agent_state_store.Fail_closed _ -> ()
       | _ -> failwith "marker without sidecar must fail closed");
@@ -967,9 +1037,9 @@ let test_agent_state_store_memory_and_bootstrap () =
       in
       let v4 = current_to_v4_parent_snapshot legacy_state in
       (match
-         Agent_state_store.resolve_load ~owner_session_id:"parent-1" ~marker:None
-           ~allow_parent_snapshots:true
-           ~sidecar_raw:None ~parent_snapshots:[ v4 ]
+         Agent_state_store.resolve_load ~owner_session_id:"parent-1"
+           ~marker:None ~allow_parent_snapshots:true ~sidecar_raw:None
+           ~parent_snapshots:[ v4 ]
        with
       | Agent_state_store.Loaded restored ->
           assert_equal "v4 bootstrap identity" legacy_identity.identity_agent_id
@@ -985,9 +1055,9 @@ let test_agent_state_store_memory_and_bootstrap () =
       | _ -> failwith "compatible v4 parent snapshot must bootstrap");
       let v5 = current_to_v5_parent_snapshot legacy_state in
       (match
-         Agent_state_store.resolve_load ~owner_session_id:"parent-1" ~marker:None
-           ~allow_parent_snapshots:true
-           ~sidecar_raw:None ~parent_snapshots:[ v5 ]
+         Agent_state_store.resolve_load ~owner_session_id:"parent-1"
+           ~marker:None ~allow_parent_snapshots:true ~sidecar_raw:None
+           ~parent_snapshots:[ v5 ]
        with
       | Agent_state_store.Loaded restored ->
           assert_equal "v5 bootstrap identity" legacy_identity.identity_agent_id
@@ -1002,12 +1072,12 @@ let test_agent_state_store_memory_and_bootstrap () =
            ~agent_id:legacy_identity.identity_agent_id
        with
       | Error message -> failwith message
-      | Ok (closed, _) ->
+      | Ok (closed, _) -> (
           let closed_v4 = current_to_v4_parent_snapshot closed in
           (match
              Agent_state_store.resolve_load ~owner_session_id:"parent-1"
-               ~allow_parent_snapshots:true
-               ~marker:None ~sidecar_raw:None ~parent_snapshots:[ closed_v4 ]
+               ~allow_parent_snapshots:true ~marker:None ~sidecar_raw:None
+               ~parent_snapshots:[ closed_v4 ]
            with
           | Agent_state_store.Loaded restored ->
               assert_true "closed handle remains issued after v4 bootstrap"
@@ -1022,11 +1092,11 @@ let test_agent_state_store_memory_and_bootstrap () =
               ~parent_snapshots:[ closed_v4 ]
           with
           | Agent_state_store.Empty -> ()
-          | _ -> failwith "fork must not bootstrap copied empty registry");
+          | _ -> failwith "fork must not bootstrap copied empty registry"));
       (match
          Agent_state_store.resolve_load ~owner_session_id:"other-owner"
-           ~allow_parent_snapshots:true
-           ~marker:None ~sidecar_raw:None ~parent_snapshots:[ v4 ]
+           ~allow_parent_snapshots:true ~marker:None ~sidecar_raw:None
+           ~parent_snapshots:[ v4 ]
        with
       | Agent_state_store.Empty -> ()
       | _ -> failwith "foreign v4 snapshot must not bootstrap");
@@ -1039,9 +1109,8 @@ let test_agent_state_store_memory_and_bootstrap () =
       in
       (match
          Agent_state_store.resolve_load ~owner_session_id:"parent-1"
-           ~allow_parent_snapshots:true
-           ~marker:(Some foreign_marker) ~sidecar_raw:(Some sidecar)
-           ~parent_snapshots:[]
+           ~allow_parent_snapshots:true ~marker:(Some foreign_marker)
+           ~sidecar_raw:(Some sidecar) ~parent_snapshots:[]
        with
       | Agent_state_store.Loaded restored ->
           assert_true "foreign marker is inert when same-owner sidecar exists"
@@ -1053,22 +1122,24 @@ let test_agent_state_store_memory_and_bootstrap () =
             (List.hd restored.state.identities).identity_agent_id
       | _ -> failwith "foreign presence marker must remain inert");
       (match
-         Agent_state_store.resolve_load ~owner_session_id:"parent-1" ~marker:None
-           ~allow_parent_snapshots:true
-           ~sidecar_raw:(Some sidecar) ~parent_snapshots:[]
+         Agent_state_store.resolve_load ~owner_session_id:"parent-1"
+           ~marker:None ~allow_parent_snapshots:true ~sidecar_raw:(Some sidecar)
+           ~parent_snapshots:[]
        with
       | Agent_state_store.Loaded restored ->
-          assert_true "sidecar without marker repairs marker" restored.ensure_marker
+          assert_true "sidecar without marker repairs marker"
+            restored.ensure_marker
       | _ -> failwith "sidecar without marker must load and repair");
       match
         Agent_state_store.resolve_load ~owner_session_id:"parent-1"
-          ~allow_parent_snapshots:true
-          ~marker:(Some marker) ~sidecar_raw:(Some sidecar) ~parent_snapshots:[]
+          ~allow_parent_snapshots:true ~marker:(Some marker)
+          ~sidecar_raw:(Some sidecar) ~parent_snapshots:[]
       with
       | Agent_state_store.Loaded restored ->
           assert_equal "sidecar load identity" identity.identity_agent_id
             (List.hd restored.state.identities).identity_agent_id;
-          assert_true "matching marker needs no repair" (not restored.ensure_marker)
+          assert_true "matching marker needs no repair"
+            (not restored.ensure_marker)
       | _ -> failwith "matching marker and sidecar must load")
 
 let () =
@@ -1092,7 +1163,8 @@ let () =
   test_codec_roundtrip_and_legacy_rejection ();
   test_codec_persists_locator_not_assistant_output ();
   test_agent_zwxp_run_counter_exhaustion_is_rejected ();
-  test_agent_zwxp_codec_rejects_specialist_escalation_and_parallel_active_runs ();
+  test_agent_zwxp_codec_rejects_specialist_escalation_and_parallel_active_runs
+    ();
   test_agent_zwxp_codec_rejects_generic_agent_tools_and_missing_effort ();
   test_routing_merge_and_validation ();
   test_agent_state_store_memory_and_bootstrap ();

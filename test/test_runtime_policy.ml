@@ -44,20 +44,21 @@ let test_gateway_authorization () =
   (match Runtime.gateway_authorized ~profile ~sandbox "write" with
   | Error
       (Gateway.Denied_effect
-        (Gateway.Mutate, "mutation is disabled in read-only sandbox")) ->
+         (Gateway.Mutate, "mutation is disabled in read-only sandbox")) ->
       ()
   | Error error ->
       fail "gateway effect"
         ("unexpected error: " ^ Runtime.gateway_error_message error)
   | Ok _ -> fail "gateway effect" "expected sandbox denial");
   (match Runtime.gateway_profile_authorized ~profile ~sandbox "write" with
-  | Ok returned -> assert_bool "profile auth returns sandbox" (returned = sandbox)
+  | Ok returned ->
+      assert_bool "profile auth returns sandbox" (returned = sandbox)
   | Error error ->
       fail "profile auth"
         ("unexpected error: " ^ Runtime.gateway_error_message error));
-  (match Runtime.authorize_ralph_start ~profile ~sandbox with
+  match Runtime.authorize_ralph_start ~profile ~sandbox with
   | Ok () -> ()
-  | Error message -> fail "ralph auth" message)
+  | Error message -> fail "ralph auth" message
 
 let () =
   test_active_policy ();

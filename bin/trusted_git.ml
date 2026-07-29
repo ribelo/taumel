@@ -28,8 +28,9 @@ let executable_result =
            "/run/current-system/sw/bin/git";
            "/nix/var/nix/profiles/default/bin/git";
          ]
-       @ if username = "" then []
-         else [ "/etc/profiles/per-user/" ^ username ^ "/bin/git" ]
+       @
+       if username = "" then []
+       else [ "/etc/profiles/per-user/" ^ username ^ "/bin/git" ]
      in
      let rec resolve = function
        | [] -> Error "trusted Git executable is unavailable"
@@ -41,6 +42,7 @@ let executable_result =
      resolve candidates)
 
 let executable () = Lazy.force executable_result
+
 let require_executable () =
   match executable () with Ok path -> path | Error message -> failwith message
 
@@ -48,7 +50,7 @@ let exec_path_result =
   lazy
     (match executable () with
     | Error _ as error -> error
-    | Ok git ->
+    | Ok git -> (
         try
           let options =
             Node_child_process.utf8_options
@@ -66,9 +68,10 @@ let exec_path_result =
           let stats = Node_fs.stat_sync canonical in
           if Node_fs.is_directory stats then Ok canonical
           else Error "trusted Git exec path is unavailable"
-        with _ -> Error "trusted Git exec path is unavailable")
+        with _ -> Error "trusted Git exec path is unavailable"))
 
 let exec_path () = Lazy.force exec_path_result
+
 let require_exec_path () =
   match exec_path () with Ok path -> path | Error message -> failwith message
 
@@ -123,7 +126,9 @@ let restricted_environment ?git_dir ?git_work_tree extra =
         Node_object.string_field "GIT_WORK_TREE" value :: fields
     | _ -> fields
   in
-  js_of_ojs (Node_object.of_fields (fields @ List.map (fun (n, v) -> (n, ojs_of_js v)) extra))
+  js_of_ojs
+    (Node_object.of_fields
+       (fields @ List.map (fun (n, v) -> (n, ojs_of_js v)) extra))
 
 type commit_identity = { name : string; email : string }
 
@@ -131,9 +136,9 @@ let identity_lookup_env () =
   let inherited =
     [ "HOME"; "XDG_CONFIG_HOME"; "LANG"; "LC_ALL" ]
     |> List.filter_map (fun name ->
-           match Node_process.env_get name with
-           | Some value -> Some (Node_object.string_field name value)
-           | None -> None)
+        match Node_process.env_get name with
+        | Some value -> Some (Node_object.string_field name value)
+        | None -> None)
   in
   Node_object.of_fields
     (Node_object.string_field "PATH" (Filename.dirname (require_executable ()))
@@ -148,7 +153,8 @@ let usable_identity_value value =
     | '\x00' .. '\x1f' | '\x7f' -> false
     | _ -> safe (index + 1)
   in
-  if value <> "" && String.length value <= 1024 && safe 0 then Some value else None
+  if value <> "" && String.length value <= 1024 && safe 0 then Some value
+  else None
 
 let configured_identity_value ~worktree_path key =
   try
@@ -173,7 +179,10 @@ let resolve_commit_identity ~worktree_path =
 
 let broker_environment ~git_dir ~git_work_tree ~commit =
   let git = require_executable () in
-  let identity = if commit then resolve_commit_identity ~worktree_path:git_work_tree else None in
+  let identity =
+    if commit then resolve_commit_identity ~worktree_path:git_work_tree
+    else None
+  in
   let config_count = if identity = None then "9" else "11" in
   let env = process_env () in
   let fields =

@@ -15,19 +15,20 @@ let descriptor_directory_flags =
 let descriptor_paths_supported =
   lazy
     (match Node_process.platform () with
-    | "linux" ->
-        (try
-           let fd =
-             Node_fs.open_sync_flags "/proc/self/fd"
-               (Lazy.force descriptor_directory_flags)
-           in
-           Node_fs.close_sync fd;
-           true
-         with _ -> false)
+    | "linux" -> (
+        try
+          let fd =
+            Node_fs.open_sync_flags "/proc/self/fd"
+              (Lazy.force descriptor_directory_flags)
+          in
+          Node_fs.close_sync fd;
+          true
+        with _ -> false)
     | _ -> false)
 
 let unsupported_error =
-  Error "descriptor-anchored deletion requires Linux with procfs (/proc/self/fd)"
+  Error
+    "descriptor-anchored deletion requires Linux with procfs (/proc/self/fd)"
 
 let open_pinned_directory target =
   Node_fs.open_sync_flags target (Lazy.force descriptor_directory_flags)
@@ -36,7 +37,7 @@ let open_pinned_directory target =
 let close_fd fd = Node_fs.close_sync (Ojs.int_to_js fd)
 
 let with_open_fd fd f =
-  match (try Ok (f fd) with error -> Error error) with
+  match try Ok (f fd) with error -> Error error with
   | Ok result ->
       close_fd fd;
       result
@@ -44,11 +45,13 @@ let with_open_fd fd f =
       close_fd fd;
       raise error
 
-let with_pinned_directory target f = with_open_fd (open_pinned_directory target) f
+let with_pinned_directory target f =
+  with_open_fd (open_pinned_directory target) f
 
 let procfs_entry_path fd name = Printf.sprintf "/proc/self/fd/%d/%s" fd name
 
 let path_dirname target = Node_path.dirname target
+
 let path_basename target = Node_path.basename target
 
 let path_components target =
@@ -56,10 +59,10 @@ let path_components target =
 
 let realpath target = Node_fs.realpath_sync target
 
-let entry_is_directory path =
-  Node_fs.is_directory (Node_fs.lstat_sync path)
+let entry_is_directory path = Node_fs.is_directory (Node_fs.lstat_sync path)
 
 let unlink_entry_path path = Node_fs.unlink_sync path
+
 let rmdir_entry_path path = Node_fs.rmdir_sync path
 
 (* Walk from the filesystem root to the canonical form of [directory],

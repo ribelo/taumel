@@ -34,6 +34,7 @@ type pending_action = {
 }
 
 let pending_actions : (string, pending_action) Hashtbl.t = Hashtbl.create 32
+
 let latest_by_agent : (string, string) Hashtbl.t = Hashtbl.create 32
 
 let agent_key ctx agent_id =
@@ -41,7 +42,8 @@ let agent_key ctx agent_id =
 
 let in_progress ~agent_id ctx =
   Authority_plans.agent_action_in_progress
-    ~owner_id:(Session_store.session_id_from_ctx ctx) ~agent_id
+    ~owner_id:(Session_store.session_id_from_ctx ctx)
+    ~agent_id
 
 let remove_pending capability_id =
   (match Hashtbl.find_opt pending_actions capability_id with
@@ -56,9 +58,9 @@ let sweep_expired () =
   let now_ms = now_milliseconds_float () in
   pending_actions |> Hashtbl.to_seq_keys |> List.of_seq
   |> List.iter (fun capability_id ->
-         if Authority_plans.agent_action_expired_issued ~now_ms capability_id then (
-           Authority_plans.revoke_agent_action capability_id;
-           remove_pending capability_id))
+      if Authority_plans.agent_action_expired_issued ~now_ms capability_id then (
+        Authority_plans.revoke_agent_action capability_id;
+        remove_pending capability_id))
 
 let issue ?(commit = fun () -> Ok ()) ?(release = fun () -> ()) issuance
     ~agent_id ctx =
@@ -82,10 +84,10 @@ let issue ?(commit = fun () -> Ok ()) ?(release = fun () -> ()) issuance
       Hashtbl.remove pending_actions previous);
   let capability_id =
     Authority_plans.issue_agent_action
-    ~owner_id:(Session_store.session_id_from_ctx ctx) ~owner_context:ctx
-    ~action ~agent_id ~owner_epoch:!owner_session_epoch
-    ~permission_epoch:!permission_state_epoch
-    ~expires_at_ms:(now_milliseconds_float () +. float_of_int ttl_ms)
+      ~owner_id:(Session_store.session_id_from_ctx ctx)
+      ~owner_context:ctx ~action ~agent_id ~owner_epoch:!owner_session_epoch
+      ~permission_epoch:!permission_state_epoch
+      ~expires_at_ms:(now_milliseconds_float () +. float_of_int ttl_ms)
   in
   Hashtbl.replace pending_actions capability_id
     {
@@ -120,23 +122,30 @@ let decode raw_facts =
       (ojs_of_js raw_facts)
   in
   let action =
-    Tool_contracts.AgentActionCapabilityFacts.get_action facts |> action_of_string
+    Tool_contracts.AgentActionCapabilityFacts.get_action facts
+    |> action_of_string
   in
   let ctx =
     Tool_contracts.AgentActionCapabilityFacts.get_ctx facts
     |> Ts2ocaml.unknown_to_js |> js_of_ojs
   in
   let run_id = Tool_contracts.AgentActionCapabilityFacts.get_runId facts in
-  let submission_id = Tool_contracts.AgentActionCapabilityFacts.get_submissionId facts in
+  let submission_id =
+    Tool_contracts.AgentActionCapabilityFacts.get_submissionId facts
+  in
   (match (action, run_id, submission_id) with
   | Authority_plans.Agent_start, Some _, Some _
   | Agent_send, Some _, Some _
   | Agent_send, Some _, None
   | Agent_send, None, None
-  | Agent_close, None, None -> ()
-  | Agent_start, _, _ -> invalid_arg "agent_start capability requires runId and submissionId"
-  | Agent_close, _, _ -> invalid_arg "agent_close capability forbids runId and submissionId"
-  | Agent_send, None, Some _ -> invalid_arg "agent_send submissionId requires runId");
+  | Agent_close, None, None ->
+      ()
+  | Agent_start, _, _ ->
+      invalid_arg "agent_start capability requires runId and submissionId"
+  | Agent_close, _, _ ->
+      invalid_arg "agent_close capability forbids runId and submissionId"
+  | Agent_send, None, Some _ ->
+      invalid_arg "agent_send submissionId requires runId");
   ( facts,
     action,
     Tool_contracts.AgentActionCapabilityFacts.get_agentId facts,
@@ -146,11 +155,16 @@ let decode raw_facts =
     ctx )
 
 let check_result operation raw_facts =
-  let _facts, action, agent_id, capability_id, _run_id, _submission_id, ctx = decode raw_facts in
+  let _facts, action, agent_id, capability_id, _run_id, _submission_id, ctx =
+    decode raw_facts
+  in
   Session_sync.require_agent_owner ctx;
-  operation ~owner_id:(Session_store.session_id_from_ctx ctx) ~action ~agent_id
-    ~owner_epoch:!owner_session_epoch ~permission_epoch:!permission_state_epoch
-    ~now_ms:(now_milliseconds_float ()) capability_id
+  operation
+    ~owner_id:(Session_store.session_id_from_ctx ctx)
+    ~action ~agent_id ~owner_epoch:!owner_session_epoch
+    ~permission_epoch:!permission_state_epoch
+    ~now_ms:(now_milliseconds_float ())
+    capability_id
 
 let check operation raw_facts =
   let result = check_result operation raw_facts in
@@ -158,14 +172,17 @@ let check operation raw_facts =
 
 let claim raw_facts =
   sweep_expired ();
-  let _facts, action, agent_id, capability_id, run_id, submission_id, ctx = decode raw_facts in
+  let _facts, action, agent_id, capability_id, run_id, submission_id, ctx =
+    decode raw_facts
+  in
   Session_sync.require_agent_owner ctx;
   match
     Authority_plans.claim_agent_action
-      ~owner_id:(Session_store.session_id_from_ctx ctx) ~action ~agent_id
-      ~owner_epoch:!owner_session_epoch
+      ~owner_id:(Session_store.session_id_from_ctx ctx)
+      ~action ~agent_id ~owner_epoch:!owner_session_epoch
       ~permission_epoch:!permission_state_epoch
-      ~now_ms:(now_milliseconds_float ()) capability_id
+      ~now_ms:(now_milliseconds_float ())
+      capability_id
   with
   | Error message -> error_obj message
   | Ok () -> (
@@ -174,35 +191,39 @@ let claim raw_facts =
           Authority_plans.revoke_agent_action capability_id;
           error_obj "agent action reservation is unavailable"
       | Some pending -> (
-          if pending.run_id <> run_id || pending.submission_id <> submission_id then (
+          if pending.run_id <> run_id || pending.submission_id <> submission_id
+          then (
             Authority_plans.revoke_agent_action capability_id;
             remove_pending capability_id;
-            error_obj "agent action run or submission does not match reservation")
-          else let committed =
-            try pending.commit ()
-            with error ->
-              Error ("agent action commit failed: " ^ Printexc.to_string error)
-          in
-          match committed with
-          | Ok () -> (
-              match
-                Authority_plans.complete_agent_action_transition
-                  ~owner_id:(Session_store.session_id_from_ctx ctx) ~action
-                  ~agent_id ~owner_epoch:!owner_session_epoch
-                  ~permission_epoch:!permission_state_epoch
-                  ~now_ms:(now_milliseconds_float ()) capability_id
-              with
-              | Ok () -> core_ack ()
-              | Error message ->
-                  Authority_plans.revoke_agent_action capability_id;
-                  Hashtbl.remove pending_actions capability_id;
-                  pending.release ();
-                  error_obj message)
-          | Error message ->
-              Authority_plans.revoke_agent_action capability_id;
-              Hashtbl.remove pending_actions capability_id;
-              pending.release ();
-              error_obj message))
+            error_obj
+              "agent action run or submission does not match reservation")
+          else
+            let committed =
+              try pending.commit ()
+              with error ->
+                Error ("agent action commit failed: " ^ Printexc.to_string error)
+            in
+            match committed with
+            | Ok () -> (
+                match
+                  Authority_plans.complete_agent_action_transition
+                    ~owner_id:(Session_store.session_id_from_ctx ctx)
+                    ~action ~agent_id ~owner_epoch:!owner_session_epoch
+                    ~permission_epoch:!permission_state_epoch
+                    ~now_ms:(now_milliseconds_float ())
+                    capability_id
+                with
+                | Ok () -> core_ack ()
+                | Error message ->
+                    Authority_plans.revoke_agent_action capability_id;
+                    Hashtbl.remove pending_actions capability_id;
+                    pending.release ();
+                    error_obj message)
+            | Error message ->
+                Authority_plans.revoke_agent_action capability_id;
+                Hashtbl.remove pending_actions capability_id;
+                pending.release ();
+                error_obj message))
 
 let revalidate raw_facts =
   check Authority_plans.revalidate_agent_action raw_facts
@@ -211,8 +232,13 @@ let ratchet raw_facts =
   check Authority_plans.ratchet_agent_action_state raw_facts
 
 let transition_result operation ~agent_id ?run_id ?submission_id raw_facts ctx =
-  let _facts, action, bound_agent_id, capability_id, bound_run_id,
-      bound_submission_id, capability_ctx =
+  let ( _facts,
+        action,
+        bound_agent_id,
+        capability_id,
+        bound_run_id,
+        bound_submission_id,
+        capability_ctx ) =
     decode raw_facts
   in
   let owner_id = Session_store.session_id_from_ctx ctx in
@@ -233,9 +259,11 @@ let transition_result operation ~agent_id ?run_id ?submission_id raw_facts ctx =
     Session_sync.require_agent_owner ctx;
     operation ~owner_id ~action ~agent_id ~owner_epoch:!owner_session_epoch
       ~permission_epoch:!permission_state_epoch
-      ~now_ms:(now_milliseconds_float ()) capability_id)
+      ~now_ms:(now_milliseconds_float ())
+      capability_id)
 
-let revalidate_transition_result ~agent_id ?run_id ?submission_id raw_facts ctx =
+let revalidate_transition_result ~agent_id ?run_id ?submission_id raw_facts ctx
+    =
   transition_result Authority_plans.revalidate_agent_action ~agent_id ?run_id
     ?submission_id raw_facts ctx
 
@@ -244,12 +272,14 @@ let complete_transition_result ~agent_id ?run_id ?submission_id raw_facts ctx =
     ?run_id ?submission_id raw_facts ctx
 
 let authorize_cleanup raw_facts =
-  let _facts, action, agent_id, capability_id, _run_id, _submission_id, ctx = decode raw_facts in
+  let _facts, action, agent_id, capability_id, _run_id, _submission_id, ctx =
+    decode raw_facts
+  in
   Session_sync.require_agent_owner ctx;
   match
     Authority_plans.authorize_agent_cleanup
-      ~owner_id:(Session_store.session_id_from_ctx ctx) ~action ~agent_id
-      ~owner_epoch:!owner_session_epoch
+      ~owner_id:(Session_store.session_id_from_ctx ctx)
+      ~action ~agent_id ~owner_epoch:!owner_session_epoch
       ~permission_epoch:!permission_state_epoch
       ~now_ms:(now_milliseconds_float ())
       capability_id
@@ -272,12 +302,15 @@ let prepare_close_stop raw_facts =
         | Some pending -> (
             match
               Taumel.Agents.owned_identity !agent_state
-                ~owner_session_id:(Session_store.session_id_from_ctx ctx) agent_id
+                ~owner_session_id:(Session_store.session_id_from_ctx ctx)
+                agent_id
             with
             | Error message -> error_obj message
             | Ok _ ->
                 pending.close_stop_expectation <-
-                  (match Taumel.Agents.active_or_suspended_run !agent_state agent_id with
+                  (match
+                     Taumel.Agents.active_or_suspended_run !agent_state agent_id
+                   with
                   | Some run when run.run_status = Taumel.Agents.Running ->
                       Close_stop_active
                         {
@@ -306,7 +339,8 @@ let adopt_close_completion ~agent_id ~run_id ~submission_id ctx =
               ~action:Authority_plans.Agent_close ~agent_id
               ~owner_epoch:!owner_session_epoch
               ~permission_epoch:!permission_state_epoch
-              ~now_ms:(now_milliseconds_float ()) capability_id
+              ~now_ms:(now_milliseconds_float ())
+              capability_id
           with
           | Ok () -> pending.close_stop_expectation <- Close_stop_no_active_run
           | Error _ -> ())
@@ -322,7 +356,7 @@ let complete_close_stop raw_facts =
     Session_sync.require_agent_owner ctx;
     match Hashtbl.find_opt pending_actions capability_id with
     | None -> error_obj "agent action reservation is unavailable"
-    | Some pending ->
+    | Some pending -> (
         let reset_expectation = ref false in
         let operation =
           match pending.close_stop_expectation with
@@ -331,10 +365,11 @@ let complete_close_stop raw_facts =
           | Close_stop_no_active_run ->
               reset_expectation := true;
               Authority_plans.ratchet_agent_action_state
-                ~owner_id:(Session_store.session_id_from_ctx ctx) ~action ~agent_id
-                ~owner_epoch:!owner_session_epoch
+                ~owner_id:(Session_store.session_id_from_ctx ctx)
+                ~action ~agent_id ~owner_epoch:!owner_session_epoch
                 ~permission_epoch:!permission_state_epoch
-                ~now_ms:(now_milliseconds_float ()) capability_id
+                ~now_ms:(now_milliseconds_float ())
+                capability_id
           | Close_stop_active { run_id; submission_id } -> (
               match Taumel.Agents.find_run !agent_state run_id with
               | Some run
@@ -343,31 +378,38 @@ let complete_close_stop raw_facts =
                      && Taumel.Agents.terminal_run_status run.run_status ->
                   reset_expectation := true;
                   Authority_plans.complete_agent_action_transition
-                    ~owner_id:(Session_store.session_id_from_ctx ctx) ~action
-                    ~agent_id ~owner_epoch:!owner_session_epoch
+                    ~owner_id:(Session_store.session_id_from_ctx ctx)
+                    ~action ~agent_id ~owner_epoch:!owner_session_epoch
                     ~permission_epoch:!permission_state_epoch
-                    ~now_ms:(now_milliseconds_float ()) capability_id
+                    ~now_ms:(now_milliseconds_float ())
+                    capability_id
               | Some run
                 when run.run_agent_id = agent_id
                      && run.run_submission_id = submission_id
                      && run.run_status = Taumel.Agents.Running ->
                   Authority_plans.revalidate_agent_action
-                    ~owner_id:(Session_store.session_id_from_ctx ctx) ~action
-                    ~agent_id ~owner_epoch:!owner_session_epoch
+                    ~owner_id:(Session_store.session_id_from_ctx ctx)
+                    ~action ~agent_id ~owner_epoch:!owner_session_epoch
                     ~permission_epoch:!permission_state_epoch
-                    ~now_ms:(now_milliseconds_float ()) capability_id
+                    ~now_ms:(now_milliseconds_float ())
+                    capability_id
               | Some _ | None ->
                   Error "close stop settlement does not match its prepared run")
         in
         if !reset_expectation then
           pending.close_stop_expectation <- Close_stop_unprepared;
-        match operation with Ok () -> core_ack () | Error message -> error_obj message)
+        match operation with
+        | Ok () -> core_ack ()
+        | Error message -> error_obj message))
 
 let release raw_facts =
-  let _facts, _action, agent_id, capability_id, _run_id, _submission_id, ctx = decode raw_facts in
+  let _facts, _action, agent_id, capability_id, _run_id, _submission_id, ctx =
+    decode raw_facts
+  in
   match
     Authority_plans.release_agent_action
-      ~owner_id:(Session_store.session_id_from_ctx ctx) capability_id
+      ~owner_id:(Session_store.session_id_from_ctx ctx)
+      capability_id
   with
   | Ok () ->
       (match Hashtbl.find_opt pending_actions capability_id with

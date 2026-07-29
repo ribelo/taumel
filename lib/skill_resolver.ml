@@ -1,7 +1,11 @@
 let is_lower = function 'a' .. 'z' -> true | _ -> false
+
 let is_digit = function '0' .. '9' -> true | _ -> false
+
 let is_name_tail c = is_lower c || is_digit c || c = '-'
-let blocks_start prev = not (is_lower prev || is_digit prev || prev = '$' || prev = '\\')
+
+let blocks_start prev =
+  not (is_lower prev || is_digit prev || prev = '$' || prev = '\\')
 
 let mentions text =
   let length = String.length text in
@@ -26,5 +30,8 @@ let mentions text =
 
 let skill_block ~name ~location ~base_dir ~body =
   Printf.sprintf
-    "<skill name=\"%s\" location=\"%s\">\nReferences are relative to %s.\n\n%s\n</skill>"
+    "<skill name=\"%s\" location=\"%s\">\n\
+     References are relative to %s.\n\n\
+     %s\n\
+     </skill>"
     name location base_dir (String.trim body)

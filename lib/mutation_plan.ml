@@ -40,20 +40,11 @@ type write_stdin_plan = {
   output_mode : string;
 }
 
-type write_request = {
-  path : string;
-  contents : string;
-  mode : string;
-}
+type write_request = { path : string; contents : string; mode : string }
 
-type edit_request = {
-  path : string;
-  edits : Sandbox.edit_replacement list;
-}
+type edit_request = { path : string; edits : Sandbox.edit_replacement list }
 
-type patch_request = {
-  patch : string;
-}
+type patch_request = { patch : string }
 
 type mutation_plan = {
   workspace_roots : string list;
@@ -79,16 +70,25 @@ type patch_output = {
 }
 
 let approval ?(message = "") prompt =
-  { message; title = prompt.Sandbox.title; prompt = prompt.prompt; timeout_ms = prompt.timeout_ms }
+  {
+    message;
+    title = prompt.Sandbox.title;
+    prompt = prompt.prompt;
+    timeout_ms = prompt.timeout_ms;
+  }
 
 let patch_request_of_values input =
-  if input = "" then Error "apply_patch.input is required" else Ok { patch = input }
+  if input = "" then Error "apply_patch.input is required"
+  else Ok { patch = input }
 
-let plan_exec ?policy_decision ?policy_message (sandbox : Sandbox.config) (request : exec_request) =
+let plan_exec ?policy_decision ?policy_message (sandbox : Sandbox.config)
+    (request : exec_request) =
   let cmd = request.cmd in
   if String.trim cmd = "" then Error "exec_command requires cmd"
   else
-    let workdir = if request.workdir = "" then request.default_workdir else request.workdir in
+    let workdir =
+      if request.workdir = "" then request.default_workdir else request.workdir
+    in
     let sandbox_request =
       {
         Sandbox.cmd;
@@ -106,12 +106,14 @@ let plan_exec ?policy_decision ?policy_message (sandbox : Sandbox.config) (reque
         approval;
       }
     in
-    match Sandbox.authorize_exec ?policy_decision ?policy_message sandbox sandbox_request with
+    match
+      Sandbox.authorize_exec ?policy_decision ?policy_message sandbox
+        sandbox_request
+    with
     | Sandbox.Allow -> Ok (base None)
     | Requires_approval message ->
         let prompt = Sandbox.exec_approval_prompt ~cmd message in
-        Ok
-          (base (Some (approval ~message prompt)))
+        Ok (base (Some (approval ~message prompt)))
     | Deny message -> Error message
 
 let plan_write_stdin (request : write_stdin_request) =
@@ -150,41 +152,51 @@ let plan_write ?auth_path ?auth_roots (sandbox : Sandbox.config)
   let contents = request.contents in
   if request.mode <> "overwrite" && request.mode <> "append" then
     Error "write mode must be overwrite or append"
-  else match Sandbox.authorize_mutation_path ?auth_path ?auth_roots sandbox Sandbox.Write path with
-  | Allow -> Ok (resolved_mutation_plan ~contents ?auth_path path sandbox)
-  | Requires_approval _ ->
-      Ok
-        (resolved_mutation_plan ~contents ?auth_path
-           ~approval:(filesystem_approval "write" path) path sandbox)
-  | Deny message -> Error message
+  else
+    match
+      Sandbox.authorize_mutation_path ?auth_path ?auth_roots sandbox
+        Sandbox.Write path
+    with
+    | Allow -> Ok (resolved_mutation_plan ~contents ?auth_path path sandbox)
+    | Requires_approval _ ->
+        Ok
+          (resolved_mutation_plan ~contents ?auth_path
+             ~approval:(filesystem_approval "write" path)
+             path sandbox)
+    | Deny message -> Error message
 
 let plan_edit ?auth_path ?auth_roots (sandbox : Sandbox.config)
     (request : edit_request) =
   let path = request.path in
   if request.edits = [] then Error "edit requires at least one replacement"
-  else if List.exists (fun edit -> edit.Sandbox.old_text = "") request.edits then
-    Error "edit oldText must not be empty"
-  else match Sandbox.authorize_mutation_path ?auth_path ?auth_roots sandbox Sandbox.Write path with
-  | Allow ->
-      Ok (resolved_mutation_plan ~edits:request.edits ?auth_path path sandbox)
-  | Requires_approval _ ->
-      Ok
-        (resolved_mutation_plan ~edits:request.edits ?auth_path
-           ~approval:(filesystem_approval "edit" path) path sandbox)
-  | Deny message -> Error message
+  else if List.exists (fun edit -> edit.Sandbox.old_text = "") request.edits
+  then Error "edit oldText must not be empty"
+  else
+    match
+      Sandbox.authorize_mutation_path ?auth_path ?auth_roots sandbox
+        Sandbox.Write path
+    with
+    | Allow ->
+        Ok (resolved_mutation_plan ~edits:request.edits ?auth_path path sandbox)
+    | Requires_approval _ ->
+        Ok
+          (resolved_mutation_plan ~edits:request.edits ?auth_path
+             ~approval:(filesystem_approval "edit" path)
+             path sandbox)
+    | Deny message -> Error message
 
-let authorization_path auth_paths path =
-  List.assoc_opt path auth_paths
+let authorization_path auth_paths path = List.assoc_opt path auth_paths
 
 let resolved_patch_paths ?(auth_paths = []) (sandbox : Sandbox.config) parsed =
   Sandbox.Patch.affected_paths parsed
   |> List.sort_uniq String.compare
   |> List.map (fun path ->
-         Sandbox.resolve_mutation_path
-           ?auth_path:(authorization_path auth_paths path)
-           sandbox path)
+      Sandbox.resolve_mutation_path
+        ?auth_path:(authorization_path auth_paths path)
+        sandbox path)
 
-let plan_apply_patch ?(auth_paths = []) ?auth_roots (sandbox : Sandbox.config) request =
+let plan_apply_patch ?(auth_paths = []) ?auth_roots (sandbox : Sandbox.config)
+    request =
   match Sandbox.Patch.parse request.patch with
   | Error _ as error -> error
   | Ok parsed -> (
@@ -233,7 +245,11 @@ let remap_files_to_original_paths ?(auth_paths = []) (sandbox : Sandbox.config)
          match Shared.String_map.find_opt resolved files with
          | Some contents -> Shared.String_map.add original contents acc
          | None -> (
-             match Shared.String_map.find_opt (Sandbox.resolve_workspace_path sandbox original) files with
+             match
+               Shared.String_map.find_opt
+                 (Sandbox.resolve_workspace_path sandbox original)
+                 files
+             with
              | Some contents -> Shared.String_map.add original contents acc
              | None -> acc))
        Shared.String_map.empty
@@ -241,8 +257,8 @@ let remap_files_to_original_paths ?(auth_paths = []) (sandbox : Sandbox.config)
 let action_paths actions =
   actions
   |> List.map (function
-       | Sandbox.Patch.Write_file path -> path
-       | Sandbox.Patch.Delete_path path -> path)
+    | Sandbox.Patch.Write_file path -> path
+    | Sandbox.Patch.Delete_path path -> path)
   |> List.sort_uniq String.compare
 
 let apply_patch_to_files ~approved ?(auth_paths = []) ?auth_roots
@@ -250,11 +266,15 @@ let apply_patch_to_files ~approved ?(auth_paths = []) ?auth_roots
   match Sandbox.Patch.parse request.patch with
   | Error _ as error -> error
   | Ok parsed -> (
-      match Sandbox.authorize_patch ~approved ~auth_paths ?auth_roots sandbox parsed with
+      match
+        Sandbox.authorize_patch ~approved ~auth_paths ?auth_roots sandbox parsed
+      with
       | Requires_approval message -> Error ("approval required: " ^ message)
       | Deny message -> Error message
       | Allow -> (
-          let input = remap_files_to_original_paths ~auth_paths sandbox parsed files in
+          let input =
+            remap_files_to_original_paths ~auth_paths sandbox parsed files
+          in
           match Sandbox.Patch.apply_to_map input parsed with
           | Error _ as error -> error
           | Ok output ->
@@ -267,17 +287,17 @@ let apply_patch_to_files ~approved ?(auth_paths = []) ?auth_roots
               let deletes =
                 actions
                 |> List.filter_map (function
-                     | Sandbox.Patch.Delete_path path -> Some (resolve path)
-                     | Sandbox.Patch.Write_file _ -> None)
+                  | Sandbox.Patch.Delete_path path -> Some (resolve path)
+                  | Sandbox.Patch.Write_file _ -> None)
                 |> List.sort_uniq String.compare
               in
               let write_pairs =
                 actions
                 |> List.filter_map (function
-                     | Sandbox.Patch.Write_file path -> Some (path, resolve path)
-                     | Sandbox.Patch.Delete_path _ -> None)
+                  | Sandbox.Patch.Write_file path -> Some (path, resolve path)
+                  | Sandbox.Patch.Delete_path _ -> None)
                 |> List.sort_uniq (fun (left, _) (right, _) ->
-                       String.compare left right)
+                    String.compare left right)
               in
               let rec collect acc = function
                 | [] ->
@@ -285,7 +305,8 @@ let apply_patch_to_files ~approved ?(auth_paths = []) ?auth_roots
                       {
                         deletes;
                         writes = List.rev acc;
-                        affected_paths = action_paths actions |> List.map resolve;
+                        affected_paths =
+                          action_paths actions |> List.map resolve;
                       }
                 | (original, resolved) :: rest -> (
                     match Shared.String_map.find_opt original output with
@@ -293,6 +314,7 @@ let apply_patch_to_files ~approved ?(auth_paths = []) ?auth_roots
                         Error
                           ("apply_patch internal error: missing contents for "
                          ^ original)
-                    | Some contents -> collect ((resolved, contents) :: acc) rest)
+                    | Some contents ->
+                        collect ((resolved, contents) :: acc) rest)
               in
               collect [] write_pairs))

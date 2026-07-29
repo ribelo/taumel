@@ -1,7 +1,4 @@
-type state = {
-  profile : Capability_profile.t;
-  sandbox : Sandbox.config;
-}
+type state = { profile : Capability_profile.t; sandbox : Sandbox.config }
 
 type update =
   | Set_sandbox of Capability_profile.sandbox_preset
@@ -20,12 +17,10 @@ type menu_option = {
 
 type prompt_plan =
   | Prompt_unavailable
-  | Prompt_select of {
-      title : string;
-      labels : string list;
-    }
+  | Prompt_select of { title : string; labels : string list }
 
 let default_prompt_title = "Sandbox settings"
+
 let network_prompt_title = "Network access"
 
 let menu_selected_value options selected =
@@ -34,14 +29,15 @@ let menu_selected_value options selected =
   | Some selected ->
       options
       |> List.find_opt (fun option ->
-             option.label = selected || option.value = selected)
+          option.label = selected || option.value = selected)
       |> Option.map (fun option -> option.value)
 
 let prompt_selection_plan ~ui_available ~title options =
   if not ui_available then Prompt_unavailable
   else
     let labels =
-      options |> List.map (fun option -> option.label)
+      options
+      |> List.map (fun option -> option.label)
       |> List.filter (fun label -> String.trim label <> "")
     in
     match labels with
@@ -55,20 +51,19 @@ let prompt_selection_plan ~ui_available ~title options =
         Prompt_select { title; labels }
 
 let create ?(workspace_roots = []) ?(network_mode = Sandbox.Network_disabled)
-    ?(no_sandbox = false) ?(isolated_child = false) (profile : Capability_profile.t) =
+    ?(no_sandbox = false) ?(isolated_child = false)
+    (profile : Capability_profile.t) =
   let network_mode =
     match profile.sandbox_preset with
     | Capability_profile.Danger_full_access -> Sandbox.Network_enabled
-    | Capability_profile.Read_only | Capability_profile.Workspace_write -> network_mode
+    | Capability_profile.Read_only | Capability_profile.Workspace_write ->
+        network_mode
   in
-  Sandbox.config_of_profile ~workspace_roots ~network_mode ~no_sandbox ~isolated_child
-    profile
+  Sandbox.config_of_profile ~workspace_roots ~network_mode ~no_sandbox
+    ~isolated_child profile
   |> Result.map (fun sandbox -> { profile; sandbox })
 
-type persisted =
-  | Missing
-  | Invalid
-  | Persisted of state
+type persisted = Missing | Invalid | Persisted of state
 
 type active = {
   profile : Capability_profile.t;
@@ -81,7 +76,8 @@ type active = {
 let network_for_active_profile (profile : Capability_profile.t) requested =
   match profile.Capability_profile.sandbox_preset with
   | Capability_profile.Danger_full_access -> Sandbox.Network_enabled
-  | Capability_profile.Read_only | Capability_profile.Workspace_write -> requested
+  | Capability_profile.Read_only | Capability_profile.Workspace_write ->
+      requested
 
 let network_mode_for_sandbox_preset = function
   | Capability_profile.Danger_full_access -> Sandbox.Network_enabled
@@ -115,18 +111,23 @@ let default_active_state ~session_isolated_child =
 let invalid_active_state ~session_isolated_child =
   active_state
     ~profile:
-      (Capability_profile.resolve ~tools:Capability_profile.None_allowed Capability_profile.default)
+      (Capability_profile.resolve ~tools:Capability_profile.None_allowed
+         Capability_profile.default)
     ~network_mode:Sandbox.Network_disabled ~no_sandbox:false
     ~isolated_child:session_isolated_child
 
 let persisted_active_state ~session_isolated_child permissions =
-  let isolated_child = session_isolated_child || permissions.sandbox.isolated_child in
+  let isolated_child =
+    session_isolated_child || permissions.sandbox.isolated_child
+  in
   let profile =
-    if isolated_child then Capability_profile.resolve ~no_sandbox_allowed:false permissions.profile
+    if isolated_child then
+      Capability_profile.resolve ~no_sandbox_allowed:false permissions.profile
     else permissions.profile
   in
   active_state ~profile ~network_mode:permissions.sandbox.network_mode
-    ~no_sandbox:(if isolated_child then false else permissions.sandbox.no_sandbox)
+    ~no_sandbox:
+      (if isolated_child then false else permissions.sandbox.no_sandbox)
     ~isolated_child
 
 let apply_flag_overrides ~host_sandbox_preset ~host_network_mode
@@ -152,8 +153,11 @@ let apply_flag_overrides ~host_sandbox_preset ~host_network_mode
   | Some requested ->
       let no_sandbox = (not active.isolated_child) && requested in
       active_state
-        ~profile:(Capability_profile.resolve ~no_sandbox_allowed:no_sandbox active.profile)
-        ~network_mode:active.network_mode ~no_sandbox ~isolated_child:active.isolated_child
+        ~profile:
+          (Capability_profile.resolve ~no_sandbox_allowed:no_sandbox
+             active.profile)
+        ~network_mode:active.network_mode ~no_sandbox
+        ~isolated_child:active.isolated_child
 
 let resolve_active ~host_sandbox_preset ~host_network_mode ~host_no_sandbox
     ~session_isolated_child persisted =
@@ -175,14 +179,19 @@ let rebuild_sandbox ?network_mode ?no_sandbox (state : state) =
         Option.value network_mode ~default:state.sandbox.network_mode
   in
   Sandbox.config_of_profile ~workspace_roots:state.sandbox.workspace_roots
-    ~network_mode ~no_sandbox:(Option.value no_sandbox ~default:state.sandbox.no_sandbox)
+    ~network_mode
+    ~no_sandbox:(Option.value no_sandbox ~default:state.sandbox.no_sandbox)
     ~isolated_child:state.sandbox.isolated_child state.profile
   |> Result.map (fun sandbox -> { state with sandbox })
 
 let apply_update (state : state) = function
   | Set_sandbox sandbox_preset ->
-      { state with profile = profile_for_sandbox_preset state.profile sandbox_preset }
-      |> rebuild_sandbox ~network_mode:(network_mode_for_sandbox_preset sandbox_preset)
+      {
+        state with
+        profile = profile_for_sandbox_preset state.profile sandbox_preset;
+      }
+      |> rebuild_sandbox
+           ~network_mode:(network_mode_for_sandbox_preset sandbox_preset)
   | Set_approval approval_policy ->
       {
         state with
@@ -193,22 +202,35 @@ let apply_update (state : state) = function
       if
         state.profile.sandbox_preset = Capability_profile.Danger_full_access
         && network_mode = Sandbox.Network_disabled
-      then Error "full access always enables network; choose read-only or workspace-write before disabling network"
+      then
+        Error
+          "full access always enables network; choose read-only or \
+           workspace-write before disabling network"
       else rebuild_sandbox ~network_mode state
   | Set_no_sandbox no_sandbox ->
-      { state with profile = Capability_profile.resolve ~no_sandbox_allowed:no_sandbox state.profile }
+      {
+        state with
+        profile =
+          Capability_profile.resolve ~no_sandbox_allowed:no_sandbox
+            state.profile;
+      }
       |> rebuild_sandbox ~no_sandbox
   | Allow_tools tools ->
       Ok
         {
           state with
-          profile = Capability_profile.resolve ~tools:(Capability_profile.of_list tools) state.profile;
+          profile =
+            Capability_profile.resolve
+              ~tools:(Capability_profile.of_list tools)
+              state.profile;
         }
   | Deny_all_tools ->
       Ok
         {
           state with
-          profile = Capability_profile.resolve ~tools:Capability_profile.None_allowed state.profile;
+          profile =
+            Capability_profile.resolve ~tools:Capability_profile.None_allowed
+              state.profile;
         }
 
 let network_to_string = function
@@ -237,7 +259,8 @@ let summary (state : state) =
     | Some [] -> "none"
     | Some values -> String.concat "," values
   in
-  Printf.sprintf "sandbox=%s approval=%s network=%s tools=%s no_sandbox=%b isolated_child=%b"
+  Printf.sprintf
+    "sandbox=%s approval=%s network=%s tools=%s no_sandbox=%b isolated_child=%b"
     (Capability_profile.sandbox_to_string state.profile.sandbox_preset)
     (Capability_profile.approval_to_string state.profile.approval_policy)
     (network_to_string state.sandbox.network_mode)
@@ -247,7 +270,7 @@ let sandbox_menu_options (state : state) =
   let option preset label value description =
     let selected = state.profile.sandbox_preset = preset in
     {
-      label = label ^ if selected then " (current)" else "";
+      label = (label ^ if selected then " (current)" else "");
       value = "sandbox " ^ value;
       description;
       selected;
@@ -255,9 +278,12 @@ let sandbox_menu_options (state : state) =
   in
   [
     option Capability_profile.Read_only "Read only" "read-only"
-      "Read files, write only to temporary paths, deny network, ask before escalation.";
-    option Capability_profile.Workspace_write "Workspace write" "workspace-write"
-      "Write in this workspace and temporary paths, deny network, ask before escalation.";
+      "Read files, write only to temporary paths, deny network, ask before \
+       escalation.";
+    option Capability_profile.Workspace_write "Workspace write"
+      "workspace-write"
+      "Write in this workspace and temporary paths, deny network, ask before \
+       escalation.";
     option Capability_profile.Danger_full_access "Full access" "full-access"
       "Unrestricted filesystem and network access.";
   ]
@@ -266,7 +292,7 @@ let approval_menu_options (state : state) =
   let option policy label value description =
     let selected = state.profile.approval_policy = policy in
     {
-      label = label ^ if selected then " (current)" else "";
+      label = (label ^ if selected then " (current)" else "");
       value = "approval " ^ value;
       description;
       selected;
@@ -287,7 +313,7 @@ let network_menu_options (state : state) =
   let option mode label value description =
     let selected = state.sandbox.network_mode = mode in
     {
-      label = label ^ if selected then " (current)" else "";
+      label = (label ^ if selected then " (current)" else "");
       value = "network " ^ value;
       description;
       selected;
@@ -332,14 +358,13 @@ let persisted_payload_to_json = function
         ]
 
 let persisted_payload_of_json = function
-  | Shared.Object fields ->
+  | Shared.Object fields -> (
       let ( let* ) = Result.bind in
       let* () =
         Shared.json_exact_fields "permissions state"
           [ "version"; "profile"; "networkMode"; "noSandbox"; "isolated_child" ]
           fields
       in
-      (
       match List.assoc_opt "version" fields with
       | Some (Shared.Number 1.) -> (
           match List.assoc_opt "profile" fields with
@@ -352,7 +377,8 @@ let persisted_payload_of_json = function
                     match persisted_network_of_string value with
                     | Some network_mode -> Ok network_mode
                     | None -> Error ("unknown network mode: " ^ value))
-                | Some _ -> Error "permissions state networkMode must be a string"
+                | Some _ ->
+                    Error "permissions state networkMode must be a string"
                 | None -> Error "permissions state requires networkMode"
               in
               let* no_sandbox =
@@ -364,10 +390,11 @@ let persisted_payload_of_json = function
               in
               let* () =
                 match (profile.sandbox_preset, network_mode) with
-                | Capability_profile.Danger_full_access,
-                  Sandbox.Network_disabled ->
+                | ( Capability_profile.Danger_full_access,
+                    Sandbox.Network_disabled ) ->
                     Error
-                      "permissions state cannot disable network for danger-full-access"
+                      "permissions state cannot disable network for \
+                       danger-full-access"
                 | _ -> Ok ()
               in
               Ok
@@ -377,7 +404,7 @@ let persisted_payload_of_json = function
       | Some (Shared.Number version) ->
           Error
             ("unsupported permissions schema version: "
-            ^ string_of_float version ^ " (expected 1)")
+           ^ string_of_float version ^ " (expected 1)")
       | Some _ -> Error "permissions state version must be a number"
       | None -> Error "permissions state requires version")
   | _ -> Error "permissions state must be an object"
@@ -420,7 +447,9 @@ let parse input =
   | [ "tools"; "deny-all" ] -> Ok (Some Deny_all_tools)
   | _ ->
       Error
-        "usage: /permissions [show|sandbox <preset>|approval <policy>|no-sandbox <enabled|disabled>|tools allow <names...>|tools deny-all]"
+        "usage: /permissions [show|sandbox <preset>|approval \
+         <policy>|no-sandbox <enabled|disabled>|tools allow <names...>|tools \
+         deny-all]"
 
 (* /permissions configures everything except network access, which now lives in
    the dedicated /network command. The permissive [parse] above still accepts a

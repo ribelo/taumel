@@ -2,7 +2,9 @@ open Jsoo_bridge
 open App_state
 
 let account () =
-  Taumel.Usage.fallback_account ~api_key_present:(env_string "OPENAI_API_KEY" <> "") ()
+  Taumel.Usage.fallback_account
+    ~api_key_present:(env_string "OPENAI_API_KEY" <> "")
+    ()
 
 let openai_host_auth () =
   let auth = Taumel.Usage.openai_host_auth in
@@ -22,14 +24,17 @@ let kimi_host_auth () =
 
 let openai_host_params params =
   let params =
-    decode_ojs_contract Tool_contracts.OpenAiUsageHostLookupFacts.t_of_js (ojs_of_js params)
+    decode_ojs_contract Tool_contracts.OpenAiUsageHostLookupFacts.t_of_js
+      (ojs_of_js params)
   in
   let lookup =
     Taumel.Usage.token_lookup_from_host
-      ~error:(Option.value
-        (Tool_contracts.OpenAiUsageHostLookupFacts.get_tokenError params)
-        ~default:"")
-      (Option.value (Tool_contracts.OpenAiUsageHostLookupFacts.get_token params)
+      ~error:
+        (Option.value
+           (Tool_contracts.OpenAiUsageHostLookupFacts.get_tokenError params)
+           ~default:"")
+      (Option.value
+         (Tool_contracts.OpenAiUsageHostLookupFacts.get_token params)
          ~default:"")
   in
   let apiKeyPresent =
@@ -49,7 +54,8 @@ let openai_host_params params =
       |> Tool_contracts.OpenAiUsageHostParamsMissing.t_to_js |> inject
   | Taumel.Usage.Token_lookup_error message ->
       let tokenError =
-        Option.value (Taumel.Shared.trim_non_empty message)
+        Option.value
+          (Taumel.Shared.trim_non_empty message)
           ~default:Taumel.Usage.token_lookup_error_default
       in
       Boundary_contracts.OpenAiUsageHostParamsError.create ~apiKeyPresent
@@ -58,29 +64,36 @@ let openai_host_params params =
 
 let kimi_host_params params =
   let params =
-    decode_ojs_contract Tool_contracts.KimiUsageHostLookupFacts.t_of_js (ojs_of_js params)
+    decode_ojs_contract Tool_contracts.KimiUsageHostLookupFacts.t_of_js
+      (ojs_of_js params)
   in
   let lookup =
     Taumel.Usage.token_lookup_from_host
-      ~error:(Option.value
-        (Tool_contracts.KimiUsageHostLookupFacts.get_tokenError params)
-        ~default:"")
-      (Option.value (Tool_contracts.KimiUsageHostLookupFacts.get_token params)
+      ~error:
+        (Option.value
+           (Tool_contracts.KimiUsageHostLookupFacts.get_tokenError params)
+           ~default:"")
+      (Option.value
+         (Tool_contracts.KimiUsageHostLookupFacts.get_token params)
          ~default:"")
   in
   match lookup with
   | Taumel.Usage.Token_lookup_present token ->
-      Boundary_contracts.KimiUsageHostParamsPresent.create ~apiKeyPresent:true ~token ()
+      Boundary_contracts.KimiUsageHostParamsPresent.create ~apiKeyPresent:true
+        ~token ()
       |> Tool_contracts.KimiUsageHostParamsPresent.t_to_js |> inject
   | Taumel.Usage.Token_lookup_missing ->
-      Boundary_contracts.KimiUsageHostParamsMissing.create ~apiKeyPresent:false ()
+      Boundary_contracts.KimiUsageHostParamsMissing.create ~apiKeyPresent:false
+        ()
       |> Tool_contracts.KimiUsageHostParamsMissing.t_to_js |> inject
   | Taumel.Usage.Token_lookup_error message ->
       let tokenError =
-        Option.value (Taumel.Shared.trim_non_empty message)
+        Option.value
+          (Taumel.Shared.trim_non_empty message)
           ~default:Taumel.Usage.kimi_token_lookup_error_default
       in
-      Boundary_contracts.KimiUsageHostParamsError.create ~apiKeyPresent:false ~tokenError ()
+      Boundary_contracts.KimiUsageHostParamsError.create ~apiKeyPresent:false
+        ~tokenError ()
       |> Tool_contracts.KimiUsageHostParamsError.t_to_js |> inject
 
 let optional_bool params name default =
@@ -139,15 +152,20 @@ let credential params =
 let account_fields params =
   let credential = credential params in
   let explicit_account_label =
-    Option.bind (optional_string_field params "accountLabel") Taumel.Shared.trim_non_empty
+    Option.bind
+      (optional_string_field params "accountLabel")
+      Taumel.Shared.trim_non_empty
   in
   let explicit_account_id =
-    Option.bind (optional_string_field params "accountId") Taumel.Shared.trim_non_empty
+    Option.bind
+      (optional_string_field params "accountId")
+      Taumel.Shared.trim_non_empty
   in
   let account_label =
     match explicit_account_label with
     | Some _ as value -> value
-    | None -> Option.bind credential (fun credential -> credential.account_label)
+    | None ->
+        Option.bind credential (fun credential -> credential.account_label)
   in
   let account_id =
     match explicit_account_id with
@@ -156,18 +174,22 @@ let account_fields params =
   in
   (account_label, account_id)
 
-let token_state ?(default_error = Taumel.Usage.token_lookup_error_default) params =
+let token_state ?(default_error = Taumel.Usage.token_lookup_error_default)
+    params =
   let token_state = get_string params "tokenState" in
   Taumel.Usage.token_state_from_fields ~default_error
     {
       token_state;
-      token = (if token_state = "present" then get_string params "token" else "");
+      token =
+        (if token_state = "present" then get_string params "token" else "");
       token_error =
         (if token_state = "error" then get_string params "tokenError" else "");
     }
 
 let openai_result_from_fetch_state params fetch_state =
-  let api_key_present = optional_bool params "apiKeyPresent" (env_string "OPENAI_API_KEY" <> "") in
+  let api_key_present =
+    optional_bool params "apiKeyPresent" (env_string "OPENAI_API_KEY" <> "")
+  in
   let account_label, account_id = account_fields params in
   Taumel.Usage.openai_host_result
     {
@@ -188,7 +210,8 @@ let kimi_result_from_fetch_state params fetch_state =
       account_id = None;
       fetched_at_ms = fetched_at_ms params;
       token_state =
-        token_state ~default_error:Taumel.Usage.kimi_token_lookup_error_default params;
+        token_state ~default_error:Taumel.Usage.kimi_token_lookup_error_default
+          params;
       fetch_state;
     }
 
@@ -207,38 +230,43 @@ let host_result params =
 let normalized_tool_result result =
   Boundary_contracts.BridgeToolResult.create
     ~text:(Taumel.Usage.render_pair result)
-    ~details:(Ts2ocaml.unknown_of_js (ojs_of_js (json_to_js (Taumel.Usage.result_details result)))) ()
+    ~details:
+      (Ts2ocaml.unknown_of_js
+         (ojs_of_js (json_to_js (Taumel.Usage.result_details result))))
+    ()
   |> Tool_contracts.BridgeToolResult.t_to_js |> inject
 
-let http_client () = Eta_http_js.Client.make ~max_response_body_bytes:(1024 * 1024) ()
+let http_client () =
+  Eta_http_js.Client.make ~max_response_body_bytes:(1024 * 1024) ()
 
 let fetch_json_effect ~label ~request ~on_http_error ~on_error ~on_ok =
   let http_request =
-    Eta_http.Request.make ~headers:request.Taumel.Usage.headers request.meth request.url
+    Eta_http.Request.make ~headers:request.Taumel.Usage.headers request.meth
+      request.url
   in
   let client = http_client () in
   Eta_http.Client.request client http_request
   |> Effect.to_result
   |> Effect.bind (function
-       | Error error -> Effect.pure (on_error (Eta_http.Error.to_string error))
-       | Ok response ->
-           if
-             response.Eta_http.Response.status < 200
-             || response.Eta_http.Response.status >= 300
-           then
-             Eta_http.Body.Stream.discard response.Eta_http.Response.body
-             |> Effect.ignore_errors
-             |> Effect.map (fun () ->
-                    on_http_error (string_of_int response.Eta_http.Response.status))
-           else
-             Eta_http.Body.Stream.read_all response.Eta_http.Response.body
-             |> Effect.to_result
-             |> Effect.map (function
-                  | Error error -> on_error (Eta_http.Error.to_string error)
-                  | Ok body -> (
-                      match parse_json ~label (Bytes.to_string body) with
-                      | Error message -> on_error message
-                      | Ok payload -> on_ok payload)))
+    | Error error -> Effect.pure (on_error (Eta_http.Error.to_string error))
+    | Ok response ->
+        if
+          response.Eta_http.Response.status < 200
+          || response.Eta_http.Response.status >= 300
+        then
+          Eta_http.Body.Stream.discard response.Eta_http.Response.body
+          |> Effect.ignore_errors
+          |> Effect.map (fun () ->
+              on_http_error (string_of_int response.Eta_http.Response.status))
+        else
+          Eta_http.Body.Stream.read_all response.Eta_http.Response.body
+          |> Effect.to_result
+          |> Effect.map (function
+            | Error error -> on_error (Eta_http.Error.to_string error)
+            | Ok body -> (
+                match parse_json ~label (Bytes.to_string body) with
+                | Error message -> on_error message
+                | Ok payload -> on_ok payload)))
 
 let execute_openai_normalized_effect params =
   match token_state params with
@@ -254,22 +282,26 @@ let execute_openai_normalized_effect params =
           openai_result_from_fetch_state params
             (Taumel.Usage.Fetch_http_error status))
         ~on_error:(fun message ->
-          openai_result_from_fetch_state params (Taumel.Usage.Fetch_error message))
+          openai_result_from_fetch_state params
+            (Taumel.Usage.Fetch_error message))
         ~on_ok:(fun payload ->
           openai_result_from_fetch_state params (Taumel.Usage.Fetch_ok payload))
 
 let execute_kimi_normalized_effect params =
   match
-    token_state ~default_error:Taumel.Usage.kimi_token_lookup_error_default params
+    token_state ~default_error:Taumel.Usage.kimi_token_lookup_error_default
+      params
   with
   | Taumel.Usage.Token_error _ | Taumel.Usage.Token_missing ->
-      Effect.pure (kimi_result_from_fetch_state params Taumel.Usage.Fetch_not_started)
+      Effect.pure
+        (kimi_result_from_fetch_state params Taumel.Usage.Fetch_not_started)
   | Taumel.Usage.Token_present ->
       let token = String.trim (get_string params "token") in
       let request = Taumel.Usage.kimi_usage_request ~token () in
       fetch_json_effect ~label:"Kimi Code usage" ~request
         ~on_http_error:(fun status ->
-          kimi_result_from_fetch_state params (Taumel.Usage.Fetch_http_error status))
+          kimi_result_from_fetch_state params
+            (Taumel.Usage.Fetch_http_error status))
         ~on_error:(fun message ->
           kimi_result_from_fetch_state params (Taumel.Usage.Fetch_error message))
         ~on_ok:(fun payload ->
@@ -278,22 +310,22 @@ let execute_kimi_normalized_effect params =
 let execute_openai_effect params =
   execute_openai_normalized_effect params
   |> Effect.map (fun openai ->
-         let dual =
-           {
-             Taumel.Usage.openai;
-             kimi =
-               Taumel.Usage.kimi_host_result
-                 {
-                   api_key_present = false;
-                   account_label = None;
-                   account_id = None;
-                   fetched_at_ms = fetched_at_ms params;
-                   token_state = Taumel.Usage.Token_missing;
-                   fetch_state = Taumel.Usage.Fetch_not_started;
-                 };
-           }
-         in
-         inject (normalized_tool_result dual))
+      let dual =
+        {
+          Taumel.Usage.openai;
+          kimi =
+            Taumel.Usage.kimi_host_result
+              {
+                api_key_present = false;
+                account_label = None;
+                account_id = None;
+                fetched_at_ms = fetched_at_ms params;
+                token_state = Taumel.Usage.Token_missing;
+                fetch_state = Taumel.Usage.Fetch_not_started;
+              };
+        }
+      in
+      inject (normalized_tool_result dual))
 
 let execute_openai raw_params _ctx =
   let params =
@@ -305,7 +337,8 @@ let execute_openai raw_params _ctx =
 
 let execute_pair_effect raw_params =
   let params =
-    decode_ojs_contract Tool_contracts.UsagePairHostParams.t_of_js (ojs_of_js raw_params)
+    decode_ojs_contract Tool_contracts.UsagePairHostParams.t_of_js
+      (ojs_of_js raw_params)
   in
   let openai_params =
     Tool_contracts.OpenAiUsageHostParams.t_to_js
@@ -321,12 +354,13 @@ let execute_pair_effect raw_params =
     (execute_openai_normalized_effect openai_params)
     (execute_kimi_normalized_effect kimi_params)
   |> Effect.map (fun (openai, kimi) ->
-         inject (normalized_tool_result { Taumel.Usage.openai; kimi }))
+      inject (normalized_tool_result { Taumel.Usage.openai; kimi }))
 
 let execute_pair raw_params _ctx =
   js_promise_of_effect (execute_pair_effect raw_params)
 
 let handle_command () =
   Boundary_contracts.UsagePairFetch.create
-    ~openaiApiKeyPresent:(env_string "OPENAI_API_KEY" <> "") ()
+    ~openaiApiKeyPresent:(env_string "OPENAI_API_KEY" <> "")
+    ()
   |> Tool_contracts.UsagePairFetch.t_to_js |> inject

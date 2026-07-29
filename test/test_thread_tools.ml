@@ -34,8 +34,7 @@ let text_part text =
 let message_line ~id ~role ?tool text =
   let message_fields =
     [
-      ("role", Shared.String role);
-      ("content", Shared.Array [ text_part text ]);
+      ("role", Shared.String role); ("content", Shared.Array [ text_part text ]);
     ]
     @
     match tool with
@@ -55,21 +54,21 @@ let hidden_line =
     [
       ("type", String "message");
       ("id", String "hidden");
-      ("message",
-       Object
-         [
-           ("role", String "assistant");
-           ( "content",
-             Array
-               [
-                 Object
-                   [
-                     ("type", String "thinking");
-                     ("thinking", String "secret-needle");
-                     ("encrypted_content", String "secret-needle");
-                   ];
-               ] );
-         ]);
+      ( "message",
+        Object
+          [
+            ("role", String "assistant");
+            ( "content",
+              Array
+                [
+                  Object
+                    [
+                      ("type", String "thinking");
+                      ("thinking", String "secret-needle");
+                      ("encrypted_content", String "secret-needle");
+                    ];
+                ] );
+          ] );
     ]
 
 let session_text =
@@ -96,8 +95,10 @@ let session_text =
        "not-json";
      ]
     @ List.init 85 (fun index ->
-          message_line ~id:(Printf.sprintf "m%02d" index) ~role:"assistant"
-            (Printf.sprintf "visible transcript line %02d" index)))
+        message_line
+          ~id:(Printf.sprintf "m%02d" index)
+          ~role:"assistant"
+          (Printf.sprintf "visible transcript line %02d" index)))
 
 let source =
   Shared.Object
@@ -172,7 +173,8 @@ let test_read_modes () =
   in
   assert_bool "query text exposes exact locator"
     (contains query_result.text
-       "Locator: {\"threadID\":\"thread-1\",\"sourcePath\":\"/repo/.pi/agent/sessions/thread-1.jsonl\",\"entryID\":\"03\",\"line\":5.0}");
+       "Locator: \
+        {\"threadID\":\"thread-1\",\"sourcePath\":\"/repo/.pi/agent/sessions/thread-1.jsonl\",\"entryID\":\"03\",\"line\":5.0}");
   let overview_request = read_request "thread-1" in
   let overview =
     Threads.plan_read ~id:overview_request.thread_id overview_request catalog
@@ -180,9 +182,12 @@ let test_read_modes () =
   assert_bool "overview ok" overview.ok;
   assert_equal "overview mode" "overview" overview.mode;
   assert_bool "overview bounded" (List.length overview.entries <= 10);
-  assert_bool "overview text not raw json" (not (contains overview.text "\"type\""));
+  assert_bool "overview text not raw json"
+    (not (contains overview.text "\"type\""));
   let window_request = read_request ~mode:"window" ~locator "thread-1" in
-  let window = Threads.plan_read ~id:window_request.thread_id window_request catalog in
+  let window =
+    Threads.plan_read ~id:window_request.thread_id window_request catalog
+  in
   assert_bool "window ok" window.ok;
   assert_bool "window marks target" (contains window.text ">> ");
   assert_bool "locator preserves source path"
@@ -195,16 +200,21 @@ let test_read_modes () =
           locator_line = Some 5;
         });
   let full_request = read_request ~mode:"full" "thread-1" in
-  let full = Threads.plan_read ~id:full_request.thread_id full_request catalog in
+  let full =
+    Threads.plan_read ~id:full_request.thread_id full_request catalog
+  in
   assert_bool "full ok" full.ok;
   assert_bool "full paginates" (Option.is_some full.cursor);
   let cursor = Option.get full.cursor in
   assert_bool "cursor is opaque" (not (contains cursor "thread-1"));
   assert_bool "cursor hides index" (not (contains cursor ":80"));
   let next_request = read_request ~mode:"full" ~cursor "thread-1" in
-  let next = Threads.plan_read ~id:next_request.thread_id next_request catalog in
+  let next =
+    Threads.plan_read ~id:next_request.thread_id next_request catalog
+  in
   assert_bool "cursor page ok" next.ok;
-  assert_bool "cursor page reaches tail" (contains next.text "visible transcript line 84");
+  assert_bool "cursor page reaches tail"
+    (contains next.text "visible transcript line 84");
   assert_bool "full text not raw json" (not (contains full.text "\"message\""))
 
 let test_session_name_is_title () =
@@ -256,7 +266,8 @@ let test_request_preparation () =
        }
    with
   | Error "read_thread window mode requires locator, entryID, or line" -> ()
-  | Error message -> fail "window cursor request" ("unexpected error: " ^ message)
+  | Error message ->
+      fail "window cursor request" ("unexpected error: " ^ message)
   | Ok _ -> fail "window cursor request" "expected error");
   (match
      Threads.prepare_read_request
@@ -279,49 +290,79 @@ let test_request_preparation () =
   (match
      Threads.prepare_read_request
        {
-         thread_id = Some "thread-1"; locator_thread_id = None;
-         locator_source_path = None; locator_entry_id = None; locator_line = None;
-         entry_id = None; line = Some 0; mode = Some "overview";
-         around = Some 11; cursor = None;
+         thread_id = Some "thread-1";
+         locator_thread_id = None;
+         locator_source_path = None;
+         locator_entry_id = None;
+         locator_line = None;
+         entry_id = None;
+         line = Some 0;
+         mode = Some "overview";
+         around = Some 11;
+         cursor = None;
        }
    with
   | Error _ -> ()
   | Ok _ -> fail "read bounds" "expected error");
-  (match
-     Threads.prepare_read_request
-       {
-         thread_id = Some "thread-1"; locator_thread_id = Some "thread-2";
-         locator_source_path = None; locator_entry_id = Some "entry";
-         locator_line = None; entry_id = None; line = None;
-         mode = Some "window"; around = None; cursor = None;
-       }
-   with
+  match
+    Threads.prepare_read_request
+      {
+        thread_id = Some "thread-1";
+        locator_thread_id = Some "thread-2";
+        locator_source_path = None;
+        locator_entry_id = Some "entry";
+        locator_line = None;
+        entry_id = None;
+        line = None;
+        mode = Some "window";
+        around = None;
+        cursor = None;
+      }
+  with
   | Error "read_thread threadID must match locator.threadID" -> ()
   | Error message -> fail "read identity" message
-  | Ok _ -> fail "read identity" "expected error")
+  | Ok _ -> fail "read identity" "expected error"
 
 let test_cursor_validation () =
-  let invalid_request = read_request ~mode:"full" ~cursor:"not-a-cursor" "thread-1" in
-  let invalid = Threads.plan_read ~id:invalid_request.thread_id invalid_request catalog in
+  let invalid_request =
+    read_request ~mode:"full" ~cursor:"not-a-cursor" "thread-1"
+  in
+  let invalid =
+    Threads.plan_read ~id:invalid_request.thread_id invalid_request catalog
+  in
   assert_bool "invalid cursor fails" (not invalid.ok);
-  assert_bool "invalid cursor explains failure" (contains invalid.text "cursor is invalid");
+  assert_bool "invalid cursor explains failure"
+    (contains invalid.text "cursor is invalid");
   let wrong_request =
-    read_request ~mode:"full" ~cursor:(Threads.encode_cursor "other-thread" 5) "thread-1"
+    read_request ~mode:"full"
+      ~cursor:(Threads.encode_cursor "other-thread" 5)
+      "thread-1"
   in
-  let wrong = Threads.plan_read ~id:wrong_request.thread_id wrong_request catalog in
+  let wrong =
+    Threads.plan_read ~id:wrong_request.thread_id wrong_request catalog
+  in
   assert_bool "wrong-thread cursor fails" (not wrong.ok);
-  assert_bool "wrong-thread cursor explains failure" (contains wrong.text "other-thread");
+  assert_bool "wrong-thread cursor explains failure"
+    (contains wrong.text "other-thread");
   let negative_request =
-    read_request ~mode:"full" ~cursor:(Threads.encode_cursor "thread-1" (-1)) "thread-1"
+    read_request ~mode:"full"
+      ~cursor:(Threads.encode_cursor "thread-1" (-1))
+      "thread-1"
   in
-  let negative = Threads.plan_read ~id:negative_request.thread_id negative_request catalog in
+  let negative =
+    Threads.plan_read ~id:negative_request.thread_id negative_request catalog
+  in
   assert_bool "negative cursor fails" (not negative.ok);
-  assert_bool "negative cursor invalid" (contains negative.text "cursor is invalid");
+  assert_bool "negative cursor invalid"
+    (contains negative.text "cursor is invalid");
   let out_of_range_request =
-    read_request ~mode:"full" ~cursor:(Threads.encode_cursor "thread-1" 9999) "thread-1"
+    read_request ~mode:"full"
+      ~cursor:(Threads.encode_cursor "thread-1" 9999)
+      "thread-1"
   in
   let out_of_range =
-    Threads.plan_read ~id:out_of_range_request.thread_id out_of_range_request catalog
+    Threads.plan_read ~id:out_of_range_request.thread_id out_of_range_request
+      catalog
   in
   assert_bool "out-of-range cursor fails" (not out_of_range.ok);
   assert_bool "out-of-range cursor explains failure"

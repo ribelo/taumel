@@ -86,7 +86,8 @@ let test_lifecycle_and_editability () =
   ignore
     (expect_error "active content frozen"
        (Plan.update_task ~now:3 ~task_id:(List.hd active.tasks).task_id
-          (patch ~title:"rewrite" ()) (Some active)));
+          (patch ~title:"rewrite" ())
+          (Some active)));
   let blocked =
     expect_ok "blocked bypasses completion"
       (Plan.update_plan ~now:4 Plan.Blocked (Some active))
@@ -106,7 +107,8 @@ let test_lifecycle_and_editability () =
   ignore
     (expect_ok "draft edit"
        (Plan.update_task ~now:7 ~task_id:(List.hd drafted.tasks).task_id
-          (patch ~title:"rewritten" ()) (Some drafted)))
+          (patch ~title:"rewritten" ())
+          (Some drafted)))
 
 let test_user_task_protection () =
   let active = active_plan ~session:"user-protection" () in
@@ -114,16 +116,19 @@ let test_user_task_protection () =
   let in_progress =
     expect_ok "agent status user task while active"
       (Plan.update_task ~now:2 ~task_id:user_task.task_id
-         (patch ~status:Plan.In_progress ()) (Some active))
+         (patch ~status:Plan.In_progress ())
+         (Some active))
   in
   ignore
     (expect_error "agent cannot edit user title"
        (Plan.update_task ~now:3 ~task_id:user_task.task_id
-          (patch ~title:"changed" ()) (Some in_progress)));
+          (patch ~title:"changed" ())
+          (Some in_progress)));
   ignore
     (expect_error "agent cannot cancel user task"
        (Plan.update_task ~now:3 ~task_id:user_task.task_id
-          (patch ~status:Plan.Cancelled ()) (Some in_progress)));
+          (patch ~status:Plan.Cancelled ())
+          (Some in_progress)));
   let draft =
     expect_ok "user draft"
       (Plan.apply_command ~session_id:"user-protection" ~now:4 "draft"
@@ -133,11 +138,13 @@ let test_user_task_protection () =
   ignore
     (expect_error "user status agent edit only active"
        (Plan.update_task ~now:5 ~task_id:user_task.task_id
-          (patch ~status:Plan.Completed ()) (Some draft)));
+          (patch ~status:Plan.Completed ())
+          (Some draft)));
   ignore
     (expect_ok "user edit unrestricted"
        (Plan.user_update_task ~now:5 ~task_id:user_task.task_id
-          (patch ~title:"user rewrite" ~status:Plan.Cancelled ()) (Some draft)))
+          (patch ~title:"user rewrite" ~status:Plan.Cancelled ())
+          (Some draft)))
 
 let test_dependencies_and_atomic_batch () =
   let plan =
@@ -154,7 +161,8 @@ let test_dependencies_and_atomic_batch () =
   let blocker_error =
     expect_error "unfinished dependency"
       (Plan.update_task ~now:2 ~task_id:b.task_id
-         (patch ~status:Plan.In_progress ()) (Some plan))
+         (patch ~status:Plan.In_progress ())
+         (Some plan))
   in
   assert_bool "blocker id" (contains blocker_error "task-a");
   assert_bool "blocker title" (contains blocker_error "\"title\":\"A\"");
@@ -164,17 +172,20 @@ let test_dependencies_and_atomic_batch () =
   let plan =
     expect_ok "complete dependency"
       (Plan.update_task ~now:3 ~task_id:a.task_id
-         (patch ~status:Plan.Completed ()) (Some plan))
+         (patch ~status:Plan.Completed ())
+         (Some plan))
   in
   let plan =
     expect_ok "start dependent"
       (Plan.update_task ~now:4 ~task_id:b.task_id
-         (patch ~status:Plan.In_progress ()) (Some plan))
+         (patch ~status:Plan.In_progress ())
+         (Some plan))
   in
   ignore
     (expect_ok "no WIP limit"
        (Plan.update_task ~now:5 ~task_id:a.task_id
-          (patch ~status:Plan.In_progress ()) (Some plan)));
+          (patch ~status:Plan.In_progress ())
+          (Some plan)));
   ignore
     (expect_error "later same-call reference rejected atomically"
        (Plan.create_tasks ~session_id:"atomic-later" ~now:1
@@ -186,7 +197,8 @@ let test_dependencies_and_atomic_batch () =
   let cyclic =
     expect_error "cycle"
       (Plan.update_task ~now:5 ~task_id:a.task_id
-         (patch ~depends_on:[ "task-b" ] ()) (Some plan))
+         (patch ~depends_on:[ "task-b" ] ())
+         (Some plan))
   in
   assert_bool "cycle named" (contains cyclic "cycle")
 
@@ -206,7 +218,8 @@ let test_completion_gate () =
   let cancelled =
     expect_ok "cancel agent task"
       (Plan.update_task ~now:3 ~task_id:task.task_id
-         (patch ~status:Plan.Cancelled ()) (Some active))
+         (patch ~status:Plan.Cancelled ())
+         (Some active))
   in
   let complete =
     expect_ok "cancelled passes"
@@ -225,7 +238,8 @@ let complete_plan ?(session = "extension") () =
   let finished =
     expect_ok "finish sole task"
       (Plan.update_task ~now:3 ~task_id:task.task_id
-         (patch ~status:Plan.Completed ()) (Some active))
+         (patch ~status:Plan.Completed ())
+         (Some active))
   in
   expect_ok "complete plan"
     (Plan.update_plan ~now:4 Plan.Complete (Some finished))
@@ -256,13 +270,15 @@ let test_extension_unlock () =
   let content_error =
     expect_error "complete content frozen"
       (Plan.update_task ~now:6 ~task_id:(List.hd unlocked.tasks).task_id
-         (patch ~title:"rewrite" ()) (Some unlocked))
+         (patch ~title:"rewrite" ())
+         (Some unlocked))
   in
   assert_bool "content stays draft-only" (contains content_error "draft");
   let status_error =
     expect_error "complete status frozen"
       (Plan.update_task ~now:6 ~task_id:(List.hd unlocked.tasks).task_id
-         (patch ~status:Plan.Pending ()) (Some unlocked))
+         (patch ~status:Plan.Pending ())
+         (Some unlocked))
   in
   assert_bool "status stays active/draft-only"
     (contains status_error "active or draft");
@@ -282,11 +298,13 @@ let test_extension_unlock () =
     let finished =
       List.fold_left
         (fun plan (task : Plan.task) ->
-          if task.status = Plan.Completed || task.status = Plan.Cancelled then plan
+          if task.status = Plan.Completed || task.status = Plan.Cancelled then
+            plan
           else
             expect_ok "finish for reopen"
               (Plan.update_task ~now:7 ~task_id:task.task_id
-                 (patch ~status:Plan.Completed ()) (Some plan)))
+                 (patch ~status:Plan.Completed ())
+                 (Some plan)))
         extended extended.tasks
     in
     expect_ok "complete again"
@@ -347,10 +365,10 @@ let test_extension_unlock () =
     expect_ok "block sticky"
       (Plan.update_plan ~now:9 Plan.Blocked
          (Some
-            (expect_ok "resume to block"
-               (Plan.apply_command ~session_id:"extension-text" ~now:9 "resume"
-                  paused_append.plan)
-             |> fun result -> Option.get result.plan)))
+            ( expect_ok "resume to block"
+                (Plan.apply_command ~session_id:"extension-text" ~now:9 "resume"
+                   paused_append.plan)
+            |> fun result -> Option.get result.plan )))
   in
   let blocked_append =
     expect_ok "append while blocked"
@@ -360,7 +378,8 @@ let test_extension_unlock () =
   assert_bool "blocked stays blocked"
     ((Option.get blocked_append.plan).status = Plan.Blocked);
   let unlocked_fork =
-    unlock_complete (complete_plan ~session:"extension-fork" ())
+    unlock_complete
+      (complete_plan ~session:"extension-fork" ())
       ~session:"extension-fork" ~now:5
   in
   let forked = Plan.fork ~session_id:"forked-extension" unlocked_fork in
@@ -380,8 +399,8 @@ let test_commands () =
     (plan.status = Plan.Active && plan.time_limit_seconds = Some 1800);
   let appended =
     expect_ok "reserved word remains text"
-      (Plan.apply_command ~session_id:"commands" ~now:2
-         "pause deployment" (Some plan))
+      (Plan.apply_command ~session_id:"commands" ~now:2 "pause deployment"
+         (Some plan))
   in
   assert_bool "appended in active"
     (List.length (Option.get appended.plan).tasks = 2);
@@ -459,7 +478,8 @@ let test_continuation () =
       assert_bool "runnable mark"
         (contains continuation.content "\"readiness\":\"runnable\"");
       assert_bool "telemetry" (contains continuation.content "0 tokens");
-      assert_bool "no objective" (not (contains continuation.content "objective")));
+      assert_bool "no objective"
+        (not (contains continuation.content "objective")));
   List.iter
     (fun blocked ->
       match Plan.plan_continuation ~initial:false blocked with
@@ -473,10 +493,10 @@ let test_continuation () =
       facts ~compacting:true plan;
       facts ~latest_assistant_stop_reason:"error" plan;
       facts
-        (expect_ok "pause continuation plan"
-           (Plan.apply_command ~session_id:"continuation" ~now:2 "pause"
-              (Some plan))
-        |> fun result -> Option.get result.plan);
+        ( expect_ok "pause continuation plan"
+            (Plan.apply_command ~session_id:"continuation" ~now:2 "pause"
+               (Some plan))
+        |> fun result -> Option.get result.plan );
     ];
   assert_bool "child cap"
     (match
@@ -484,7 +504,8 @@ let test_continuation () =
          ~automation:Plan.Automation_enabled ~iterations:25 ~max_iterations:25
          ~latest_assistant_stop_reason:None
      with
-    | Plan.Child_finalize { child_reason = Some "plan_continuation_limit"; _ } ->
+    | Plan.Child_finalize { child_reason = Some "plan_continuation_limit"; _ }
+      ->
         true
     | _ -> false)
 
@@ -527,7 +548,8 @@ let persisted_task ?(status = "pending") ?(depends_on = []) id title =
       ("description", Shared.Null);
       ("status", Shared.String status);
       ( "depends_on",
-        Shared.Array (List.map (fun dependency -> Shared.String dependency) depends_on) );
+        Shared.Array
+          (List.map (fun dependency -> Shared.String dependency) depends_on) );
       ("origin", Shared.String "agent");
     ]
 
@@ -540,7 +562,8 @@ let test_persistence () =
   assert_bool "round trip" (decoded.tasks = plan.tasks);
   assert_bool "round trip locked" (not decoded.extension_unlocked);
   let unlocked_complete =
-    unlock_complete (complete_plan ~session:"codec-unlock" ())
+    unlock_complete
+      (complete_plan ~session:"codec-unlock" ())
       ~session:"codec-unlock" ~now:5
   in
   let decoded_unlocked =
@@ -564,8 +587,7 @@ let test_persistence () =
   assert_bool "absent field locks" (not decoded_absent.extension_unlocked);
   ignore
     (expect_error "empty tasks"
-       (Plan.codec.decode
-          (persisted_plan ~tasks:(Some (Shared.Array [])) ())));
+       (Plan.codec.decode (persisted_plan ~tasks:(Some (Shared.Array [])) ())));
   ignore
     (expect_error "negative tokens"
        (Plan.codec.decode (persisted_plan ~tokens:(-1.) ())));
@@ -610,7 +632,8 @@ let test_persistence () =
              ())));
   let legacy =
     match persisted_plan () with
-    | Shared.Object fields -> Shared.Object (("tokenBudget", Shared.Number 1.) :: fields)
+    | Shared.Object fields ->
+        Shared.Object (("tokenBudget", Shared.Number 1.) :: fields)
     | _ -> assert false
   in
   ignore (expect_error "legacy field" (Plan.codec.decode legacy))
@@ -671,18 +694,21 @@ let test_accounting_and_time () =
     Plan.account_turn_end ~pending_terminal_status:Plan.Pending_complete
       ~session_id:"accounting" ~now:3 ~active_time_seconds:4
       ~last_accounting_key:None
-      ~latest_usage:(Plan.latest_assistant_usage branch) (Some plan)
+      ~latest_usage:(Plan.latest_assistant_usage branch)
+      (Some plan)
   in
   let final = Option.get accounted.plan in
   assert_bool "terminal accounted first"
-    (final.status = Plan.Complete && final.tokens_used = 22
-   && final.time_used_seconds = 4);
+    (final.status = Plan.Complete
+    && final.tokens_used = 22
+    && final.time_used_seconds = 4);
   assert_bool "terminal remains locked until natural turn-end"
     (not final.extension_unlocked);
   let unlocked_turn =
-    Plan.account_turn_end ~session_id:"accounting" ~now:4
-      ~active_time_seconds:4 ~last_accounting_key:accounted.accounting_key
-      ~latest_usage:(Plan.latest_assistant_usage branch) accounted.plan
+    Plan.account_turn_end ~session_id:"accounting" ~now:4 ~active_time_seconds:4
+      ~last_accounting_key:accounted.accounting_key
+      ~latest_usage:(Plan.latest_assistant_usage branch)
+      accounted.plan
   in
   let unlocked = Option.get unlocked_turn.plan in
   assert_bool "natural turn-end unlocks complete" unlocked.extension_unlocked;
@@ -690,9 +716,10 @@ let test_accounting_and_time () =
   assert_bool "unlock keeps accounting key"
     (unlocked_turn.accounting_key = accounted.accounting_key);
   let duplicate =
-    Plan.account_turn_end ~session_id:"accounting" ~now:5
-      ~active_time_seconds:4 ~last_accounting_key:unlocked_turn.accounting_key
-      ~latest_usage:(Plan.latest_assistant_usage branch) unlocked_turn.plan
+    Plan.account_turn_end ~session_id:"accounting" ~now:5 ~active_time_seconds:4
+      ~last_accounting_key:unlocked_turn.accounting_key
+      ~latest_usage:(Plan.latest_assistant_usage branch)
+      unlocked_turn.plan
   in
   assert_bool "exactly once after unlock" (not duplicate.changed)
 
@@ -705,7 +732,8 @@ let test_task_manager_commands () =
   let plan = Option.get created.plan in
   assert_bool "modal birth is draft" (plan.status = Plan.Draft);
   assert_bool "modal task is user" ((List.hd plan.tasks).origin = Plan.User);
-  assert_bool "modal add has no agent submit" (created.submit_user_message = None);
+  assert_bool "modal add has no agent submit"
+    (created.submit_user_message = None);
   let task_id = (List.hd plan.tasks).task_id in
   let edited =
     expect_ok "task edit"
@@ -718,21 +746,24 @@ let test_task_manager_commands () =
   let advanced =
     expect_ok "task advance"
       (Plan.apply_command ~session_id:"tasks-modal" ~now:3
-         ("task advance " ^ task_id) edited.plan)
+         ("task advance " ^ task_id)
+         edited.plan)
   in
   assert_bool "advanced in progress"
     ((List.hd (Option.get advanced.plan).tasks).status = Plan.In_progress);
   let completed =
     expect_ok "task advance complete"
       (Plan.apply_command ~session_id:"tasks-modal" ~now:4
-         ("task advance " ^ task_id) advanced.plan)
+         ("task advance " ^ task_id)
+         advanced.plan)
   in
   assert_bool "advanced completed"
     ((List.hd (Option.get completed.plan).tasks).status = Plan.Completed);
   ignore
     (expect_error "terminal advance rejected"
        (Plan.apply_command ~session_id:"tasks-modal" ~now:5
-          ("task advance " ^ task_id) completed.plan));
+          ("task advance " ^ task_id)
+          completed.plan));
   let second =
     expect_ok "task add second"
       (Plan.apply_command ~session_id:"tasks-modal" ~now:6
@@ -742,14 +773,16 @@ let test_task_manager_commands () =
   let cancelled =
     expect_ok "task cancel"
       (Plan.apply_command ~session_id:"tasks-modal" ~now:7
-         ("task cancel " ^ second_id) second.plan)
+         ("task cancel " ^ second_id)
+         second.plan)
   in
   assert_bool "cancelled"
     ((List.nth (Option.get cancelled.plan).tasks 1).status = Plan.Cancelled);
   let deleted =
     expect_ok "task delete"
       (Plan.apply_command ~session_id:"tasks-modal" ~now:8
-         ("task delete " ^ second_id) cancelled.plan)
+         ("task delete " ^ second_id)
+         cancelled.plan)
   in
   assert_bool "deleted leaves one"
     (List.length (Option.get deleted.plan).tasks = 1);

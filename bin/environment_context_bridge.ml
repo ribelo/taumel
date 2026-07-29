@@ -3,8 +3,11 @@ open App_state
 open Runtime_access
 
 let custom_type = "taumel.environment_context"
+
 let delivered_session_id : string option ref = ref None
-let delivered_snapshot : Taumel.Environment_context.snapshot option ref = ref None
+
+let delivered_snapshot : Taumel.Environment_context.snapshot option ref =
+  ref None
 
 let shell_from_facts facts =
   match Tool_contracts.EnvironmentContextFacts.get_shell facts with
@@ -21,7 +24,8 @@ let reset_on_session_change session_id =
 
 let plan_context ctx facts =
   let facts =
-    decode_ojs_contract Tool_contracts.EnvironmentContextFacts.t_of_js (ojs_of_js facts)
+    decode_ojs_contract Tool_contracts.EnvironmentContextFacts.t_of_js
+      (ojs_of_js facts)
   in
   Session_sync.require_session_from_host ~scope:"environment context" ctx;
   let session_id = Session_store.session_id_from_ctx ctx in
@@ -41,7 +45,7 @@ let plan_context ctx facts =
       Boundary_contracts.EnvironmentContextNone.create ()
       |> Tool_contracts.EnvironmentContextNone.t_to_js |> inject
   | Some context ->
-      Boundary_contracts.EnvironmentContextInject.create
-        ~customType:custom_type
-        ~content:(Taumel.Environment_context.serialize context) ~display:false ()
+      Boundary_contracts.EnvironmentContextInject.create ~customType:custom_type
+        ~content:(Taumel.Environment_context.serialize context)
+        ~display:false ()
       |> Tool_contracts.EnvironmentContextInject.t_to_js |> inject

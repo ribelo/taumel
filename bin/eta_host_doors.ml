@@ -8,22 +8,27 @@ module Exit = Eta.Exit
 module Runtime = Eta_jsoo.Runtime
 
 let inject = Unsafe.inject
+
 let js_string value = inject (Js.string value)
+
 let js_bool value = inject (Js.bool value)
 
 let is_js_function =
   let predicate = Unsafe.js_expr "((value) => typeof value === 'function')" in
-  fun value -> Js.to_bool (Unsafe.coerce (Unsafe.fun_call predicate [| value |]))
+  fun value ->
+    Js.to_bool (Unsafe.coerce (Unsafe.fun_call predicate [| value |]))
 
 let is_js_string =
   let predicate = Unsafe.js_expr "((value) => typeof value === 'string')" in
-  fun value -> Js.to_bool (Unsafe.coerce (Unsafe.fun_call predicate [| value |]))
+  fun value ->
+    Js.to_bool (Unsafe.coerce (Unsafe.fun_call predicate [| value |]))
 
 let is_nullish =
   let predicate =
     Unsafe.js_expr "((value) => value === null || value === undefined)"
   in
-  fun value -> Js.to_bool (Unsafe.coerce (Unsafe.fun_call predicate [| value |]))
+  fun value ->
+    Js.to_bool (Unsafe.coerce (Unsafe.fun_call predicate [| value |]))
 
 let string_value value =
   if is_js_string value then Some (Js.to_string (Unsafe.coerce value)) else None
@@ -95,9 +100,7 @@ let await_abort_signal signal =
       else if not (is_js_function (Unsafe.get signal "addEventListener")) then
         invalid_arg "Eta host door await_abort_signal: expected AbortSignal"
       else
-        let wrapped =
-          Js.wrap_callback (fun _event -> resume (Exit.Ok ()))
-        in
+        let wrapped = Js.wrap_callback (fun _event -> resume (Exit.Ok ())) in
         let options = Unsafe.obj [| ("once", js_bool true) |] in
         ignore
           (Unsafe.meth_call signal "addEventListener"

@@ -5,8 +5,11 @@
 open Agents
 
 let storage_schema_version = 1
+
 let parent_snapshot_custom_type = "taumel.agents.v4"
+
 let presence_marker_custom_type = "taumel.agents.presence"
+
 let registry_file_name = "registry.json"
 
 type presence_marker = {
@@ -20,14 +23,12 @@ type loaded = {
   ensure_marker : bool;
 }
 
-type load_result =
-  | Empty
-  | Loaded of loaded
-  | Fail_closed of string
+type load_result = Empty | Loaded of loaded | Fail_closed of string
 
 type registry_backend = {
   read_registry : owner_session_id:string -> (string option, string) result;
-  write_registry : owner_session_id:string -> contents:string -> (unit, string) result;
+  write_registry :
+    owner_session_id:string -> contents:string -> (unit, string) result;
 }
 
 type memory_backend = {
@@ -38,7 +39,8 @@ type memory_backend = {
 let encode_presence_marker (marker : presence_marker) =
   Shared.Object
     [
-      ("storage_schema_version", Shared.Number (float_of_int marker.storage_schema_version));
+      ( "storage_schema_version",
+        Shared.Number (float_of_int marker.storage_schema_version) );
       ("owner_session_id", Shared.String marker.owner_session_id);
     ]
 
@@ -59,15 +61,11 @@ let decode_presence_marker = function
       if marker_schema_version <> storage_schema_version then
         Error
           ("unsupported agent presence marker schema version: "
-         ^ string_of_int marker_schema_version)
+          ^ string_of_int marker_schema_version)
       else if String.trim owner_session_id = "" then
         Error "agent presence marker owner_session_id is required"
       else
-        Ok
-          {
-            storage_schema_version = marker_schema_version;
-            owner_session_id;
-          }
+        Ok { storage_schema_version = marker_schema_version; owner_session_id }
   | _ -> Error "agent presence marker must be an object"
 
 let presence_marker ~owner_session_id =
@@ -81,18 +79,20 @@ let presence_marker_owner = function
   | _ -> None
 
 let owner_registry_path ~private_root ~owner_component =
-  Agent_workspace.join_path [ private_root; owner_component; registry_file_name ]
+  Agent_workspace.join_path
+    [ private_root; owner_component; registry_file_name ]
 
 let encode_registry_envelope ~owner_session_id state =
   Shared.Object
     [
-      ("storage_schema_version", Shared.Number (float_of_int storage_schema_version));
+      ( "storage_schema_version",
+        Shared.Number (float_of_int storage_schema_version) );
       ("owner_session_id", Shared.String owner_session_id);
       ("registry", Agents_codec.encode state);
     ]
 
 let decode_registry_envelope ~owner_session_id = function
-  | Shared.Object fields ->
+  | Shared.Object fields -> (
       let ( let* ) = Result.bind in
       let* () =
         Shared.json_exact_fields ""
@@ -109,12 +109,12 @@ let decode_registry_envelope ~owner_session_id = function
         if envelope_schema <> storage_schema_version then
           Error
             ("unsupported agent registry storage schema version: "
-           ^ string_of_int envelope_schema)
+            ^ string_of_int envelope_schema)
         else if envelope_owner <> owner_session_id then
           Error "agent registry is owned by another session"
         else Ok ()
       in
-      (match List.assoc_opt "registry" fields with
+      match List.assoc_opt "registry" fields with
       | None -> Error "agent registry envelope is missing registry"
       | Some registry_json -> (
           match Agents_codec.decode registry_json with
@@ -136,7 +136,8 @@ let decode_registry_envelope ~owner_session_id = function
 (* Reconstruct the deterministic issued-handle sequence used before issued_ids
    were persisted: for each kind, cursor 0..count-1 at
    (stable_hash(owner:prefix) + cursor * 65537) mod namespace. *)
-let reconstruct_issued_ids ~owner_session_id ~generic ~finder ~oracle retained_ids =
+let reconstruct_issued_ids ~owner_session_id ~generic ~finder ~oracle
+    retained_ids =
   let issued_for kind count =
     let prefix = kind_prefix kind in
     let offset =
@@ -155,7 +156,8 @@ let reconstruct_issued_ids ~owner_session_id ~generic ~finder ~oracle retained_i
   if generic < 0 || finder < 0 || oracle < 0 then
     Error "issued_identity_counts must be non-negative"
   else if
-    generic > nano_id_namespace_size || finder > nano_id_namespace_size
+    generic > nano_id_namespace_size
+    || finder > nano_id_namespace_size
     || oracle > nano_id_namespace_size
   then Error "issued_identity_counts exceed handle namespace"
   else
@@ -165,18 +167,17 @@ let reconstruct_issued_ids ~owner_session_id ~generic ~finder ~oracle retained_i
     in
     if List.for_all (fun id -> List.mem id issued_ids) retained_ids then
       Ok issued_ids
-    else
-      Error "retained agent handle is absent from reconstructed issued set"
+    else Error "retained agent handle is absent from reconstructed issued set"
 
 let retained_identity_ids = function
   | Shared.Array values ->
       values
       |> List.filter_map (function
-           | Shared.Object fields -> (
-               match List.assoc_opt "agent_id" fields with
-               | Some (Shared.String value) -> Some value
-               | _ -> None)
-           | _ -> None)
+        | Shared.Object fields -> (
+            match List.assoc_opt "agent_id" fields with
+            | Some (Shared.String value) -> Some value
+            | _ -> None)
+        | _ -> None)
   | _ -> []
 
 let rewrite_v4_issued_ids ~owner_session_id identities count_fields =
@@ -224,7 +225,8 @@ let decode_parent_snapshot_without_issued_ids ~owner_session_id ~expected_fields
     | Some (Shared.Object count_fields) ->
         let* () =
           Shared.json_exact_fields "issued_identity_counts"
-            [ "agent"; "finder"; "oracle" ] count_fields
+            [ "agent"; "finder"; "oracle" ]
+            count_fields
         in
         rewrite_v4_issued_ids ~owner_session_id identities count_fields
     | Some _ -> Error "issued_identity_counts must be an object"
@@ -265,7 +267,8 @@ let decode_parent_snapshot_for_bootstrap ~owner_session_id = function
   | Shared.Object fields -> (
       match Shared.json_required_int "" fields "version" with
       | Error _ as error -> error
-      | Ok version when version = schema_version -> Agents_codec.decode (Shared.Object fields)
+      | Ok version when version = schema_version ->
+          Agents_codec.decode (Shared.Object fields)
       | Ok 4 -> decode_v4_parent_snapshot ~owner_session_id fields
       | Ok 5 -> decode_v5_parent_snapshot ~owner_session_id fields
       | Ok version ->
@@ -287,7 +290,7 @@ let ensure_same_owner ~owner_session_id state =
   else Error "agent registry is owned by another session"
 
 let parent_snapshot_owner = function
-  | Shared.Object fields ->
+  | Shared.Object fields -> (
       let owners_from_array owner_field = function
         | Shared.Array values ->
             List.filter_map
@@ -311,7 +314,9 @@ let parent_snapshot_owner = function
         | Some pending -> owners_from_array "owner_session_id" pending
         | None -> []
       in
-      (match List.sort_uniq String.compare (identity_owners @ cleanup_owners) with
+      match
+        List.sort_uniq String.compare (identity_owners @ cleanup_owners)
+      with
       | [ owner ] -> Some owner
       | _ -> None)
   | _ -> None
@@ -319,8 +324,7 @@ let parent_snapshot_owner = function
 let select_bootstrap_snapshot ~owner_session_id snapshots =
   let rec loop = function
     | [] -> Ok None
-    | json :: rest
-      when parent_snapshot_owner json = Some owner_session_id -> (
+    | json :: rest when parent_snapshot_owner json = Some owner_session_id -> (
         match decode_parent_snapshot_for_bootstrap ~owner_session_id json with
         | Error message -> Error message
         | Ok state -> (
@@ -331,7 +335,9 @@ let select_bootstrap_snapshot ~owner_session_id snapshots =
         match parent_snapshot_owner json with
         | Some _foreign_owner -> loop rest
         | None -> (
-            match decode_parent_snapshot_for_bootstrap ~owner_session_id json with
+            match
+              decode_parent_snapshot_for_bootstrap ~owner_session_id json
+            with
             | Error message -> Error message
             | Ok state -> (
                 match ensure_same_owner ~owner_session_id state with
@@ -348,26 +354,24 @@ let decode_sidecar ~owner_session_id raw =
       | Error message -> Error ("agent registry is malformed: " ^ message)
       | Ok state -> Ok state)
 
-let resolve_without_marker ~allow_parent_snapshots ~owner_session_id ~sidecar_raw
-    ~parent_snapshots =
+let resolve_without_marker ~allow_parent_snapshots ~owner_session_id
+    ~sidecar_raw ~parent_snapshots =
   match sidecar_raw with
   | Some raw -> (
       match decode_sidecar ~owner_session_id raw with
       | Error message -> Fail_closed message
       | Ok state ->
-          Loaded
-            { state; materialize_current = false; ensure_marker = true })
+          Loaded { state; materialize_current = false; ensure_marker = true })
   | None when not allow_parent_snapshots -> Empty
   | None -> (
       match select_bootstrap_snapshot ~owner_session_id parent_snapshots with
       | Error message -> Fail_closed message
       | Ok None -> Empty
       | Ok (Some state) ->
-          Loaded
-            { state; materialize_current = true; ensure_marker = true })
+          Loaded { state; materialize_current = true; ensure_marker = true })
 
-let resolve_load ~allow_parent_snapshots ~owner_session_id ~marker
-    ~sidecar_raw ~parent_snapshots =
+let resolve_load ~allow_parent_snapshots ~owner_session_id ~marker ~sidecar_raw
+    ~parent_snapshots =
   match marker with
   | None ->
       resolve_without_marker ~allow_parent_snapshots ~owner_session_id
@@ -386,12 +390,13 @@ let resolve_load ~allow_parent_snapshots ~owner_session_id ~marker
             when marker.storage_schema_version <> storage_schema_version ->
               Fail_closed
                 ("unsupported agent presence marker schema version: "
-               ^ string_of_int marker.storage_schema_version)
+                ^ string_of_int marker.storage_schema_version)
           | Ok _ -> (
               match sidecar_raw with
               | None ->
                   Fail_closed
-                    "agent registry presence marker exists without current registry"
+                    "agent registry presence marker exists without current \
+                     registry"
               | Some raw -> (
                   match decode_sidecar ~owner_session_id raw with
                   | Error message -> Fail_closed message

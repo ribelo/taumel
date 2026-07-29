@@ -43,8 +43,7 @@ let test_execution_plan () =
   let plan =
     match
       Command.plan_execution ~controller_session_id:"controller"
-        ~ralph_start_denial:None "ralph"
-        "start --max 2 --reflect 1 ship it"
+        ~ralph_start_denial:None "ralph" "start --max 2 --reflect 1 ship it"
     with
     | Ok (Command.Command_child_session plan) -> plan
     | Ok Command.Command_direct -> fail "command child" "expected child session"
@@ -111,16 +110,18 @@ let test_child_dispatch_plan () =
       assert_equal "dispatch prompt" "continue" plan.prompt
   | Command.Command_return -> fail "dispatch ready" "expected dispatch");
   let cancelled =
-    Option.map (fun bridge -> { bridge with Child.cancelled = true }) bridge_ready
+    Option.map
+      (fun bridge -> { bridge with Child.cancelled = true })
+      bridge_ready
   in
-  (match
-     Command.plan_child_dispatch
-       { object_like = true; ok = true; details }
-       cancelled
-   with
+  match
+    Command.plan_child_dispatch
+      { object_like = true; ok = true; details }
+      cancelled
+  with
   | Command.Command_return -> ()
   | Command.Command_child_dispatch _ ->
-      fail "dispatch cancelled" "expected return")
+      fail "dispatch cancelled" "expected return"
 
 let () =
   test_execution_plan ();

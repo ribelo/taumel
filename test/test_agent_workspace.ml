@@ -37,8 +37,7 @@ let test_isolation_modes_and_defaults () =
   (match Agent_workspace.isolation_of_string "none" with
   | Ok Agent_workspace.None -> ()
   | _ -> failwith "none parse");
-  assert_error "unknown isolation"
-    (Agent_workspace.isolation_of_string "tmp")
+  assert_error "unknown isolation" (Agent_workspace.isolation_of_string "tmp")
 
 let test_shared_binding_effective_workspace () =
   let binding = Agent_workspace.shared ~source_root:"/tmp/project" in
@@ -46,7 +45,9 @@ let test_shared_binding_effective_workspace () =
     (Agent_workspace.isolation_to_string
        (Agent_workspace.isolation_of_binding binding))
     "none";
-  assert_equal "source" (Agent_workspace.source_workspace binding) "/tmp/project";
+  assert_equal "source"
+    (Agent_workspace.source_workspace binding)
+    "/tmp/project";
   match Agent_workspace.effective_workspace binding with
   | Ok path -> assert_equal "effective shared" path "/tmp/project"
   | Error message -> failwith message
@@ -68,12 +69,11 @@ let test_worktree_binding_derives_path_and_branch () =
       assert_equal "project name" derived.project_name "project";
       assert_equal "repository identity" derived.main_repository_id "repo-abc";
       assert_equal "worktree path" derived.worktree_path
-        ("/home/u/.pi/agent/taumel/worktrees/project/"
-       ^ derived.owner_component ^ "/agent-ab12");
+        ("/home/u/.pi/agent/taumel/worktrees/project/" ^ derived.owner_component
+       ^ "/agent-ab12");
       assert_true "owner component is filesystem-safe"
         (String.for_all
-           (function
-             | 'a' .. 'z' | '0' .. '9' | '-' | '_' -> true | _ -> false)
+           (function 'a' .. 'z' | '0' .. '9' | '-' | '_' -> true | _ -> false)
            derived.owner_component);
       assert_true "owner component is non-empty"
         (String.length derived.owner_component >= 12);

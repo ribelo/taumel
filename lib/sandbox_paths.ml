@@ -7,9 +7,7 @@ let normalize_path path =
   let rec loop acc = function
     | [] -> List.rev acc
     | ".." :: rest -> (
-        match acc with
-        | [] -> loop acc rest
-        | _ :: acc -> loop acc rest)
+        match acc with [] -> loop acc rest | _ :: acc -> loop acc rest)
     | part :: rest -> loop (part :: acc) rest
   in
   let parts = loop [] (split_path path) in
@@ -19,9 +17,9 @@ let path_within ~root path =
   let root = normalize_path root in
   let path = normalize_path path in
   path = root
-  || (String.length path > String.length root
+  || String.length path > String.length root
      && String.sub path 0 (String.length root) = root
-     && path.[String.length root] = '/')
+     && path.[String.length root] = '/'
 
 let protected_workspace_dir_names = [ ".git"; ".hg"; ".svn" ]
 
@@ -36,6 +34,6 @@ let path_starts_with_dir ~dir path =
   let dir = normalize_path dir in
   let path = normalize_path path in
   path = dir
-  || (String.length path > String.length dir
+  || String.length path > String.length dir
      && String.sub path 0 (String.length dir) = dir
-     && path.[String.length dir] = '/')
+     && path.[String.length dir] = '/'

@@ -11,7 +11,16 @@ let unique_strings values =
   loop [] [] values
 
 let system_ro_path_candidates =
-  [ "/nix"; "/bin"; "/sbin"; "/etc"; "/run/current-system"; "/lib64"; "/usr"; "/lib" ]
+  [
+    "/nix";
+    "/bin";
+    "/sbin";
+    "/etc";
+    "/run/current-system";
+    "/lib64";
+    "/usr";
+    "/lib";
+  ]
 
 let temp_root_candidates ~tmp_dir ~env_tmp_dir =
   unique_strings [ tmp_dir; "/tmp"; env_tmp_dir ]
@@ -24,7 +33,7 @@ let protected_workspace_listing_paths listing =
     | Some children ->
         children
         |> List.filter (fun child ->
-               not (listing.metadata_dir = ".git" && child = "hooks"))
+            not (listing.metadata_dir = ".git" && child = "hooks"))
         |> List.map (join_path listing.path)
 
 let protected_workspace_children host =
@@ -49,7 +58,8 @@ let plan_exec_invocation config host ~shell ~shell_args ~force_unsandboxed =
   then Ok { command = shell; args = shell_args; sandboxed = false }
   else if host.platform <> "linux" then
     Error
-      "sandboxed execution is only supported on Linux; use /permissions to change sandbox mode"
+      "sandboxed execution is only supported on Linux; use /permissions to \
+       change sandbox mode"
   else
     let args =
       [
@@ -79,15 +89,14 @@ let plan_exec_invocation config host ~shell ~shell_args ~force_unsandboxed =
       | Workspace_write ->
           args
           @ List.concat_map (bind_pair "--bind") host.workspace_roots
-          @ List.concat_map
-              (bind_pair "--ro-bind")
+          @ List.concat_map (bind_pair "--ro-bind")
               (protected_workspace_children host)
       | Read_only ->
           args
           @ (host.workspace_roots
             |> List.filter (fun root ->
-                   host.home_mount = ""
-                   || not (strict_child_path ~root:host.home_mount root))
+                host.home_mount = ""
+                || not (strict_child_path ~root:host.home_mount root))
             |> List.concat_map (bind_pair "--ro-bind"))
       | Danger_full_access -> args @ bind_pair "--bind" "/"
     in
@@ -97,7 +106,12 @@ let plan_exec_invocation config host ~shell ~shell_args ~force_unsandboxed =
       | Network_disabled -> args @ [ "--unshare-net" ]
     in
     let args = args @ [ "--dev"; "/dev"; "--proc"; "/proc" ] in
-    Ok { command = "bwrap"; args = args @ ("--" :: shell :: shell_args); sandboxed = true }
+    Ok
+      {
+        command = "bwrap";
+        args = args @ ("--" :: shell :: shell_args);
+        sandboxed = true;
+      }
 
 let exec_shell_args ~cmd = [ "-c"; cmd ]
 
@@ -107,13 +121,13 @@ let plan_exec_host_call config host (options : exec_host_options)
   plan_exec_invocation config host ~shell:options.shell ~shell_args
     ~force_unsandboxed
   |> Result.map (fun invocation ->
-         {
-           invocation;
-           (* Run against the authorization path so a workdir reached through a
+      {
+        invocation;
+        (* Run against the authorization path so a workdir reached through a
               symlink is usable even when only workspace roots are mounted. *)
-           cwd = host.authorization_cwd;
-           timeout_ms = options.timeout_ms;
-           yield_time_ms = options.yield_time_ms;
-           tty = options.tty;
-           escalated = force_unsandboxed;
-         })
+        cwd = host.authorization_cwd;
+        timeout_ms = options.timeout_ms;
+        yield_time_ms = options.yield_time_ms;
+        tty = options.tty;
+        escalated = force_unsandboxed;
+      })

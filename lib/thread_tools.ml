@@ -11,11 +11,21 @@ let prepare_query_request ?limit ?scope ?(include_tools = true) query =
       let scope = Option.value scope ~default:"current_workspace" in
       if String.length query > 500 then
         Error "query_threads query must be at most 500 characters"
-      else if Option.fold ~none:false ~some:(fun value -> value < 1 || value > 50) limit then
-        Error "query_threads limit must be between 1 and 50"
+      else if
+        Option.fold ~none:false
+          ~some:(fun value -> value < 1 || value > 50)
+          limit
+      then Error "query_threads limit must be between 1 and 50"
       else if scope <> "current_workspace" && scope <> "all" then
         Error "query_threads scope must be current_workspace or all"
-      else Ok { query; limit = Option.value limit ~default:10; scope; include_tools }
+      else
+        Ok
+          {
+            query;
+            limit = Option.value limit ~default:10;
+            scope;
+            include_tools;
+          }
 
 let read_mode_of_string = function
   | None | Some "overview" -> Ok Overview
@@ -30,7 +40,9 @@ let read_mode_to_string = function
 
 let prepare_read_request (input : read_request_input) =
   let conflicting_thread_ids =
-    match (trim_option input.thread_id, trim_option input.locator_thread_id) with
+    match
+      (trim_option input.thread_id, trim_option input.locator_thread_id)
+    with
     | Some thread_id, Some locator_thread_id -> thread_id <> locator_thread_id
     | _ -> false
   in
@@ -41,52 +53,55 @@ let prepare_read_request (input : read_request_input) =
   in
   if conflicting_thread_ids then
     Error "read_thread threadID must match locator.threadID"
-  else match (thread_id, read_mode_of_string input.mode) with
-  | None, _ -> Error "read_thread requires threadID"
-  | _, Error message -> Error message
-  | Some _, Ok _
-    when Option.fold ~none:false ~some:(fun value -> value < 0 || value > 10)
-           input.around ->
-      Error "read_thread around must be between 0 and 10"
-  | Some _, Ok _
-    when Option.fold ~none:false ~some:(fun value -> value < 1) input.line
-         || Option.fold ~none:false ~some:(fun value -> value < 1)
-              input.locator_line ->
-      Error "read_thread line must be positive"
-  | Some thread_id, Ok mode ->
-      let around = Option.value input.around ~default:3 in
-      let locator =
-        match trim_option input.locator_thread_id with
-        | None -> None
-        | Some locator_thread_id ->
-            Some
-              {
-                locator_thread_id;
-                locator_source_path = trim_option input.locator_source_path;
-                locator_entry_id = trim_option input.locator_entry_id;
-                locator_line = input.locator_line;
-              }
-      in
-      let has_window_target =
-        Option.is_some locator
-        || Option.is_some (trim_option input.entry_id)
-        || Option.is_some input.line
-      in
-      if mode = Window && not has_window_target then
-        Error "read_thread window mode requires locator, entryID, or line"
-      else if mode <> Full && Option.is_some (trim_option input.cursor) then
-        Error "read_thread cursor is only valid with mode=full"
-      else
-        Ok
-          {
-            thread_id;
-            locator;
-            entry_id = trim_option input.entry_id;
-            line = input.line;
-            mode;
-            around;
-            cursor = trim_option input.cursor;
-          }
+  else
+    match (thread_id, read_mode_of_string input.mode) with
+    | None, _ -> Error "read_thread requires threadID"
+    | _, Error message -> Error message
+    | Some _, Ok _
+      when Option.fold ~none:false
+             ~some:(fun value -> value < 0 || value > 10)
+             input.around ->
+        Error "read_thread around must be between 0 and 10"
+    | Some _, Ok _
+      when Option.fold ~none:false ~some:(fun value -> value < 1) input.line
+           || Option.fold ~none:false
+                ~some:(fun value -> value < 1)
+                input.locator_line ->
+        Error "read_thread line must be positive"
+    | Some thread_id, Ok mode ->
+        let around = Option.value input.around ~default:3 in
+        let locator =
+          match trim_option input.locator_thread_id with
+          | None -> None
+          | Some locator_thread_id ->
+              Some
+                {
+                  locator_thread_id;
+                  locator_source_path = trim_option input.locator_source_path;
+                  locator_entry_id = trim_option input.locator_entry_id;
+                  locator_line = input.locator_line;
+                }
+        in
+        let has_window_target =
+          Option.is_some locator
+          || Option.is_some (trim_option input.entry_id)
+          || Option.is_some input.line
+        in
+        if mode = Window && not has_window_target then
+          Error "read_thread window mode requires locator, entryID, or line"
+        else if mode <> Full && Option.is_some (trim_option input.cursor) then
+          Error "read_thread cursor is only valid with mode=full"
+        else
+          Ok
+            {
+              thread_id;
+              locator;
+              entry_id = trim_option input.entry_id;
+              line = input.line;
+              mode;
+              around;
+              cursor = trim_option input.cursor;
+            }
 
 let entry_is_toolish (entry : visible_entry) =
   match entry.kind with
@@ -103,7 +118,8 @@ let thread_in_scope ~workspace scope (thread : thread) =
   | Some cwd -> cwd = workspace
   | None -> (
       match thread.source_path with
-      | Some path when workspace <> "" -> String.starts_with ~prefix:workspace path
+      | Some path when workspace <> "" ->
+          String.starts_with ~prefix:workspace path
       | _ -> false)
 
 let locator_of_entry (thread : thread) (entry : visible_entry) =
@@ -125,11 +141,13 @@ let matching_line_fragment query text =
       let selected =
         indexed
         |> List.filter_map (fun (line_index, line) ->
-               if line_index >= start && line_index <= stop then Some line
-               else None)
+            if line_index >= start && line_index <= stop then Some line
+            else None)
       in
       let prefix = if start > 0 then [ "… omitted" ] else [] in
-      let suffix = if stop < List.length lines - 1 then [ "… omitted" ] else [] in
+      let suffix =
+        if stop < List.length lines - 1 then [ "… omitted" ] else []
+      in
       bounded_text ~max_lines:5 ~max_bytes:1024
         (String.concat "\n" (prefix @ selected @ suffix))
 
@@ -152,7 +170,9 @@ let hit_of_entry (thread : thread) query (entry : visible_entry) =
   {
     hit_locator = locator_of_entry thread entry;
     hit_kind = entry.kind;
-    hit_field = if entry_matches ~include_tools:true query entry then entry.kind else "metadata";
+    hit_field =
+      (if entry_matches ~include_tools:true query entry then entry.kind
+       else "metadata");
     hit_role = entry.role;
     hit_tool_name = entry.tool_name;
     hit_timestamp = entry.timestamp;
@@ -161,7 +181,9 @@ let hit_of_entry (thread : thread) query (entry : visible_entry) =
 
 let locator_text (locator : locator) =
   let optional name value =
-    match value with None -> [] | Some value -> [ (name, Shared.String value) ]
+    match value with
+    | None -> []
+    | Some value -> [ (name, Shared.String value) ]
   in
   let optional_line =
     match locator.locator_line with
@@ -172,7 +194,8 @@ let locator_text (locator : locator) =
     (Shared.Object
        ([ ("threadID", Shared.String locator.locator_thread_id) ]
        @ optional "sourcePath" locator.locator_source_path
-       @ optional "entryID" locator.locator_entry_id @ optional_line))
+       @ optional "entryID" locator.locator_entry_id
+       @ optional_line))
 
 let metadata_hits (thread : thread) query =
   let locator =
@@ -201,8 +224,7 @@ let metadata_hits (thread : thread) query =
         :: hits
     | _ -> hits
   in
-  []
-  |> add "id" (Some thread.id)
+  [] |> add "id" (Some thread.id)
   |> add "title" (Some thread.title)
   |> add "workspace" thread.workspace
   |> add "source_path" thread.source_path
@@ -250,12 +272,19 @@ let plan_query ~workspace (request : query_request) (catalog : catalog) =
     catalog.threads
     |> List.filter (thread_in_scope ~workspace request.scope)
     |> List.filter_map (fun thread ->
-           let hits = query_hits ~include_tools:request.include_tools request.query thread in
-           if hits = [] then None
-           else
-             let top_hits = List.take 3 hits in
-             Some (score_thread ~workspace request.query hits thread, thread, top_hits))
-    |> List.sort (fun (left_score, (left : thread), _) (right_score, (right : thread), _) ->
+        let hits =
+          query_hits ~include_tools:request.include_tools request.query thread
+        in
+        if hits = [] then None
+        else
+          let top_hits = List.take 3 hits in
+          Some
+            (score_thread ~workspace request.query hits thread, thread, top_hits))
+    |> List.sort
+         (fun
+           (left_score, (left : thread), _)
+           (right_score, (right : thread), _)
+         ->
            let by_score = compare right_score left_score in
            if by_score <> 0 then by_score else compare left.id right.id)
     |> List.take request.limit
@@ -269,38 +298,51 @@ let plan_query ~workspace (request : query_request) (catalog : catalog) =
     | threads ->
         threads
         |> List.mapi (fun index thread ->
-               let hits =
-                 thread.hits
-                 |> List.map (fun hit ->
-                        Printf.sprintf "- %s%s: %s\n  Locator: %s" hit.hit_kind
-                          (match hit.hit_tool_name with
-                          | None -> ""
-                          | Some tool -> "/" ^ tool)
-                          hit.hit_snippet (locator_text hit.hit_locator))
-                 |> String.concat "\n"
-               in
-               Printf.sprintf "[%d] %s\nID: %s\nHits: %d%s%s" (index + 1)
-                 thread.title thread.id (List.length thread.hits)
-                 (match thread.workspace with
-                 | None -> ""
-                 | Some workspace -> "\nWorkspace: " ^ workspace)
-                 (if hits = "" then "" else "\n" ^ hits))
+            let hits =
+              thread.hits
+              |> List.map (fun hit ->
+                  Printf.sprintf "- %s%s: %s\n  Locator: %s" hit.hit_kind
+                    (match hit.hit_tool_name with
+                    | None -> ""
+                    | Some tool -> "/" ^ tool)
+                    hit.hit_snippet
+                    (locator_text hit.hit_locator))
+              |> String.concat "\n"
+            in
+            Printf.sprintf "[%d] %s\nID: %s\nHits: %d%s%s" (index + 1)
+              thread.title thread.id (List.length thread.hits)
+              (match thread.workspace with
+              | None -> ""
+              | Some workspace -> "\nWorkspace: " ^ workspace)
+              (if hits = "" then "" else "\n" ^ hits))
         |> String.concat "\n\n"
   in
-  { text; ok = true; query = request.query; scope = request.scope; threads; diagnostics = catalog.diagnostics }
+  {
+    text;
+    ok = true;
+    query = request.query;
+    scope = request.scope;
+    threads;
+    diagnostics = catalog.diagnostics;
+  }
 
 let read ~id (catalog : catalog) =
-  match List.filter (fun (thread : thread) -> thread.id = id) catalog.threads with
+  match
+    List.filter (fun (thread : thread) -> thread.id = id) catalog.threads
+  with
   | [ thread ] -> Found thread
   | _ :: _ -> Ambiguous [ id ]
   | [] -> (
       let matches =
-        List.filter (fun (thread : thread) -> String.starts_with ~prefix:id thread.id) catalog.threads
+        List.filter
+          (fun (thread : thread) -> String.starts_with ~prefix:id thread.id)
+          catalog.threads
       in
       match matches with
       | [] -> Not_found
       | [ thread ] -> Found thread
-      | threads -> Ambiguous (List.map (fun (thread : thread) -> thread.id) threads))
+      | threads ->
+          Ambiguous (List.map (fun (thread : thread) -> thread.id) threads))
 
 let entry_label (entry : visible_entry) =
   let who =
@@ -310,7 +352,9 @@ let entry_label (entry : visible_entry) =
     | None, Some tool -> entry.kind ^ "/" ^ tool
     | None, None -> entry.kind
   in
-  match entry.timestamp with None -> who | Some timestamp -> timestamp ^ " " ^ who
+  match entry.timestamp with
+  | None -> who
+  | Some timestamp -> timestamp ^ " " ^ who
 
 let entry_line ?(target = false) (entry : visible_entry) =
   let prefix = if target then ">> " else "- " in
@@ -329,16 +373,22 @@ let overview_text (thread : thread) entries =
     [
       "Thread: " ^ thread.title;
       "ID: " ^ thread.id;
-      (match thread.workspace with None -> "" | Some workspace -> "Workspace: " ^ workspace);
-      (match thread.started_at with None -> "" | Some value -> "Started: " ^ value);
-      (match thread.updated_at with None -> "" | Some value -> "Updated: " ^ value);
+      (match thread.workspace with
+      | None -> ""
+      | Some workspace -> "Workspace: " ^ workspace);
+      (match thread.started_at with
+      | None -> ""
+      | Some value -> "Started: " ^ value);
+      (match thread.updated_at with
+      | None -> ""
+      | Some value -> "Updated: " ^ value);
     ]
     |> List.filter (( <> ) "")
   in
   String.concat "\n"
     (facts @ summaries
     @ [ "Recent visible entries:" ]
-    @ (if entries = [] then [ "(none)" ] else List.map entry_line entries))
+    @ if entries = [] then [ "(none)" ] else List.map entry_line entries)
 
 let cursor_prefix = "thread-v2:"
 
@@ -389,7 +439,8 @@ let decode_cursor cursor =
   if not (String.starts_with ~prefix:cursor_prefix cursor) then None
   else
     let rest =
-      String.sub cursor (String.length cursor_prefix)
+      String.sub cursor
+        (String.length cursor_prefix)
         (String.length cursor - String.length cursor_prefix)
     in
     match hex_decode rest with
@@ -397,7 +448,9 @@ let decode_cursor cursor =
     | Some payload -> (
         match String.split_on_char '\000' payload with
         | [ thread_id; index; checksum ] -> (
-            let expected = Digest.string (thread_id ^ "\000" ^ index) |> Digest.to_hex in
+            let expected =
+              Digest.string (thread_id ^ "\000" ^ index) |> Digest.to_hex
+            in
             if checksum <> expected then None
             else
               match int_of_string_opt index with
@@ -431,14 +484,16 @@ let find_entry_index request (thread : thread) =
     | None -> Option.bind locator (fun locator -> locator.locator_line)
   in
   match target_entry_id with
-  | Some entry_id -> (
+  | Some entry_id ->
       List.find_index
         (fun (entry : visible_entry) -> entry.entry_id = Some entry_id)
-        thread.entries)
+        thread.entries
   | None -> (
       match target_line with
       | Some line ->
-          List.find_index (fun (entry : visible_entry) -> entry.line = Some line) thread.entries
+          List.find_index
+            (fun (entry : visible_entry) -> entry.line = Some line)
+            thread.entries
       | None -> None)
 
 let plan_read ~id (request : read_request) (catalog : catalog) =
@@ -458,7 +513,8 @@ let plan_read ~id (request : read_request) (catalog : catalog) =
       }
   | Ambiguous ids ->
       {
-        text = "Thread ID \"" ^ id ^ "\" is ambiguous:\n" ^ String.concat "\n" ids;
+        text =
+          "Thread ID \"" ^ id ^ "\" is ambiguous:\n" ^ String.concat "\n" ids;
         ok = false;
         thread = None;
         entries = [];
@@ -505,19 +561,21 @@ let plan_read ~id (request : read_request) (catalog : catalog) =
               }
           | Some index ->
               let start = max 0 (index - request.around) in
-              let stop = min (List.length thread.entries - 1) (index + request.around) in
+              let stop =
+                min (List.length thread.entries - 1) (index + request.around)
+              in
               let entries =
                 thread.entries
                 |> List.mapi (fun i entry -> (i, entry))
                 |> List.filter_map (fun (i, entry) ->
-                       if i >= start && i <= stop then Some entry else None)
+                    if i >= start && i <= stop then Some entry else None)
               in
               let text =
                 Printf.sprintf "Thread: %s\nID: %s\nWindow around entry %d:\n%s"
                   thread.title thread.id (index + 1)
                   (entries
                   |> List.mapi (fun offset entry ->
-                         entry_line ~target:(start + offset = index) entry)
+                      entry_line ~target:(start + offset = index) entry)
                   |> String.concat "\n")
               in
               {
@@ -532,13 +590,13 @@ let plan_read ~id (request : read_request) (catalog : catalog) =
                 cursor = None;
                 truncation = [];
               })
-      | Full ->
+      | Full -> (
           let start =
             match request.cursor with
             | None -> Ok 0
             | Some cursor -> cursor_start thread cursor
           in
-          (match start with
+          match start with
           | Error message ->
               {
                 text = message;
@@ -558,20 +616,22 @@ let plan_read ~id (request : read_request) (catalog : catalog) =
                 thread.entries
                 |> List.mapi (fun i entry -> (i, entry))
                 |> List.filter_map (fun (i, entry) ->
-                       if i >= start && i < start + max_entries then Some entry
-                       else None)
+                    if i >= start && i < start + max_entries then Some entry
+                    else None)
               in
               let next_index = start + List.length entries in
               let has_more = next_index < List.length thread.entries in
               let cursor =
-                if has_more then Some (encode_cursor thread.id next_index) else None
+                if has_more then Some (encode_cursor thread.id next_index)
+                else None
               in
               let text =
                 Printf.sprintf
                   "Thread: %s\nID: %s\nTranscript entries %d-%d of %d:\n%s%s"
                   thread.title thread.id
                   (if entries = [] then 0 else start + 1)
-                  next_index (List.length thread.entries)
+                  next_index
+                  (List.length thread.entries)
                   (if entries = [] then "(none)"
                    else entries |> List.map entry_line |> String.concat "\n")
                   (match cursor with
@@ -602,7 +662,8 @@ let current_source_json ~cwd ~session_id ~branch ~entries =
     [
       ("kind", Shared.String "current");
       ("cwd", Shared.String cwd);
-      ("sessionId", Shared.String (if session_id = "" then "current" else session_id));
+      ( "sessionId",
+        Shared.String (if session_id = "" then "current" else session_id) );
       ("branch", branch);
       ("entries", entries);
     ]
@@ -612,11 +673,12 @@ let find ~workspace ~query threads =
   match prepare_query_request ~scope:"all" query with
   | Error _ -> []
   | Ok request ->
-      plan_query ~workspace request catalog
-      |> fun result ->
+      plan_query ~workspace request catalog |> fun result ->
       result.threads
       |> List.filter_map (fun summary ->
-             List.find_opt (fun (thread : thread) -> thread.id = summary.id) threads)
+          List.find_opt
+            (fun (thread : thread) -> thread.id = summary.id)
+            threads)
 
 let transcript ?(plan_only = false) (thread : thread) =
   let summaries =
@@ -631,7 +693,8 @@ let transcript ?(plan_only = false) (thread : thread) =
     if plan_only then []
     else
       List.map
-        (fun (message : message) -> Printf.sprintf "%s: %s" message.role message.content)
+        (fun (message : message) ->
+          Printf.sprintf "%s: %s" message.role message.content)
         thread.messages
   in
   String.concat "\n" (summaries @ messages)

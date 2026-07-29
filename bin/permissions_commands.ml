@@ -19,7 +19,8 @@ let apply_state (next : Taumel.Permissions.state) =
 
 let js_menu_option (option : Taumel.Permissions.menu_option) =
   Tool_contracts.PermissionsMenuOption.create ~label:option.label
-    ~value:option.value ~description:option.description ~selected:option.selected ()
+    ~value:option.value ~description:option.description
+    ~selected:option.selected ()
 
 let menu_option_from_js obj =
   {
@@ -32,7 +33,8 @@ let menu_option_from_js obj =
 let prompt_with ~title ~options permissions =
   Boundary_contracts.PermissionsPrompt.create ~title
     ~message:(Taumel.Permissions.summary permissions)
-    ~options:(List.map js_menu_option options) ()
+    ~options:(List.map js_menu_option options)
+    ()
   |> Tool_contracts.PermissionsPrompt.t_to_js |> inject
 
 let prompt_result permissions =
@@ -48,7 +50,8 @@ let network_prompt_result permissions =
 let build_permissions () =
   let workspace_roots = if state.cwd = "" then [] else [ state.cwd ] in
   Taumel.Permissions.create ~workspace_roots ~network_mode:!active_network_mode
-    ~no_sandbox:!active_no_sandbox ~isolated_child:!active_isolated_child (active_profile ())
+    ~no_sandbox:!active_no_sandbox ~isolated_child:!active_isolated_child
+    (active_profile ())
 
 let command_result message =
   Boundary_contracts.PermissionsCommandResult.create ~ok:true ~message ()
@@ -68,16 +71,17 @@ let apply_and_persist permissions update ctx =
 let run ~parser ~on_empty args ctx =
   match build_permissions () with
   | Error message -> error_obj message
-  | Ok permissions ->
+  | Ok permissions -> (
       if String.trim args = "" then on_empty permissions
-      else (
+      else
         match parser args with
         | Error message -> error_obj message
         | Ok None -> command_result (Taumel.Permissions.summary permissions)
         | Ok (Some update) -> apply_and_persist permissions update ctx)
 
 let handle args ctx =
-  run ~parser:Taumel.Permissions.parse_permissions ~on_empty:prompt_result args ctx
+  run ~parser:Taumel.Permissions.parse_permissions ~on_empty:prompt_result args
+    ctx
 
 let handle_network args ctx =
   run ~parser:Taumel.Permissions.parse_network ~on_empty:network_prompt_result
@@ -93,16 +97,18 @@ let finish_prompt_impl prompt selection ctx =
         ~message:"Permissions unchanged."
         ~details:
           (Ts2ocaml.unknown_of_js
-             (ojs_of_js (Unsafe.obj [| ("cancelled", js_bool true) |]))) ()
+             (ojs_of_js (Unsafe.obj [| ("cancelled", js_bool true) |])))
+        ()
       |> Tool_contracts.PermissionsCommandResult.t_to_js |> inject
   | "unavailable" ->
       Boundary_contracts.PermissionsCommandResult.create ~ok:true
         ~message:(get_string prompt "message")
         ~details:
           (Ts2ocaml.unknown_of_js
-             (ojs_of_js (Unsafe.obj [| ("unavailable", js_bool true) |]))) ()
+             (ojs_of_js (Unsafe.obj [| ("unavailable", js_bool true) |])))
+        ()
       |> Tool_contracts.PermissionsCommandResult.t_to_js |> inject
-  | _ ->
+  | _ -> (
       let options =
         get_object_array prompt "options" |> List.map menu_option_from_js
       in
@@ -113,11 +119,15 @@ let finish_prompt_impl prompt selection ctx =
             ~message:"Invalid permissions selection."
             ~error:"Invalid permissions selection." ()
           |> Tool_contracts.PermissionsCommandResult.t_to_js |> inject
-      | Some value -> apply_menu_value value ctx
+      | Some value -> apply_menu_value value ctx)
 
 let plan_prompt raw_facts =
-  let facts = decode_ojs_contract Tool_contracts.PermissionsPromptFacts.t_of_js (ojs_of_js raw_facts) in
-  let prompt = Tool_contracts.PermissionsPromptFacts.get_prompt facts
+  let facts =
+    decode_ojs_contract Tool_contracts.PermissionsPromptFacts.t_of_js
+      (ojs_of_js raw_facts)
+  in
+  let prompt =
+    Tool_contracts.PermissionsPromptFacts.get_prompt facts
     |> Tool_contracts.PermissionsPrompt.t_to_js |> js_of_ojs
   in
   let options =
@@ -125,15 +135,18 @@ let plan_prompt raw_facts =
   in
   match
     Taumel.Permissions.prompt_selection_plan
-      ~ui_available:(Tool_contracts.PermissionsPromptFacts.get_uiAvailable facts)
-      ~title:(get_string prompt "title") options
+      ~ui_available:
+        (Tool_contracts.PermissionsPromptFacts.get_uiAvailable facts)
+      ~title:(get_string prompt "title")
+      options
   with
   | Taumel.Permissions.Prompt_unavailable ->
       let result =
         finish_prompt_impl prompt
           (Unsafe.obj [| ("status", js_string "unavailable") |])
           (Unsafe.obj [||])
-        |> ojs_of_js |> decode_ojs_contract Tool_contracts.PermissionsCommandResult.t_of_js
+        |> ojs_of_js
+        |> decode_ojs_contract Tool_contracts.PermissionsCommandResult.t_of_js
       in
       Boundary_contracts.PermissionsPromptResult.create ~result ()
       |> Tool_contracts.PermissionsPromptResult.t_to_js |> inject
@@ -143,14 +156,20 @@ let plan_prompt raw_facts =
       |> Tool_contracts.PermissionsPromptSelect.t_to_js |> inject
 
 let finish_prompt raw_facts =
-  let facts = decode_ojs_contract Tool_contracts.PermissionsPromptFinishFacts.t_of_js (ojs_of_js raw_facts) in
-  let prompt = Tool_contracts.PermissionsPromptFinishFacts.get_prompt facts
+  let facts =
+    decode_ojs_contract Tool_contracts.PermissionsPromptFinishFacts.t_of_js
+      (ojs_of_js raw_facts)
+  in
+  let prompt =
+    Tool_contracts.PermissionsPromptFinishFacts.get_prompt facts
     |> Tool_contracts.PermissionsPrompt.t_to_js |> js_of_ojs
   in
-  let selection = Tool_contracts.PermissionsPromptFinishFacts.get_selection facts
+  let selection =
+    Tool_contracts.PermissionsPromptFinishFacts.get_selection facts
     |> Tool_contracts.PermissionsSelection.t_to_js |> js_of_ojs
   in
-  let ctx = Tool_contracts.PermissionsPromptFinishFacts.get_ctx facts
+  let ctx =
+    Tool_contracts.PermissionsPromptFinishFacts.get_ctx facts
     |> Ts2ocaml.unknown_to_js |> js_of_ojs
   in
   finish_prompt_impl prompt selection ctx

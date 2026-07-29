@@ -4,11 +4,15 @@ open Runtime_access
 
 let js_context_overrides overrides =
   List.map
-    (fun (name, value) -> Tool_contracts.CommandContextOverride.create ~name ~value ())
+    (fun (name, value) ->
+      Tool_contracts.CommandContextOverride.create ~name ~value ())
     overrides
 
 let plan_execution raw_facts =
-  let facts = decode_ojs_contract Tool_contracts.CommandExecutionFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts =
+    decode_ojs_contract Tool_contracts.CommandExecutionFacts.t_of_js
+      (ojs_of_js raw_facts)
+  in
   let name = Tool_contracts.CommandExecutionFacts.get_name facts in
   let args = Tool_contracts.CommandExecutionFacts.get_args facts in
   let ctx =
@@ -19,7 +23,10 @@ let plan_execution raw_facts =
   Session_sync.require_session_from_host ~scope:"command plan" ctx;
   let ralph_start_denial =
     match name with
-    | "ralph" -> (match authorize_ralph_start () with Ok () -> None | Error message -> Some message)
+    | "ralph" -> (
+        match authorize_ralph_start () with
+        | Ok () -> None
+        | Error message -> Some message)
     | _ -> None
   in
   match
@@ -35,14 +42,19 @@ let plan_execution raw_facts =
       |> Tool_contracts.CommandExecutionDirect.t_to_js |> inject
   | Ok (Command_child_session plan) ->
       Boundary_contracts.CommandExecutionChild.create
-        ~metadata:(decode_ojs_contract Tool_contracts.ChildSessionMetadata.t_of_js (ojs_of_js (json_to_js plan.metadata)))
+        ~metadata:
+          (decode_ojs_contract Tool_contracts.ChildSessionMetadata.t_of_js
+             (ojs_of_js (json_to_js plan.metadata)))
         ~contextOverrides:(js_context_overrides plan.context_overrides)
         ~activeToolsMode:plan.active_tools_mode
         ~childSessionContextKey:plan.child_session_context_key ()
       |> Tool_contracts.CommandExecutionChild.t_to_js |> inject
 
 let plan_child_session raw_facts =
-  let facts = decode_ojs_contract Tool_contracts.CommandChildSessionFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts =
+    decode_ojs_contract Tool_contracts.CommandChildSessionFacts.t_of_js
+      (ojs_of_js raw_facts)
+  in
   let metadata =
     Tool_contracts.CommandChildSessionFacts.get_metadata facts
     |> Tool_contracts.ChildSessionMetadata.t_to_js |> js_of_ojs
@@ -55,17 +67,27 @@ let plan_child_session raw_facts =
   let metadata =
     Taumel.Child_session.enrich_command_child_metadata
       ~parent_profile:(active_profile ())
-      ~current_active_tools_available:(Tool_contracts.CommandChildSessionFacts.get_currentActiveToolsAvailable facts)
-      ~current_active_tools:(Tool_contracts.CommandChildSessionFacts.get_currentActiveTools facts)
-      ~active_tools_mode:(Tool_contracts.CommandChildSessionFacts.get_activeToolsMode facts)
+      ~current_active_tools_available:
+        (Tool_contracts.CommandChildSessionFacts.get_currentActiveToolsAvailable
+           facts)
+      ~current_active_tools:
+        (Tool_contracts.CommandChildSessionFacts.get_currentActiveTools facts)
+      ~active_tools_mode:
+        (Tool_contracts.CommandChildSessionFacts.get_activeToolsMode facts)
       metadata
   in
   Tool_contracts.CommandChildSessionPlan.create
-    ~metadata:(decode_ojs_contract Tool_contracts.ChildSessionMetadata.t_of_js (ojs_of_js (json_to_js metadata))) ()
+    ~metadata:
+      (decode_ojs_contract Tool_contracts.ChildSessionMetadata.t_of_js
+         (ojs_of_js (json_to_js metadata)))
+    ()
   |> Tool_contracts.CommandChildSessionPlan.t_to_js |> inject
 
 let plan_child_dispatch raw_facts =
-  let facts = decode_ojs_contract Tool_contracts.CommandChildDispatchFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts =
+    decode_ojs_contract Tool_contracts.CommandChildDispatchFacts.t_of_js
+      (ojs_of_js raw_facts)
+  in
   let result =
     Tool_contracts.CommandChildDispatchFacts.get_result facts
     |> Tool_contracts.BridgeCommandResult.t_to_js |> js_of_ojs
@@ -80,7 +102,10 @@ let plan_child_dispatch raw_facts =
   in
   let return_result result =
     Boundary_contracts.CommandChildReturn.create
-      ~result:(decode_ojs_contract Tool_contracts.BridgeCommandResult.t_of_js (ojs_of_js result)) ()
+      ~result:
+        (decode_ojs_contract Tool_contracts.BridgeCommandResult.t_of_js
+           (ojs_of_js result))
+      ()
     |> Tool_contracts.CommandChildReturn.t_to_js |> inject
   in
   let details =
@@ -105,16 +130,21 @@ let plan_child_dispatch raw_facts =
   | Command_return -> return_result result_with_child
   | Command_child_dispatch plan ->
       let bridgeUpdate =
-        Tool_contracts.CommandBridgeUpdate.create ~action:plan.bridge_update_action
-          ~key:plan.bridge_update_key ()
+        Tool_contracts.CommandBridgeUpdate.create
+          ~action:plan.bridge_update_action ~key:plan.bridge_update_key ()
       in
       Boundary_contracts.CommandChildDispatch.create
-        ~result:(decode_ojs_contract Tool_contracts.BridgeCommandResult.t_of_js (ojs_of_js result_with_child))
+        ~result:
+          (decode_ojs_contract Tool_contracts.BridgeCommandResult.t_of_js
+             (ojs_of_js result_with_child))
         ~bridgeUpdate ~prompt:plan.prompt ()
       |> Tool_contracts.CommandChildDispatch.t_to_js |> inject
 
 let finish_child_dispatch raw_facts =
-  let facts = decode_ojs_contract Tool_contracts.CommandChildDispatchFinishFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts =
+    decode_ojs_contract Tool_contracts.CommandChildDispatchFinishFacts.t_of_js
+      (ojs_of_js raw_facts)
+  in
   let result =
     Tool_contracts.CommandChildDispatchFinishFacts.get_result facts
     |> Tool_contracts.BridgeCommandResult.t_to_js |> js_of_ojs
@@ -123,15 +153,21 @@ let finish_child_dispatch raw_facts =
     Tool_contracts.CommandChildDispatchFinishFacts.get_dispatch facts
     |> Tool_contracts.ChildDispatchResult.t_to_js |> js_of_ojs
   in
-  command_result_with_details result (Unsafe.obj [| ("dispatch", inject dispatch) |])
-  |> ojs_of_js |> decode_ojs_contract Tool_contracts.BridgeCommandResult.t_of_js
+  command_result_with_details result
+    (Unsafe.obj [| ("dispatch", inject dispatch) |])
+  |> ojs_of_js
+  |> decode_ojs_contract Tool_contracts.BridgeCommandResult.t_of_js
   |> Tool_contracts.BridgeCommandResult.t_to_js |> inject
 
 let handle raw_facts =
-  let facts = decode_ojs_contract Tool_contracts.HandleCommandFacts.t_of_js (ojs_of_js raw_facts) in
+  let facts =
+    decode_ojs_contract Tool_contracts.HandleCommandFacts.t_of_js
+      (ojs_of_js raw_facts)
+  in
   let name = Tool_contracts.HandleCommandFacts.get_name facts in
   let args = Tool_contracts.HandleCommandFacts.get_args facts in
-  let ctx = Tool_contracts.HandleCommandFacts.get_ctx facts
+  let ctx =
+    Tool_contracts.HandleCommandFacts.get_ctx facts
     |> Ts2ocaml.unknown_to_js |> js_of_ojs
   in
   Session_sync.require_session_from_host ~scope:"command handle" ctx;

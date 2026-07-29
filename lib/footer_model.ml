@@ -1,7 +1,4 @@
-type git_delta = {
-  added : int;
-  removed : int;
-}
+type git_delta = { added : int; removed : int }
 
 type activity = {
   running_agents : int;
@@ -78,8 +75,7 @@ let format_token_window tokens =
     let value = float_of_int rounded /. 1000.0 in
     let rendered = Printf.sprintf "%.1fk" value in
     match String.ends_with ~suffix:".0k" rendered with
-    | true ->
-        String.sub rendered 0 (String.length rendered - 3) ^ "k"
+    | true -> String.sub rendered 0 (String.length rendered - 3) ^ "k"
     | false -> rendered
 
 let utf8_char_len byte =
@@ -150,9 +146,7 @@ let sandbox_dot_token = function
   | "read-only" -> "success"
   | _ -> "warning"
 
-let network_dot_token = function
-  | "enabled" -> "error"
-  | _ -> "success"
+let network_dot_token = function "enabled" -> "error" | _ -> "success"
 
 let approval_dot_token = function
   | "untrusted" -> "success"
@@ -188,24 +182,31 @@ let context_text percent window =
   else None
 
 let display_default ~default value =
-  match String.trim value with
-  | "" -> default
-  | value -> value
+  match String.trim value with "" -> default | value -> value
 
 let render_line ~colorize ~width snapshot =
   if width <= 0 then ""
   else
     let dot = "•" in
     let repo_name = basename snapshot.cwd in
-    let repo_line = if snapshot.git_repo && snapshot.branch <> "" then repo_name ^ ":" ^ snapshot.branch else repo_name in
+    let repo_line =
+      if snapshot.git_repo && snapshot.branch <> "" then
+        repo_name ^ ":" ^ snapshot.branch
+      else repo_name
+    in
     let git_suffix =
       if snapshot.git_error then " git error"
-      else if snapshot.git_repo then Printf.sprintf " Δ+%d/-%d" snapshot.git_delta.added snapshot.git_delta.removed
+      else if snapshot.git_repo then
+        Printf.sprintf " Δ+%d/-%d" snapshot.git_delta.added
+          snapshot.git_delta.removed
       else ""
     in
     let indicator = render_permission_indicator ~colorize snapshot in
     let repo_part = repo_line ^ git_suffix in
-    let left_raw = String.concat "" (List.init permission_indicator_width (fun _ -> dot)) ^ "  " ^ repo_part in
+    let left_raw =
+      String.concat "" (List.init permission_indicator_width (fun _ -> dot))
+      ^ "  " ^ repo_part
+    in
     let left_rendered =
       indicator ^ "  " ^ colorize "dim" repo_line
       ^ colorize (if snapshot.git_error then "error" else "dim") git_suffix
@@ -215,7 +216,8 @@ let render_line ~colorize ~width snapshot =
     let thinking = display_default ~default:"off" snapshot.thinking in
     let model_and_meta = model ^ " • " ^ thinking in
     let middle_raw =
-      if provider = "" then model_and_meta else provider ^ " • " ^ model_and_meta
+      if provider = "" then model_and_meta
+      else provider ^ " • " ^ model_and_meta
     in
     let cost = Printf.sprintf "$%.3f" snapshot.total_cost in
     let right_raw =
@@ -228,10 +230,13 @@ let render_line ~colorize ~width snapshot =
     let right_width = visible_width right_raw in
     let min_gap = 2 in
     let render_full rendered_middle left_gap right_gap =
-      left_rendered ^ String.make left_gap ' ' ^ colorize "dim" rendered_middle
+      left_rendered ^ String.make left_gap ' '
+      ^ colorize "dim" rendered_middle
       ^ String.make right_gap ' ' ^ colorize "dim" right_raw
     in
-    let full_required = left_width + middle_width + right_width + (min_gap * 2) in
+    let full_required =
+      left_width + middle_width + right_width + (min_gap * 2)
+    in
     if full_required <= width then
       let free = width - full_required in
       let left_gap = min_gap + (free / 2) in
@@ -242,16 +247,19 @@ let render_line ~colorize ~width snapshot =
       if middle_budget > 0 then
         let compact_middle = model_and_meta in
         let preferred_middle =
-          if provider <> "" && visible_width compact_middle <= middle_budget then
-            compact_middle
+          if provider <> "" && visible_width compact_middle <= middle_budget
+          then compact_middle
           else middle_raw
         in
         let rendered_middle =
-          if visible_width preferred_middle <= middle_budget then preferred_middle
+          if visible_width preferred_middle <= middle_budget then
+            preferred_middle
           else truncate_middle preferred_middle middle_budget
         in
         let consumed =
-          left_width + visible_width rendered_middle + right_width + (min_gap * 2)
+          left_width
+          + visible_width rendered_middle
+          + right_width + (min_gap * 2)
         in
         let free = max 0 (width - consumed) in
         let left_gap = min_gap + (free / 2) in
@@ -285,7 +293,8 @@ let plan_line_raw (plan : Plan.presentation) =
     match plan.time_limit_seconds with
     | None -> Plan.format_duration plan.time_used_seconds
     | Some limit ->
-        Plan.format_duration plan.time_used_seconds ^ "/" ^ Plan.format_duration limit
+        Plan.format_duration plan.time_used_seconds
+        ^ "/" ^ Plan.format_duration limit
   in
   let progress =
     Printf.sprintf "%d/%d tasks" plan.completed_tasks plan.total_tasks
@@ -302,7 +311,8 @@ let activity_has_content (activity : activity) =
 
 let agent_activity_label (activity : activity) =
   match (activity.running_agents, activity.single_agent_description) with
-  | 1, Some description when String.trim description <> "" -> String.trim description
+  | 1, Some description when String.trim description <> "" ->
+      String.trim description
   | n, _ when n > 0 -> Printf.sprintf "%d agents" n
   | _ -> ""
 
@@ -340,12 +350,13 @@ let render_activity_segment ~colorize ~width (activity : activity) =
             else
               fit
                 (remaining - sep - visible_width truncated)
-                ((truncated, token) :: acc) rest
+                ((truncated, token) :: acc)
+                rest
     in
     fit width [] parts
     |> List.mapi (fun index (label, token) ->
-           let colored = colorize token label in
-           if index = 0 then colored else colorize "dim" " · " ^ colored)
+        let colored = colorize token label in
+        if index = 0 then colored else colorize "dim" " · " ^ colored)
     |> String.concat ""
 
 let render_second_line ~colorize ~width snapshot =
@@ -368,8 +379,7 @@ let render_second_line ~colorize ~width snapshot =
         let activity_part =
           render_activity_segment ~colorize ~width:activity_budget activity
         in
-        Some
-          ( colorize "dim" plan_raw ^ colorize "dim" sep ^ activity_part )
+        Some (colorize "dim" plan_raw ^ colorize "dim" sep ^ activity_part)
 
 let render_lines ~colorize ~width snapshot =
   let primary = render_line ~colorize ~width snapshot in

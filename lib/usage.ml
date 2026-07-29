@@ -41,15 +41,9 @@ type openai_host_auth = {
   source : string;
 }
 
-type kimi_host_auth = {
-  provider_key : string;
-  source : string;
-}
+type kimi_host_auth = { provider_key : string; source : string }
 
-type token_state =
-  | Token_present
-  | Token_missing
-  | Token_error of string
+type token_state = Token_present | Token_missing | Token_error of string
 
 type token_lookup =
   | Token_lookup_present of string
@@ -79,10 +73,7 @@ type normalized_result = {
   account_id : string option;
 }
 
-type dual_result = {
-  openai : normalized_result;
-  kimi : normalized_result;
-}
+type dual_result = { openai : normalized_result; kimi : normalized_result }
 
 type token_state_fields = {
   token_state : string;
@@ -109,6 +100,7 @@ let openai_host_auth =
 let kimi_host_auth = { provider_key = "moonshot"; source = "moonshot" }
 
 let openai_usage_url = "https://chatgpt.com/backend-api/wham/usage"
+
 let kimi_usage_url = "https://api.kimi.com/coding/v1/usages"
 
 let openai_usage_request ?account_id ~token () =
@@ -144,6 +136,7 @@ let kimi_usage_request_error status =
   else "Kimi Code usage request failed: " ^ status
 
 let token_lookup_error_default = "OpenAI usage token lookup failed"
+
 let kimi_token_lookup_error_default = "Kimi Code usage token lookup failed"
 
 let token_lookup_from_host ?error token =
@@ -159,7 +152,8 @@ let token_state_of_lookup = function
   | Token_lookup_missing -> Token_missing
   | Token_lookup_error message ->
       Token_error
-        (Option.value (Shared.trim_non_empty message)
+        (Option.value
+           (Shared.trim_non_empty message)
            ~default:token_lookup_error_default)
 
 let token_state_from_fields ?(default_error = token_lookup_error_default) fields
@@ -167,7 +161,8 @@ let token_state_from_fields ?(default_error = token_lookup_error_default) fields
   match fields.token_state with
   | "error" ->
       Token_error
-        (Option.value (Shared.trim_non_empty fields.token_error)
+        (Option.value
+           (Shared.trim_non_empty fields.token_error)
            ~default:default_error)
   | "missing" -> Token_missing
   | _ when Shared.trim_non_empty fields.token = None -> Token_missing
@@ -181,7 +176,9 @@ let fetch_state_from_fields ?(default_error = "OpenAI usage fetch failed")
   | "http_error" -> Fetch_http_error fields.http_status
   | "error" ->
       Fetch_error
-        (Option.value (Shared.trim_non_empty fields.error) ~default:default_error)
+        (Option.value
+           (Shared.trim_non_empty fields.error)
+           ~default:default_error)
   | "ok" -> (
       match fields.payload with
       | Some payload -> Fetch_ok payload
@@ -215,8 +212,8 @@ let format_membership_level value =
           |> List.filter_map Shared.trim_non_empty
           |> List.map String.lowercase_ascii
           |> List.map (fun word ->
-                 String.uppercase_ascii (String.sub word 0 1)
-                 ^ String.sub word 1 (String.length word - 1))
+              String.uppercase_ascii (String.sub word 0 1)
+              ^ String.sub word 1 (String.length word - 1))
         in
         if words = [] then None else Some (String.concat " " words)
 
@@ -230,9 +227,9 @@ let percent_left_from_used_percent = function
 
 let percent_left_from_used_and_limit ~used ~limit =
   match (used, limit) with
-  | Some used, Some limit when Float.is_finite used && Float.is_finite limit && limit > 0.0
-    ->
-      let left = ((limit -. used) /. limit) *. 100.0 in
+  | Some used, Some limit
+    when Float.is_finite used && Float.is_finite limit && limit > 0.0 ->
+      let left = (limit -. used) /. limit *. 100.0 in
       Some (clamp_percent (int_of_float (Float.round left)))
   | _ -> None
 
@@ -242,7 +239,7 @@ let percent_left_from_remaining_and_limit ~remaining ~limit =
     when Float.is_finite remaining && Float.is_finite limit && limit > 0.0 ->
       Some
         (clamp_percent
-           (int_of_float (Float.round ((remaining /. limit) *. 100.0))))
+           (int_of_float (Float.round (remaining /. limit *. 100.0))))
   | _ -> None
 
 let label_for_window_seconds = function
@@ -309,11 +306,12 @@ let json_string_field name json =
 let first_json_string_field names json =
   names
   |> List.find_map (fun name ->
-         Option.bind (json_string_field name json) Shared.trim_non_empty)
+      Option.bind (json_string_field name json) Shared.trim_non_empty)
 
 let openai_credential_from_json json =
   {
-    account_id = first_json_string_field [ "accountId"; "account_id"; "id" ] json;
+    account_id =
+      first_json_string_field [ "accountId"; "account_id"; "id" ] json;
     account_label =
       first_json_string_field [ "accountLabel"; "account_label"; "email" ] json;
   }
@@ -377,9 +375,7 @@ let parse_iso_timestamp raw =
           let hour = int_of_string (String.sub normalized 11 2) in
           let minute = int_of_string (String.sub normalized 14 2) in
           let second = int_of_string (String.sub normalized 17 2) in
-          let is_leap y =
-            (y mod 4 = 0 && y mod 100 <> 0) || y mod 400 = 0
-          in
+          let is_leap y = (y mod 4 = 0 && y mod 100 <> 0) || y mod 400 = 0 in
           let days_before_month =
             [| 0; 31; 59; 90; 120; 151; 181; 212; 243; 273; 304; 334 |]
           in
@@ -458,10 +454,12 @@ let map_window fetched_at_ms window =
   let percent_left =
     percent_left_from_used_percent (json_number_field "used_percent" window)
   in
-  let burn_rate_per_hour, exhausts_at, exhausts_in_seconds, exhausts_before_reset
-      =
-    derive_burn ~fetched_at_ms ~percent_left ~duration_seconds:seconds ~resets_at
-      ~reset_after_seconds
+  let ( burn_rate_per_hour,
+        exhausts_at,
+        exhausts_in_seconds,
+        exhausts_before_reset ) =
+    derive_burn ~fetched_at_ms ~percent_left ~duration_seconds:seconds
+      ~resets_at ~reset_after_seconds
   in
   {
     label;
@@ -485,10 +483,12 @@ let sort_windows windows =
       | Some left, Some right -> compare left right)
     windows
 
-let make_window ~label ?duration_seconds ?percent_left ?resets_at
-    ~fetched_at_ms () =
-  let burn_rate_per_hour, exhausts_at, exhausts_in_seconds, exhausts_before_reset
-      =
+let make_window ~label ?duration_seconds ?percent_left ?resets_at ~fetched_at_ms
+    () =
+  let ( burn_rate_per_hour,
+        exhausts_at,
+        exhausts_in_seconds,
+        exhausts_before_reset ) =
     derive_burn ~fetched_at_ms ~percent_left ~duration_seconds ~resets_at
       ~reset_after_seconds:None
   in
@@ -517,9 +517,9 @@ let openai_payload_to_account ~fetched_at_ms ~api_key_present ?account_label
     | Some rate_limit ->
         [ "primary_window"; "secondary_window" ]
         |> List.filter_map (fun name ->
-               match json_object_field name rate_limit with
-               | Some window -> Some (map_window fetched_at_ms window)
-               | None -> None)
+            match json_object_field name rate_limit with
+            | Some window -> Some (map_window fetched_at_ms window)
+            | None -> None)
         |> sort_windows
   in
   let credits_balance =
@@ -589,42 +589,44 @@ let kimi_limits_windows ~fetched_at_ms payload =
   | Some items ->
       items
       |> List.mapi (fun index item ->
-             match item with
-             | Shared.Object _ as row ->
-                 let detail =
-                   match json_object_field "detail" row with
-                   | Some detail -> detail
-                   | None -> row
-                 in
-                 let window =
-                   match json_object_field "window" row with
-                   | Some value -> value
-                   | None -> Shared.Object []
-                 in
-                 let duration =
-                   match json_int_field "duration" window with
-                   | Some _ as value -> value
-                   | None -> json_int_field "duration" row
-                 in
-                 let time_unit =
-                   match json_string_field "timeUnit" window with
-                   | Some _ as value -> value
-                   | None -> json_string_field "timeUnit" row
-                 in
-                 let duration_seconds =
-                   duration_seconds_for_kimi_window ~duration ~time_unit
-                 in
-                 let default_label =
-                   match label_for_kimi_window ~duration ~time_unit with
-                   | Some label -> label
-                   | None ->
-                       match first_json_string_field [ "name"; "title"; "scope" ] row with
-                       | Some label -> label
-                       | None -> "Limit #" ^ string_of_int (index + 1)
-                 in
-                 kimi_quota_row ~fetched_at_ms ~default_label ?duration_seconds
-                   detail
-             | _ -> None)
+          match item with
+          | Shared.Object _ as row ->
+              let detail =
+                match json_object_field "detail" row with
+                | Some detail -> detail
+                | None -> row
+              in
+              let window =
+                match json_object_field "window" row with
+                | Some value -> value
+                | None -> Shared.Object []
+              in
+              let duration =
+                match json_int_field "duration" window with
+                | Some _ as value -> value
+                | None -> json_int_field "duration" row
+              in
+              let time_unit =
+                match json_string_field "timeUnit" window with
+                | Some _ as value -> value
+                | None -> json_string_field "timeUnit" row
+              in
+              let duration_seconds =
+                duration_seconds_for_kimi_window ~duration ~time_unit
+              in
+              let default_label =
+                match label_for_kimi_window ~duration ~time_unit with
+                | Some label -> label
+                | None -> (
+                    match
+                      first_json_string_field [ "name"; "title"; "scope" ] row
+                    with
+                    | Some label -> label
+                    | None -> "Limit #" ^ string_of_int (index + 1))
+              in
+              kimi_quota_row ~fetched_at_ms ~default_label ?duration_seconds
+                detail
+          | _ -> None)
       |> List.filter_map Fun.id
 
 let kimi_booster_metadata_and_window ~fetched_at_ms payload =
@@ -646,8 +648,7 @@ let kimi_booster_metadata_and_window ~fetched_at_ms payload =
                   (json_string_field "currency" money)
                   Shared.trim_non_empty
             | None ->
-                Option.bind
-                  (json_object_field "monthlyUsed" wallet)
+                Option.bind (json_object_field "monthlyUsed" wallet)
                   (fun money ->
                     Option.bind
                       (json_string_field "currency" money)
@@ -693,8 +694,8 @@ let kimi_booster_metadata_and_window ~fetched_at_ms payload =
                         percent_left_from_used_and_limit ~used ~limit:(Some cap)
                       in
                       Some
-                        (make_window ~label:"Monthly booster cap"
-                           ?percent_left ~fetched_at_ms ())
+                        (make_window ~label:"Monthly booster cap" ?percent_left
+                           ~fetched_at_ms ())
                   | _ -> None)
             else None
           in
@@ -713,9 +714,7 @@ let kimi_payload_to_account ~fetched_at_ms ~api_key_present ?error
               format_membership_level
         | None -> None)
     | None ->
-        Option.bind
-          (json_object_field "membership" payload)
-          (fun membership ->
+        Option.bind (json_object_field "membership" payload) (fun membership ->
             Option.bind
               (json_string_field "level" membership)
               format_membership_level)
@@ -738,10 +737,10 @@ let kimi_payload_to_account ~fetched_at_ms ~api_key_present ?error
     kimi_booster_metadata_and_window ~fetched_at_ms payload
   in
   let rate_limits =
-    (match plan_window with None -> [] | Some row -> [ row ])
+    ((match plan_window with None -> [] | Some row -> [ row ])
     @ limit_windows
     @ (match total_window with None -> [] | Some row -> [ row ])
-    @ (match booster_window with None -> [] | Some row -> [ row ])
+    @ match booster_window with None -> [] | Some row -> [ row ])
     |> sort_windows
   in
   {
@@ -818,19 +817,19 @@ let rate_limit_json row =
        ("isDepleted", Shared.Bool row.is_depleted);
      ]
     @ option_field "durationSeconds" row.duration_seconds (fun value ->
-          Shared.Number (float_of_int value))
+        Shared.Number (float_of_int value))
     @ option_field "percentLeft" row.percent_left (fun value ->
-          Shared.Number (float_of_int value))
+        Shared.Number (float_of_int value))
     @ option_field "resetsAt" row.resets_at (fun value ->
-          Shared.Number (float_of_int value))
+        Shared.Number (float_of_int value))
     @ option_field "burnRatePerHour" row.burn_rate_per_hour (fun value ->
-          Shared.Number value)
+        Shared.Number value)
     @ option_field "exhaustsAt" row.exhausts_at (fun value ->
-          Shared.Number (float_of_int value))
+        Shared.Number (float_of_int value))
     @ option_field "exhaustsInSeconds" row.exhausts_in_seconds (fun value ->
-          Shared.Number (float_of_int value))
+        Shared.Number (float_of_int value))
     @ option_field "exhaustsBeforeReset" row.exhausts_before_reset (fun value ->
-          Shared.Bool value))
+        Shared.Bool value))
 
 let account_details account =
   Shared.Object
@@ -840,15 +839,16 @@ let account_details account =
        ("notConfigured", Shared.Bool account.not_configured);
        ( "rateLimitCount",
          Shared.Number (float_of_int (List.length account.rate_limits)) );
-       ("rateLimits", Shared.Array (List.map rate_limit_json account.rate_limits));
+       ( "rateLimits",
+         Shared.Array (List.map rate_limit_json account.rate_limits) );
      ]
     @ option_field "accountLabel" account.account_label (fun value ->
-          Shared.String value)
+        Shared.String value)
     @ option_field "plan" account.plan (fun value -> Shared.String value)
     @ option_field "creditsBalance" account.credits_balance (fun value ->
-          Shared.Number value)
+        Shared.Number value)
     @ option_field "creditsCurrency" account.credits_currency (fun value ->
-          Shared.String value)
+        Shared.String value)
     @ option_field "error" account.error (fun value -> Shared.String value))
 
 let provider_result_details (result : normalized_result) =
@@ -856,7 +856,10 @@ let provider_result_details (result : normalized_result) =
   | Shared.Object fields ->
       Shared.Object
         (fields
-        @ [ ("source", Shared.String result.source); ("live", Shared.Bool result.live) ]
+        @ [
+            ("source", Shared.String result.source);
+            ("live", Shared.Bool result.live);
+          ]
         @
         match result.account_id with
         | None -> []
@@ -919,9 +922,11 @@ let render_account account =
           [ ("credits", Printf.sprintf "%s %.2f" currency value) ]
       | Some value, None -> [ ("credits", Printf.sprintf "%.2f" value) ])
     @ (if account.not_configured then [ ("status", "not configured") ] else [])
-    @ (match account.error with None -> [] | Some value -> [ ("error", value) ])
+    @ match account.error with None -> [] | Some value -> [ ("error", value) ]
   in
-  let field_lines = List.map (fun (name, value) -> name ^ ": " ^ value) fields in
+  let field_lines =
+    List.map (fun (name, value) -> name ^ ": " ^ value) fields
+  in
   String.concat "\n"
     (field_lines @ List.map render_rate_limit account.rate_limits)
 

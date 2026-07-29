@@ -24,7 +24,8 @@ let gateway_error_message = Taumel.Runtime_policy.gateway_error_message
 
 let gateway_error_obj error =
   Boundary_contracts.GatewayCommandError.create
-    ~error:(gateway_error_message error) ()
+    ~error:(gateway_error_message error)
+    ()
   |> Tool_contracts.GatewayCommandError.t_to_js |> inject
 
 let with_gateway_authorized name run =
