@@ -94,11 +94,7 @@ let optional_field obj name =
 
 let function_field obj name = Option.bind (property_value obj name) function_value
 
-let node_require name =
-  let process = Unsafe.get Unsafe.global "process" in
-  match function_field process "getBuiltinModule" with
-  | Some get_builtin -> Unsafe.fun_call get_builtin [| js_string name |]
-  | None -> Unsafe.fun_call (Unsafe.get Unsafe.global "require") [| js_string name |]
+let node_require name = js_of_ojs (Node_require.require name)
 
 let invalid_field name expected =
   invalid_arg
@@ -286,22 +282,14 @@ let js_object_or_empty value =
   if is_js_object value then value else Unsafe.obj [||]
 
 let merge_js_details base extra =
-  let object_ctor = Unsafe.get Unsafe.global "Object" in
-  Unsafe.fun_call (Unsafe.get object_ctor "assign")
-    [|
-      inject (Unsafe.obj [||]);
-      inject (js_object_or_empty base);
-      inject (js_object_or_empty extra);
-    |]
+  js_of_ojs
+    (Node_object.assign
+       [ ojs_of_js (js_object_or_empty base); ojs_of_js (js_object_or_empty extra) ])
 
 let command_result_with_details result extra =
   if not (is_js_object result) then result
   else
-    let object_ctor = Unsafe.get Unsafe.global "Object" in
-    let next =
-      Unsafe.fun_call (Unsafe.get object_ctor "assign")
-        [| inject (Unsafe.obj [||]); inject result |]
-    in
+    let next = js_of_ojs (Node_object.assign [ ojs_of_js result ]) in
     let details =
       if has_property result "details" then Unsafe.get result "details"
       else Unsafe.obj [||]

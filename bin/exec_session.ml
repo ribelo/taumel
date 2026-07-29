@@ -94,11 +94,7 @@ let generate_chunk_id () =
   let value = !next_chunk_id land 0xffffff in
   next_chunk_id := (!next_chunk_id + 1) land 0xffffff;
   Printf.sprintf "%06x" value
-let now_ms () =
-  let date = Unsafe.get Unsafe.global "Date" in
-  match function_field date "now" with
-  | None -> 0.0
-  | Some now -> Option.value (float_value (Unsafe.fun_call now [||])) ~default:0.0
+let now_ms = Node_globals.now_ms
 let clamp value lower upper = min (max value lower) upper
 let normalize_exec_yield_ms = function
   | Some value when value >= 0. ->
@@ -120,7 +116,6 @@ let normalize_write_yield_ms value input_is_empty output_mode =
 let default_max_output_tokens = Exec_output.default_max_output_tokens
 let approximate_bytes_per_token = Exec_output.approximate_bytes_per_token
 let total_output_limit_bytes = Exec_output.total_output_limit_bytes
-let js_require = Exec_output.js_require
 let make_truncation = Exec_output.make_truncation
 let add_output (session : session) text = Exec_output.add session.output text
 let close_temp (session : session) = Exec_output.close session.output

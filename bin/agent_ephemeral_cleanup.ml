@@ -14,11 +14,9 @@ type lease_error = Lease_held | Lease_error of string
 
 let active_leases : (string, lease) Hashtbl.t = Hashtbl.create 4
 
-let process_object () = Unsafe.get Unsafe.global "process"
+let process_object () = js_of_ojs (Node_process.as_ojs ())
 
-let current_pid () =
-  Unsafe.get (process_object ()) "pid" |> float_value
-  |> Option.map int_of_float |> Option.value ~default:0
+let current_pid () = Node_process.pid ()
 
 let process_start_token pid =
   match Host.read_file (Printf.sprintf "/proc/%d/stat" pid) with

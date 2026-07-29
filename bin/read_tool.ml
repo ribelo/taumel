@@ -1,31 +1,15 @@
 open Jsoo_bridge
 
-let js_require name =
-  Unsafe.fun_call (Unsafe.js_expr "require") [| js_string name |]
-
 let resolve_path cwd path =
   if (not (Filename.is_relative path)) || cwd = "" then path
-  else
-    let node_path = js_require "node:path" in
-    match
-      string_value
-        (Unsafe.fun_call (Unsafe.get node_path "resolve")
-           [| js_string cwd; js_string path |])
-    with
-    | Some resolved -> resolved
-    | None -> path
+  else Node_path.resolve [ cwd; path ]
 
 let error_result message =
   text_tool_result message
     (Unsafe.obj [| ("ok", js_bool false); ("error", js_string message) |])
 
-let is_symbolic_link fs path =
-  try
-    let stat =
-      Unsafe.fun_call (Unsafe.get fs "lstatSync") [| js_string path |]
-    in
-    Js.to_bool (Unsafe.coerce (Unsafe.meth_call stat "isSymbolicLink" [||]))
-  with _ -> false
+let is_symbolic_link path =
+  try Node_fs.is_symbolic_link (Node_fs.lstat_sync path) with _ -> false
 
 (* read_file: resolve the path against the session cwd, stat it (reject missing
    / directories), read it as UTF-8, and hand the content to the pure formatter.
@@ -39,14 +23,10 @@ let read_file raw_facts =
   if String.trim path = "" then error_result "read requires a non-empty path"
   else
     let resolved = resolve_path cwd path in
-    let fs = js_require "node:fs" in
-    let stat =
-      try Some (Unsafe.fun_call (Unsafe.get fs "statSync") [| js_string resolved |])
-      with _ -> None
-    in
+    let stat = try Some (Node_fs.stat_sync resolved) with _ -> None in
     match stat with
     | None ->
-        if is_symbolic_link fs resolved then
+        if is_symbolic_link resolved then
           error_result
             (Printf.sprintf
                "\"%s\" is a symbolic link whose target does not exist or cannot \
@@ -54,10 +34,7 @@ let read_file raw_facts =
                path)
         else error_result (Printf.sprintf "\"%s\" does not exist." path)
     | Some stat ->
-        let is_dir =
-          Js.to_bool (Unsafe.coerce (Unsafe.meth_call stat "isDirectory" [||]))
-        in
-        if is_dir then
+        if Node_fs.is_directory stat then
           error_result
             (Printf.sprintf
                "\"%s\" is not a file. Use exec_command (e.g. `ls`) to inspect a \
@@ -65,11 +42,7 @@ let read_file raw_facts =
                path)
         else
           let content =
-            try
-              string_value
-                (Unsafe.fun_call (Unsafe.get fs "readFileSync")
-                   [| js_string resolved; js_string "utf8" |])
-            with _ -> None
+            try Some (Node_fs.read_file_sync_utf8 resolved) with _ -> None
           in
           (match content with
           | None -> error_result (Printf.sprintf "Could not read \"%s\" as text." path)

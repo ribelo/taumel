@@ -1,17 +1,8 @@
 open Jsoo_bridge
-let fs_mod = lazy (node_require "fs")
-let path_mod = lazy (node_require "path")
-let child_process_mod = lazy (node_require "child_process")
 let crypto_mod = lazy (node_require "crypto")
-let os_mod = lazy (node_require "os")
 let pi_agent_dir () =
-  let home =
-    try Js.to_string (Unsafe.meth_call (Lazy.force os_mod) "homedir" [||])
-    with _ -> ""
-  in
-  let process = Unsafe.get Unsafe.global "process" in
-  let env = Unsafe.get process "env" in
-  match string_value (Unsafe.get env "PI_CODING_AGENT_DIR") with
+  let home = try Node_os.homedir () with _ -> "" in
+  match Node_process.env_get "PI_CODING_AGENT_DIR" with
   | Some value when String.trim value <> "" ->
       let value = String.trim value in
       if String.length value >= 2 && String.sub value 0 2 = "~/" then
@@ -22,23 +13,15 @@ let trusted_git_env = Trusted_git.restricted_environment
 let trusted_git_executable = Trusted_git.executable
 let require_trusted_git = Trusted_git.require_executable
 let run_git ?(trim = true) ~cwd ?git_dir ?git_work_tree args =
-  let child_process = Lazy.force child_process_mod in
   try
-    let stdout =
-      Unsafe.meth_call child_process "execFileSync"
-        [|
-          js_string (require_trusted_git ());
-          js_array (List.map js_string args);
-          Unsafe.obj
-            [|
-              ("cwd", js_string cwd);
-              ("encoding", js_string "utf8");
-              ("env", trusted_git_env ?git_dir ?git_work_tree []);
-              ("stdio", js_array [ js_string "ignore"; js_string "pipe"; js_string "pipe" ]);
-            |];
-        |]
+    let options =
+      Node_child_process.utf8_options ~cwd
+        ~env:(ojs_of_js (trusted_git_env ?git_dir ?git_work_tree [])) ()
     in
-    let text = Js.to_string stdout in
+    let text =
+      Node_child_process.exec_file_sync ~file:(require_trusted_git ()) ~args
+        ~options
+    in
     Ok (if trim then String.trim text else text)
   with error ->
     let message =
@@ -54,35 +37,13 @@ let run_git ?(trim = true) ~cwd ?git_dir ?git_work_tree args =
     in
     Error message
 let path_exists path =
-  let fs = Lazy.force fs_mod in
-  try Js.to_bool (Unsafe.meth_call fs "existsSync" [| js_string path |])
-  with _ -> false
+  try Node_fs.exists_sync path with _ -> false
 let is_directory path =
-  let fs = Lazy.force fs_mod in
-  try
-    let stats = Unsafe.meth_call fs "statSync" [| js_string path |] in
-    Js.to_bool (Unsafe.meth_call stats "isDirectory" [||])
-  with _ -> false
-let mkdir_p path =
-  let fs = Lazy.force fs_mod in
-  ignore
-    (Unsafe.meth_call fs "mkdirSync"
-       [|
-         js_string path;
-         Unsafe.obj [| ("recursive", js_bool true) |];
-       |])
-let write_file path contents =
-  let fs = Lazy.force fs_mod in
-  ignore
-    (Unsafe.meth_call fs "writeFileSync"
-       [| js_string path; js_string contents; js_string "utf8" |])
+  try Node_fs.is_directory (Node_fs.stat_sync path) with _ -> false
+let mkdir_p path = Node_fs.mkdir_sync ~recursive:true path
+let write_file path contents = Node_fs.write_file_sync_string path contents
 let read_file path =
-  let fs = Lazy.force fs_mod in
-  try
-    Ok
-      (Js.to_string
-         (Unsafe.meth_call fs "readFileSync"
-            [| js_string path; js_string "utf8" |]))
+  try Ok (Node_fs.read_file_sync_utf8 path)
   with error -> Error (Printexc.to_string error)
 let repository_identity = Agent_worktree_verification.repository_identity
 (* Worktree removal is descriptor-anchored like private-session cleanup
@@ -131,27 +92,20 @@ let sha256_hex value =
   ignore (Unsafe.meth_call hash "update" [| js_string value |]);
   Js.to_string (Unsafe.meth_call hash "digest" [| js_string "hex" |])
 let file_entry_fingerprint ~root relative =
-  let fs = Lazy.force fs_mod in
   let path = Filename.concat root relative in
   let crypto = Lazy.force crypto_mod in
   try
     if not (path_exists path) then Ok ("deleted\000" ^ relative)
     else
-      let lstat = Unsafe.meth_call fs "lstatSync" [| js_string path |] in
-      if Js.to_bool (Unsafe.meth_call lstat "isSymbolicLink" [||]) then
-        let target =
-          Js.to_string (Unsafe.meth_call fs "readlinkSync" [| js_string path |])
-        in
+      let lstat = Node_fs.lstat_sync path in
+      if Node_fs.is_symbolic_link lstat then
+        let target = Node_fs.readlink_sync path in
         Ok ("symlink\000" ^ relative ^ "\000" ^ target)
-      else if Js.to_bool (Unsafe.meth_call lstat "isDirectory" [||]) then
+      else if Node_fs.is_directory lstat then
         Error ("unsupported directory entry in source snapshot: " ^ relative)
-      else if Js.to_bool (Unsafe.meth_call lstat "isFile" [||]) then
-        let mode =
-          match float_value (Unsafe.get lstat "mode") with
-          | Some value -> int_of_float value land 0o777
-          | None -> 0o644
-        in
-        let buf = Unsafe.meth_call fs "readFileSync" [| js_string path |] in
+      else if Node_fs.is_file lstat then
+        let mode = int_of_float (Node_fs.mode lstat) land 0o777 in
+        let buf = js_of_ojs (Node_fs.read_file_sync path) in
         let hash =
           Unsafe.fun_call (Unsafe.get crypto "createHash") [| js_string "sha256" |]
         in
@@ -251,7 +205,6 @@ let create_worktree ~main_repository_root ~worktree_path ~branch ~head =
   |> Result.map (fun _ -> ())
 
 let reproduce_source_entries ~source_workspace ~worktree_path ~entries =
-  let fs = Lazy.force fs_mod in
   let rec copy = function
   | [] -> Ok ()
   | relative :: rest ->
@@ -263,33 +216,18 @@ let reproduce_source_entries ~source_workspace ~worktree_path ~entries =
       else (
         mkdir_p (Filename.dirname target);
         try
-          let lstat =
-            Unsafe.meth_call fs "lstatSync" [| js_string source |]
-          in
-          if Js.to_bool (Unsafe.meth_call lstat "isSymbolicLink" [||]) then (
-            let link =
-              Js.to_string
-                (Unsafe.meth_call fs "readlinkSync" [| js_string source |])
-            in
+          let lstat = Node_fs.lstat_sync source in
+          if Node_fs.is_symbolic_link lstat then (
+            let link = Node_fs.readlink_sync source in
             ignore (remove_path target);
-            ignore
-              (Unsafe.meth_call fs "symlinkSync"
-                 [| js_string link; js_string target |]);
+            Node_fs.symlink_sync link target;
             copy rest)
-          else if Js.to_bool (Unsafe.meth_call lstat "isDirectory" [||]) then
+          else if Node_fs.is_directory lstat then
             Error ("unsupported directory entry in source snapshot: " ^ relative)
-          else if Js.to_bool (Unsafe.meth_call lstat "isFile" [||]) then (
-            ignore
-              (Unsafe.meth_call fs "copyFileSync"
-                 [| js_string source; js_string target |]);
-            let mode =
-              match float_value (Unsafe.get lstat "mode") with
-              | Some value -> int_of_float value land 0o777
-              | None -> 0o644
-            in
-            ignore
-              (Unsafe.meth_call fs "chmodSync"
-                 [| js_string target; js_number (float_of_int mode) |]);
+          else if Node_fs.is_file lstat then (
+            Node_fs.copy_file_sync source target;
+            let mode = int_of_float (Node_fs.mode lstat) land 0o777 in
+            Node_fs.chmod_sync target mode;
             copy rest)
           else Error ("unsupported source entry type: " ^ relative)
         with error -> Error (relative ^ ": " ^ Printexc.to_string error))
@@ -365,10 +303,8 @@ let with_temp_index ~worktree_path f =
   let ( let* ) = Result.bind in
   let* index_path = run_git ~cwd:worktree_path [ "rev-parse"; "--git-path"; "index" ] in
   let* temp_index = run_git ~cwd:worktree_path [ "rev-parse"; "--git-path"; "taumel-temp-index" ] in
-  let fs = Lazy.force fs_mod in
   (try
-     if path_exists index_path then
-       ignore (Unsafe.meth_call fs "copyFileSync" [| js_string index_path; js_string temp_index |])
+     if path_exists index_path then Node_fs.copy_file_sync index_path temp_index
      else ignore (remove_path temp_index);
      Ok ()
    with error -> Error (Printexc.to_string error))
@@ -378,7 +314,7 @@ let with_temp_index ~worktree_path f =
       match f ~temp_index with
       | Ok () -> (
           try
-            ignore (Unsafe.meth_call fs "renameSync" [| js_string temp_index; js_string index_path |]);
+            Node_fs.rename_sync temp_index index_path;
             Ok ()
           with error -> ignore (remove_path temp_index); Error (Printexc.to_string error))
       | Error _ as error -> ignore (remove_path temp_index); error)
@@ -388,35 +324,30 @@ let perform_secure_broker_add ?(preflight = true) ~worktree_path argv =
   let* paths = expand_broker_add_paths ~worktree_path argv in
   with_temp_index ~worktree_path (fun ~temp_index ->
   let run_index args =
-    let child_process = Lazy.force child_process_mod in
     try
-      let stdout =
-        Unsafe.meth_call child_process "execFileSync"
-          [|
-            js_string (require_trusted_git ());
-            js_array (List.map js_string args);
-            Unsafe.obj
-              [|
-                ("cwd", js_string worktree_path);
-                ("encoding", js_string "utf8");
-                ("env", trusted_git_env [ ("GIT_INDEX_FILE", js_string temp_index) ]);
-                ("stdio", js_array [ js_string "ignore"; js_string "pipe"; js_string "pipe" ]);
-              |];
-          |]
+      let options =
+        Node_child_process.utf8_options ~cwd:worktree_path
+          ~env:
+            (ojs_of_js
+               (trusted_git_env [ ("GIT_INDEX_FILE", js_string temp_index) ]))
+          ()
       in
-      Ok (String.trim (Js.to_string stdout))
+      let stdout =
+        Node_child_process.exec_file_sync ~file:(require_trusted_git ()) ~args
+          ~options
+      in
+      Ok (String.trim stdout)
     with error -> Error (Printexc.to_string error)
   in
   let stage_path relative =
     let full = Filename.concat worktree_path relative in
-    let fs = Lazy.force fs_mod in
     if not (path_exists full) then
       run_index [ "update-index"; "--force-remove"; "--"; relative ] |> Result.map ignore
     else
       try
-        let st = Unsafe.meth_call fs "lstatSync" [| js_string full |] in
-        if Js.to_bool (Unsafe.meth_call st "isSymbolicLink" [||]) then (
-          let target = Js.to_string (Unsafe.meth_call fs "readlinkSync" [| js_string full |]) in
+        let st = Node_fs.lstat_sync full in
+        if Node_fs.is_symbolic_link st then (
+          let target = Node_fs.readlink_sync full in
           let tmp =
             match run_git ~cwd:worktree_path [ "rev-parse"; "--git-path"; "taumel-link-bytes" ] with
             | Ok path -> path
@@ -432,9 +363,8 @@ let perform_secure_broker_add ?(preflight = true) ~worktree_path argv =
               |> Result.map ignore)
         else
           let mode =
-            match float_value (Unsafe.get st "mode") with
-            | Some m when int_of_float m land 0o111 <> 0 -> "100755"
-            | _ -> "100644"
+            let m = int_of_float (Node_fs.mode st) in
+            if m land 0o111 <> 0 then "100755" else "100644"
           in
           match run_git ~cwd:worktree_path [ "hash-object"; "-w"; "--no-filters"; full ] with
           | Error message -> Error message
@@ -475,25 +405,32 @@ let create_baseline ~worktree_path =
     if dirty = [] then Ok ()
     else perform_secure_broker_add ~preflight:false ~worktree_path ("add" :: "--" :: dirty)
   in
-  let child_process = Lazy.force child_process_mod in
   try
+    let options =
+      Node_child_process.utf8_options ~cwd:worktree_path
+        ~env:
+          (ojs_of_js
+             (trusted_git_env
+                [
+                  ("GIT_AUTHOR_NAME", js_string Taumel.Agent_worktree.baseline_author_name);
+                  ("GIT_AUTHOR_EMAIL", js_string Taumel.Agent_worktree.baseline_author_email);
+                  ("GIT_COMMITTER_NAME", js_string Taumel.Agent_worktree.baseline_committer_name);
+                  ("GIT_COMMITTER_EMAIL", js_string Taumel.Agent_worktree.baseline_committer_email);
+                ]))
+        ()
+    in
     ignore
-      (Unsafe.meth_call child_process "execFileSync"
-         [|
-           js_string (require_trusted_git ());
-           js_array (List.map js_string [ "-c"; "core.hooksPath=/dev/null"; "commit"; "--allow-empty"; "-m"; "pi agent baseline" ]);
-           Unsafe.obj
-             [|
-               ("cwd", js_string worktree_path);
-               ("encoding", js_string "utf8");
-               ("env", trusted_git_env [
-                    ("GIT_AUTHOR_NAME", js_string Taumel.Agent_worktree.baseline_author_name);
-                    ("GIT_AUTHOR_EMAIL", js_string Taumel.Agent_worktree.baseline_author_email);
-                    ("GIT_COMMITTER_NAME", js_string Taumel.Agent_worktree.baseline_committer_name);
-                    ("GIT_COMMITTER_EMAIL", js_string Taumel.Agent_worktree.baseline_committer_email)]);
-               ("stdio", js_array [ js_string "ignore"; js_string "pipe"; js_string "pipe" ]);
-             |];
-         |]);
+      (Node_child_process.exec_file_sync ~file:(require_trusted_git ())
+         ~args:
+           [
+             "-c";
+             "core.hooksPath=/dev/null";
+             "commit";
+             "--allow-empty";
+             "-m";
+             "pi agent baseline";
+           ]
+         ~options);
     Ok ()
   with error -> Error (Printexc.to_string error)
 let validate_lifecycle_resources ~main_repository_root ~main_repository_id
@@ -915,28 +852,19 @@ let list_provisional_marker_files ~agent_home =
   in
   if not (path_exists root) then []
   else
-    let fs = Lazy.force fs_mod in
     try
-      let owners =
-        Js.to_array
-          (Unsafe.meth_call fs "readdirSync" [| js_string root |])
-        |> Array.to_list
-        |> List.filter_map string_value
-      in
+      let owners = Node_fs.readdir_sync root in
       List.concat_map
         (fun owner ->
           let owner_dir = Filename.concat root owner in
           if not (is_directory owner_dir) then []
           else
             try
-              Js.to_array
-                (Unsafe.meth_call fs "readdirSync" [| js_string owner_dir |])
-              |> Array.to_list
-              |> List.filter_map (fun name_js ->
-                     match string_value name_js with
-                     | Some name when Filename.check_suffix name ".json" ->
-                         Some (Filename.concat owner_dir name)
-                     | _ -> None)
+              Node_fs.readdir_sync owner_dir
+              |> List.filter_map (fun name ->
+                     if Filename.check_suffix name ".json" then
+                       Some (Filename.concat owner_dir name)
+                     else None)
             with _ -> [])
         owners
     with _ -> []

@@ -3,44 +3,28 @@ open App_state
 
 type skill = { name : string; path : string; base_dir : string; description : string }
 
-let js_require name =
-  Unsafe.fun_call (Unsafe.js_expr "require") [| js_string name |]
-
-let fs = lazy (js_require "node:fs")
-let path_mod = lazy (js_require "node:path")
-let os_mod = lazy (js_require "node:os")
-let process_obj = lazy (Unsafe.js_expr "process")
-
-let call_path name args = Unsafe.fun_call (Unsafe.get (Lazy.force path_mod) name) args
-let exists path = Js.to_bool (Unsafe.coerce (Unsafe.fun_call (Unsafe.get (Lazy.force fs) "existsSync") [| js_string path |]))
+let exists path = try Node_fs.exists_sync path with _ -> false
 
 let read_file path =
-  try
-    string_value
-      (Unsafe.fun_call (Unsafe.get (Lazy.force fs) "readFileSync")
-         [| js_string path; js_string "utf8" |])
-  with _ -> None
+  try Some (Node_fs.read_file_sync_utf8 path) with _ -> None
 
 let is_dir path =
-  try
-    let stat = Unsafe.fun_call (Unsafe.get (Lazy.force fs) "statSync") [| js_string path |] in
-    Js.to_bool (Unsafe.coerce (Unsafe.meth_call stat "isDirectory" [||]))
-  with _ -> false
+  try Node_fs.is_directory (Node_fs.stat_sync path) with _ -> false
 
-let dirname path = Option.value (string_value (call_path "dirname" [| js_string path |])) ~default:""
-let basename path = Option.value (string_value (call_path "basename" [| js_string path |])) ~default:path
+let dirname path = Node_path.dirname path
+let basename path = Node_path.basename path
 
 let resolve_path base raw =
   let raw = String.trim raw in
   let raw =
     if String.length raw >= 2 && raw.[0] = '~' && raw.[1] = '/' then
-      let home = string_value (Unsafe.meth_call (Lazy.force os_mod) "homedir" [||]) |> Option.value ~default:"" in
+      let home = try Node_os.homedir () with _ -> "" in
       home ^ String.sub raw 1 (String.length raw - 1)
     else raw
   in
-  Option.value (string_value (call_path "resolve" [| js_string base; js_string raw |])) ~default:raw
+  Node_path.resolve [ base; raw ]
 
-let skill_file dir = Option.value (string_value (call_path "join" [| js_string dir; js_string "SKILL.md" |])) ~default:(dir ^ "/SKILL.md")
+let skill_file dir = Node_path.join [ dir; "SKILL.md" ]
 
 let trim_quotes value =
   let value = String.trim value in
@@ -90,9 +74,8 @@ let strip_frontmatter text =
 
 let readdir path =
   try
-    Unsafe.fun_call (Unsafe.get (Lazy.force fs) "readdirSync")
-      [| js_string path; Unsafe.obj [| ("withFileTypes", js_bool true) |] |]
-    |> array_items |> List.sort (fun a b -> compare (get_string a "name") (get_string b "name"))
+    Node_fs.readdir_sync_with_file_types path
+    |> List.sort (fun a b -> compare (Node_fs.dirent_name a) (Node_fs.dirent_name b))
   with _ -> []
 
 let add_skill table skill = if Hashtbl.mem table skill.name then () else Hashtbl.add table skill.name skill
@@ -104,10 +87,9 @@ let rec discover_dir table dir =
   else
     readdir dir
     |> List.iter (fun entry ->
-           let name = get_string entry "name" in
-           let full = Option.value (string_value (call_path "join" [| js_string dir; js_string name |])) ~default:(dir ^ "/" ^ name) in
-           let directory = Js.to_bool (Unsafe.coerce (Unsafe.meth_call entry "isDirectory" [||])) in
-           if directory then discover_dir table full)
+           let name = Node_fs.dirent_name entry in
+           let full = Node_path.join [ dir; name ] in
+           if Node_fs.dirent_is_directory entry then discover_dir table full)
 
 let discover_path table path =
   if exists path then
@@ -128,7 +110,7 @@ let settings_paths settings base =
   List.map (resolve_path base) arrays
 
 let argv_skill_paths cwd =
-  let argv = Unsafe.get (Lazy.force process_obj) "argv" |> array_items |> List.filter_map string_value in
+  let argv = Node_process.argv () in
   let rec loop acc = function
     | [] -> List.rev acc
     | "--skill" :: value :: rest -> loop (resolve_path cwd value :: acc) rest
@@ -139,7 +121,7 @@ let argv_skill_paths cwd =
   loop [] argv
 
 let source_paths cwd =
-  let home = string_value (Unsafe.meth_call (Lazy.force os_mod) "homedir" [||]) |> Option.value ~default:"" in
+  let home = try Node_os.homedir () with _ -> "" in
   let agent_dir = resolve_path home ".pi/agent" in
   let global_settings = resolve_path agent_dir "settings.json" in
   let project_settings = resolve_path cwd ".pi/settings.json" in

@@ -9,49 +9,31 @@ open Jsoo_bridge
    canonicalized first so legitimate symlinks above the target keep working.
    Requires Linux with procfs; any other platform fails closed. *)
 
-let fs = lazy (node_require "fs")
-let path_module = lazy (node_require "path")
-
 let descriptor_directory_flags =
-  lazy
-    (let constants = Unsafe.get (Lazy.force fs) "constants" in
-     let flag name =
-       Unsafe.get constants name |> Unsafe.coerce |> Js.float_of_number
-       |> Float.to_int
-     in
-     flag "O_RDONLY" lor flag "O_DIRECTORY" lor flag "O_NOFOLLOW")
+  lazy (Node_fs.o_rdonly () lor Node_fs.o_directory () lor Node_fs.o_nofollow ())
 
 let descriptor_paths_supported =
   lazy
-    (let process = Unsafe.get Unsafe.global "process" in
-     match string_value (Unsafe.get process "platform") with
-     | Some "linux" ->
-         (try
-            let fd =
-              Unsafe.meth_call (Lazy.force fs) "openSync"
-                [|
-                  js_string "/proc/self/fd";
-                  js_number (float_of_int (Lazy.force descriptor_directory_flags));
-                |]
-            in
-            ignore (Unsafe.meth_call (Lazy.force fs) "closeSync" [| fd |]);
-            true
-          with _ -> false)
-     | _ -> false)
+    (match Node_process.platform () with
+    | "linux" ->
+        (try
+           let fd =
+             Node_fs.open_sync_flags "/proc/self/fd"
+               (Lazy.force descriptor_directory_flags)
+           in
+           Node_fs.close_sync fd;
+           true
+         with _ -> false)
+    | _ -> false)
 
 let unsupported_error =
   Error "descriptor-anchored deletion requires Linux with procfs (/proc/self/fd)"
 
 let open_pinned_directory target =
-  Unsafe.meth_call (Lazy.force fs) "openSync"
-    [|
-      js_string target;
-      js_number (float_of_int (Lazy.force descriptor_directory_flags));
-    |]
-  |> Unsafe.coerce |> Js.float_of_number |> Float.to_int
+  Node_fs.open_sync_flags target (Lazy.force descriptor_directory_flags)
+  |> Ojs.int_of_js
 
-let close_fd fd =
-  ignore (Unsafe.meth_call (Lazy.force fs) "closeSync" [| js_number (float_of_int fd) |])
+let close_fd fd = Node_fs.close_sync (Ojs.int_to_js fd)
 
 let with_open_fd fd f =
   match (try Ok (f fd) with error -> Error error) with
@@ -66,30 +48,19 @@ let with_pinned_directory target f = with_open_fd (open_pinned_directory target)
 
 let procfs_entry_path fd name = Printf.sprintf "/proc/self/fd/%d/%s" fd name
 
-let path_dirname target =
-  Unsafe.meth_call (Lazy.force path_module) "dirname" [| js_string target |]
-  |> Js.to_string
-
-let path_basename target =
-  Unsafe.meth_call (Lazy.force path_module) "basename" [| js_string target |]
-  |> Js.to_string
+let path_dirname target = Node_path.dirname target
+let path_basename target = Node_path.basename target
 
 let path_components target =
   String.split_on_char '/' target |> List.filter (fun part -> part <> "")
 
-let realpath target =
-  Unsafe.meth_call (Lazy.force fs) "realpathSync" [| js_string target |]
-  |> Js.to_string
+let realpath target = Node_fs.realpath_sync target
 
 let entry_is_directory path =
-  let stats = Unsafe.meth_call (Lazy.force fs) "lstatSync" [| js_string path |] in
-  Js.to_bool (Unsafe.meth_call stats "isDirectory" [||])
+  Node_fs.is_directory (Node_fs.lstat_sync path)
 
-let unlink_entry_path path =
-  ignore (Unsafe.meth_call (Lazy.force fs) "unlinkSync" [| js_string path |])
-
-let rmdir_entry_path path =
-  ignore (Unsafe.meth_call (Lazy.force fs) "rmdirSync" [| js_string path |])
+let unlink_entry_path path = Node_fs.unlink_sync path
+let rmdir_entry_path path = Node_fs.rmdir_sync path
 
 (* Walk from the filesystem root to the canonical form of [directory],
    opening every component with O_NOFOLLOW|O_DIRECTORY so no ancestor can be
@@ -122,26 +93,22 @@ let is_enoent error = js_exception_string_field error "code" = Some "ENOENT"
 
 let rec unlink_tree_entries fd =
   let entries =
-    Unsafe.meth_call (Lazy.force fs) "readdirSync"
-      [| js_string (Printf.sprintf "/proc/self/fd/%d" fd) |]
-    |> array_value |> Option.value ~default:[||]
+    try Node_fs.readdir_sync (Printf.sprintf "/proc/self/fd/%d" fd)
+    with _ -> []
   in
-  Array.iter
-    (fun entry ->
-      match string_value entry with
-      | None -> ()
-      | Some name -> (
-          let path = procfs_entry_path fd name in
-          try
-            if entry_is_directory path then begin
-              with_pinned_directory path unlink_tree_entries;
-              rmdir_entry_path path
-            end
-            else unlink_entry_path path
-          with error ->
-            (* A concurrently vanished entry already satisfies the deletion
-               plan; keep traversing the remaining entries. *)
-            if not (is_enoent error) then raise error))
+  List.iter
+    (fun name ->
+      let path = procfs_entry_path fd name in
+      try
+        if entry_is_directory path then begin
+          with_pinned_directory path unlink_tree_entries;
+          rmdir_entry_path path
+        end
+        else unlink_entry_path path
+      with error ->
+        (* A concurrently vanished entry already satisfies the deletion
+           plan; keep traversing the remaining entries. *)
+        if not (is_enoent error) then raise error)
     entries
 
 let delete_root_entry parent_fd name =

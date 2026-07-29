@@ -97,24 +97,9 @@ let truncation_reason ~by_lines ~by_bytes =
   | true, false -> "lines"
   | false, true -> "bytes"
   | true, true -> "lines,bytes"
-let js_require name =
-  Unsafe.fun_call (Unsafe.js_expr "require") [| js_string name |]
-let math_random () =
-  let m = Unsafe.get Unsafe.global "Math" in
-  Option.value (float_value (Unsafe.fun_call (Unsafe.get m "random") [||])) ~default:0.
-let os_tmpdir () =
-  let os = js_require "node:os" in
-  match string_value (Unsafe.fun_call (Unsafe.get os "tmpdir") [||]) with
-  | Some dir when dir <> "" -> dir
-  | _ -> "/tmp"
-let path_join a b =
-  let path = js_require "node:path" in
-  match
-    string_value
-      (Unsafe.fun_call (Unsafe.get path "join") [| js_string a; js_string b |])
-  with
-  | Some p -> p
-  | None -> a ^ "/" ^ b
+let math_random = Node_globals.random
+let os_tmpdir = Node_os.tmpdir
+let path_join a b = Node_path.join [ a; b ]
 let ensure_temp_file (output : t) =
   match output.temp_fd with
   | Some _ -> ()
@@ -125,11 +110,7 @@ let ensure_temp_file (output : t) =
             (int_of_float (math_random () *. 1.0e9))
         in
         let path = path_join (os_tmpdir ()) name in
-        let fs = js_require "node:fs" in
-        let fd =
-          Unsafe.fun_call (Unsafe.get fs "openSync")
-            [| js_string path; js_string "a" |]
-        in
+        let fd = js_of_ojs (Node_fs.open_sync path "a") in
         output.temp_path <- Some path;
         output.temp_fd <- Some fd
       with _ -> ())
@@ -137,10 +118,7 @@ let write_temp (output : t) text =
   match output.temp_fd with
   | None -> ()
   | Some fd -> (
-      try
-        let fs = js_require "node:fs" in
-        ignore (Unsafe.fun_call (Unsafe.get fs "writeSync") [| fd; js_string text |])
-      with _ -> ())
+      try ignore (Node_fs.write_sync (ojs_of_js fd) text) with _ -> ())
 let add (output : t) text =
   if text = "" || output.output_limit_exceeded then false
   else begin
@@ -172,11 +150,7 @@ let add (output : t) text =
 let close (output : t) =
   (match output.temp_fd with
   | None -> ()
-  | Some fd -> (
-      try
-        let fs = js_require "node:fs" in
-        ignore (Unsafe.fun_call (Unsafe.get fs "closeSync") [| fd |])
-      with _ -> ()));
+  | Some fd -> (try Node_fs.close_sync (ojs_of_js fd) with _ -> ()));
   output.temp_fd <- None
 let make_truncation ?full_output_path ?(last_line_partial = false)
     ?(first_line_exceeds_limit = false) ?(max_lines = max_display_lines)
@@ -337,15 +311,7 @@ let collectable_display output =
   let source =
     match output.temp_path with
     | Some path -> (
-        try
-          let fs = js_require "node:fs" in
-          match
-            string_value
-              (Unsafe.fun_call (Unsafe.get fs "readFileSync")
-                 [| js_string path; js_string "utf8" |])
-          with
-          | Some text -> text
-          | None -> Buffer.contents output.pending
+        try Node_fs.read_file_sync_utf8 path
         with _ -> Buffer.contents output.pending)
     | None -> Buffer.contents output.pending
   in

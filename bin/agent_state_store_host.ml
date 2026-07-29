@@ -6,14 +6,9 @@ open Jsoo_bridge
 
 module Store = Taumel.Agent_state_store
 
-let fs = lazy (node_require "fs")
-let path = lazy (node_require "path")
 let crypto = lazy (node_require "crypto")
 
-let join parts =
-  Unsafe.meth_call (Lazy.force path) "join"
-    (Array.of_list (List.map js_string parts))
-  |> Js.to_string
+let join parts = Node_path.join parts
 
 let private_root () = Agent_child_session_host.private_root ()
 
@@ -26,12 +21,7 @@ let registry_path ~owner_session_id =
 
 let mkdir_p target =
   try
-    ignore
-      (Unsafe.meth_call (Lazy.force fs) "mkdirSync"
-         [|
-           js_string target;
-           Unsafe.obj [| ("recursive", js_bool true) |];
-         |]);
+    Node_fs.mkdir_sync ~recursive:true target;
     Ok ()
   with error -> Error (Printexc.to_string error)
 
@@ -42,29 +32,19 @@ let error_code error =
 
 let file_presence target =
   try
-    let stat =
-      Unsafe.meth_call (Lazy.force fs) "lstatSync" [| js_string target |]
-    in
-    if Js.to_bool (Unsafe.meth_call stat "isFile" [||]) then Regular_file
-    else Invalid_file
+    let stat = Node_fs.lstat_sync target in
+    if Node_fs.is_file stat then Regular_file else Invalid_file
   with error -> (
     match error_code error with
     | Some "ENOENT" -> Missing
     | _ -> Unavailable (Printexc.to_string error))
 
 let realpath target =
-  try
-    Ok
-      (Unsafe.meth_call (Lazy.force fs) "realpathSync" [| js_string target |]
-      |> Js.to_string)
+  try Ok (Node_fs.realpath_sync target)
   with error -> Error (Printexc.to_string error)
 
 let read_file target =
-  try
-    Ok
-      (Unsafe.meth_call (Lazy.force fs) "readFileSync"
-         [| js_string target; js_string "utf8" |]
-      |> Js.to_string)
+  try Ok (Node_fs.read_file_sync_utf8 target)
   with error -> Error (Printexc.to_string error)
 
 let write_file_durable target contents =
@@ -74,19 +54,13 @@ let write_file_durable target contents =
     | None -> ()
     | Some fd ->
         descriptor := None;
-        (try ignore (Unsafe.meth_call (Lazy.force fs) "closeSync" [| fd |])
-         with _ -> ())
+        (try Node_fs.close_sync fd with _ -> ())
   in
   try
-    let fd =
-      Unsafe.meth_call (Lazy.force fs) "openSync"
-        [| js_string target; js_string "w"; js_number 384. |]
-    in
+    let fd = Node_fs.open_sync_mode target "w" 0o600 in
     descriptor := Some fd;
-    ignore
-      (Unsafe.meth_call (Lazy.force fs) "writeFileSync"
-         [| fd; js_string contents; js_string "utf8" |]);
-    ignore (Unsafe.meth_call (Lazy.force fs) "fsyncSync" [| fd |]);
+    Node_fs.write_file_sync_fd fd contents;
+    Node_fs.fsync_sync fd;
     close ();
     Ok ()
   with error ->
@@ -95,15 +69,13 @@ let write_file_durable target contents =
 
 let rename source destination =
   try
-    ignore
-      (Unsafe.meth_call (Lazy.force fs) "renameSync"
-         [| js_string source; js_string destination |]);
+    Node_fs.rename_sync source destination;
     Ok ()
   with error -> Error (Printexc.to_string error)
 
 let unlink target =
   try
-    ignore (Unsafe.meth_call (Lazy.force fs) "unlinkSync" [| js_string target |]);
+    Node_fs.unlink_sync target;
     Ok ()
   with _ -> Ok ()
 
@@ -132,10 +104,7 @@ let ensure_owner_directory ~owner_session_id directory =
           else Ok ())
 
 let write_atomic ~owner_session_id ~path:target ~contents =
-  let directory =
-    Unsafe.meth_call (Lazy.force path) "dirname" [| js_string target |]
-    |> Js.to_string
-  in
+  let directory = Node_path.dirname target in
   match ensure_owner_directory ~owner_session_id directory with
   | Error _ as error -> error
   | Ok () ->
@@ -157,33 +126,18 @@ let write_atomic ~owner_session_id ~path:target ~contents =
               Error message
           | Ok () ->
               (try
-                 let dir_fd =
-                   Unsafe.meth_call (Lazy.force fs) "openSync"
-                     [| js_string directory; js_string "r" |]
-                 in
-                 (try
-                    ignore
-                      (Unsafe.meth_call (Lazy.force fs) "fsyncSync" [| dir_fd |])
-                  with _ -> ());
-                 ignore
-                   (Unsafe.meth_call (Lazy.force fs) "closeSync" [| dir_fd |])
+                 let dir_fd = Node_fs.open_sync directory "r" in
+                 (try Node_fs.fsync_sync dir_fd with _ -> ());
+                 Node_fs.close_sync dir_fd
                with _ -> ());
               Ok ()))
 
 let env_flag name =
-  let process = Unsafe.get Unsafe.global "process" in
-  let env =
-    match object_field process "env" with Some env -> env | None -> Unsafe.obj [||]
-  in
-  match Option.bind (object_field env name) string_value with
+  match Node_process.env_get name with
   | Some value when String.trim value = "1" -> true
   | _ -> false
 
-let clear_env_flag name =
-  let process = Unsafe.get Unsafe.global "process" in
-  match object_field process "env" with
-  | None -> ()
-  | Some env -> Unsafe.set env name (Unsafe.inject Js.undefined)
+let clear_env_flag name = Node_process.env_delete name
 
 let filesystem_backend : Store.registry_backend =
   {
@@ -195,10 +149,7 @@ let filesystem_backend : Store.registry_backend =
         | Invalid_file -> Error "agent registry is not a regular file"
         | Unavailable message -> Error ("agent registry cannot be inspected: " ^ message)
         | Regular_file ->
-          let directory =
-            Unsafe.meth_call (Lazy.force path) "dirname" [| js_string target |]
-            |> Js.to_string
-          in
+          let directory = Node_path.dirname target in
           (match ensure_owner_directory ~owner_session_id directory with
           | Error _ as error -> error
           | Ok () -> (

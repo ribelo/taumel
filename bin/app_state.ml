@@ -174,31 +174,7 @@ let capture_loaded_footer_permissions () =
       footer_no_sandbox = !active_no_sandbox;
     }
 
-let now_seconds () =
-  let date = Unsafe.get Unsafe.global "Date" in
-  match function_field date "now" with
-  | Some now -> (
-    match float_value (Unsafe.fun_call now [||]) with
-    | Some milliseconds -> int_of_float (milliseconds /. 1000.0)
-    | None -> 0)
-  | _ -> 0
-
-let now_milliseconds_float () =
-  let date = Unsafe.get Unsafe.global "Date" in
-  match function_field date "now" with
-  | Some now -> (
-    match float_value (Unsafe.fun_call now [||]) with
-    | Some milliseconds -> milliseconds
-    | None -> 0.0)
-  | _ -> 0.0
-
+let now_milliseconds_float = Node_globals.now_ms
 let now_milliseconds () = int_of_float (now_milliseconds_float ())
-
-let env_string name =
-  let process = Unsafe.get Unsafe.global "process" in
-  let env =
-    match object_field process "env" with Some env -> env | None -> Unsafe.obj [||]
-  in
-  match Option.bind (object_field env name) string_value with
-  | Some value -> value
-  | None -> ""
+let now_seconds () = int_of_float (now_milliseconds_float () /. 1000.0)
+let env_string = Node_process.env_string

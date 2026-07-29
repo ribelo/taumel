@@ -391,26 +391,9 @@ let child_session_file_available (identity : Taumel.Agents.identity) =
   | None -> false
   | Some path -> (
       try
-        let process = Unsafe.get Unsafe.global "process" in
-        let fs =
-          match function_field process "getBuiltinModule" with
-          | Some get_builtin ->
-              Unsafe.fun_call get_builtin [| js_string "fs" |]
-          | None ->
-              let require = Unsafe.get Unsafe.global "require" in
-              Unsafe.fun_call require [| js_string "fs" |]
-        in
-        if
-          not
-            (Js.to_bool
-               (Unsafe.meth_call fs "existsSync" [| js_string path |]))
-        then false
+        if not (Node_fs.exists_sync path) then false
         else
-          let raw =
-            Js.to_string
-              (Unsafe.meth_call fs "readFileSync"
-                 [| js_string path; js_string "utf8" |])
-          in
+          let raw = Node_fs.read_file_sync_utf8 path in
           child_marker_matches identity raw
       with _ -> false)
 
@@ -420,16 +403,7 @@ let settled_entry_id (identity : Taumel.Agents.identity)
   | None -> None
   | Some path -> (
       try
-        let process = Unsafe.get Unsafe.global "process" in
-        let fs =
-          match function_field process "getBuiltinModule" with
-          | Some get_builtin -> Unsafe.fun_call get_builtin [| js_string "fs" |]
-          | None -> Unsafe.fun_call (Unsafe.get Unsafe.global "require") [| js_string "fs" |]
-        in
-        let raw =
-          Js.to_string
-            (Unsafe.meth_call fs "readFileSync" [| js_string path; js_string "utf8" |])
-        in
+        let raw = Node_fs.read_file_sync_utf8 path in
         if not (child_marker_matches identity raw) then None
         else
           let rec scan = function

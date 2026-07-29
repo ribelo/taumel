@@ -4,14 +4,10 @@ open App_state
 let pi_agent_dir = Agent_worktree_host.pi_agent_dir
 
 let read_settings_json path =
-  let fs = node_require "fs" in
   try
-    if not (Js.to_bool (Unsafe.meth_call fs "existsSync" [| js_string path |])) then Ok None
+    if not (Node_fs.exists_sync path) then Ok None
     else
-      let raw =
-        Js.to_string
-          (Unsafe.meth_call fs "readFileSync" [| js_string path; js_string "utf8" |])
-      in
+      let raw = Node_fs.read_file_sync_utf8 path in
       match Taumel.Shared.decode_json_string raw with
       | Ok json -> Ok (Some json)
       | Error message -> Error (path ^ ": " ^ message)

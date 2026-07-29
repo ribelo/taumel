@@ -1,9 +1,7 @@
 open Jsoo_bridge
 open App_state
 
-let js_require name =
-  let req = Unsafe.js_expr "(typeof require === 'function' ? require : globalThis.require)" in
-  Unsafe.fun_call req [| js_string name |]
+let js_require name = node_require name
 
 let direct_string_field obj name =
   match string_value (Unsafe.get obj name) with Some value -> value | None -> ""

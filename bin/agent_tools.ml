@@ -513,12 +513,7 @@ let assistant_text_from_entry_json = message_text_from_entry_json ~role:"assista
 let user_text_from_entry_json = message_text_from_entry_json ~role:"user"
 let recover_output_from_file ~path ~entry_id =
   try
-    let fs = node_require "fs" in
-    let raw =
-      Js.to_string
-        (Unsafe.meth_call fs "readFileSync"
-           [| js_string path; js_string "utf8" |])
-    in
+    let raw = Node_fs.read_file_sync_utf8 path in
     raw |> String.split_on_char '\n'
     |> List.find_map (fun line ->
            match Taumel.Shared.decode_json_string line with
@@ -531,12 +526,7 @@ let recover_output_from_file ~path ~entry_id =
   with _ -> None
 let recover_latest_user_message ~path =
   try
-    let fs = node_require "fs" in
-    let raw =
-      Js.to_string
-        (Unsafe.meth_call fs "readFileSync"
-           [| js_string path; js_string "utf8" |])
-    in
+    let raw = Node_fs.read_file_sync_utf8 path in
     raw |> String.split_on_char '\n'
     |> List.fold_left
          (fun latest line ->

@@ -16,36 +16,26 @@ let rec take acc count = function
 
 let write_full_output ~agent_dir ?owner_session_id ?agent_id ?run_id text =
   try
-    let fs = node_require "fs" in
-    let path = node_require "path" in
     let directory =
-      Js.to_string
-        (Unsafe.meth_call path "join"
-           [|
-             js_string agent_dir;
-             js_string "taumel";
-             js_string "agents";
-             js_string "owners";
-             js_string (Option.fold ~none:"unowned" ~some:owner_token owner_session_id);
-             js_string (Option.value agent_id ~default:"unowned");
-             js_string "outputs";
-           |])
+      Node_path.join
+        [
+          agent_dir;
+          "taumel";
+          "agents";
+          "owners";
+          Option.fold ~none:"unowned" ~some:owner_token owner_session_id;
+          Option.value agent_id ~default:"unowned";
+          "outputs";
+        ]
     in
-    ignore
-      (Unsafe.meth_call fs "mkdirSync"
-         [| js_string directory; inject (Unsafe.obj [| ("recursive", js_bool true) |]) |]);
+    Node_fs.mkdir_sync ~recursive:true directory;
     let filename =
       Option.value run_id
         ~default:(string_of_int (int_of_float (Unix.gettimeofday () *. 1000.)))
       ^ ".txt"
     in
-    let full_path =
-      Js.to_string
-        (Unsafe.meth_call path "join" [| js_string directory; js_string filename |])
-    in
-    ignore
-      (Unsafe.meth_call fs "writeFileSync"
-         [| js_string full_path; js_string text; js_string "utf8" |]);
+    let full_path = Node_path.join [ directory; filename ] in
+    Node_fs.write_file_sync_string full_path text;
     Some full_path
   with _ -> None
 

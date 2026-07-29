@@ -1,27 +1,11 @@
 open Jsoo_bridge
 
-let fs =
-  lazy
-    (let process = Unsafe.get Unsafe.global "process" in
-     match function_field process "getBuiltinModule" with
-     | Some get_builtin -> Unsafe.fun_call get_builtin [| js_string "node:fs" |]
-     | None ->
-         Unsafe.fun_call (Unsafe.get Unsafe.global "require")
-           [| js_string "node:fs" |])
-
 let repository_identity path =
   try
-    let real =
-      Js.to_string (Unsafe.meth_call (Lazy.force fs) "realpathSync" [| js_string path |])
-    in
-    let stat =
-      Unsafe.meth_call (Lazy.force fs) "statSync"
-        [| js_string real; Unsafe.obj [| ("bigint", js_bool true) |] |]
-    in
-    let field name =
-      Js.to_string (Unsafe.meth_call (Unsafe.get stat name) "toString" [||])
-    in
-    Ok (real ^ "\000" ^ field "dev" ^ ":" ^ field "ino")
+    let real = Node_fs.realpath_sync path in
+    let stat = Node_fs.stat_sync_bigint real in
+    let field value = Node_buffer.to_string_default value in
+    Ok (real ^ "\000" ^ field (Node_fs.dev stat) ^ ":" ^ field (Node_fs.ino stat))
   with error -> Error (Printexc.to_string error)
 
 let verify_repository_identity ~run_git ~main_repository_root

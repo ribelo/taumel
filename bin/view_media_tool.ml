@@ -16,8 +16,6 @@ type candidate = {
   encoded_size : int;
 }
 
-let js_require name =
-  Unsafe.fun_call (Unsafe.get Unsafe.global "require") [| js_string name |]
 
 let prepare params =
   with_gateway_authorized "view_media" (fun _sandbox ->
@@ -268,17 +266,9 @@ let is_animated_webp bytes =
 
 let base64_size raw_size = ((raw_size + 2) / 3) * 4
 
-let buffer_from bytes =
-  let buffer = Unsafe.get Unsafe.global "Buffer" in
-  Unsafe.fun_call (Unsafe.get buffer "from") [| bytes |]
-
 let base64_of_bytes bytes =
-  match
-    string_value
-      (Unsafe.meth_call (buffer_from bytes) "toString" [| js_string "base64" |])
-  with
-  | Some value -> value
-  | None -> failwith "unable to base64-encode image bytes"
+  try Node_buffer.base64_of_bytes (ojs_of_js bytes)
+  with _ -> failwith "unable to base64-encode image bytes"
 
 let encode_candidate bytes mime_type =
   let data = base64_of_bytes bytes in
@@ -477,9 +467,8 @@ let view_media raw_facts =
   if String.trim path = "" then error_result "view_media requires a non-empty path"
   else
     let full_path = resolve_path cwd path in
-    let fs = js_require "node:fs" in
     let stat_result =
-      try Ok (Unsafe.fun_call (Unsafe.get fs "statSync") [| js_string full_path |])
+      try Ok (Node_fs.stat_sync full_path)
       with exn -> Error (Printexc.to_string exn)
     in
     match stat_result with
@@ -487,16 +476,11 @@ let view_media raw_facts =
         error_result ~path ~full_path
           (Printf.sprintf "unable to locate image at `%s`: %s" full_path error)
     | Ok stat ->
-        let is_file =
-          Js.to_bool (Unsafe.coerce (Unsafe.meth_call stat "isFile" [||]))
-        in
-        if not is_file then
+        if not (Node_fs.is_file stat) then
           error_result ~path ~full_path
             (Printf.sprintf "image path `%s` is not a file" full_path)
         else
-          let source_size_float =
-            match float_value (Unsafe.get stat "size") with Some value -> value | None -> 0.
-          in
+          let source_size_float = Node_fs.size stat in
           (* viewmedia-s4f8: 64 MiB source file ceiling (viewmedia-r2d5) *)
           if source_size_float > float_of_int max_source_bytes then
             error_result ~path ~full_path
@@ -505,7 +489,7 @@ let view_media raw_facts =
           else
             let source_size = int_of_float source_size_float in
             let read_result =
-              try Ok (Unsafe.fun_call (Unsafe.get fs "readFileSync") [| js_string full_path |])
+              try Ok (js_of_ojs (Node_fs.read_file_sync full_path))
               with exn -> Error (Printexc.to_string exn)
             in
             match read_result with

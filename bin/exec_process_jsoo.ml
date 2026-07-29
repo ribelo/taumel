@@ -5,43 +5,25 @@ type t = {
   tty : bool;
 }
 
-let node_process () = Unsafe.get Unsafe.global "process"
-let require name = Unsafe.fun_call (Unsafe.js_expr "require") [| js_string name |]
-
-let data_to_string data =
-  match string_value data with
-  | Some value -> value
-  | None -> (
-      match function_field data "toString" with
-      | None -> ""
-      | Some _ ->
-          Option.value
-            (string_value
-               (Unsafe.meth_call data "toString" [| js_string "utf8" |]))
-            ~default:"")
+let data_to_string data = Node_buffer.data_to_string (ojs_of_js data)
 
 let node_env ~shell =
-  let process = node_process () in
-  let env = Unsafe.get process "env" in
-  Unsafe.fun_call (Unsafe.get (Unsafe.get Unsafe.global "Object") "assign")
-    [|
-      inject (Unsafe.obj [||]);
-      inject env;
-      inject
-        (Unsafe.obj
-           [|
-             ("NO_COLOR", js_string "1");
-             ("TERM", js_string "dumb");
-             ("LANG", js_string "C.UTF-8");
-             ("LC_CTYPE", js_string "C.UTF-8");
-             ("LC_ALL", js_string "C.UTF-8");
-             ("COLORTERM", js_string "");
-             ("PAGER", js_string "cat");
-             ("GIT_PAGER", js_string "cat");
-             ("GIT_TERMINAL_PROMPT", js_string "0");
-             ("SHELL", js_string shell);
-           |]);
-    |]
+  let overrides =
+    Node_object.of_fields
+      [
+        Node_object.string_field "NO_COLOR" "1";
+        Node_object.string_field "TERM" "dumb";
+        Node_object.string_field "LANG" "C.UTF-8";
+        Node_object.string_field "LC_CTYPE" "C.UTF-8";
+        Node_object.string_field "LC_ALL" "C.UTF-8";
+        Node_object.string_field "COLORTERM" "";
+        Node_object.string_field "PAGER" "cat";
+        Node_object.string_field "GIT_PAGER" "cat";
+        Node_object.string_field "GIT_TERMINAL_PROMPT" "0";
+        Node_object.string_field "SHELL" shell;
+      ]
+  in
+  js_of_ojs (Node_object.assign [ Node_process.env (); overrides ])
 
 let process_pid process =
   match int_field process.child "pid" with
@@ -49,16 +31,11 @@ let process_pid process =
   | _ -> None
 
 let request_sigterm process =
-  let node = node_process () in
   let kill pid =
-    try
-      ignore
-        (Unsafe.meth_call node "kill"
-           [| js_number (float_of_int pid); js_string "SIGTERM" |])
-    with _ -> ()
+    try Node_process.kill pid "SIGTERM" with _ -> ()
   in
   (match process_pid process with
-  | Some pid when get_string node "platform" <> "win32" ->
+  | Some pid when Node_process.platform () <> "win32" ->
       kill (-pid);
       kill pid
   | Some pid -> kill pid
@@ -75,11 +52,9 @@ let write process chars =
     with _ -> Error "stdin is closed for this session"
 
 let spawn ~file ~args ~cwd ?env ~tty ~on_data ~on_exit () =
-  let fs = node_require "node:fs" in
-  let exists = Unsafe.fun_call (Unsafe.get fs "existsSync") [| js_string cwd |] in
-  if not (Js.to_bool (Unsafe.coerce exists)) then
+  if not (Node_fs.exists_sync cwd) then
     failwith ("Working directory does not exist: " ^ cwd);
-  let node_pty = require "node-pty" in
+  let node_pty = node_require "node-pty" in
   let options =
     Unsafe.obj
       [|

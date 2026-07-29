@@ -1,13 +1,8 @@
 open Jsoo_bridge
 
 let crypto = lazy (node_require "crypto")
-let fs = lazy (node_require "fs")
-let path = lazy (node_require "path")
 
-let join parts =
-  Unsafe.meth_call (Lazy.force path) "join"
-    (Array.of_list (List.map js_string parts))
-  |> Js.to_string
+let join parts = Node_path.join parts
 
 let owner_component owner_session_id =
   let hash =
@@ -52,56 +47,32 @@ let cleanup_envelope ~owner_session_id ~agent_id =
 
 let path_exists target =
   try
-    ignore (Unsafe.meth_call (Lazy.force fs) "lstatSync" [| js_string target |]);
+    ignore (Node_fs.lstat_sync target);
     true
   with _ -> false
 
 let realpath target =
-  try
-    Ok
-      (Unsafe.meth_call (Lazy.force fs) "realpathSync" [| js_string target |]
-      |> Js.to_string)
+  try Ok (Node_fs.realpath_sync target)
   with error -> Error (Printexc.to_string error)
 
 let is_directory target =
-  try
-    let stat =
-      Unsafe.meth_call (Lazy.force fs) "lstatSync" [| js_string target |]
-    in
-    Js.to_bool (Unsafe.meth_call stat "isDirectory" [||])
-  with _ -> false
+  try Node_fs.is_directory (Node_fs.lstat_sync target) with _ -> false
 
 let is_regular_file target =
-  try
-    let stat =
-      Unsafe.meth_call (Lazy.force fs) "lstatSync" [| js_string target |]
-    in
-    Js.to_bool (Unsafe.meth_call stat "isFile" [||])
-  with _ -> false
+  try Node_fs.is_file (Node_fs.lstat_sync target) with _ -> false
 
 let list_directory target =
-  try
-    Unsafe.meth_call (Lazy.force fs) "readdirSync" [| js_string target |]
-    |> array_value |> Option.value ~default:[||] |> Array.to_list
-    |> List.filter_map string_value
-  with _ -> []
+  try Node_fs.readdir_sync target with _ -> []
 
 let mkdir_p target =
   try
-    ignore
-      (Unsafe.meth_call (Lazy.force fs) "mkdirSync"
-         [|
-           js_string target;
-           Unsafe.obj [| ("recursive", js_bool true) |];
-         |]);
+    Node_fs.mkdir_sync ~recursive:true target;
     Ok ()
   with error -> Error (Printexc.to_string error)
 
 let write_file target contents =
   try
-    ignore
-      (Unsafe.meth_call (Lazy.force fs) "writeFileSync"
-         [| js_string target; js_string contents; js_string "utf8" |]);
+    Node_fs.write_file_sync_string target contents;
     Ok ()
   with error -> Error (Printexc.to_string error)
 
@@ -112,20 +83,13 @@ let write_file_durable_with_flag ~flag target contents =
     | None -> ()
     | Some fd ->
         descriptor := None;
-        (try
-           ignore (Unsafe.meth_call (Lazy.force fs) "closeSync" [| fd |])
-         with _ -> ())
+        (try Node_fs.close_sync fd with _ -> ())
   in
   try
-    let fd =
-      Unsafe.meth_call (Lazy.force fs) "openSync"
-        [| js_string target; js_string flag; js_number 384. |]
-    in
+    let fd = Node_fs.open_sync_mode target flag 0o600 in
     descriptor := Some fd;
-    ignore
-      (Unsafe.meth_call (Lazy.force fs) "writeFileSync"
-         [| fd; js_string contents; js_string "utf8" |]);
-    ignore (Unsafe.meth_call (Lazy.force fs) "fsyncSync" [| fd |]);
+    Node_fs.write_file_sync_fd fd contents;
+    Node_fs.fsync_sync fd;
     close ();
     Ok ()
   with error ->
@@ -139,26 +103,18 @@ let write_file_exclusive_durable target contents =
   write_file_durable_with_flag ~flag:"wx" target contents
 
 let read_file target =
-  try
-    Ok
-      (Unsafe.meth_call (Lazy.force fs) "readFileSync"
-         [| js_string target; js_string "utf8" |]
-      |> Js.to_string)
+  try Ok (Node_fs.read_file_sync_utf8 target)
   with error -> Error (Printexc.to_string error)
 
 let rename source destination =
   try
-    ignore
-      (Unsafe.meth_call (Lazy.force fs) "renameSync"
-         [| js_string source; js_string destination |]);
+    Node_fs.rename_sync source destination;
     Ok ()
   with error -> Error (Printexc.to_string error)
 
 let link_file source destination =
   try
-    ignore
-      (Unsafe.meth_call (Lazy.force fs) "linkSync"
-         [| js_string source; js_string destination |]);
+    Node_fs.link_sync source destination;
     Ok ()
   with error -> Error (Printexc.to_string error)
 
@@ -201,11 +157,7 @@ let child_marker_counts ~owner_session_id ~agent_id raw =
 
 let directory_has_marker ~owner_session_id ~agent_id directory =
   let names =
-    try
-      Unsafe.meth_call (Lazy.force fs) "readdirSync" [| js_string directory |]
-      |> array_value |> Option.value ~default:[||] |> Array.to_list
-      |> List.filter_map string_value
-    with _ -> []
+    try Node_fs.readdir_sync directory with _ -> []
   in
   let marker_count, matching_count =
     List.fold_left
@@ -218,11 +170,7 @@ let directory_has_marker ~owner_session_id ~agent_id directory =
             (marker_count, matching_count)
           else
             try
-              let raw =
-                Unsafe.meth_call (Lazy.force fs) "readFileSync"
-                  [| js_string candidate; js_string "utf8" |]
-                |> Js.to_string
-              in
+              let raw = Node_fs.read_file_sync_utf8 candidate in
               let file_markers, file_matches =
                 child_marker_counts ~owner_session_id ~agent_id raw
               in
@@ -718,13 +666,8 @@ let append_cleanup_journal_lines lines =
           Error ("cleanup journal root create failed: " ^ message)
       | Ok () -> (
           try
-            ignore
-              (Unsafe.meth_call (Lazy.force fs) "appendFileSync"
-                 [|
-                   js_string (cleanup_journal_path ());
-                   js_string (String.concat "" lines);
-                   js_string "utf8";
-                 |]);
+            Node_fs.append_file_sync (cleanup_journal_path ())
+              (String.concat "" lines);
             Ok ()
           with error ->
             Error

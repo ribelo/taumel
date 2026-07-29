@@ -1,38 +1,23 @@
 open Jsoo_bridge
 
-let fs_mod = lazy (node_require "fs")
-let child_process_mod = lazy (node_require "child_process")
-let os_mod = lazy (node_require "os")
-
 let canonical_executable path =
   if Filename.is_relative path then None
   else
-    let fs = Lazy.force fs_mod in
     try
-      let canonical =
-        Js.to_string (Unsafe.meth_call fs "realpathSync" [| js_string path |])
-      in
-      let stats = Unsafe.meth_call fs "statSync" [| js_string canonical |] in
-      let x_ok = Unsafe.get (Unsafe.get fs "constants") "X_OK" in
-      ignore (Unsafe.meth_call fs "accessSync" [| js_string canonical; x_ok |]);
-      if Js.to_bool (Unsafe.meth_call stats "isFile" [||]) then Some canonical
-      else None
+      let canonical = Node_fs.realpath_sync path in
+      let stats = Node_fs.stat_sync canonical in
+      Node_fs.access_sync canonical (Node_fs.x_ok ());
+      if Node_fs.is_file stats then Some canonical else None
     with _ -> None
 
 let executable_result =
   lazy
-    (let process_env = Unsafe.get (Unsafe.get Unsafe.global "process") "env" in
-     let configured =
-       match string_value (Unsafe.get process_env "TAUMEL_TRUSTED_GIT") with
+    (let configured =
+       match Node_process.env_get "TAUMEL_TRUSTED_GIT" with
        | Some value when String.trim value <> "" -> [ String.trim value ]
        | _ -> []
      in
-     let username =
-       try
-         let info = Unsafe.meth_call (Lazy.force os_mod) "userInfo" [||] in
-         Option.value (string_value (Unsafe.get info "username")) ~default:""
-       with _ -> ""
-     in
+     let username = Option.value (Node_os.user_info_username ()) ~default:"" in
      let candidates =
        configured
        @ [
@@ -64,28 +49,22 @@ let exec_path_result =
     (match executable () with
     | Error _ as error -> error
     | Ok git ->
-        let child_process = Lazy.force child_process_mod in
         try
-          let output =
-            Unsafe.meth_call child_process "execFileSync"
-              [|
-                js_string git;
-                js_array [ js_string "--exec-path" ];
-                Unsafe.obj
-                  [|
-                    ("encoding", js_string "utf8");
-                    ("env", Unsafe.obj [| ("PATH", js_string (Filename.dirname git)) |]);
-                    ("stdio", js_array [ js_string "ignore"; js_string "pipe"; js_string "pipe" ]);
-                  |];
-              |]
+          let options =
+            Node_child_process.utf8_options
+              ~env:
+                (Node_object.of_fields
+                   [ Node_object.string_field "PATH" (Filename.dirname git) ])
+              ()
           in
-          let path = String.trim (Js.to_string output) in
-          let fs = Lazy.force fs_mod in
-          let canonical =
-            Js.to_string (Unsafe.meth_call fs "realpathSync" [| js_string path |])
+          let path =
+            String.trim
+              (Node_child_process.exec_file_sync ~file:git
+                 ~args:[ "--exec-path" ] ~options)
           in
-          let stats = Unsafe.meth_call fs "statSync" [| js_string canonical |] in
-          if Js.to_bool (Unsafe.meth_call stats "isDirectory" [||]) then Ok canonical
+          let canonical = Node_fs.realpath_sync path in
+          let stats = Node_fs.stat_sync canonical in
+          if Node_fs.is_directory stats then Ok canonical
           else Error "trusted Git exec path is unavailable"
         with _ -> Error "trusted Git exec path is unavailable")
 
@@ -93,67 +72,72 @@ let exec_path () = Lazy.force exec_path_result
 let require_exec_path () =
   match exec_path () with Ok path -> path | Error message -> failwith message
 
-let process_env () = Unsafe.get (Unsafe.get Unsafe.global "process") "env"
+let process_env () = Node_process.env ()
 
 let restricted_environment ?git_dir ?git_work_tree extra =
   let git = require_executable () in
   let env = process_env () in
   let fields =
     [
-      ("PATH", js_string (Filename.dirname git));
-      ("HOME", Unsafe.get env "HOME");
-      ("GIT_EXEC_PATH", js_string (require_exec_path ()));
-      ("GIT_CONFIG_NOSYSTEM", js_string "1");
-      ("GIT_CONFIG_GLOBAL", js_string "/dev/null");
-      ("GIT_CONFIG_SYSTEM", js_string "/dev/null");
-      ("GIT_TERMINAL_PROMPT", js_string "0");
-      ("GIT_OPTIONAL_LOCKS", js_string "0");
-      ("GIT_PAGER", js_string "cat");
-      ("GIT_EDITOR", js_string "true");
-      ("GIT_ASKPASS", js_string "true");
-      ("GCM_INTERACTIVE", js_string "never");
-      ("LC_ALL", js_string "C");
-      ("GIT_CONFIG_COUNT", js_string "8");
-      ("GIT_CONFIG_KEY_0", js_string "core.hooksPath");
-      ("GIT_CONFIG_VALUE_0", js_string "/dev/null");
-      ("GIT_CONFIG_KEY_1", js_string "alias.x");
-      ("GIT_CONFIG_VALUE_1", js_string "");
-      ("GIT_CONFIG_KEY_2", js_string "core.useBuiltinFSMonitor");
-      ("GIT_CONFIG_VALUE_2", js_string "false");
-      ("GIT_CONFIG_KEY_3", js_string "advice.detachedHead");
-      ("GIT_CONFIG_VALUE_3", js_string "false");
-      ("GIT_CONFIG_KEY_4", js_string "commit.gpgsign");
-      ("GIT_CONFIG_VALUE_4", js_string "false");
-      ("GIT_CONFIG_KEY_5", js_string "core.editor");
-      ("GIT_CONFIG_VALUE_5", js_string "true");
-      ("GIT_CONFIG_KEY_6", js_string "protocol.file.allow");
-      ("GIT_CONFIG_VALUE_6", js_string "always");
-      ("GIT_CONFIG_KEY_7", js_string "submodule.recurse");
-      ("GIT_CONFIG_VALUE_7", js_string "false");
+      Node_object.string_field "PATH" (Filename.dirname git);
+      Node_object.copy_field env "HOME";
+      Node_object.string_field "GIT_EXEC_PATH" (require_exec_path ());
+      Node_object.string_field "GIT_CONFIG_NOSYSTEM" "1";
+      Node_object.string_field "GIT_CONFIG_GLOBAL" "/dev/null";
+      Node_object.string_field "GIT_CONFIG_SYSTEM" "/dev/null";
+      Node_object.string_field "GIT_TERMINAL_PROMPT" "0";
+      Node_object.string_field "GIT_OPTIONAL_LOCKS" "0";
+      Node_object.string_field "GIT_PAGER" "cat";
+      Node_object.string_field "GIT_EDITOR" "true";
+      Node_object.string_field "GIT_ASKPASS" "true";
+      Node_object.string_field "GCM_INTERACTIVE" "never";
+      Node_object.string_field "LC_ALL" "C";
+      Node_object.string_field "GIT_CONFIG_COUNT" "8";
+      Node_object.string_field "GIT_CONFIG_KEY_0" "core.hooksPath";
+      Node_object.string_field "GIT_CONFIG_VALUE_0" "/dev/null";
+      Node_object.string_field "GIT_CONFIG_KEY_1" "alias.x";
+      Node_object.string_field "GIT_CONFIG_VALUE_1" "";
+      Node_object.string_field "GIT_CONFIG_KEY_2" "core.useBuiltinFSMonitor";
+      Node_object.string_field "GIT_CONFIG_VALUE_2" "false";
+      Node_object.string_field "GIT_CONFIG_KEY_3" "advice.detachedHead";
+      Node_object.string_field "GIT_CONFIG_VALUE_3" "false";
+      Node_object.string_field "GIT_CONFIG_KEY_4" "commit.gpgsign";
+      Node_object.string_field "GIT_CONFIG_VALUE_4" "false";
+      Node_object.string_field "GIT_CONFIG_KEY_5" "core.editor";
+      Node_object.string_field "GIT_CONFIG_VALUE_5" "true";
+      Node_object.string_field "GIT_CONFIG_KEY_6" "protocol.file.allow";
+      Node_object.string_field "GIT_CONFIG_VALUE_6" "always";
+      Node_object.string_field "GIT_CONFIG_KEY_7" "submodule.recurse";
+      Node_object.string_field "GIT_CONFIG_VALUE_7" "false";
     ]
   in
   let fields =
-    match git_dir with Some value when value <> "" -> ("GIT_DIR", js_string value) :: fields | _ -> fields
+    match git_dir with
+    | Some value when value <> "" ->
+        Node_object.string_field "GIT_DIR" value :: fields
+    | _ -> fields
   in
   let fields =
-    match git_work_tree with Some value when value <> "" -> ("GIT_WORK_TREE", js_string value) :: fields | _ -> fields
+    match git_work_tree with
+    | Some value when value <> "" ->
+        Node_object.string_field "GIT_WORK_TREE" value :: fields
+    | _ -> fields
   in
-  Unsafe.obj (Array.of_list (fields @ extra))
+  js_of_ojs (Node_object.of_fields (fields @ List.map (fun (n, v) -> (n, ojs_of_js v)) extra))
 
 type commit_identity = { name : string; email : string }
 
 let identity_lookup_env () =
-  let env = process_env () in
   let inherited =
     [ "HOME"; "XDG_CONFIG_HOME"; "LANG"; "LC_ALL" ]
     |> List.filter_map (fun name ->
-           match string_value (Unsafe.get env name) with
-           | Some value -> Some (name, js_string value)
+           match Node_process.env_get name with
+           | Some value -> Some (Node_object.string_field name value)
            | None -> None)
   in
-  Unsafe.obj
-    (Array.of_list
-       (("PATH", js_string (Filename.dirname (require_executable ()))) :: inherited))
+  Node_object.of_fields
+    (Node_object.string_field "PATH" (Filename.dirname (require_executable ()))
+    :: inherited)
 
 let usable_identity_value value =
   let value = String.trim value in
@@ -168,21 +152,15 @@ let usable_identity_value value =
 
 let configured_identity_value ~worktree_path key =
   try
-    let output =
-      Unsafe.meth_call (Lazy.force child_process_mod) "execFileSync"
-        [|
-          js_string (require_executable ());
-          js_array (List.map js_string [ "config"; "--get"; key ]);
-          Unsafe.obj
-            [|
-              ("cwd", js_string worktree_path);
-              ("encoding", js_string "utf8");
-              ("env", identity_lookup_env ());
-              ("stdio", js_array [ js_string "ignore"; js_string "pipe"; js_string "pipe" ]);
-            |];
-        |]
+    let options =
+      Node_child_process.utf8_options ~cwd:worktree_path
+        ~env:(identity_lookup_env ()) ()
     in
-    usable_identity_value (Js.to_string output)
+    let output =
+      Node_child_process.exec_file_sync ~file:(require_executable ())
+        ~args:[ "config"; "--get"; key ] ~options
+    in
+    usable_identity_value output
   with _ -> None
 
 let resolve_commit_identity ~worktree_path =
@@ -201,41 +179,50 @@ let broker_environment ~git_dir ~git_work_tree ~commit =
   let fields =
     ref
       [
-        ("PATH", js_string (Filename.dirname git));
-        ("HOME", Unsafe.get env "HOME");
-        ("GIT_EXEC_PATH", js_string (require_exec_path ()));
-        ("LC_ALL", js_string "C");
-        ("NO_COLOR", js_string "1");
-        ("TERM", js_string "dumb");
-        ("GIT_CONFIG_NOSYSTEM", js_string "1");
-        ("GIT_CONFIG_GLOBAL", js_string "/dev/null");
-        ("GIT_CONFIG_SYSTEM", js_string "/dev/null");
-        ("GIT_OPTIONAL_LOCKS", js_string "0");
-        ("GIT_TERMINAL_PROMPT", js_string "0");
-        ("GIT_PAGER", js_string "cat");
-        ("GIT_EDITOR", js_string "true");
-        ("GIT_ASKPASS", js_string "true");
-        ("GIT_DIR", js_string git_dir);
-        ("GIT_WORK_TREE", js_string git_work_tree);
-        ("GIT_CONFIG_COUNT", js_string config_count);
-        ("GIT_CONFIG_KEY_0", js_string "core.hooksPath"); ("GIT_CONFIG_VALUE_0", js_string "/dev/null");
-        ("GIT_CONFIG_KEY_1", js_string "commit.gpgsign"); ("GIT_CONFIG_VALUE_1", js_string "false");
-        ("GIT_CONFIG_KEY_2", js_string "submodule.recurse"); ("GIT_CONFIG_VALUE_2", js_string "false");
-        ("GIT_CONFIG_KEY_3", js_string "core.useBuiltinFSMonitor"); ("GIT_CONFIG_VALUE_3", js_string "false");
-        ("GIT_CONFIG_KEY_4", js_string "diff.external"); ("GIT_CONFIG_VALUE_4", js_string "true");
-        ("GIT_CONFIG_KEY_5", js_string "core.attributesFile"); ("GIT_CONFIG_VALUE_5", js_string "/dev/null");
-        ("GIT_CONFIG_KEY_6", js_string "filter.unset.clean"); ("GIT_CONFIG_VALUE_6", js_string "");
-        ("GIT_CONFIG_KEY_7", js_string "filter.unset.process"); ("GIT_CONFIG_VALUE_7", js_string "");
-        ("GIT_CONFIG_KEY_8", js_string "user.useConfigOnly"); ("GIT_CONFIG_VALUE_8", js_string "true");
+        Node_object.string_field "PATH" (Filename.dirname git);
+        Node_object.copy_field env "HOME";
+        Node_object.string_field "GIT_EXEC_PATH" (require_exec_path ());
+        Node_object.string_field "LC_ALL" "C";
+        Node_object.string_field "NO_COLOR" "1";
+        Node_object.string_field "TERM" "dumb";
+        Node_object.string_field "GIT_CONFIG_NOSYSTEM" "1";
+        Node_object.string_field "GIT_CONFIG_GLOBAL" "/dev/null";
+        Node_object.string_field "GIT_CONFIG_SYSTEM" "/dev/null";
+        Node_object.string_field "GIT_OPTIONAL_LOCKS" "0";
+        Node_object.string_field "GIT_TERMINAL_PROMPT" "0";
+        Node_object.string_field "GIT_PAGER" "cat";
+        Node_object.string_field "GIT_EDITOR" "true";
+        Node_object.string_field "GIT_ASKPASS" "true";
+        Node_object.string_field "GIT_DIR" git_dir;
+        Node_object.string_field "GIT_WORK_TREE" git_work_tree;
+        Node_object.string_field "GIT_CONFIG_COUNT" config_count;
+        Node_object.string_field "GIT_CONFIG_KEY_0" "core.hooksPath";
+        Node_object.string_field "GIT_CONFIG_VALUE_0" "/dev/null";
+        Node_object.string_field "GIT_CONFIG_KEY_1" "commit.gpgsign";
+        Node_object.string_field "GIT_CONFIG_VALUE_1" "false";
+        Node_object.string_field "GIT_CONFIG_KEY_2" "submodule.recurse";
+        Node_object.string_field "GIT_CONFIG_VALUE_2" "false";
+        Node_object.string_field "GIT_CONFIG_KEY_3" "core.useBuiltinFSMonitor";
+        Node_object.string_field "GIT_CONFIG_VALUE_3" "false";
+        Node_object.string_field "GIT_CONFIG_KEY_4" "diff.external";
+        Node_object.string_field "GIT_CONFIG_VALUE_4" "true";
+        Node_object.string_field "GIT_CONFIG_KEY_5" "core.attributesFile";
+        Node_object.string_field "GIT_CONFIG_VALUE_5" "/dev/null";
+        Node_object.string_field "GIT_CONFIG_KEY_6" "filter.unset.clean";
+        Node_object.string_field "GIT_CONFIG_VALUE_6" "";
+        Node_object.string_field "GIT_CONFIG_KEY_7" "filter.unset.process";
+        Node_object.string_field "GIT_CONFIG_VALUE_7" "";
+        Node_object.string_field "GIT_CONFIG_KEY_8" "user.useConfigOnly";
+        Node_object.string_field "GIT_CONFIG_VALUE_8" "true";
       ]
   in
   (match identity with
   | None -> ()
   | Some identity ->
       fields :=
-        ("GIT_CONFIG_KEY_9", js_string "user.name")
-        :: ("GIT_CONFIG_VALUE_9", js_string identity.name)
-        :: ("GIT_CONFIG_KEY_10", js_string "user.email")
-        :: ("GIT_CONFIG_VALUE_10", js_string identity.email)
+        Node_object.string_field "GIT_CONFIG_KEY_9" "user.name"
+        :: Node_object.string_field "GIT_CONFIG_VALUE_9" identity.name
+        :: Node_object.string_field "GIT_CONFIG_KEY_10" "user.email"
+        :: Node_object.string_field "GIT_CONFIG_VALUE_10" identity.email
         :: !fields);
-  Unsafe.obj (Array.of_list !fields)
+  js_of_ojs (Node_object.of_fields !fields)
