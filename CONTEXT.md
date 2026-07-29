@@ -349,8 +349,9 @@ visible to both the agent and user without appearing user-authored.
 _Avoid_: User message, plan acknowledgement, hidden prompt
 
 **Complete plan**:
-A plan the agent has marked complete through `update_plan`, which stops
-automated continuation but remains recorded and may be resumed, returned to
-draft, or cleared only by the user. After the completing turn ends it is
-extension-unlocked so the agent may append tasks and reopen it to `active`.
+A plan whose tasks are all completed or cancelled; the system completes it
+automatically in every committed status, which stops automated continuation
+but keeps it recorded and resumable, returnable to draft, or clearable only
+by the user. After the completing turn ends it is extension-unlocked so the
+agent may append tasks and reopen it to `active`.
 _Avoid_: Deleted plan, immutable plan, free plan slot

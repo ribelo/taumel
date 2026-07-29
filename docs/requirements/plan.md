@@ -19,8 +19,10 @@ plan lifecycle.
 Rationale: every surveyed harness ships task tools disconnected from its
 continuation machinery — cosmetic checklists nothing enforces. Coupling the
 task list to the continuation loop is what makes tasks real: the loop pursues
-unfinished tasks, and completion is gated on them. The earlier objective-centric
-goal was unified into the plan because the two concepts overlapped — an
+unfinished tasks, and completion is gated on them. Completion is an invariant,
+not a request: a plan with no unfinished work is complete in every committed
+status, so the continuation loop can never outlive its task list. The earlier
+objective-centric goal was unified into the plan because the two concepts overlapped — an
 objective-only goal is a plan with one task — and the unification dissolved a
 class of special cases (objective immutability, late-fill, birth-with-tasks).
 Because the agent edits the very list the loop pursues, editability is
@@ -52,11 +54,15 @@ contract the agent is policed against cannot be renegotiated by the agent.
 - The agent shall move a plan to `active` via `update_plan` only from `draft`; activation commits the current task list and starts continuation. ^plan-lc03
 - When the agent creates one or more tasks in an extension-unlocked `complete` plan, the system shall apply the creation atomically and move the plan to `active`. ^plan-z19k
 - Only the user shall move a plan to `draft`, from any lifecycle status; the agent shall never transition a plan to `draft`. ^plan-lc04
-- The agent shall move a plan to `blocked` or `complete` only from `active`, via `update_plan`. ^plan-lc05
+- The agent shall move a plan to `blocked` only from `active`, via `update_plan`. ^plan-lc05
 - The system shall move a plan to `time_limited` only as specified under time-limit rules; neither the agent nor a command shall set that status directly. ^plan-lc06
 - Only the user shall resume a plan from `paused`, `blocked`, or `time_limited` to `active`, or move any plan to `draft`. ^plan-m0z1
 - Only the user shall clear a plan, and clearing shall be available from every lifecycle status. ^plan-lc08
 - Only the user shall move a plan to `paused`, and only from `active`; pausing shall suspend continuation without making the plan editable, and the agent shall never transition a plan to `paused`. ^plan-lc09
+- While the plan status is `active`, `paused`, `blocked`, or `time_limited`, when a change leaves every task `completed` or `cancelled`, the system shall set the plan status to `complete`. ^plan-zv0s
+- When an activate or resume would move a plan whose tasks are all `completed` or `cancelled` to `active`, the system shall set the status to `complete` in the same transition and shall not send a continuation. ^plan-oua0
+- When the plan status becomes `complete` through the automatic invariant, the system shall emit exactly one transient `Plan complete.` notification. ^plan-yve7
+- When the automatic completion fires during an agent turn, the system shall allow the current Pi turn to finish normally. ^plan-hwit
 
 ### Editability mapping
 
@@ -75,7 +81,7 @@ contract the agent is policed against cannot be renegotiated by the agent.
 
 - The system shall default continuation to enabled by the absence of `taumel.plan_automation` and persist that entry only when continuation is interrupted (`continuation = interrupted`, `requiresUserInput = true`). ^plan-au01
 - While the plan status is `active` and automation continuation is enabled, the system shall treat continuation as effective. ^plan-au02
-- The model shall not suspend plan continuation by ending a turn, declining to poll, starting or leaving a live exec session, or reporting progress in text; only the user-controlled interruption and lifecycle paths specified here may interrupt automation, and only `complete` or `blocked` may be model-directed terminal transitions. ^plan-au03
+- The model shall not suspend plan continuation by ending a turn, declining to poll, starting or leaving a live exec session, or reporting progress in text; only the user-controlled interruption and lifecycle paths specified here may interrupt automation, and only `blocked` may be a model-directed terminal transition. ^plan-au03
 
 ### Permission boundary
 
@@ -105,7 +111,7 @@ contract the agent is policed against cannot be renegotiated by the agent.
 - When the model calls `get_plan`, the system shall render exactly one ordinary tool-result block labeled `get_plan` and shall not additionally emit a plan summary or transient notification. ^plan-gt03
 - The system shall describe `get_plan` to the model as `Get the current plan for this thread, including status, automation state, tasks, token telemetry, elapsed active time, and optional time limit.` ^plan-gt04
 - The system shall present `get_plan` in the system tool catalog with the prompt snippet `Inspect the current plan, tasks, status, usage, and automation state.` ^plan-gt05
-- The system shall describe `create_task` to the model as `Create one or more tasks for the current plan. Tasks are the living breakdown of the work: order, dependencies, and completion state drive continuation and gate plan completion. Creating a task while no plan exists creates a draft plan; activate it with update_plan to start continuation. Tasks may be created while the plan is in draft, or to extend a completed plan once the turn in which it completed has ended; extending a completed plan reopens it to active.` ^plan-o5ch
+- The system shall describe `create_task` to the model as `Create one or more tasks for the current plan. Tasks are the living breakdown of the work: order, dependencies, and completion state drive continuation and complete the plan when every task is completed or cancelled. Creating a task while no plan exists creates a draft plan; activate it with update_plan to start continuation. Tasks may be created while the plan is in draft, or to extend a completed plan once the turn in which it completed has ended; extending a completed plan reopens it to active.` ^plan-o5ch
 - The system shall describe `create_task.tasks[].id` to the model as `Optional explicit task identity, unique within this plan. Omit to auto-generate a task- identity.` ^plan-gt07
 - The system shall describe `create_task.tasks[].title` to the model as `Short statement of the work. Trimmed; must not be empty.` ^plan-gt08
 - The system shall describe `create_task.tasks[].description` to the model as `Optional longer specification of this step.` ^plan-gt09
@@ -113,15 +119,14 @@ contract the agent is policed against cannot be renegotiated by the agent.
 - The system shall present `create_task` in the system tool catalog with the prompt snippet `Create one or more plan tasks while the plan is in draft or a completed plan is extension-unlocked.` ^plan-5n6h
 - The system shall describe `update_task` to the model as `Update one task's status, title, description, or dependencies. Content edits require a draft plan; status changes require an active or draft plan. Setting in_progress requires every depended task to be completed or cancelled. Mark a task completed only when its work is verifiably done; cancel tasks that are no longer needed. User-authored task text and cancellation are reserved to the user.` ^plan-gt12
 - The system shall present `update_task` in the system tool catalog with the prompt snippet `Update one plan task's status or content within editability rules.` ^plan-gt13
-- The system shall describe `update_plan` to the model as `Update the plan lifecycle: activate a draft plan to commit its task list and start continuation, or mark an active plan complete or genuinely blocked. Completion requires every task to be completed or cancelled first.` ^plan-gt14
-- The system shall describe `update_plan.status` to the model as `Lifecycle status to set: active commits the task list and starts continuation; complete declares every required outcome satisfied; blocked marks a genuine impasse requiring user input or an external-state change.` ^plan-gt15
-- The system shall present `update_plan` in the system tool catalog with the prompt snippet `Activate the plan, or mark it complete or genuinely blocked.` ^plan-gt16
-- When the model calls `update_plan` with a status other than `active`, `complete`, or `blocked`, or targeting a time limit or automation state, the system shall reject it. ^plan-ut01
-- When `update_plan` requests `active` from a status other than `draft`, or `complete` or `blocked` from a status other than `active`, the system shall reject it. ^plan-ut02
-- If any task has status `pending` or `in_progress`, the system shall reject `update_plan` with status `complete` and return the unfinished tasks with their `taskId`, `title`, and `status`; tasks with status `cancelled` shall not block completion, and the gate shall not apply to `update_plan` with status `blocked`. ^plan-ut03
-- When `update_plan` transitions a plan to `complete` or `blocked`, the system shall return the updated structured plan state and allow the current Pi turn to finish normally. ^plan-ut04
+- The system shall describe `update_plan` to the model as `Update the plan lifecycle: activate a draft plan to commit its task list and start continuation, or mark an active plan genuinely blocked. A plan completes automatically when every task is completed or cancelled.` ^plan-gt14
+- The system shall describe `update_plan.status` to the model as `Lifecycle status to set: active commits the task list and starts continuation; blocked marks a genuine impasse requiring user input or an external-state change.` ^plan-gt15
+- The system shall present `update_plan` in the system tool catalog with the prompt snippet `Activate the plan, or mark it genuinely blocked.` ^plan-gt16
+- When the model calls `update_plan` with a status other than `active` or `blocked`, or targeting a time limit or automation state, the system shall reject it. ^plan-ut01
+- When `update_plan` requests `active` from a status other than `draft`, or `blocked` from a status other than `active`, the system shall reject it. ^plan-ut02
+- When `update_plan` transitions a plan to `blocked`, the system shall return the updated structured plan state and allow the current Pi turn to finish normally. ^plan-ut04
 - A terminal `update_plan` call shall not generate or inject a separate user-facing outcome summary, terminate the current Pi turn, or request another continuation. ^plan-ut05
-- A successful `update_plan` or task-tool call shall produce only its ordinary tool-result block; any subsequent assistant prose remains an independent assistant response, and the system shall add no plan summary or transient notification. ^plan-ut06
+- A successful `update_plan` or task-tool call shall produce only its ordinary tool-result block; any subsequent assistant prose remains an independent assistant response, and the system shall add no plan summary or transient notification other than the automatic-completion notification of **plan-yve7**. ^plan-ut06
 - Task tool calls that violate the editability mapping, task-origin rules, dependency rules, or identity rules shall be rejected with the explicit rule-specific error and shall leave plan state unchanged. ^plan-ut07
 
 ### Commands
@@ -130,7 +135,7 @@ contract the agent is policed against cannot be renegotiated by the agent.
 - When the user runs `/plan <text>` while a plan record exists, the system shall append the text as a user-authored task in any lifecycle status and submit the text as a visible user message. ^plan-cm02
 - When the user appends a task to a `complete` plan, the system shall move the plan to `active`; task creation and appends shall not otherwise change the lifecycle status of an existing plan. ^plan-6ngi
 - When the user runs `/plan pause` for an active plan, the system shall set the status to `paused` and delete `taumel.plan_automation`; for an already paused plan it shall leave state unchanged and acknowledge `Plan already paused.`; for a draft, blocked, time-limited, or complete plan it shall reject the transition without erasing the reason continuation stopped and shall report that `/plan draft` enables editing. ^plan-cm03
-- When the user runs `/plan resume` from `draft`, `paused`, `blocked`, `time_limited`, or `complete`, the system shall preserve plan identity, tasks, and accumulated telemetry, set the status to `active`, clear interrupted automation, may inject resume content, and honor `--time-limit` and `--no-time-limit`; for an already active plan with enabled automation it shall leave state unchanged, emit exactly one transient `Plan already active.` acknowledgement, and shall not send a continuation. ^plan-cm04
+- While any task is `pending` or `in_progress`, when the user runs `/plan resume` from `draft`, `paused`, `blocked`, `time_limited`, or `complete`, the system shall preserve plan identity, tasks, and accumulated telemetry, set the status to `active`, clear interrupted automation, may inject resume content, and honor `--time-limit` and `--no-time-limit`; for an already active plan with enabled automation it shall leave state unchanged, emit exactly one transient `Plan already active.` acknowledgement, and shall not send a continuation. ^plan-cm04
 - If the user resumes from `time_limited` without changing or removing the limit, then the system shall reject the resume. ^plan-cm05
 - When the user runs `/plan clear`, the system shall delete `taumel.plan` and `taumel.plan_automation`; when neither exists, the command shall still succeed idempotently with exactly one transient `No plan to clear.` acknowledgement. ^plan-cm06
 - If `/plan <text>` has invalid syntax or an invalid time limit, the system shall report the command error before creating plan state or submitting any prompt. ^plan-cm07
@@ -139,7 +144,7 @@ contract the agent is policed against cannot be renegotiated by the agent.
 - When the user runs bare `/plan`, the system shall render exactly one non-persistent plan inspection titled `Plan`, shall not emit a transient notification, shall not add a transcript entry, and shall not submit content to the agent; the expanded inspection shall list the plan's tasks with status and origin. ^plan-cm10
 - If a `/plan` command is invalid, the system shall emit exactly one transient warning and shall not create a transcript entry or submit content to the agent. ^plan-cm11
 - When `/plan resume` is valid, the system shall emit its persisted visible `plan.continue` entry without an additional transient acknowledgement or plan summary. ^plan-cm12
-- The slash-command interface shall not provide `complete` or `blocked`; only the agent-facing `update_plan` tool may request those lifecycle transitions, and the user may resume or clear an incorrect model-directed terminal state. ^plan-cm13
+- The slash-command interface shall not provide `complete` or `blocked`; plan completion follows automatically from task completion, only the agent-facing `update_plan` tool may request `blocked`, and the user may resume or clear an incorrect model-directed terminal state. ^plan-cm13
 - The slash-command grammar shall expose only bare inspection, task-text submission, `pause`, `resume`, `draft`, and `clear`; it shall not provide the aliases `show`, `status`, `start`, `create`, `set`, or `cancel`. ^plan-cm14
 - `pause`, `clear`, and valid `resume` forms shall be recognized as subcommands only when the complete input matches their grammar; otherwise their words shall remain part of the submitted task text and shall never be silently discarded as trailing subcommand text. ^plan-cm15
 - Task-text submission and resume shall reject duplicate `--time-limit` flags and any combination of `--time-limit` with `--no-time-limit`; parsing shall not silently choose the last flag. ^plan-cm16
@@ -173,7 +178,7 @@ contract the agent is policed against cannot be renegotiated by the agent.
 - The system shall deliver the continuation as a Pi follow-up message rather than a steering message. ^plan-co03
 - The system shall express each automated continuation as one model-visible follow-up message and shall not add a second per-turn plan-context injection mechanism. ^plan-co04
 - The continuation message shall include active status, token telemetry, active time used, and the explicit active-time limit when one exists. ^plan-co05
-- The continuation message shall instruct the model to preserve the full plan, make one bounded useful increment when material work remains, verify completion against current authoritative evidence, call `update_plan complete` only when every required outcome is satisfied, and call `update_plan blocked` only at a genuine impasse requiring user input or an external-state change. ^plan-co06
+- The continuation message shall instruct the model to preserve the full plan, make one bounded useful increment when material work remains, verify completion against current authoritative evidence, mark tasks completed only when their work is verifiably done, and call `update_plan blocked` only at a genuine impasse requiring user input or an external-state change. ^plan-co06
 - The continuation message shall not synthesize strategy, redefine success, introduce a budget the user did not request, or treat turn boundaries, difficulty, uncertainty, or incomplete work as completion or blockage. ^plan-co07
 - The system shall not require or represent a model-counted consecutive-turn blocker threshold and shall not add cross-turn repetition tracking to decide whether `blocked` is valid. ^plan-co08
 - While a plan is not `active`, the system shall not inject its tasks or status into unrelated normal user turns; draft plan state shall remain available through the footer, `/plan`, and `get_plan` until explicitly resumed or cleared. ^plan-co09
@@ -202,7 +207,7 @@ contract the agent is policed against cannot be renegotiated by the agent.
 ### Accounting
 
 - When an assistant turn completes while the plan is `active`, the system shall add that turn's uncached input plus output tokens to `tokensUsed` and its active seconds to `timeUsedSeconds`, exactly once per turn keyed by session, branch length, and usage. ^plan-ac01
-- When the plan transitions to `complete` or `blocked` through `update_plan`, the system shall account the in-flight turn while the plan is still `active` before applying the terminal status, so the returned `tokensUsed` and `timeUsedSeconds` include that turn. ^plan-ac02
+- When the plan transitions to `complete` through the automatic invariant or to `blocked` through `update_plan`, the system shall account the in-flight turn while the plan is still `active` before applying the terminal status, so the plan's accumulated `tokensUsed` and `timeUsedSeconds` include that turn. ^plan-ac02
 - The system shall report `tokensUsed` as the sum of every accounted turn's uncached input plus output tokens and `timeUsedSeconds` as the sum of every accounted turn's active seconds. ^plan-ac03
 
 ### Time limit
