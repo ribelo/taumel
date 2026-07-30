@@ -53,3 +53,35 @@ function assertLinesFit(rendered) {
   assert.ok(rendered.length > 0);
   assertLinesFit(rendered);
 }
+
+async function selectAfterInputs(inputs, initialIndex = 0) {
+  const ui = {
+    custom: async (factory) => {
+      await new Promise((resolve) => {
+        const component = factory(
+          { requestRender: () => undefined },
+          { fg: (_color, text) => text },
+          {},
+          resolve,
+        );
+        for (const input of inputs) component.handleInput(input);
+        component.handleInput("\r");
+      });
+    },
+  };
+  return showInteractiveList(ui, {
+    items: ["a", "b", "c"],
+    renderRow: (item) => [item],
+    actionKeys: ["enter"],
+    initialIndex,
+  });
+}
+
+// Kitty keyboard-protocol repeat events move the interactive-list cursor.
+{
+  const down = await selectAfterInputs(["\x1b[B", "\x1b[1;1:2B"]);
+  assert.deepEqual(down, { key: "enter", index: 2 });
+
+  const up = await selectAfterInputs(["\x1b[A", "\x1b[1;1:2A"], 2);
+  assert.deepEqual(up, { key: "enter", index: 0 });
+}
