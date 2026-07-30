@@ -210,14 +210,14 @@ export async function showInteractiveList<T>(
         },
         invalidate: () => undefined,
         handleInput: (input: string) => {
-          if (input === "\x1b[A" || input === "k") {
+          if (input === "\x1b[A" || (input === "k" && !actionKeys.has("k"))) {
             if (options.items.length > 0) {
               cursor = Math.max(0, cursor - 1);
               requestRender();
             }
             return;
           }
-          if (input === "\x1b[B" || input === "j") {
+          if (input === "\x1b[B" || (input === "j" && !actionKeys.has("j"))) {
             if (options.items.length > 0) {
               cursor = Math.min(options.items.length - 1, cursor + 1);
               requestRender();
