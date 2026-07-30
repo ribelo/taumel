@@ -85,6 +85,32 @@ or content edits: every status other than `draft`, except that a `complete`
 plan may become extension-unlocked after the completing turn ends and then
 allows append-only task creation (which reopens the plan to `active`).
 _Avoid_: locked flag, plan mode, read-only mode
+
+**Plan lifecycle**:
+The transition law over the plan statuses. The agent moves only `draft` →
+`active` (`update_plan active`) and `active` → `blocked` (`update_plan
+blocked`); the user alone moves a plan to `draft` or `paused` and out of
+`paused`, `blocked`, or `time_limited`; the system alone sets `time_limited`
+when a time limit is hit. Completion is never requested: in every committed
+status the plan becomes `complete` the instant every task is `completed` or
+`cancelled`, and a `complete` plan reopens to `active` when tasks are
+appended by the user or created by the agent while extension-unlocked.
+
+| From | To | Who | Trigger |
+| --- | --- | --- | --- |
+| — | `draft` | agent | `create_task` with no plan (plan-lc01) |
+| — | `active` | user | `/plan <text>` (plan-lc02) |
+| `draft` | `active` | agent | `update_plan active` (plan-lc03); lands `complete` when all tasks terminal (plan-oua0) |
+| `active` | `blocked` | agent | `update_plan blocked` (plan-lc05) |
+| `active` | `paused` | user | `/plan pause` (plan-lc09) |
+| `active` | `time_limited` | system | time limit hit (plan-lc06) |
+| `paused`, `blocked`, `time_limited`, `complete` | `active` | user | `/plan resume` (plan-cm04); lands `complete` when all tasks terminal (plan-oua0) |
+| `active`, `paused`, `blocked`, `time_limited` | `complete` | system | every task `completed` or `cancelled` (plan-zv0s) |
+| `complete` | `active` | both | user append (plan-6ngi); agent `create_task` while extension-unlocked (plan-z19k) |
+| any | `draft` | user | `/plan draft` (plan-lc04) |
+| any | — | user | `/plan clear` (plan-lc08) |
+
+_Avoid_: state machine, plan mode, manual completion
 the identity of the parent session that may observe or control it.
 _Avoid_: Background global, detached task
 
