@@ -13,6 +13,14 @@ let js_number value = inject (Js.number_of_float value)
 
 let js_bool value = inject (Js.bool value)
 
+let js_optional_int = function
+  | None -> Unsafe.inject Js.null
+  | Some value -> js_number (float_of_int value)
+
+let js_optional_string = function
+  | None -> Unsafe.inject Js.null
+  | Some value -> js_string value
+
 let ojs_of_js value : Ojs.t = Obj.magic value
 
 let js_of_ojs (value : Ojs.t) : Unsafe.any = Obj.magic value

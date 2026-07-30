@@ -986,7 +986,7 @@ let handle_agent_runs_command args ctx =
                       ("agent_id", js_string run.run_agent_id);
                       ("status", js_run_status run.run_status);
                       ("truncated", js_bool truncated);
-                      ("full_output_path", option_string path);
+                      ("full_output_path", js_optional_string path);
                     |]
                 in
                 command_result ~details text)

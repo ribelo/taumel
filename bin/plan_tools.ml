@@ -2,10 +2,6 @@ open Jsoo_bridge
 open App_state
 open Runtime_access
 
-let js_optional_int = function
-  | None -> Unsafe.inject Js.null
-  | Some value -> js_number (float_of_int value)
-
 let notify_info ctx message =
   let ui = Unsafe.get ctx "ui" in
   if Option.is_some (function_field ui "notify") then
@@ -30,10 +26,6 @@ let apply_plan_transition ctx ~(previous : Taumel.Plan.store)
   else (
     current_plan := Some plan;
     Session_sync.save_plan_state ctx)
-
-let js_optional_string = function
-  | None -> Unsafe.inject Js.null
-  | Some value -> js_string value
 
 let js_task (task : Taumel.Plan.task) =
   Unsafe.obj

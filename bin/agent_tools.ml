@@ -30,10 +30,6 @@ let commit_agent_state ctx next =
 
 let js_string_array values = js_array (List.map js_string values)
 
-let option_string = function
-  | None -> Unsafe.inject Js.null
-  | Some value -> js_string value
-
 let js_run_status status = js_string (Taumel.Agents.run_status_to_string status)
 
 let js_kind kind = js_string (Taumel.Agents.agent_kind_to_string kind)
