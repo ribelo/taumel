@@ -64,28 +64,77 @@ test "$(git -C "$installed" cat-file -t "refs/tags/v$version")" = "tag"
 test "$(node -p "require('$installed/package.json').version")" = "$version"
 test ! -e "$installed/node_modules/typescript"
 
-commands_output="$temporary/commands.jsonl"
-status_output="$temporary/status.jsonl"
-(
-  cd "$temporary"
-  { printf '%s\n' '{"id":"commands","type":"get_commands"}'; sleep 0.5; } \
-    | HOME="$git_home" PI_CODING_AGENT_DIR="$agent_dir" \
-        "$root/node_modules/.bin/pi" --mode rpc --no-session >"$commands_output"
-  { printf '%s\n' '{"id":"status","type":"prompt","message":"/taumel"}'; sleep 0.5; } \
-    | HOME="$git_home" PI_CODING_AGENT_DIR="$agent_dir" \
-        "$root/node_modules/.bin/pi" --mode rpc --no-session >"$status_output"
-)
-
-TAUMEL_COMMANDS_OUTPUT="$commands_output" TAUMEL_STATUS_OUTPUT="$status_output" \
+TAUMEL_PI="$root/node_modules/.bin/pi" TAUMEL_RPC_CWD="$temporary" \
+  TAUMEL_RPC_HOME="$git_home" PI_CODING_AGENT_DIR="$agent_dir" \
   TAUMEL_EXPECTED_VERSION="$version" \
   node --input-type=module <<'NODE'
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
 
 const records = [];
-for (const path of [process.env.TAUMEL_COMMANDS_OUTPUT, process.env.TAUMEL_STATUS_OUTPUT]) {
-  records.push(...(await readFile(path, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)));
-}
+let stdout = "";
+let stderr = "";
+let statusSent = false;
+let inputEnded = false;
+const child = spawn(process.env.TAUMEL_PI, ["--mode", "rpc", "--no-session"], {
+  cwd: process.env.TAUMEL_RPC_CWD,
+  env: {
+    ...process.env,
+    HOME: process.env.TAUMEL_RPC_HOME,
+    PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+  },
+  stdio: ["pipe", "pipe", "pipe"],
+});
+
+const completeInputIfReady = () => {
+  const status = records.some((record) => record.type === "response" && record.id === "status");
+  const notification = records.some((record) =>
+    record.type === "extension_ui_request"
+    && record.method === "notify"
+    && record.message?.startsWith(`Taumel version: ${process.env.TAUMEL_EXPECTED_VERSION}\n`)
+  );
+  if (status && notification && !inputEnded) {
+    inputEnded = true;
+    child.stdin.end();
+  }
+};
+
+const acceptRecord = (record) => {
+  records.push(record);
+  if (record.type === "response" && record.id === "commands" && !statusSent) {
+    statusSent = true;
+    child.stdin.write('{"id":"status","type":"prompt","message":"/taumel"}\n');
+  }
+  completeInputIfReady();
+};
+
+child.stdout.setEncoding("utf8");
+child.stdout.on("data", (chunk) => {
+  stdout += chunk;
+  let newline;
+  while ((newline = stdout.indexOf("\n")) !== -1) {
+    const line = stdout.slice(0, newline).trim();
+    stdout = stdout.slice(newline + 1);
+    if (line !== "") acceptRecord(JSON.parse(line));
+  }
+});
+child.stderr.setEncoding("utf8");
+child.stderr.on("data", (chunk) => { stderr += chunk; });
+
+child.stdin.write('{"id":"commands","type":"get_commands"}\n');
+const exitCode = await new Promise((resolve, reject) => {
+  const timeout = setTimeout(() => {
+    child.kill();
+    reject(new Error(`Pi RPC timed out: ${JSON.stringify(records)}\n${stderr}`));
+  }, 30_000);
+  child.once("error", reject);
+  child.once("close", (code) => {
+    clearTimeout(timeout);
+    resolve(code);
+  });
+});
+
+assert.equal(exitCode, 0, stderr);
 assert.equal(records.some((record) => record.type === "extension_error"), false);
 const commands = records.find((record) => record.type === "response" && record.id === "commands");
 assert.equal(commands?.success, true, JSON.stringify(records));
