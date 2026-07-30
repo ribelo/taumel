@@ -481,6 +481,22 @@ export const AgentManagerSnapshotSchema = Type.Object(
   },
   { $id: "AgentManagerSnapshot", additionalProperties: false },
 );
+export const AgentWorktreeLineDeltaReadySchema = Type.Object(
+  {
+    kind: Type.Literal("ready"),
+    added: Type.Integer({ minimum: 0 }),
+    removed: Type.Integer({ minimum: 0 }),
+  },
+  { $id: "AgentWorktreeLineDeltaReady", additionalProperties: false },
+);
+export const AgentWorktreeLineDeltaUnavailableSchema = Type.Object(
+  { kind: Type.Literal("unavailable") },
+  { $id: "AgentWorktreeLineDeltaUnavailable", additionalProperties: false },
+);
+export const AgentWorktreeLineDeltaUpdateSchema = Type.Union(
+  [AgentWorktreeLineDeltaReadySchema, AgentWorktreeLineDeltaUnavailableSchema],
+  { $id: "AgentWorktreeLineDeltaUpdate" },
+);
 export const AgentChildSessionUpdateSchema = Type.Object(
   {
     action: Type.Union([
@@ -496,6 +512,7 @@ export type AgentNotificationClaimValidation = Static<typeof AgentNotificationCl
 export type AgentActiveCountResult = Static<typeof AgentActiveCountResultSchema>;
 export type AgentCleanupPlan = Static<typeof AgentCleanupPlanSchema>;
 export type AgentManagerSnapshot = Static<typeof AgentManagerSnapshotSchema>;
+export type AgentWorktreeLineDeltaUpdate = Static<typeof AgentWorktreeLineDeltaUpdateSchema>;
 
 export const ProcessManagerEntrySchema = Type.Object(
   {

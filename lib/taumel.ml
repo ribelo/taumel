@@ -6,6 +6,7 @@ module Agent_routing = Agent_routing
 module Agent_wait = Agent_wait
 module Agent_workspace = Agent_workspace
 module Agent_worktree = Agent_worktree
+module Agent_worktree_delta = Agent_worktree_delta
 module Agent_registry = Agent_registry
 module Capability_profile = Capability_profile
 module Child_session = Child_session

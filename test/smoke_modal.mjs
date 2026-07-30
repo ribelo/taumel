@@ -85,3 +85,43 @@ async function selectAfterInputs(inputs, initialIndex = 0) {
   const up = await selectAfterInputs(["\x1b[A", "\x1b[1;1:2A"], 2);
   assert.deepEqual(up, { key: "enter", index: 0 });
 }
+
+// shared-0mmo/eta-feaq: modal activity is aborted and awaited before close returns.
+{
+  let started = false;
+  let aborted = false;
+  let settled = false;
+  let renderRequests = 0;
+  const ui = {
+    custom: async (factory) => {
+      await new Promise((resolve) => {
+        const component = factory(
+          { requestRender: () => { renderRequests += 1; } },
+          { fg: (_color, text) => text },
+          {},
+          resolve,
+        );
+        component.handleInput("q");
+      });
+    },
+  };
+  await showScrollModal(ui, () => ["content"], {
+    activity: async ({ signal, requestRender }) => {
+      started = true;
+      await new Promise((resolve) => {
+        signal.addEventListener("abort", () => {
+          aborted = true;
+          requestRender();
+          queueMicrotask(() => {
+            settled = true;
+            resolve();
+          });
+        }, { once: true });
+      });
+    },
+  });
+  assert.equal(started, true);
+  assert.equal(aborted, true);
+  assert.equal(settled, true, "showScrollModal returned before activity settled");
+  assert.equal(renderRequests, 1);
+}

@@ -12,6 +12,7 @@ import {
 import type { ChildSessionBridge } from "./types.ts";
 import {
   decodeAgentManagerSnapshot,
+  decodeAgentWorktreeLineDeltaUpdate,
   decodeCoreAck,
   decodeGatewayCommandOutput,
   decodePreparedToolAction,
@@ -285,7 +286,22 @@ export async function executeAgentRunsManager(
     lastAgentId = agentId;
     if (selection.key === "enter" || selection.key === "i") {
       const instruction = await fetchLatestInstruction(core, ctx, agentId);
-      await showAgentInspection(ui, item.agent, item.latest, instruction);
+      await showAgentInspection(
+        ui,
+        item.agent,
+        item.latest,
+        instruction,
+        item.agent.isolation === "worktree"
+          ? async ({ signal }, onUpdate) => {
+              await core.call("watchAgentWorktreeLineDelta", [
+                { agent_id: agentId },
+                signal,
+                (rawUpdate) => onUpdate(decodeAgentWorktreeLineDeltaUpdate(rawUpdate)),
+                { ctx },
+              ]);
+            }
+          : undefined,
+      );
       continue;
     }
     if (selection.key === "o") {

@@ -8,6 +8,8 @@ function agent(overrides = {}) {
     model: "provider/model",
     thinking: "high",
     workspace: "/repo",
+    isolation: "worktree",
+    effectiveWorkspace: "/worktree/agent-abcd",
     tier: "high",
     createdAt: 100,
     childSessionFile: "/private/agent-abcd/session.jsonl",
@@ -71,7 +73,15 @@ const sortedSnapshot = {
   ],
 };
 
-function makeCore(snapshot, handleCommand) {
+function abortableWatch(args) {
+  const signal = args[1];
+  return new Promise((resolve) => {
+    if (signal.aborted) resolve();
+    else signal.addEventListener("abort", resolve, { once: true });
+  });
+}
+
+function makeCore(snapshot, handleCommand, watchLineDelta = abortableWatch) {
   const calls = [];
   return {
     calls,
@@ -80,6 +90,7 @@ function makeCore(snapshot, handleCommand) {
       if (name === "reconcileLiveAgentDispatches") return { ok: true };
       if (name === "agentManagerSnapshot") return snapshot;
       if (name === "handleCommand") return handleCommand(args);
+      if (name === "watchAgentWorktreeLineDelta") return watchLineDelta(args);
       throw new Error(`unexpected core call: ${name}`);
     },
   };
@@ -113,14 +124,14 @@ function makeUi({ drives = [], confirm } = {}) {
         component.handleInput("q");
       });
       customCalls += 1;
-      await new Promise((resolve) => {
+      await new Promise((resolve, reject) => {
         const component = factory(
           { requestRender: () => undefined },
           { fg: (color, text) => `[${color}]${text}` },
           {},
           resolve,
         );
-        drive(component, rendered);
+        Promise.resolve(drive(component, rendered)).catch(reject);
       });
     },
   };
@@ -167,11 +178,100 @@ function rowLines(rendered) {
   assert.ok(rendered.some((line) => line.includes("call_agent_wait")));
   assert.ok(rendered.some((line) => line.includes("Inspect agent lifecycle")));
   assert.ok(rendered.some((line) => line.includes("Refactor the compiler.")));
+  // agent-16ip/agent-73sf: worktree Inspect opens with an immediate measuring row.
+  assert.ok(rendered.some((line) => line.includes("Changes") && line.includes("[dim]measuring…")));
   // agent-9jof/agent-lpbp: the instruction is recovered on demand through the gateway.
   assert.deepEqual(
     core.calls.find(([name]) => name === "handleCommand")?.[1],
     [{ name: "agent-runs", args: "instruction agent-abcd", ctx: { ui } }],
   );
+  const watchCall = core.calls.find(([name]) => name === "watchAgentWorktreeLineDelta");
+  assert.deepEqual(watchCall?.[1][0], { agent_id: "agent-abcd" });
+  assert.equal(watchCall?.[1][1].aborted, true, "Inspect close did not abort its line-delta watcher");
+  assert.equal(typeof watchCall?.[1][2], "function");
+}
+
+// --- agent-ny9s: a ready worktree line delta uses semantic colors ---
+{
+  const core = makeCore(singleSnapshot, instructionResult, (args) => {
+    args[2]({ kind: "ready", added: 12, removed: 3 });
+    return abortableWatch(args);
+  });
+  const { ui, rendered } = makeUi({
+    drives: [
+      (component) => component.handleInput("i"),
+      (component, out) => {
+        out.push(...component.render(120));
+        component.handleInput("q");
+      },
+    ],
+  });
+  await executeAgentRunsManager({}, core, new Map(), "", { ui });
+  assert.ok(rendered.some((line) =>
+    line.includes("Changes") && line.includes("[success]+12/[error]-3")));
+}
+
+// --- agent-xk9h: an unavailable sample remains an inspectable row ---
+{
+  const core = makeCore(singleSnapshot, instructionResult, (args) => {
+    args[2]({ kind: "unavailable" });
+    return abortableWatch(args);
+  });
+  const { ui, rendered } = makeUi({
+    drives: [
+      (component) => component.handleInput("i"),
+      (component, out) => {
+        out.push(...component.render(120));
+        component.handleInput("q");
+      },
+    ],
+  });
+  await executeAgentRunsManager({}, core, new Map(), "", { ui });
+  assert.ok(rendered.some((line) =>
+    line.includes("Changes") && line.includes("[dim]unavailable")));
+}
+
+// --- agent-16ip: shared-workspace Inspect omits worktree changes entirely ---
+{
+  const sharedSnapshot = {
+    agents: [agent({ isolation: "none", effectiveWorkspace: undefined })],
+    runs: [run()],
+  };
+  const core = makeCore(sharedSnapshot, instructionResult, () => {
+    throw new Error("shared identity started a worktree watcher");
+  });
+  const { ui, rendered } = makeUi({
+    drives: [
+      (component) => component.handleInput("i"),
+      (component, out) => {
+        out.push(...component.render(120));
+        component.handleInput("q");
+      },
+    ],
+  });
+  await executeAgentRunsManager({}, core, new Map(), "", { ui });
+  assert.equal(rendered.some((line) => line.includes("Changes")), false);
+  assert.equal(core.calls.some(([name]) => name === "watchAgentWorktreeLineDelta"), false);
+}
+
+// --- unexpected watcher failure becomes unavailable while Inspect stays open ---
+{
+  const core = makeCore(singleSnapshot, instructionResult, async () => {
+    throw new Error("watcher failed");
+  });
+  const { ui, rendered } = makeUi({
+    drives: [
+      (component) => component.handleInput("i"),
+      async (component, out) => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        out.push(...component.render(120));
+        component.handleInput("q");
+      },
+    ],
+  });
+  await executeAgentRunsManager({}, core, new Map(), "", { ui });
+  assert.ok(rendered.some((line) =>
+    line.includes("Changes") && line.includes("[dim]unavailable")));
 }
 
 // --- agent-oy3p: an unavailable instruction renders as a placeholder ---

@@ -4,6 +4,9 @@ import type * as Core from "./bridge-core-contracts.ts";
 
 type HostContext = unknown;
 type HostAbortSignal = unknown;
+type HostAgentWorktreeLineDeltaListener = (
+  update: Static<typeof Action.AgentWorktreeLineDeltaUpdateSchema>,
+) => void;
 type PersistedPermissionsEntry = unknown;
 type ChildMetadataHostValue = unknown;
 type HostPlanEntry = unknown;
@@ -87,6 +90,7 @@ export type CoreMethodArgs = {
   readonly countActiveChildRuns: readonly [Static<typeof Core.AgentOwnerContextFactsSchema>];
   readonly ephemeralAgentCleanupPlan: readonly [Static<typeof Core.AgentOwnerContextFactsSchema>];
   readonly agentManagerSnapshot: readonly [Static<typeof Core.AgentOwnerContextFactsSchema>];
+  readonly watchAgentWorktreeLineDelta: readonly [Static<typeof Action.AgentIdFactsSchema>, HostAbortSignal, HostAgentWorktreeLineDeltaListener, Static<typeof Core.AgentOwnerContextFactsSchema>];
   readonly finishEphemeralAgentCleanup: readonly [Static<typeof Core.AgentOwnerContextFactsSchema>];
   readonly releaseEphemeralAgentCleanupLease: readonly [Static<typeof Core.AgentOwnerContextFactsSchema>];
   readonly suspendOwnerAgentsOnShutdown: readonly [Static<typeof Core.AgentOwnerContextFactsSchema>];

@@ -2,9 +2,20 @@ import { truncateToWidth } from "@earendil-works/pi-tui";
 import type { AgentManagerSnapshot } from "./bridge-contracts.ts";
 import { formatLocalTime } from "./util.ts";
 import { showScrollModal, wrapModalText, type ModalTheme, type ModalUi } from "./modal.ts";
+import type { ModalActivityContext } from "./modal.ts";
 
 type AgentIdentity = AgentManagerSnapshot["agents"][number];
 type AgentRun = AgentManagerSnapshot["runs"][number];
+
+export type WorktreeLineDeltaState =
+  | { readonly kind: "measuring" }
+  | { readonly kind: "unavailable" }
+  | { readonly kind: "ready"; readonly added: number; readonly removed: number };
+
+export type WorktreeLineDeltaWatch = (
+  context: ModalActivityContext,
+  onUpdate: (update: Exclude<WorktreeLineDeltaState, { readonly kind: "measuring" }>) => void,
+) => Promise<void>;
 
 export function statusColor(status: AgentRun["status"]): string {
   switch (status) {
@@ -26,6 +37,7 @@ export function renderAgentInspection(
   agent: AgentIdentity,
   run: AgentRun | undefined,
   instruction: string | undefined,
+  worktreeLineDelta: WorktreeLineDeltaState | undefined,
   theme: ModalTheme,
   width: number,
   nowMs = Date.now(),
@@ -51,6 +63,12 @@ export function renderAgentInspection(
   identityFields.push(["Workspace", agent.workspace]);
   if (agent.effectiveWorkspace !== undefined && agent.effectiveWorkspace !== agent.workspace) {
     identityFields.push(["Effective", agent.effectiveWorkspace]);
+  }
+  if (agent.isolation === "worktree") {
+    const changes = worktreeLineDelta?.kind === "ready"
+      ? `${theme.fg("success", `+${worktreeLineDelta.added}`)}/${theme.fg("error", `-${worktreeLineDelta.removed}`)}`
+      : theme.fg("dim", worktreeLineDelta?.kind === "unavailable" ? "unavailable" : "measuring…");
+    identityFields.push(["Changes", changes]);
   }
   identityFields.push(["Created", formatLocalTime(agent.createdAt, nowMs)]);
   if (agent.childSessionFile !== undefined) identityFields.push(["Session", agent.childSessionFile]);
@@ -93,6 +111,31 @@ export async function showAgentInspection(
   agent: AgentIdentity,
   run: AgentRun | undefined,
   instruction: string | undefined,
+  watchWorktreeLineDelta?: WorktreeLineDeltaWatch,
 ): Promise<void> {
-  await showScrollModal(ui, (width, theme) => renderAgentInspection(agent, run, instruction, theme, width));
+  let worktreeLineDelta: WorktreeLineDeltaState | undefined = agent.isolation === "worktree"
+    ? { kind: "measuring" }
+    : undefined;
+  await showScrollModal(
+    ui,
+    (width, theme) => renderAgentInspection(agent, run, instruction, worktreeLineDelta, theme, width),
+    agent.isolation === "worktree" && watchWorktreeLineDelta !== undefined
+      ? {
+          activity: async (context) => {
+            const update = (next: WorktreeLineDeltaState) => {
+              if (context.signal.aborted) return;
+              worktreeLineDelta = next;
+              context.requestRender();
+            };
+            try {
+              await watchWorktreeLineDelta(context, update);
+            } catch {
+              update({ kind: "unavailable" });
+              return;
+            }
+            update({ kind: "unavailable" });
+          },
+        }
+      : {},
+  );
 }

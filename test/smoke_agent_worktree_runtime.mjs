@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { executeTool, registerGatewayTools } from "../src/tool-executor.ts";
 
 const root = mkdtempSync(join(tmpdir(), "taumel-worktree-runtime-"));
@@ -12,6 +13,7 @@ const main = join(root, "main");
 const worktree = join(root, "worktree");
 const branch = "taumel/agent/test/agent-runtime";
 const trustedGit = realpathSync(execFileSync("which", ["git"], { encoding: "utf8" }).trim());
+const execFileAsync = promisify(execFile);
 process.env.PI_CODING_AGENT_DIR = join(root, "agent-home");
 process.env.HOME = join(root, "home");
 process.env.XDG_CONFIG_HOME = join(process.env.HOME, ".config");
@@ -28,7 +30,8 @@ try {
   git(main, "config", "user.email", "test@example.com");
   git(main, "config", "commit.gpgsign", "false");
   writeFileSync(join(main, "tracked.txt"), "tracked\n");
-  git(main, "add", "tracked.txt");
+  writeFileSync(join(main, ".gitignore"), "ignored.txt\n");
+  git(main, "add", "tracked.txt", ".gitignore");
   git(main, "commit", "-m", "initial");
   git(main, "worktree", "add", "-b", branch, worktree);
   git(main, "config", "--global", "user.name", "Global Test");
@@ -51,7 +54,24 @@ let core;
     on: () => undefined,
     eventsOn: () => () => undefined,
     emit: () => undefined,
-    exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+    exec: async (command, args, options = {}) => {
+      try {
+        const result = await execFileAsync(command, args, {
+          cwd: options.cwd,
+          encoding: "utf8",
+          signal: options.signal,
+          timeout: options.timeout,
+        });
+        return { code: 0, stdout: result.stdout, stderr: result.stderr, killed: false };
+      } catch (error) {
+        return {
+          code: typeof error?.code === "number" ? error.code : 1,
+          stdout: typeof error?.stdout === "string" ? error.stdout : "",
+          stderr: typeof error?.stderr === "string" ? error.stderr : String(error),
+          killed: error?.killed === true,
+        };
+      }
+    },
     setFooter: () => undefined,
     sessionSnapshot: (ctx) => ({
       cwd: ctx?.cwd ?? main,
@@ -324,6 +344,62 @@ let core;
     "starting another identity reclaimed a live provisional worktree",
   );
   assert.equal(existsSync(fakeGitMarker), false, "Git execution resolved through poisoned PATH");
+
+  const cleanDeltaController = new AbortController();
+  const cleanDeltaUpdates = [];
+  await core.call("watchAgentWorktreeLineDelta", [
+    { agent_id: firstStart.agentId },
+    cleanDeltaController.signal,
+    (update) => {
+      cleanDeltaUpdates.push(update);
+      cleanDeltaController.abort();
+    },
+    { ctx: parentCtx },
+  ]);
+  assert.deepEqual(cleanDeltaUpdates, [{ kind: "ready", added: 0, removed: 0 }]);
+
+  // agent-l8km/agent-r686/agent-tvgn: one identity-wide native-Git sample.
+  writeFileSync(join(firstStart.metadata.worktreePath, "committed.txt"), "committed\n");
+  git(firstStart.metadata.worktreePath, "add", "committed.txt");
+  git(firstStart.metadata.worktreePath, "commit", "-m", "agent commit");
+  writeFileSync(join(firstStart.metadata.worktreePath, "staged.txt"), "staged\n");
+  git(firstStart.metadata.worktreePath, "add", "staged.txt");
+  writeFileSync(join(firstStart.metadata.worktreePath, "tracked.txt"), "tracked\nunstaged\n");
+  writeFileSync(join(firstStart.metadata.worktreePath, "untracked.txt"), "one\ntwo\n");
+  writeFileSync(join(firstStart.metadata.worktreePath, "ignored.txt"), "ignored\nignored\n");
+  writeFileSync(join(firstStart.metadata.worktreePath, "binary.dat"), Buffer.from([0, 1, 2, 3]));
+  const deltaController = new AbortController();
+  const deltaUpdates = [];
+  const deltaTimes = [];
+  const deltaStartedAt = Date.now();
+  process.env.GIT_INDEX_FILE = join(root, "poison-index");
+  await core.call("watchAgentWorktreeLineDelta", [
+    { agent_id: firstStart.agentId },
+    deltaController.signal,
+    (update) => {
+      deltaUpdates.push(update);
+      deltaTimes.push(Date.now());
+      if (deltaUpdates.length === 1) {
+        writeFileSync(join(firstStart.metadata.worktreePath, "untracked.txt"), "one\ntwo\nthree\n");
+      } else {
+        deltaController.abort();
+      }
+    },
+    { ctx: parentCtx },
+  ]);
+  delete process.env.GIT_INDEX_FILE;
+  assert.deepEqual(deltaUpdates, [
+    { kind: "ready", added: 5, removed: 0 },
+    { kind: "ready", added: 6, removed: 0 },
+  ]);
+  assert.ok(deltaTimes[0] - deltaStartedAt < 4_500, "first line-delta sample waited for the refresh interval");
+  assert.ok(deltaTimes[1] - deltaTimes[0] >= 4_500, "line-delta refresh did not wait five seconds");
+
+  git(firstStart.metadata.worktreePath, "reset", "--hard", "HEAD");
+  rmSync(join(firstStart.metadata.worktreePath, "untracked.txt"));
+  rmSync(join(firstStart.metadata.worktreePath, "ignored.txt"));
+  rmSync(join(firstStart.metadata.worktreePath, "binary.dat"));
+
   writeFileSync(join(firstStart.metadata.worktreePath, "dirty.txt"), "dirty\n");
   const failedClose = await executeTool(
     {},

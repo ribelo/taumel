@@ -79,6 +79,9 @@ let baseline_committer_name = baseline_author_name
 
 let baseline_committer_email = baseline_author_email
 
+let nul_paths listing =
+  String.split_on_char '\x00' listing |> List.filter (fun value -> value <> "")
+
 let provisional_marker_path ~agent_home ~owner_component ~agent_id =
   Agent_workspace.join_path
     [

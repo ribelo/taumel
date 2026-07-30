@@ -34,6 +34,8 @@ val baseline_committer_name : string
 
 val baseline_committer_email : string
 
+val nul_paths : string -> string list
+
 val provisional_marker_path :
   agent_home:string -> owner_component:string -> agent_id:string -> string
 

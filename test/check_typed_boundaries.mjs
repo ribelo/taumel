@@ -153,6 +153,8 @@ const auditedOpaqueCoreArguments = new Set([
   "interruptPlanAutomation:0:HostContext", "clearInterruptedPlanAutomation:0:HostContext",
   "persistRalphControllerState:0:HostContext", "reloadSessionState:0:HostContext",
   "finishCronPrompt:2:HostContext", "executeOpenAiUsage:1:HostContext", "executeUsagePair:1:HostContext",
+  "watchAgentWorktreeLineDelta:1:HostAbortSignal",
+  "watchAgentWorktreeLineDelta:2:HostAgentWorktreeLineDeltaListener",
 ]);
 const observedOpaqueCoreArguments = new Set();
 for (const method of typedNames) {

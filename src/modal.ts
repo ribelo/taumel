@@ -12,6 +12,11 @@ export type ModalUi = {
   readonly notify?: unknown;
 };
 
+export type ModalActivityContext = {
+  readonly signal: AbortSignal;
+  readonly requestRender: () => void;
+};
+
 const defaultPageSize = 30;
 
 export function modalTheme(rawTheme: unknown): ModalTheme {
@@ -61,45 +66,67 @@ function requestRenderFrom(tui: unknown): () => void {
 export async function showScrollModal(
   ui: ModalUi | undefined,
   content: (width: number, theme: ModalTheme) => string[],
-  options: { readonly footer?: string; readonly pageSize?: number } = {},
+  options: {
+    readonly footer?: string;
+    readonly pageSize?: number;
+    readonly activity?: (context: ModalActivityContext) => Promise<void>;
+  } = {},
 ): Promise<void> {
   const custom = ui?.custom;
   if (typeof custom !== "function") return;
   let offset = 0;
-  await (custom as (factory: unknown) => Promise<unknown>).call(ui, (
-    tui: unknown,
-    rawTheme: unknown,
-    _keys: unknown,
-    done: () => void,
-  ) => {
-    const theme = modalTheme(rawTheme);
-    const pageSize = options.pageSize ?? defaultPageSize;
-    const requestRender = requestRenderFrom(tui);
-    return {
-      render: (width: number) => {
-        const w = Math.max(1, width);
-        const lines = content(w, theme);
-        offset = Math.min(offset, Math.max(0, lines.length - 1));
-        const visible = lines.slice(offset, offset + pageSize);
-        const footer = options.footer ?? " ↑↓ scroll · Esc/q/Enter close";
-        return [...visible, theme.fg("dim", footer)].map((line) => truncateToWidth(line, w, "..."));
-      },
-      invalidate: () => undefined,
-      handleInput: (input: string) => {
-        if (matchesKey(input, Key.up)) {
-          offset = Math.max(0, offset - 1);
-          requestRender();
-          return;
-        }
-        if (matchesKey(input, Key.down)) {
-          offset += 1;
-          requestRender();
-          return;
-        }
-        if (input === "q" || matchesKey(input, Key.escape) || matchesKey(input, Key.enter)) done();
-      },
-    };
-  });
+  const controller = new AbortController();
+  let activityFailure: unknown;
+  let activityPromise: Promise<void> | undefined;
+  try {
+    await (custom as (factory: unknown) => Promise<unknown>).call(ui, (
+      tui: unknown,
+      rawTheme: unknown,
+      _keys: unknown,
+      done: () => void,
+    ) => {
+      const theme = modalTheme(rawTheme);
+      const pageSize = options.pageSize ?? defaultPageSize;
+      const requestRender = requestRenderFrom(tui);
+      if (options.activity !== undefined) {
+        activityPromise = options.activity({ signal: controller.signal, requestRender }).catch((error) => {
+          activityFailure = error;
+        });
+      }
+      const close = () => {
+        controller.abort();
+        done();
+      };
+      return {
+        render: (width: number) => {
+          const w = Math.max(1, width);
+          const lines = content(w, theme);
+          offset = Math.min(offset, Math.max(0, lines.length - 1));
+          const visible = lines.slice(offset, offset + pageSize);
+          const footer = options.footer ?? " ↑↓ scroll · Esc/q/Enter close";
+          return [...visible, theme.fg("dim", footer)].map((line) => truncateToWidth(line, w, "..."));
+        },
+        invalidate: () => undefined,
+        handleInput: (input: string) => {
+          if (matchesKey(input, Key.up)) {
+            offset = Math.max(0, offset - 1);
+            requestRender();
+            return;
+          }
+          if (matchesKey(input, Key.down)) {
+            offset += 1;
+            requestRender();
+            return;
+          }
+          if (input === "q" || matchesKey(input, Key.escape) || matchesKey(input, Key.enter)) close();
+        },
+      };
+    });
+  } finally {
+    controller.abort();
+    await activityPromise;
+  }
+  if (activityFailure !== undefined) throw activityFailure;
 }
 
 /** Canonical confirmation prompt shared by manager flows (shared-zetx). */

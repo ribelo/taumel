@@ -113,9 +113,53 @@ let test_broker_authorization () =
   | Ok _ -> ()
   | Error error -> failwith (Agent_git_broker.error_message error)
 
+let baseline_line hash =
+  String.concat "\x00"
+    [
+      hash;
+      Agent_worktree.baseline_author_name;
+      Agent_worktree.baseline_author_email;
+      Agent_worktree.baseline_committer_name;
+      Agent_worktree.baseline_committer_email;
+      "pi agent baseline\n";
+      "";
+    ]
+
+let test_worktree_delta_parsing () =
+  let hash = String.make 40 'a' in
+  assert_true "find unique baseline"
+    (Agent_worktree_delta.baseline_commit (baseline_line hash) = Some hash);
+  let older = String.make 40 'b' in
+  assert_true "choose nearest baseline"
+    (Agent_worktree_delta.baseline_commit
+       (baseline_line hash ^ "\n" ^ baseline_line older)
+    = Some hash);
+  assert_true "reject baseline with message body"
+    (Agent_worktree_delta.baseline_commit
+       (String.concat "\x00"
+          [
+            hash;
+            Agent_worktree.baseline_author_name;
+            Agent_worktree.baseline_author_email;
+            Agent_worktree.baseline_committer_name;
+            Agent_worktree.baseline_committer_email;
+            "pi agent baseline\n\nbody\n";
+            "";
+          ])
+    = None);
+  match
+    Agent_worktree_delta.parse_numstat
+      "2\t1\tsource.ml\n-\t-\tbinary.dat\n3\t0\tdocs.md\n"
+  with
+  | Error message -> failwith message
+  | Ok delta ->
+      assert_true "added line count" (Agent_worktree_delta.added delta = 5);
+      assert_true "removed line count" (Agent_worktree_delta.removed delta = 1)
+
 let () =
   test_marker_roundtrip_and_match ();
   test_spawn_persists_worktree_binding ();
   test_delete_worktree_message_for_none ();
   test_broker_authorization ();
+  test_worktree_delta_parsing ();
   print_endline "test_agent_worktree_lifecycle: ok"

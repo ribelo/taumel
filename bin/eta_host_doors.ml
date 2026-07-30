@@ -46,8 +46,17 @@ let js_error_to_string error =
       | Some message -> message
       | None -> "JavaScript promise rejected")
 
-let await_js_result promise =
-  Eta_js.from_js_promise ~on_reject:js_error_to_string promise
+let await_js_result ?on_cancel promise =
+  let await () = Eta_js.from_js_promise ~on_reject:js_error_to_string promise in
+  match on_cancel with
+  | None -> await ()
+  | Some cancel ->
+      Effect.on_interrupt
+        (fun _interrupt_id ->
+          let open Eta.Syntax in
+          let* () = Effect.sync cancel in
+          await () |> Effect.to_result |> Effect.discard)
+        (await ())
 
 let cause_message : type err. err Eta.Cause.t -> string =
  fun cause ->

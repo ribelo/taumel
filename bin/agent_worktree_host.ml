@@ -122,9 +122,6 @@ let file_entry_fingerprint ~root relative =
       else Error ("unsupported source entry type: " ^ relative)
   with error -> Error (relative ^ ": " ^ Printexc.to_string error)
 
-let nul_paths listing =
-  String.split_on_char '\x00' listing |> List.filter (fun value -> value <> "")
-
 let list_source_entries ~source_workspace =
   let ( let* ) = Result.bind in
   let* head_paths =
@@ -139,7 +136,9 @@ let list_source_entries ~source_workspace =
       [ "ls-files"; "-z"; "-o"; "--exclude-standard" ]
   in
   let paths =
-    nul_paths head_paths @ nul_paths index_paths @ nul_paths untracked
+    Taumel.Agent_worktree.nul_paths head_paths
+    @ Taumel.Agent_worktree.nul_paths index_paths
+    @ Taumel.Agent_worktree.nul_paths untracked
     |> List.sort_uniq String.compare
   in
   Ok paths
@@ -264,8 +263,9 @@ let attr_values_for ~worktree_path ~attr relative =
       let parts =
         match output with
         | "" -> []
-        | text when text.[String.length text - 1] = '\x00' -> nul_paths text
-        | text -> nul_paths (text ^ "\x00")
+        | text when text.[String.length text - 1] = '\x00' ->
+            Taumel.Agent_worktree.nul_paths text
+        | text -> Taumel.Agent_worktree.nul_paths (text ^ "\x00")
       in
       let rec values acc = function
         | [] -> Ok (List.rev acc)
@@ -302,7 +302,8 @@ let expand_broker_add_paths ~worktree_path argv =
       [ "ls-files"; "-z"; "-c"; "-o"; "--exclude-standard" ]
       @ if pathspecs = [] then [] else "--" :: pathspecs
     in
-    run_git ~trim:false ~cwd:worktree_path args |> Result.map nul_paths
+    run_git ~trim:false ~cwd:worktree_path args
+    |> Result.map Taumel.Agent_worktree.nul_paths
 
 let preflight_broker_add ~worktree_path argv =
   let ( let* ) = Result.bind in
@@ -473,7 +474,7 @@ let create_baseline ~worktree_path =
   let* dirty =
     run_git ~trim:false ~cwd:worktree_path
       [ "ls-files"; "-z"; "-m"; "-d"; "-o"; "--exclude-standard" ]
-    |> Result.map nul_paths
+    |> Result.map Taumel.Agent_worktree.nul_paths
   in
   let* () =
     if dirty = [] then Ok ()

@@ -201,6 +201,15 @@ let core_call name_js args_js =
         (Agent_tools.agent_owner_context (arg 0))
   | "agentManagerSnapshot" ->
       Agent_lifecycle.manager_snapshot (Agent_tools.agent_owner_context (arg 0))
+  | "watchAgentWorktreeLineDelta" ->
+      let facts =
+        decode_ojs_contract Tool_contracts.AgentIdFacts.t_of_js
+          (ojs_of_js (arg 0))
+      in
+      Agent_worktree_inspection.watch
+        ~agent_id:(Tool_contracts.AgentIdFacts.get_agent_id facts)
+        (arg 1) (arg 2)
+        (Agent_tools.agent_owner_context (arg 3))
   | "finishEphemeralAgentCleanup" ->
       Agent_lifecycle.finish_ephemeral_cleanup
         (Agent_tools.agent_owner_context (arg 0))

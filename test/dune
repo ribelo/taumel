@@ -131,12 +131,13 @@
  (libraries taumel unix))
 
 (copy_files# ../bin/eta_host_doors.ml)
+(copy_files# ../bin/node_child_process_eta.ml)
 
 (executable
  (name test_eta_host_doors)
- (modules test_eta_host_doors eta_host_doors)
+ (modules test_eta_host_doors eta_host_doors node_child_process_eta)
  (modes js)
- (libraries eta eta_js eta_jsoo js_of_ocaml)
+ (libraries taumel_node eta eta_js eta_jsoo js_of_ocaml)
  (js_of_ocaml
   (flags --effects=cps)))
 
