@@ -143,21 +143,15 @@ let validate_time_limit = function
       Error "plan time limits must be positive when provided"
   | _ -> Ok ()
 
-let plan_id_sequence = ref 0
+let handle_rng = Random.State.make_self_init ()
 
-let plan_id_rng = Random.State.make_self_init ()
-
-let next_plan_id session_id now =
-  incr plan_id_sequence;
-  Printf.sprintf "plan-%s:%d:%d:%08x%08x" session_id now !plan_id_sequence
-    (Random.State.bits plan_id_rng)
-    (Random.State.bits plan_id_rng)
+let next_plan_id () =
+  "plan-"
+  ^ Shared.nano_id (Random.State.full_int handle_rng Shared.nano_id_namespace_size)
 
 module String_set = Set.Make (String)
 
 let issued_task_ids : (string, String_set.t) Hashtbl.t = Hashtbl.create 17
-
-let task_id_rng = Random.State.make_self_init ()
 
 let issued_ids session_id =
   Hashtbl.find_opt issued_task_ids session_id
@@ -177,7 +171,7 @@ let next_task_id reserved =
     if remaining <= 0 then Error "task handle namespace is exhausted"
     else
       let index =
-        Random.State.full_int task_id_rng Shared.nano_id_namespace_size
+        Random.State.full_int handle_rng Shared.nano_id_namespace_size
       in
       let id = "task-" ^ Shared.nano_id index in
       if String_set.mem id reserved then attempt (remaining - 1) else Ok id
@@ -186,7 +180,7 @@ let next_task_id reserved =
 
 let create_record ?time_limit_seconds ~session_id ~now ~status tasks =
   {
-    plan_id = next_plan_id session_id now;
+    plan_id = next_plan_id ();
     session_id;
     status;
     tasks;
@@ -550,7 +544,7 @@ type forked = { plan : t; automation : automation }
 
 let rebind_for_fork ~session_id (plan : t) =
   remember_task_ids session_id (List.map (fun task -> task.task_id) plan.tasks);
-  { plan with plan_id = next_plan_id session_id plan.created_at; session_id }
+  { plan with plan_id = next_plan_id (); session_id }
 
 let fork ~session_id (plan : t) =
   {

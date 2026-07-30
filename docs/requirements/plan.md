@@ -44,7 +44,7 @@ contract the agent is policed against cannot be renegotiated by the agent.
 - The system shall provide the lifecycle statuses `draft`, `active`, `paused`, `blocked`, `time_limited`, and `complete`. ^plan-st02
 - The system shall treat `tokensUsed` as telemetry that never controls lifecycle state. ^plan-st03
 - The system shall set `timeLimitSeconds` only when the user explicitly requests a time limit. ^plan-st04
-- Every newly created plan shall receive an identity unique within its owning session; timestamp resolution shall not permit identity reuse after clearing and recreating a plan. ^plan-st05
+- Every newly created plan shall receive a `plan-<nano-id>` identity, where nano-id is exactly four characters from `abcdefghjkmnpqrstuvwxyz23456789`, unique within its owning session. ^plan-st05
 - Plan ownership shall use the exact owning Pi session identity and shall not substitute the working-directory or workspace path as identity. ^plan-st06
 
 ### Lifecycle transitions
