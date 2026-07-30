@@ -103,7 +103,11 @@ frozen plan stranded until the user types a command.
 
 ### Tasks
 
-- The system shall store plan tasks as an ordered list within the plan record; each task shall carry `taskId`, `title`, optional `description`, `status`, `depends_on`, and `origin`, and list order shall be preserved through persistence. ^plan-tk01
+- The system shall store plan tasks as an ordered list within the plan record; each task shall carry `taskId`, `title`, optional `description`, `status`, `depends_on`, `origin`, and a `cancellationReason` while cancelled, and list order shall be preserved through persistence. ^plan-tk01
+- When the agent cancels a task, the system shall require a non-empty trimmed reason and shall reject the call without changing plan state when that reason is missing or empty. ^plan-i4u9
+- When the user cancels a task through the task manager modal or the `/plan` task command, the system shall record a system-authored cancellation reason naming the user action, without prompting the user for text. ^plan-zsos
+- When a task leaves `cancelled`, the system shall clear its `cancellationReason`. ^plan-rx0w
+- Persisted decoding shall reject a `cancelled` task with an empty or absent `cancellationReason` and shall reject a `cancellationReason` on a task in any other status. ^plan-ezxt
 - The system shall provide the task statuses `pending`, `in_progress`, `completed`, and `cancelled`. ^plan-tk02
 - Every task shall receive a `taskId` unique within the owning plan's lifetime that is never reused while that plan exists, including after cancellation; the model may supply an explicit `taskId` at creation, and the system shall generate one shaped `task-<nano-id>`, where nano-id is exactly four characters from `abcdefghjkmnpqrstuvwxyz23456789`, retrying collisions and failing creation clearly on namespace exhaustion rather than lengthening the identity, when none is supplied. ^plan-tk03
 - A plan shall contain at least one task; every constructor shall reject, and persisted decoding shall reject, a plan with no tasks. ^plan-tk04
@@ -131,7 +135,8 @@ frozen plan stranded until the user types a command.
 - The system shall describe `create_task.tasks[].description` to the model as `Optional longer specification of this step.` ^plan-gt09
 - The system shall describe `create_task.tasks[].depends_on` to the model as `Task identities that must reach completed or cancelled before this task may enter in_progress. May reference identities supplied earlier in this call.` ^plan-gt10
 - The system shall present `create_task` in the system tool catalog with the prompt snippet `Create one or more plan tasks while the plan is in draft or a completed plan is extension-unlocked.` ^plan-5n6h
-- The system shall describe `update_task` to the model as `Update one task's status, title, description, or dependencies. Content edits require a draft plan; status changes require an active or draft plan. Setting in_progress requires every depended task to be completed or cancelled. Mark a task completed only when its work is verifiably done; cancel tasks that are no longer needed. User-authored task text and cancellation are reserved to the user.` ^plan-gt12
+- The system shall describe `update_task` to the model as `Update one task's status, title, description, or dependencies. Content edits require a draft plan; status changes require an active or draft plan. Setting in_progress requires every depended task to be completed or cancelled. Mark a task completed only when its work is verifiably done; cancel tasks that are no longer needed, stating why. User-authored task text and cancellation are reserved to the user.` ^plan-gt12
+- The system shall describe `update_task.reason` to the model as `Why this task is being cancelled. Required when setting status to cancelled.` ^plan-7mt5
 - The system shall present `update_task` in the system tool catalog with the prompt snippet `Update one plan task's status or content within editability rules.` ^plan-gt13
 - The system shall describe `update_plan` to the model as `Update the plan lifecycle: activate a draft plan to commit its task list and start continuation, mark an active plan genuinely blocked, or return a blocked plan to active once its impasse is resolved. A plan completes automatically when every task is completed or cancelled.` ^plan-gt14
 - The system shall describe `update_plan.status` to the model as `Lifecycle status to set: active commits a draft plan's task list and starts continuation, or returns a blocked plan to active; blocked marks a genuine impasse requiring user input or an external-state change.` ^plan-gt15
@@ -187,6 +192,7 @@ frozen plan stranded until the user types a command.
 - If a core operation rejects a modal mutation, then the modal shall surface the rejection reason and remain open. ^plan-fent
 - The modal shall display a plan header line with lifecycle status, task progress, and active time above the task list. ^plan-wi58
 - Task rows shall lead with the task status rendered in color, followed by the title, the origin rendered dim, and `depends_on` references rendered dim inline; row truncation shall never remove the status. ^plan-2fnt
+- A cancelled task's row shall render its cancellation reason dim inline wherever the shared task-row grammar is used. ^plan-pvl2
 - The modal shall visually separate the task list from its key-hints footer. ^plan-j4x8
 
 ### Continuation
