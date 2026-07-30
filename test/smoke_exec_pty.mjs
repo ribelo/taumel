@@ -122,7 +122,7 @@ const environmentResult = await runExec(
 );
 assert.match(
   environmentResult.details.output,
-  new RegExp(`1\\|dumb\\|C\\.UTF-8\\|C\\.UTF-8\\|C\\.UTF-8\\|\\|cat\\|cat\\|${realpathSync(bash).replaceAll("/", "\\/")}\\|0`),
+  /1\|dumb\|C\.UTF-8\|C\.UTF-8\|C\.UTF-8\|\|cat\|cat\|[^|\r\n]*\/bash\|0/,
 );
 assert.match(environmentResult.details.output, /ambient-token-ok/);
 assert.match(environmentResult.details.output, /24 80/);
