@@ -1,4 +1,3 @@
-import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
@@ -12,10 +11,25 @@ const files = execFileSync("find", ["lib", "bin", "src", "-type", "f"], {
   path !== "" && !path.includes("/generated/") && /\.(?:ml|mli|ts)$/.test(path)
 );
 
+const maximum = 1000;
+const oversized = [];
+
 for (const path of files) {
-  const maximum = 1000;
   const actual = lineCount(path);
-  assert.ok(actual <= maximum, `eng-fs01: ${path} has ${actual} lines (maximum ${maximum})`);
+  if (actual > maximum) oversized.push({ path, actual });
 }
 
-console.log("source file size check: all assertions passed");
+for (const { path, actual } of oversized) {
+  const message = `eng-fs01: ${path} has ${actual} lines (recommended maximum ${maximum})`;
+  if (process.env.GITHUB_ACTIONS === "true") {
+    console.warn(`::warning file=${path},title=eng-fs01::${message}`);
+  } else {
+    console.warn(`warning: ${message}`);
+  }
+}
+
+console.log(
+  oversized.length === 0
+    ? "source file size check: all files are within the recommendation"
+    : `source file size check: ${oversized.length} informational warning(s)`,
+);

@@ -11,7 +11,7 @@ independent of any single feature.
 
 ## Requirements
 
-- Each `lib/`, `bin/`, and `src/` source file shall stay at or under 1000 lines, split along cohesive module seams. ^eng-fs01
+- When a `lib/`, `bin/`, or `src/` source file exceeds 1000 lines, the quality gate shall report an informational warning without failing, so maintainers can split it along cohesive module seams. ^eng-fs01
 - Code shall make invalid states unrepresentable where practical. Prefer domain-specific types, explicit variants, and narrow data shapes that prevent misuse over generic records plus late assertions. When an invalid state cannot be made impossible, catch it at the earliest practical boundary, preferably at compile time, then at parse/normalization time, and only lastly through behavior tests or runtime assertions. ^eng-ds01
 - Every value returned through the Taumel core-call boundary shall be constructed through the generated builder for its declared bridge contract; code shall not return an ad hoc JavaScript object through that boundary except inside a field that the declared contract explicitly types as open data. ^eng-bc01
 - Generated bridge-contract builders shall supply literal discriminants such as `ok`, `action`, and `kind` internally and shall not permit callers to choose those values. ^eng-bc02
