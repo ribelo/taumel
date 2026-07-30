@@ -263,6 +263,12 @@ A persistent Git working tree dedicated to one agent identity and reused by all
 of that identity's runs until explicitly removed by its owner.
 _Avoid_: Work directory, temporary checkout, run worktree
 
+**Agent worktree line delta**:
+The transient identity-wide net added and removed text lines between an agent
+worktree's automatic baseline and its current content, including committed and
+uncommitted work without retaining edit churn or becoming persisted agent state.
+_Avoid_: Run LOC, dirty line count, cumulative churn counter
+
 **Agent Git broker**:
 The allowlisted execution path that applies an eligible agent's validated
 `exec_command` Git invocation to its worktree without granting the command shell

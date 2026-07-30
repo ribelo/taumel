@@ -12,6 +12,8 @@ atomic writes, file locking, JSON helpers, settings discovery, model id parsing,
 formatters, and small Pi adapter helpers. Each component owns its own typed
 persisted state; shared persistence stays infrastructure only. Authorization
 lives in the capability profile and tool gateway, never in active-tool mutation.
+The shared modal kit also owns reusable interaction and transient-activity
+lifetimes so individual command surfaces do not hand-roll either concern.
 
 ## Requirements
 
@@ -65,3 +67,4 @@ lives in the capability profile and tool gateway, never in active-tool mutation.
 - If a canonical `taumel.childSession` entry is malformed or its session entries cannot be scanned, then authority-sensitive callers shall retain child confinement and shall not treat the session as top-level. ^shared-o11w
 - The system shall register `/taumel` as a visible local command for Taumel status and initialization. ^shared-2hck
 - Where a user-facing terminal modal is added or revised, the system shall build it on a shared modal kit that supplies scrolling, close-key handling, theme fallback, and confirmation prompts. ^shared-zetx
+- While a user-facing terminal modal owns asynchronous activity, the shared modal kit shall bind that activity to the modal lifetime, provide render invalidation, and cancel and await the activity before the modal call returns. ^shared-0mmo

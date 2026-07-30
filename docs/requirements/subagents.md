@@ -16,6 +16,10 @@ specialists with dedicated model-facing tools, fixed purposes, and read-only
 authority. All three kinds share identity, continuation, waiting, persistence,
 notification, and closing mechanics.
 
+The user-only agent manager exposes identity, run, instruction, and transient
+worktree inspection without adding that inspection to the parent conversation
+or the model-facing agent contract.
+
 Model-facing orchestration remains provider-portable: every tool result is valid
 JSON, child output is delivered only by an explicit `agent_wait`, resolved model
 and thinking stay user-only, and short caller-supplied descriptions label work
@@ -357,6 +361,11 @@ agents, plan-mode continuation, Librarian, Review, and Painter.
 - When the user invokes the prune action, the system shall close every identity whose latest run is terminal after user confirmation, shall leave identities with a non-terminal latest run untouched, and shall report how many identities were closed. ^agent-6d58
 - When the user closes the `/agent-runs` manager without choosing an action, the system shall not add a transcript entry and shall not emit a transient notification. ^agent-bxg4
 - After an identity action completes, the system shall reopen the `/agent-runs` identity list with a refreshed snapshot. ^agent-mljb
+- When the Inspect modal shows a worktree-isolated identity, the system shall show a `Changes` row in the Identity section; when it shows a shared-workspace identity, the system shall omit that row. ^agent-16ip
+- When an agent worktree line delta is available, the Inspect modal shall render it as `+<added>/-<removed>`, color additions as success and removals as error, and show `+0/-0` for an unchanged worktree. ^agent-ny9s
+- When the Inspect modal opens for a worktree-isolated identity, the system shall immediately show `Changes` as measuring and start the first worktree line-delta measurement without waiting for the refresh interval. ^agent-73sf
+- While a worktree identity's Inspect modal remains open, after each line-delta attempt finishes, the system shall wait five seconds and start the next attempt; attempts shall be serialized and each attempt shall time out after fifteen seconds. ^agent-tkom
+- If an agent worktree line-delta attempt fails or times out, then the Inspect modal shall show `Changes` as unavailable, continue its refresh schedule, and restore the numeric delta after the next successful attempt. ^agent-xk9h
 
 ### Non-interactive draining
 

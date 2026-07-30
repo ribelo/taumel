@@ -11,7 +11,9 @@ An agent identity may use a persistent Git worktree instead of sharing its
 parent's workspace. The worktree gives every run of that identity one stable,
 isolated filesystem and a dedicated branch. The child may inspect, stage, and
 commit through a constrained Git broker, while the main agent exclusively owns
-integration and physical-worktree lifecycle decisions.
+integration and physical-worktree lifecycle decisions. User inspection may
+derive a transient net line delta from the automatic baseline, but that
+presentation does not become agent state or integration policy.
 
 ## Requirements
 
@@ -42,6 +44,7 @@ integration and physical-worktree lifecycle decisions.
 - When the source workspace contains staged and unstaged versions of the same tracked file, the system shall place the current working-tree content in the agent worktree baseline. ^agent-ugw6
 - When creating an agent worktree, the system shall create one baseline commit on the dedicated branch after reproducing the source state, including an empty baseline commit when that state matches `HEAD`. ^agent-w2w6
 - The system shall author and commit every automatic baseline as `Pi Baseline <pi-baseline@local>` without reading or changing the user's Git identity configuration. ^agent-vptx
+- When creating an automatic baseline commit, the system shall use the exact commit message `pi agent baseline`. ^agent-oeg4
 - After creating the baseline, the system shall present the child with a clean index and working tree whose filesystem tree exactly matches the accepted source-state snapshot. ^agent-9e5w
 - When creating an agent worktree, the system shall compare the source `HEAD` and a fingerprint of tracked content, tracked deletions, and untracked non-ignored content before and after capture. ^agent-ne9r
 - The source-state fingerprint and accepted baseline shall preserve regular-file content, executable mode, symbolic-link targets, and Git-tracked file type; if a source entry required by the snapshot cannot be represented safely, then creation shall fail rather than omit or rewrite it. ^agent-s2zv
@@ -119,6 +122,16 @@ integration and physical-worktree lifecycle decisions.
 - The broker shall reuse `exec_command` process-exit, bounded output, truncation, full-output artifact, cancellation, background-session, and rendering semantics. ^agent-og85
 - A nonzero native Git exit shall remain an executed-command result, while grammar rejection, permission denial, repository mismatch, unsafe-filter detection, or broker verification failure shall remain a failed `exec_command` tool call. ^agent-hy5x
 - The system shall apply the brokered Git subprocess, environment, hook, signing, filter, filesystem-monitor, external-driver, and submodule restrictions to automatic source-state capture and baseline creation. ^agent-cqek
+
+### User inspection
+
+- When measuring an agent worktree, the system shall locate the automatic baseline commit in the dedicated branch's first-parent history by its required author, committer, and commit message. ^agent-y1ue
+- Before measuring an agent worktree, the trusted host adapter shall verify the identity-owned worktree, native registration, main repository, and dedicated branch and shall invoke the trusted native Git executable with external diff, text conversion, hooks, signing, filesystem monitoring, and interactive behavior disabled. ^agent-re17
+- If the automatic baseline commit is unavailable or no longer belongs to the dedicated branch's first-parent history, then the system shall report the worktree line delta as unavailable rather than compare against the main branch, a merge base, or another inferred revision. ^agent-rd7b
+- The agent worktree line delta shall be the identity-wide net added and removed lines between the automatic baseline and the current worktree, including committed, staged, tracked unstaged, and non-ignored untracked content across every run of that identity. ^agent-l8km
+- The agent worktree line delta shall count text lines in source, tests, documentation, configuration, and every other text file, and shall exclude ignored and binary content. ^agent-r686
+- When current worktree content returns to its automatic-baseline state, the agent worktree line delta shall return to zero rather than retain cumulative edit churn. ^agent-tn0h
+- The system shall derive the agent worktree line delta on demand from native Git and current filesystem content and shall not persist the baseline commit hash or measured delta in agent state. ^agent-tvgn
 
 ### Integration and lifecycle
 

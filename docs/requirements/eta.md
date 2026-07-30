@@ -13,7 +13,9 @@ promises instead of touching JavaScript async APIs. TypeScript stays the
 thinnest pi adapter; its orchestration logic belongs in the core and moves
 there as modules are revised. The migration is gardener's-method: the target
 shape is declared here, and the codebase is pruned toward it continuously,
-module by module — never as a single rewrite.
+module by module — never as a single rewrite. Every asynchronous child has an
+explicit scope, and cancellation crosses host doors instead of abandoning live
+promises, listeners, timers, or processes.
 
 ## Requirements
 
@@ -27,3 +29,5 @@ module by module — never as a single rewrite.
 - When a TypeScript-side orchestration module is revised, the system shall move its orchestration logic to the OCaml core on Eta and keep TypeScript as the thinnest pi adapter. ^eta-bd25
 - The system shall provide a typed Node.js interop layer of `gen_js_api` bindings covering the Node APIs the core actually uses — fs, path, os, process, Buffer, and child_process — rather than binding whole API surfaces speculatively. ^eta-4u1e
 - OCaml modules shall consume the typed Node layer for the APIs it covers and shall not call those APIs through raw `Unsafe`; `Unsafe` remains acceptable only for interop the layer does not cover, per **eta-6b4o**. ^eta-pw57
+- Every fiber, promise, timer, event listener, and host process started by Taumel asynchronous activity shall belong to an explicit scope; when that scope exits, the system shall cancel and await its children, remove its listeners, and terminate its host operations before reporting scope completion. ^eta-feaq
+- When Eta interruption cancels an awaited JavaScript promise whose host operation supports cancellation, the shared host door shall invoke that host cancellation and shall not merely detach the Eta waiter. ^eta-hu56
