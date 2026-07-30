@@ -148,7 +148,9 @@ frozen plan stranded until the user types a command.
 - A terminal `update_plan` call shall not generate or inject a separate user-facing outcome summary, terminate the current Pi turn, or request another continuation. ^plan-ut05
 - A successful `update_plan` or task-tool call shall produce only its ordinary tool-result block; any subsequent assistant prose remains an independent assistant response, and the system shall add no plan summary or transient notification other than the automatic-completion notification of **plan-yve7**. ^plan-ut06
 - Task tool calls that violate the editability mapping, task-origin rules, dependency rules, or identity rules shall be rejected with the explicit rule-specific error and shall leave plan state unchanged. ^plan-ut07
-- Every rejection caused by the plan's lifecycle status shall name the current status and the available remedy: while `blocked`, that the agent may call `update_plan` with `active` to unblock; while `paused` or `time_limited`, that the user must run `/plan resume`; while `complete` without the extension unlock, the wording required by **plan-zty5**. ^plan-q0ri
+- Every rejection caused by the plan's lifecycle status shall name the current status and the remedy that restores the refused capability rather than any other lifecycle remedy. ^plan-q0ri
+- A refused task status change shall name returning the plan to `active`: while `blocked`, that the agent may call `update_plan` with `active` and a resolution; while `paused` or `time_limited`, that the user must run `/plan resume`; while `complete`, that the user must run `/plan draft`. ^plan-iqux
+- A refused task creation or content edit shall name `/plan draft`, except while `complete` without the extension unlock, where it shall keep the wording required by **plan-zty5**. ^plan-d0u8
 - When `update_plan` requests the plan's current status, the system shall leave plan state unchanged and acknowledge `Plan already active.` or `Plan already blocked.` accordingly. ^plan-q1gi
 
 ### Commands
