@@ -139,7 +139,7 @@ does not use a separate Taumel settings file or environment-variable override.
 | `TAUMEL_ETA_PATH` | unset | Optional local Eta repository containing the commit in `eta-revision` |
 | `TAUMEL_OPAM_SWITCH` | `5.4.1` | Shared OPAM switch name |
 | `OPAMROOT` | `~/.cache/opam` | Shared OPAM root |
-| `TAUMEL_ETA_PACKAGES` | `eta eta_http eta_jsoo eta_http_js` | Eta packages pinned during initialization |
+| `TAUMEL_ETA_PACKAGES` | `eta eta_http eta_js eta_jsoo eta_http_js` | Eta packages pinned during initialization |
 
 These variables affect development setup, not runtime configuration.
 

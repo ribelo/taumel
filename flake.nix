@@ -75,7 +75,7 @@
               else
                 eta_url="git+https://github.com/ribelo/eta.git#$eta_revision"
               fi
-              eta_packages="''${TAUMEL_ETA_PACKAGES:-eta eta_http eta_jsoo eta_http_js}"
+              eta_packages="''${TAUMEL_ETA_PACKAGES:-eta eta_http eta_js eta_jsoo eta_http_js}"
               if [ "$#" -gt 0 ]; then
                 eta_packages="$*"
               fi

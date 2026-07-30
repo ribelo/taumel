@@ -36,9 +36,15 @@ jobs:
 
       - run: npm ci
 
+      - name: Initialize pinned OCaml environment
+        run: npm run ocaml:init
+
       # ^release-1zti ^release-cge4: PRs and main run the same complete validation.
       - name: Run quality gate
-        run: npm run gate
+        run: |
+          export OPAMROOT="$HOME/.cache/opam"
+          eval "$(nix develop -c opam env --switch 5.4.1 --set-switch)"
+          npm run gate
 
       - name: Stage release checkout
         run: npm run release:stage
