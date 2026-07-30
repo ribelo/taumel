@@ -87,12 +87,15 @@ allows append-only task creation (which reopens the plan to `active`).
 _Avoid_: locked flag, plan mode, read-only mode
 
 **Plan lifecycle**:
-The transition law over the plan statuses. The agent moves only `draft` →
-`active` (`update_plan active`) and `active` → `blocked` (`update_plan
-blocked`); the user alone moves a plan to `draft` or `paused` and out of
-`paused`, `blocked`, or `time_limited`; the system alone sets `time_limited`
-when a time limit is hit. Completion is never requested: in every committed
-status the plan becomes `complete` the instant every task is `completed` or
+The transition law over the plan statuses. The agent moves `draft` → `active`,
+`active` → `blocked`, and `blocked` → `active` (`update_plan`, carrying a reason
+when it blocks and a resolution when it unblocks); the user alone moves a plan
+to `draft` or `paused` and out of `paused` or `time_limited`; the system sets
+`time_limited` when a time limit is hit and blocks the plan on a final
+unrecoverable turn error. Every block is recorded as an append-only history
+entry with its reason, source, and eventual resolution. Completion is never
+requested: in every committed status the plan becomes `complete` the instant
+every task is `completed` or
 `cancelled`, and a `complete` plan reopens to `active` when tasks are
 appended by the user or created by the agent while extension-unlocked.
 
@@ -101,7 +104,9 @@ appended by the user or created by the agent while extension-unlocked.
 | — | `draft` | agent | `create_task` with no plan (plan-lc01) |
 | — | `active` | user | `/plan <text>` (plan-lc02) |
 | `draft` | `active` | agent | `update_plan active` (plan-lc03); lands `complete` when all tasks terminal (plan-oua0) |
-| `active` | `blocked` | agent | `update_plan blocked` (plan-lc05) |
+| `active` | `blocked` | agent | `update_plan blocked` with reason (plan-lc05, plan-5sl5) |
+| `active` | `blocked` | system | final unrecoverable turn error (plan-rc03, plan-tndz) |
+| `blocked` | `active` | agent | `update_plan active` with resolution (plan-lc03, plan-w45d) |
 | `active` | `paused` | user | `/plan pause` (plan-lc09) |
 | `active` | `time_limited` | system | time limit hit (plan-lc06) |
 | `paused`, `blocked`, `time_limited`, `complete` | `active` | user | `/plan resume` (plan-cm04); lands `complete` when all tasks terminal (plan-oua0) |
