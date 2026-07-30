@@ -380,6 +380,19 @@ let test_agent_task_cancellation_reason () =
   in
   assert_bool "empty cancellation reason rejected"
     (contains empty_error "cancellation reason");
+  let misplaced_error =
+    expect_error "reason without cancelled status"
+      (Plan.update_task ~now:3 ~task_id:"cancel-target"
+         (patch ~status:Plan.Completed ~reason:"Not a cancellation." ())
+         (Some active))
+  in
+  assert_bool "misplaced cancellation reason rejected"
+    (contains misplaced_error "cancelled");
+  assert_bool "misplaced cancellation reason leaves task pending"
+    ((List.find
+        (fun (task : Plan.task) -> task.task_id = "cancel-target")
+        active.tasks)
+       .status = Plan.Pending);
   let cancelled =
     expect_ok "agent cancellation reason stored"
       (Plan.update_task ~now:4 ~task_id:"cancel-target"

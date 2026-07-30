@@ -408,9 +408,9 @@ let apply_task_patch (task : task) patch =
   let* cancellation_reason =
     match (patch.status, patch.reason) with
     | Some Cancelled, reason -> Plan_task.normalize_cancellation_reason reason
-    | Some _, _ -> Ok None
+    | Some _, None -> Ok None
     | None, None -> Ok task.cancellation_reason
-    | None, Some _ ->
+    | _, Some _ ->
         Error
           "plan task cancellation reason may be provided only when setting \
            status to cancelled"
