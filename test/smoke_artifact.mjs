@@ -3,6 +3,7 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 
+const projectRoot = realpathSync(fileURLToPath(new URL("..", import.meta.url)));
 const artifact = new URL("../dist/taumel.cjs", import.meta.url);
 const require = createRequire(import.meta.url);
 require(fileURLToPath(artifact));
@@ -84,7 +85,7 @@ const core = bootstrap.init({
   sessionSnapshot: (snapshotCtx) => {
     const model = snapshotCtx?.model ?? {};
     return {
-      cwd: "/home/ribelo/projects/ribelo/taumel",
+      cwd: projectRoot,
       provider: model.provider ?? "openai-codex",
       model: model.id ?? "gpt-test",
       thinking: "medium",
