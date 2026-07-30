@@ -148,22 +148,20 @@ let apply_command_draft ~now (store : store) =
   | None -> Error "cannot draft plan because this session has no plan"
   | Some plan when plan.status = Draft ->
       Ok (command_result ~message:"Plan already in draft." store)
-  | Some plan ->
-      let plan =
-        match plan.status with
-        | Blocked open_entry -> (
-            match
-              Plan_block.close_carried ~now ~cleared_by:Plan_block.user_clearer
-                ~resolution:"The user moved the plan to draft." open_entry
-                plan.blocks
-            with
-            | Ok blocks -> { plan with blocks }
-            | Error _ -> plan)
-        | _ -> plan
-      in
-      Ok
-        (command_result ~changed:true ~message:"Plan moved to draft."
-           (Some (with_status ~now Draft plan)))
+  | Some plan -> (
+      match plan.status with
+      | Blocked open_entry ->
+          Result.map
+            (fun blocks ->
+              command_result ~changed:true ~message:"Plan moved to draft."
+                (Some (with_status ~now Draft { plan with blocks })))
+            (Plan_block.close_carried ~now ~cleared_by:Plan_block.user_clearer
+               ~resolution:"The user moved the plan to draft." open_entry
+               plan.blocks)
+      | _ ->
+          Ok
+            (command_result ~changed:true ~message:"Plan moved to draft."
+               (Some (with_status ~now Draft plan))))
 
 let apply_command_clear (store : store) =
   let message = if store = None then "No plan to clear." else "Plan cleared." in
@@ -187,7 +185,7 @@ let apply_command_resume ~now ~automation args (store : store) =
           in
           match validate_time_limit time_limit_seconds with
           | Error _ as error -> error
-          | Ok () ->
+          | Ok () -> (
               if
                 plan.status = Time_limited
                 && Option.fold ~none:false
@@ -200,32 +198,34 @@ let apply_command_resume ~now ~automation args (store : store) =
                    /plan resume --time-limit <duration> or /plan resume \
                    --no-time-limit"
               else
-                let plan =
+                match
                   match plan.status with
-                  | Blocked open_entry -> (
-                      match
-                        Plan_block.close_carried ~now
-                          ~cleared_by:Plan_block.user_clearer
-                          ~resolution:"The user resumed the plan." open_entry
-                          plan.blocks
-                      with
-                      | Ok blocks -> { plan with blocks }
-                      | Error _ -> plan)
-                  | _ -> plan
-                in
-                let plan =
-                  (* ^plan-oua0: all-done resume lands complete with no continuation. *)
-                  apply_completion_invariant ~now
-                    { (with_status ~now Active plan) with time_limit_seconds }
-                in
-                if plan.status = Complete then
-                  Ok
-                    (command_result ~automation:Automation_enabled ~changed:true
-                       ~message:"Plan complete." (Some plan))
-                else
-                  Ok
-                    (command_result ~automation:Automation_enabled
-                       ~followup:true ~changed:true (Some plan))))
+                  | Blocked open_entry ->
+                      Plan_block.close_carried ~now
+                        ~cleared_by:Plan_block.user_clearer
+                        ~resolution:"The user resumed the plan." open_entry
+                        plan.blocks
+                      |> Result.map (fun blocks -> { plan with blocks })
+                  | _ -> Ok plan
+                with
+                | Error _ as error -> error
+                | Ok plan ->
+                    let plan =
+                      (* ^plan-oua0: all-done resume lands complete with no continuation. *)
+                      apply_completion_invariant ~now
+                        {
+                          (with_status ~now Active plan) with
+                          time_limit_seconds;
+                        }
+                    in
+                    if plan.status = Complete then
+                      Ok
+                        (command_result ~automation:Automation_enabled
+                           ~changed:true ~message:"Plan complete." (Some plan))
+                    else
+                      Ok
+                        (command_result ~automation:Automation_enabled
+                           ~followup:true ~changed:true (Some plan)))))
 
 let apply_command ?(automation = Automation_enabled) ~session_id ~now args store
     =

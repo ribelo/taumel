@@ -1,4 +1,5 @@
 module Plan = Taumel.Plan
+module Plan_block = Taumel.Plan_block
 module Shared = Taumel.Shared
 
 let expect_ok label = function
@@ -213,7 +214,9 @@ let test_system_and_user_block_history () =
   assert_bool "completion cleared by user"
     (Plan.block_cleared_by_to_string completion_entry.cleared_by = "user");
   assert_bool "completion resolution names cause"
-    (contains completion_entry.resolution "completed automatically");
+    (completion_entry.resolution
+   = "Plan completed automatically because every task is completed or \
+      cancelled.");
   let system_blocked =
     Plan.final_unrecoverable_error ~now:4
       (Some (active_plan ~session:"system-block" ()))
@@ -409,6 +412,32 @@ let test_agent_task_cancellation_reason () =
   assert_bool "reopened task clears cancellation reason"
     (reopened_task.status = Plan.Pending
     && reopened_task.cancellation_reason = None)
+
+let test_block_close_invariants () =
+  let history =
+    expect_ok "open block entry"
+      (Plan_block.open_entry ~now:5 ~reason:"Need input."
+         ~source:Plan_block.agent_source Plan_block.empty)
+  in
+  let carried = Option.get (Plan_block.open_entry_opt history) in
+  let mismatched =
+    expect_error "mismatched carried entry"
+      (Plan_block.close_carried ~now:6 ~cleared_by:Plan_block.user_clearer
+         ~resolution:"Done."
+         { carried with reason = "Different." }
+         history)
+  in
+  assert_bool "mismatch named" (contains mismatched "does not match");
+  let rolled_back =
+    expect_error "clock rollback close"
+      (Plan_block.close_carried ~now:4 ~cleared_by:Plan_block.user_clearer
+         ~resolution:"Done." carried history)
+  in
+  assert_bool "rollback named" (contains rolled_back "must not precede");
+  ignore
+    (expect_error "close without open entry"
+       (Plan_block.close_carried ~now:6 ~cleared_by:Plan_block.user_clearer
+          ~resolution:"Done." carried Plan_block.empty))
 
 let test_dependencies_and_atomic_batch () =
   let plan =
@@ -1148,6 +1177,24 @@ let test_persistence () =
              ~blocks:(block_array [ persisted_block ~reason:"  " () ])
              ())));
   ignore
+    (expect_error "block reason surrounding whitespace"
+       (Plan.codec.decode
+          (persisted_plan ~status:"blocked"
+             ~blocks:
+               (block_array [ persisted_block ~reason:" Need input. " () ])
+             ())));
+  ignore
+    (expect_error "block resolution surrounding whitespace"
+       (Plan.codec.decode
+          (persisted_plan
+             ~blocks:
+               (block_array
+                  [
+                    persisted_block ~cleared_at:3. ~cleared_by:"user"
+                      ~resolution:" Fixed. " ();
+                  ])
+             ())));
+  ignore
     (expect_error "unknown block source"
        (Plan.codec.decode
           (persisted_plan ~status:"blocked"
@@ -1380,6 +1427,7 @@ let () =
   test_lifecycle_rejection_messages ();
   test_user_task_protection ();
   test_agent_task_cancellation_reason ();
+  test_block_close_invariants ();
   test_dependencies_and_atomic_batch ();
   test_completion_invariant ();
   test_extension_unlock ();

@@ -103,8 +103,6 @@ let status_to_string = Plan_status.to_string
 
 let status_label = Plan_status.label
 
-let status_of_string = Plan_status.of_string
-
 let content_editable = Plan_status.content_editable
 
 let status_editable = Plan_status.status_editable
@@ -380,19 +378,16 @@ let unfinished_tasks (plan : t) = List.filter Plan_task.unfinished plan.tasks
 (* ^plan-zv0s: committed statuses complete themselves when no unfinished work remains. *)
 let apply_completion_invariant ~now (plan : t) =
   match plan.status with
-  | Blocked open_entry when unfinished_tasks plan = [] ->
-      let blocks =
-        match
-          Plan_block.close_carried ~now ~cleared_by:Plan_block.user_clearer
-            ~resolution:
-              "Plan completed automatically because every task is \
-               completed                or cancelled."
-            open_entry plan.blocks
-        with
-        | Ok blocks -> blocks
-        | Error _ -> plan.blocks
-      in
-      with_status ~now Complete { plan with blocks }
+  | Blocked open_entry when unfinished_tasks plan = [] -> (
+      match
+        Plan_block.close_carried ~now ~cleared_by:Plan_block.user_clearer
+          ~resolution:
+            "Plan completed automatically because every task is completed or \
+             cancelled."
+          open_entry plan.blocks
+      with
+      | Ok blocks -> with_status ~now Complete { plan with blocks }
+      | Error _ -> plan)
   | (Active | Paused | Time_limited) when unfinished_tasks plan = [] ->
       with_status ~now Complete plan
   | _ -> plan

@@ -50,36 +50,37 @@ let entries = function
   | Has_open (closed, open_entry) ->
       List.map (fun entry -> Closed entry) closed @ [ Open open_entry ]
 
-let has_open = function No_open _ -> false | Has_open _ -> true
-
 let open_entry_opt = function
   | No_open _ -> None
   | Has_open (_, entry) -> Some entry
 
-let closed_entries = function
-  | No_open closed -> closed
-  | Has_open (closed, _) -> closed
-
 (* Close using the open entry carried by Blocked status (^plan-l08x). *)
-let close_carried ~now ~cleared_by ~resolution (open_entry : open_entry) history
-    =
+let close_carried ~now ~cleared_by ~resolution (carried : open_entry) history =
   let resolution = String.trim resolution in
   if resolution = "" then
     Error "unblocking a plan requires a non-empty resolution"
   else
-    Ok
-      (No_open
-         (closed_entries history
-         @ [
-             {
-               blocked_at = open_entry.blocked_at;
-               reason = open_entry.reason;
-               source = open_entry.source;
-               cleared_at = now;
-               cleared_by;
-               resolution;
-             };
-           ]))
+    match history with
+    | No_open _ -> Error "plan block history has no open entry to close"
+    | Has_open (_, open_entry) when open_entry <> carried ->
+        Error "blocked plan status does not match its block history"
+    | Has_open (closed, _) ->
+        if now < carried.blocked_at then
+          Error "plan block clearedAt must not precede blockedAt"
+        else
+          Ok
+            (No_open
+               (closed
+               @ [
+                   {
+                     blocked_at = carried.blocked_at;
+                     reason = carried.reason;
+                     source = carried.source;
+                     cleared_at = now;
+                     cleared_by;
+                     resolution;
+                   };
+                 ]))
 
 let open_entry ~now ~reason ~source = function
   | Has_open _ -> Error "plan block history already has an open entry"
@@ -87,27 +88,6 @@ let open_entry ~now ~reason ~source = function
       let reason = String.trim reason in
       if reason = "" then Error "blocking a plan requires a non-empty reason"
       else Ok (Has_open (closed, { blocked_at = now; reason; source }))
-
-let close_open ~now ~cleared_by ~resolution = function
-  | No_open _ -> Error "plan block history has no open entry to close"
-  | Has_open (closed, open_entry) ->
-      let resolution = String.trim resolution in
-      if resolution = "" then
-        Error "unblocking a plan requires a non-empty resolution"
-      else
-        Ok
-          (No_open
-             (closed
-             @ [
-                 {
-                   blocked_at = open_entry.blocked_at;
-                   reason = open_entry.reason;
-                   source = open_entry.source;
-                   cleared_at = now;
-                   cleared_by;
-                   resolution;
-                 };
-               ]))
 
 let entry_to_json = function
   | Open entry ->
@@ -159,7 +139,6 @@ let decode_entry = function
       in
       let* blocked_at = int_field "blockedAt" fields in
       let* reason = string_field "reason" fields in
-      let reason = String.trim reason in
       let* source_name = string_field "source" fields in
       let* source =
         match source_of_string source_name with
@@ -167,7 +146,10 @@ let decode_entry = function
         | None -> Error ("unknown plan block source: " ^ source_name)
       in
       if blocked_at < 0 then Error "blockedAt must be non-negative"
-      else if reason = "" then Error "plan block reason must not be empty"
+      else if String.trim reason = "" then
+        Error "plan block reason must not be empty"
+      else if String.trim reason <> reason then
+        Error "plan block reason must not have surrounding whitespace"
       else if not has_clearing_field then
         Ok (Open { blocked_at; reason; source })
       else
@@ -187,11 +169,12 @@ let decode_entry = function
                   Error
                     ("unknown plan block clearedBy value: " ^ cleared_by_name)
             in
-            let resolution = String.trim resolution in
             if cleared_at < blocked_at then
               Error "plan block clearedAt must not precede blockedAt"
-            else if resolution = "" then
+            else if String.trim resolution = "" then
               Error "cleared plan block requires a non-empty resolution"
+            else if String.trim resolution <> resolution then
+              Error "plan block resolution must not have surrounding whitespace"
             else
               Ok
                 (Closed

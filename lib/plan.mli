@@ -103,8 +103,6 @@ val status_to_string : status -> string
 
 val status_label : status -> string
 
-val status_of_string : string -> status option
-
 val content_editable : status -> bool
 
 val status_editable : status -> bool

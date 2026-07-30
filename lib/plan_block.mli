@@ -29,8 +29,6 @@ val cleared_by_of_string : string -> cleared_by option
 
 val entries : t -> entry list
 
-val has_open : t -> bool
-
 val open_entry_opt : t -> open_entry option
 
 val close_carried :
@@ -43,13 +41,6 @@ val close_carried :
 
 val open_entry :
   now:int -> reason:string -> source:source -> t -> (t, string) result
-
-val close_open :
-  now:int ->
-  cleared_by:cleared_by ->
-  resolution:string ->
-  t ->
-  (t, string) result
 
 val agent_source : source
 
