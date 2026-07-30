@@ -63,10 +63,15 @@ type PlanAutomationView = { readonly continuation?: unknown };
 type PlanView = {
   readonly statusLabel?: unknown; readonly tasks?: unknown; readonly completedTasks?: unknown; readonly totalTasks?: unknown; readonly timeUsage?: unknown;
   readonly tokensUsed?: unknown; readonly timeUsedSeconds?: unknown; readonly timeLimitSeconds?: unknown;
+  readonly blocks?: unknown;
 };
 type PlanTaskView = {
   readonly taskId?: unknown; readonly title?: unknown; readonly status?: unknown;
   readonly origin?: unknown; readonly depends_on?: unknown;
+};
+type PlanBlockView = {
+  readonly blockedAt?: unknown; readonly reason?: unknown; readonly source?: unknown;
+  readonly clearedAt?: unknown; readonly clearedBy?: unknown; readonly resolution?: unknown;
 };
 type SessionLifecycleEvent = { readonly type?: unknown; readonly willRetry?: unknown };
 type InputEvent = { readonly source?: unknown };
@@ -151,6 +156,25 @@ async function showPlanInspection(result: CommandResultLike, ctx: unknown): Prom
   const total = typeof plan?.totalTasks === "number" ? plan.totalTasks : 0;
   const progress = plan === undefined ? "" : `${completed}/${total} tasks`;
   const candidate = ["Plan", status, progress, time].filter((part) => part !== "").join(" · ");
+  const blockRows = Array.isArray(plan?.blocks) ? plan.blocks.flatMap((rawBlock, index) => {
+    const block = typeof rawBlock === "object" && rawBlock !== null ? rawBlock as PlanBlockView : {};
+    const blockedAt = typeof block.blockedAt === "number"
+      ? new Date(block.blockedAt * 1_000).toISOString()
+      : "unknown time";
+    const clearedAt = typeof block.clearedAt === "number"
+      ? new Date(block.clearedAt * 1_000).toISOString()
+      : "open";
+    const source = typeof block.source === "string" ? block.source : "unknown";
+    const reason = typeof block.reason === "string" ? block.reason : "";
+    const clearedBy = typeof block.clearedBy === "string" ? block.clearedBy : "unresolved";
+    const resolution = typeof block.resolution === "string" ? block.resolution : "unresolved";
+    return [
+      `Block ${index + 1}: ${blockedAt} · source ${source}`,
+      `  Reason: ${reason}`,
+      `  Cleared: ${clearedAt} · by ${clearedBy}`,
+      `  Resolution: ${resolution}`,
+    ];
+  }) : [];
   let expanded = false;
   await ui.custom((tui: unknown, theme: unknown, _keys: unknown, done: () => void) => ({
     render: (width: number) => {
@@ -162,6 +186,7 @@ async function showPlanInspection(result: CommandResultLike, ctx: unknown): Prom
             `Tokens: ${String(plan.tokensUsed ?? 0)}`,
             `Active time: ${time}`,
             `Time limit: ${plan.timeLimitSeconds == null ? "none" : String(plan.timeLimitSeconds)}`,
+            ...blockRows,
             ...(Array.isArray(plan.tasks) ? plan.tasks.map((rawTask) => {
               const task = typeof rawTask === "object" && rawTask !== null ? rawTask as PlanTaskView : {};
               const id = typeof task.taskId === "string" ? task.taskId : "task";

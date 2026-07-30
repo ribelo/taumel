@@ -21,7 +21,7 @@ const core = {
         ok: true,
         action: "command_result",
         message: "Plan active: ship (2s)",
-        details: { plan: { statusLabel: "active", completedTasks: 0, totalTasks: 1, tasks: [{ taskId: "task-1", title: "ship", status: "pending", origin: "user", depends_on: [] }], timeUsage: "2s", tokensUsed: 3, timeLimitSeconds: null }, automation: { continuation: "enabled" } },
+        details: { plan: { statusLabel: "active", completedTasks: 0, totalTasks: 1, tasks: [{ taskId: "task-1", title: "ship", status: "pending", origin: "user", depends_on: [] }], blocks: [{ blockedAt: 1, reason: "Need input.", source: "agent", clearedAt: 2, clearedBy: "user", resolution: "Input supplied." }], timeUsage: "2s", tokensUsed: 3, timeLimitSeconds: null }, automation: { continuation: "enabled" } },
         planInspection: true,
       };
       if (input === "ship") return {
@@ -49,6 +49,11 @@ const ctx = {
       await new Promise((resolve) => {
         const component = factory({ requestRender() {} }, { fg: (_color, text) => text }, {}, resolve);
         assert.deepEqual(component.render(120), ["Plan · active · 0/1 tasks · 2s"]);
+        component.handleInput("\x0f");
+        const expanded = component.render(120).join("\n");
+        assert.match(expanded, /Block 1: 1970-01-01T00:00:01.000Z · source agent/);
+        assert.match(expanded, /Reason: Need input./);
+        assert.match(expanded, /Resolution: Input supplied./);
         component.handleInput("escape");
       });
     },
