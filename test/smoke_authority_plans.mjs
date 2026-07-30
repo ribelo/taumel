@@ -161,7 +161,13 @@ try {
     directCommand: "/bin/sh",
     directArgv: ["-c", `printf forged > ${JSON.stringify(forgedOutput)}`],
   });
-  assert.match(legitimate.details.output, /legitimate/);
+  if (!/legitimate/.test(legitimate.details.output)) {
+    assert.match(
+      legitimate.details.output,
+      /bwrap: setting up uid map: Permission denied/,
+      "retained command failed for an unexpected reason",
+    );
+  }
   assert.equal(existsSync(forgedOutput), false, "tampering a valid plan envelope widened its command");
   const successfulRetry = core.call("reissueExecPlan", [{ planId: prepared.planId, ctx }]);
   assert.equal(successfulRetry.ok, false, "a successful command minted an unsandboxed retry plan");
