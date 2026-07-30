@@ -338,7 +338,7 @@ export const CronCreateParamsSchema = Type.Object(
 export const CronDeleteParamsSchema = Type.Object(
   {
     id: Type.String({
-      pattern: "^[0-9a-f]{8}$",
+      pattern: "^cron-[abcdefghjkmnpqrstuvwxyz23456789]{4}$",
       description: "Task ID returned by cron_create or cron_list, shaped cron-<nano-id>.",
     }),
   },

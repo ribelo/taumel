@@ -267,7 +267,7 @@ export const AgentsPresenceMarkerSchema = Type.Object({
 export type AgentsPresenceMarker = Static<typeof AgentsPresenceMarkerSchema>;
 
 const CronTaskSchema = Type.Object({
-  id: Type.String({ pattern: "^[0-9a-f]{8}$" }),
+  id: Type.String({ pattern: "^cron-[abcdefghjkmnpqrstuvwxyz23456789]{4}$" }),
   cron: Type.String({ pattern: "^\\S+(?:\\s+\\S+){4}$" }),
   prompt: Type.String({ pattern: "\\S" }), recurring: Type.Boolean(),
   mode: Type.Union([Type.Literal("message"), Type.Literal("plan")]), enabled: Type.Boolean(),

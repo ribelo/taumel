@@ -56,7 +56,9 @@ const create = core.call("prepareTool", [{
 assert.equal(create?.ok, true, `cron_create failed: ${JSON.stringify(create)}`);
 assert.equal(entries.at(-1)?.customType, "taumel.cron", "cron_create should persist a cron entry");
 assert.equal(entries.at(-1)?.data?.tasks?.length, 1, "cron_create should persist one task");
-assert.equal(latestTaumelCustomEntry(sessionManager, "taumel.cron").entry.data.tasks.length, 1);
+const cronEntry = latestTaumelCustomEntry(sessionManager, "taumel.cron");
+assert.equal(cronEntry.kind, "contract_valid", JSON.stringify(cronEntry));
+assert.equal(cronEntry.entry.data.tasks.length, 1);
 
 const startup = core.call("cronStartup", [{ reason: "resume", ctx }]);
 assert.equal(startup?.kind, "notify", "resume with stored cron tasks should notify");
