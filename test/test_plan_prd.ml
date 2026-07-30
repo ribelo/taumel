@@ -81,22 +81,14 @@ let test_birth_and_identity () =
 
 let test_lifecycle_and_editability () =
   let draft = agent_plan ~session:"lifecycle" () in
-  ignore
-    (expect_error "update_plan complete rejected"
-       (Plan.update_plan ~reason:"test transition" ~now:2 Plan.Complete
-          (Some draft)));
   let active =
     expect_ok "activate"
-      (Plan.update_plan ~reason:"test transition" ~now:2 Plan.Active
+      (Plan.update_plan ~reason:"test transition" ~now:2 Plan.Request_active
          (Some draft))
   in
   ignore
-    (expect_error "agent cannot pause"
-       (Plan.update_plan ~reason:"test transition" ~now:3 Plan.Paused
-          (Some active)));
-  ignore
     (expect_ok "active reactivation is idempotent"
-       (Plan.update_plan ~reason:"test transition" ~now:3 Plan.Active
+       (Plan.update_plan ~reason:"test transition" ~now:3 Plan.Request_active
           (Some active)));
   ignore
     (expect_error "active content frozen"
@@ -105,7 +97,8 @@ let test_lifecycle_and_editability () =
           (Some active)));
   let blocked =
     expect_ok "blocked bypasses completion"
-      (Plan.update_plan ~reason:"test block" ~now:4 Plan.Blocked (Some active))
+      (Plan.update_plan ~reason:"test block" ~now:4 Plan.Request_blocked
+         (Some active))
   in
   let resumed =
     expect_ok "user resumes blocked"
@@ -130,7 +123,7 @@ let test_agent_block_lifecycle () =
   let active = active_plan ~session:"agent-block" () in
   let empty_reason =
     expect_error "block reason required"
-      (Plan.update_plan ~reason:"  " ~now:2 Plan.Blocked (Some active))
+      (Plan.update_plan ~reason:"  " ~now:2 Plan.Request_blocked (Some active))
   in
   assert_bool "empty block reason named"
     (contains empty_reason "non-empty reason");
@@ -138,7 +131,7 @@ let test_agent_block_lifecycle () =
   let blocked =
     expect_ok "agent blocks with reason"
       (Plan.update_plan ~reason:"  Waiting for credentials.  " ~now:3
-         Plan.Blocked (Some active))
+         Plan.Request_blocked (Some active))
   in
   let opened = only_open_block blocked in
   assert_bool "block reason trimmed" (opened.reason = "Waiting for credentials.");
@@ -147,21 +140,21 @@ let test_agent_block_lifecycle () =
   assert_bool "block timestamp" (opened.blocked_at = 3);
   let blocked_again =
     expect_ok "same blocked idempotent"
-      (Plan.update_plan ~reason:"No lifecycle change." ~now:4 Plan.Blocked
-         (Some blocked))
+      (Plan.update_plan ~reason:"No lifecycle change." ~now:4
+         Plan.Request_blocked (Some blocked))
   in
   assert_bool "same blocked leaves one entry"
     (Plan.block_entries blocked_again = Plan.block_entries blocked);
   let empty_resolution =
     expect_error "unblock resolution required"
-      (Plan.update_plan ~reason:" \t " ~now:5 Plan.Active (Some blocked))
+      (Plan.update_plan ~reason:" \t " ~now:5 Plan.Request_active (Some blocked))
   in
   assert_bool "empty resolution named"
     (contains empty_resolution "non-empty reason");
   let active_again =
     expect_ok "agent unblocks"
-      (Plan.update_plan ~reason:"  Credentials supplied.  " ~now:6 Plan.Active
-         (Some blocked))
+      (Plan.update_plan ~reason:"  Credentials supplied.  " ~now:6
+         Plan.Request_active (Some blocked))
   in
   assert_bool "agent unblock active" (active_again.status = Plan.Active);
   let closed = only_closed_block active_again in
@@ -172,7 +165,7 @@ let test_agent_block_lifecycle () =
   assert_bool "agent clearedAt" (closed.cleared_at = 6);
   let active_same =
     expect_ok "same active idempotent"
-      (Plan.update_plan ~reason:"test transition" ~now:7 Plan.Active
+      (Plan.update_plan ~reason:"test transition" ~now:7 Plan.Request_active
          (Some active_again))
   in
   assert_bool "same active unchanged" (active_same = active_again)
@@ -182,7 +175,8 @@ let test_system_and_user_block_history () =
   let blocked session =
     let active = active_plan ~session () in
     expect_ok "block for user closure"
-      (Plan.update_plan ~reason:"Need input." ~now:2 Plan.Blocked (Some active))
+      (Plan.update_plan ~reason:"Need input." ~now:2 Plan.Request_blocked
+         (Some active))
   in
   let resumed =
     expect_ok "user resume closes block"
@@ -236,7 +230,8 @@ let test_lifecycle_rejection_messages () =
   let active = active_plan ~session:"status-errors" () in
   let blocked =
     expect_ok "blocked status error source"
-      (Plan.update_plan ~reason:"Need input." ~now:2 Plan.Blocked (Some active))
+      (Plan.update_plan ~reason:"Need input." ~now:2 Plan.Request_blocked
+         (Some active))
   in
   let blocked_error =
     expect_error "blocked create rejection"
@@ -265,12 +260,12 @@ let test_lifecycle_rejection_messages () =
   let agent_draft = agent_plan ~session:"status-errors-capability" () in
   let agent_active =
     expect_ok "activate capability source"
-      (Plan.update_plan ~reason:"Start work." ~now:2 Plan.Active
+      (Plan.update_plan ~reason:"Start work." ~now:2 Plan.Request_active
          (Some agent_draft))
   in
   let agent_blocked =
     expect_ok "block capability source"
-      (Plan.update_plan ~reason:"Need input." ~now:3 Plan.Blocked
+      (Plan.update_plan ~reason:"Need input." ~now:3 Plan.Request_blocked
          (Some agent_active))
   in
   let agent_task = List.hd agent_blocked.tasks in
@@ -358,8 +353,8 @@ let test_agent_task_cancellation_reason () =
   in
   let active =
     expect_ok "activate cancellation plan"
-      (Plan.update_plan ~reason:"Start cancellation test." ~now:2 Plan.Active
-         (Some draft))
+      (Plan.update_plan ~reason:"Start cancellation test." ~now:2
+         Plan.Request_active (Some draft))
   in
   let missing_error =
     expect_error "agent cancellation reason missing"
@@ -482,14 +477,10 @@ let test_completion_invariant () =
   let draft = agent_plan ~session:"completion" () in
   let active =
     expect_ok "activate"
-      (Plan.update_plan ~reason:"test transition" ~now:2 Plan.Active
+      (Plan.update_plan ~reason:"test transition" ~now:2 Plan.Request_active
          (Some draft))
   in
   let task = List.hd active.tasks in
-  ignore
-    (expect_error "update_plan complete rejected"
-       (Plan.update_plan ~reason:"test transition" ~now:3 Plan.Complete
-          (Some active)));
   let complete =
     expect_ok "last task completes plan"
       (Plan.update_task ~now:3 ~task_id:task.task_id
@@ -501,7 +492,7 @@ let test_completion_invariant () =
   let cancelled_draft = agent_plan ~session:"completion-cancel" () in
   let cancelled_active =
     expect_ok "activate cancel path"
-      (Plan.update_plan ~reason:"test transition" ~now:2 Plan.Active
+      (Plan.update_plan ~reason:"test transition" ~now:2 Plan.Request_active
          (Some cancelled_draft))
   in
   let cancelled =
@@ -521,7 +512,7 @@ let test_completion_invariant () =
   assert_bool "draft exempt" (draft_finished.status = Plan.Draft);
   let activated_done =
     expect_ok "activate all-done lands complete"
-      (Plan.update_plan ~reason:"test transition" ~now:3 Plan.Active
+      (Plan.update_plan ~reason:"test transition" ~now:3 Plan.Request_active
          (Some draft_finished))
   in
   assert_bool "activate all-done" (activated_done.status = Plan.Complete);
@@ -532,7 +523,7 @@ let test_completion_invariant () =
     |> fun result ->
     let plan =
       expect_ok "activate paused path"
-        (Plan.update_plan ~reason:"test transition" ~now:2 Plan.Active
+        (Plan.update_plan ~reason:"test transition" ~now:2 Plan.Request_active
            result.plan)
     in
     expect_ok "pause"
@@ -565,11 +556,12 @@ let test_completion_invariant () =
     let draft = agent_plan ~session:"completion-blocked" () in
     let active =
       expect_ok "activate blocked path"
-        (Plan.update_plan ~reason:"test transition" ~now:2 Plan.Active
+        (Plan.update_plan ~reason:"test transition" ~now:2 Plan.Request_active
            (Some draft))
     in
     expect_ok "block"
-      (Plan.update_plan ~reason:"test block" ~now:3 Plan.Blocked (Some active))
+      (Plan.update_plan ~reason:"test block" ~now:3 Plan.Request_blocked
+         (Some active))
   in
   let blocked_complete =
     expect_ok "user completes blocked"
@@ -605,7 +597,7 @@ let test_completion_invariant () =
            (Some draft))
     in
     expect_ok "activate to complete"
-      (Plan.update_plan ~reason:"test transition" ~now:3 Plan.Active
+      (Plan.update_plan ~reason:"test transition" ~now:3 Plan.Request_active
          (Some finished))
   in
   let unlocked =
@@ -624,19 +616,21 @@ let test_completion_invariant () =
     let draft = agent_plan ~session:"completion-block-tool" () in
     let active =
       expect_ok "activate block tool"
-        (Plan.update_plan ~reason:"test transition" ~now:2 Plan.Active
+        (Plan.update_plan ~reason:"test transition" ~now:2 Plan.Request_active
            (Some draft))
     in
     expect_ok "blocked unchanged"
-      (Plan.update_plan ~reason:"test block" ~now:3 Plan.Blocked (Some active))
+      (Plan.update_plan ~reason:"test block" ~now:3 Plan.Request_blocked
+         (Some active))
   in
-  assert_bool "blocked stays blocked" (blocked_still.status = Plan.Blocked)
+  assert_bool "blocked stays blocked"
+    (match blocked_still.status with Plan.Blocked _ -> true | _ -> false)
 
 let complete_plan ?(session = "extension") () =
   let draft = agent_plan ~session () in
   let active =
     expect_ok "activate complete plan"
-      (Plan.update_plan ~reason:"test transition" ~now:2 Plan.Active
+      (Plan.update_plan ~reason:"test transition" ~now:2 Plan.Request_active
          (Some draft))
   in
   let task = List.hd active.tasks in
@@ -751,7 +745,7 @@ let test_extension_unlock () =
     ((Option.get paused_append.plan).status = Plan.Paused);
   let blocked =
     expect_ok "block sticky"
-      (Plan.update_plan ~reason:"test block" ~now:9 Plan.Blocked
+      (Plan.update_plan ~reason:"test block" ~now:9 Plan.Request_blocked
          (Some
             ( expect_ok "resume to block"
                 (Plan.apply_command ~session_id:"extension-text" ~now:9 "resume"
@@ -764,7 +758,9 @@ let test_extension_unlock () =
          (Some blocked))
   in
   assert_bool "blocked stays blocked"
-    ((Option.get blocked_append.plan).status = Plan.Blocked);
+    (match (Option.get blocked_append.plan).status with
+    | Plan.Blocked _ -> true
+    | _ -> false);
   let unlocked_fork =
     unlock_complete
       (complete_plan ~session:"extension-fork" ())
@@ -989,7 +985,7 @@ let test_persistence () =
   assert_bool "round trip locked" (not decoded.extension_unlocked);
   let blocked =
     expect_ok "block history round trip source"
-      (Plan.update_plan ~reason:"Waiting." ~now:2 Plan.Blocked
+      (Plan.update_plan ~reason:"Waiting." ~now:2 Plan.Request_blocked
          (Some (active_plan ~session:"codec-block" ())))
   in
   let decoded_blocked =
@@ -1001,7 +997,8 @@ let test_persistence () =
     (Plan.block_entries decoded_blocked = Plan.block_entries blocked);
   let cleared =
     expect_ok "clear block for round trip"
-      (Plan.update_plan ~reason:"Ready." ~now:3 Plan.Active (Some blocked))
+      (Plan.update_plan ~reason:"Ready." ~now:3 Plan.Request_active
+         (Some blocked))
   in
   let decoded_cleared =
     expect_ok "closed block round trip"

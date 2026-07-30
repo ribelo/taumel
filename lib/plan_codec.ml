@@ -100,22 +100,21 @@ let decode = function
       let* plan_id = string_field "planId" in
       let* session_id = string_field "sessionId" in
       let* status_name = string_field "status" in
-      let* status =
-        match Plan_status.of_string status_name with
-        | Some status -> Ok status
-        | None -> Error ("unknown plan status: " ^ status_name)
-      in
       let* tasks =
         match List.assoc_opt "tasks" fields with
         | Some value -> Plan_task.list_of_json value
         | None -> Error "tasks must be an array"
       in
-      (* ^plan-ax49: old entries without blocks decode empty, then lifecycle
-         validation below rejects an old blocked plan. *)
+      (* ^plan-ax49: old entries without blocks decode empty, then of_wire
+         rejects an old blocked plan without an open entry. *)
       let* blocks =
         match List.assoc_opt "blocks" fields with
         | None -> Ok Plan_block.empty
         | Some value -> Plan_block.of_json value
+      in
+      let* status =
+        Plan_status.of_wire ~name:status_name
+          ~open_entry:(Plan_block.open_entry_opt blocks)
       in
       let* tokens_used = int_field "tokensUsed" in
       let* time_used_seconds = int_field "timeUsedSeconds" in
@@ -153,14 +152,6 @@ let decode = function
         | Plan_status.Time_limited, _ ->
             Error "time_limited status requires a reached timeLimitSeconds"
         | _ -> Ok ()
-      in
-      let* () =
-        match (status, Plan_block.has_open blocks) with
-        | Plan_status.Blocked, true -> Ok ()
-        | Plan_status.Blocked, false ->
-            Error "blocked status requires exactly one open blocks entry"
-        | _, true -> Error "an open blocks entry requires blocked plan status"
-        | _, false -> Ok ()
       in
       Ok
         (Some

@@ -52,6 +52,35 @@ let entries = function
 
 let has_open = function No_open _ -> false | Has_open _ -> true
 
+let open_entry_opt = function
+  | No_open _ -> None
+  | Has_open (_, entry) -> Some entry
+
+let closed_entries = function
+  | No_open closed -> closed
+  | Has_open (closed, _) -> closed
+
+(* Close using the open entry carried by Blocked status (^plan-l08x). *)
+let close_carried ~now ~cleared_by ~resolution (open_entry : open_entry) history
+    =
+  let resolution = String.trim resolution in
+  if resolution = "" then
+    Error "unblocking a plan requires a non-empty resolution"
+  else
+    Ok
+      (No_open
+         (closed_entries history
+         @ [
+             {
+               blocked_at = open_entry.blocked_at;
+               reason = open_entry.reason;
+               source = open_entry.source;
+               cleared_at = now;
+               cleared_by;
+               resolution;
+             };
+           ]))
+
 let open_entry ~now ~reason ~source = function
   | Has_open _ -> Error "plan block history already has an open entry"
   | No_open closed ->

@@ -278,7 +278,7 @@ let plan_status_label = function
   | Plan.Draft -> "Plan draft"
   | Plan.Active -> "Plan active"
   | Plan.Paused -> "Plan paused"
-  | Plan.Blocked -> "Plan blocked"
+  | Plan.Blocked _ -> "Plan blocked"
   | Plan.Time_limited -> "Plan time limited"
   | Plan.Complete -> "Plan complete"
 

@@ -397,40 +397,43 @@ let prepare_update_plan params ctx =
         decode_ojs_contract Tool_contracts.UpdatePlanParams.t_of_js
           (ojs_of_js params)
       in
-      let status =
+      let requested =
         match Boundary_contracts.UpdatePlanParams.get_status params with
-        | `V_active -> Taumel.Plan.Active
-        | `V_blocked -> Taumel.Plan.Blocked
+        | `V_active -> Taumel.Plan.Request_active
+        | `V_blocked -> Taumel.Plan.Request_blocked
       in
       let previous = !current_plan in
       let same_status =
-        match previous with
-        | Some (plan : Taumel.Plan.t) -> plan.status = status
-        | None -> false
+        match (previous, requested) with
+        | Some (plan : Taumel.Plan.t), Taumel.Plan.Request_active ->
+            plan.status = Taumel.Plan.Active
+        | Some (plan : Taumel.Plan.t), Taumel.Plan.Request_blocked -> (
+            match plan.status with Taumel.Plan.Blocked _ -> true | _ -> false)
+        | None, _ -> false
       in
       match
         Taumel.Plan.update_plan
           ~reason:(Tool_contracts.UpdatePlanParams.get_reason params)
-          ~now:(now_seconds ()) status !current_plan
+          ~now:(now_seconds ()) requested !current_plan
       with
       | Error message -> error_obj message
       | Ok plan ->
           if same_status then
             let message =
-              match status with
-              | Taumel.Plan.Active -> "Plan already active."
-              | Taumel.Plan.Blocked -> "Plan already blocked."
-              | _ -> assert false
+              match requested with
+              | Taumel.Plan.Request_active -> "Plan already active."
+              | Taumel.Plan.Request_blocked -> "Plan already blocked."
             in
             tool_result !current_plan message
           else (
-            (match status with
-            | Taumel.Plan.Blocked ->
+            (match requested with
+            | Taumel.Plan.Request_blocked ->
                 current_plan := Some plan;
                 pending_plan_terminal_status := Some Taumel.Plan.Pending_blocked;
                 Session_sync.account_plan_turn_end ctx;
                 pending_plan_terminal_status := None
-            | _ -> apply_plan_transition ctx ~previous plan);
+            | Taumel.Plan.Request_active ->
+                apply_plan_transition ctx ~previous plan);
             tool_result !current_plan
               (model_state_text !current_plan !plan_automation)))
 

@@ -31,6 +31,16 @@ val entries : t -> entry list
 
 val has_open : t -> bool
 
+val open_entry_opt : t -> open_entry option
+
+val close_carried :
+  now:int ->
+  cleared_by:cleared_by ->
+  resolution:string ->
+  open_entry ->
+  t ->
+  (t, string) result
+
 val open_entry :
   now:int -> reason:string -> source:source -> t -> (t, string) result
 

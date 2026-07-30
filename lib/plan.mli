@@ -2,9 +2,11 @@ type status = Plan_status.t =
   | Draft
   | Active
   | Paused
-  | Blocked
+  | Blocked of Plan_block.open_entry
   | Time_limited
   | Complete
+
+type status_request = Plan_status.request = Request_active | Request_blocked
 
 type task_status = Plan_task.status =
   | Pending
@@ -183,7 +185,7 @@ val user_delete_task : now:int -> task_id:string -> store -> (t, string) result
 val unfinished_tasks : t -> task list
 
 val update_plan :
-  reason:string -> now:int -> status -> store -> (t, string) result
+  reason:string -> now:int -> status_request -> store -> (t, string) result
 
 val final_unrecoverable_error : now:int -> store -> store
 
