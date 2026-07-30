@@ -1,5 +1,27 @@
 import Type from "typebox";
 
+const PlanBlockBaseSchema = {
+  blockedAt: Type.Integer({ minimum: 0 }),
+  reason: Type.String({ minLength: 1 }),
+  source: Type.Union([Type.Literal("agent"), Type.Literal("system")]),
+};
+
+export const PlanBlockSchema = Type.Union([
+  Type.Object(
+    PlanBlockBaseSchema,
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      ...PlanBlockBaseSchema,
+      clearedAt: Type.Integer({ minimum: 0 }),
+      clearedBy: Type.Union([Type.Literal("agent"), Type.Literal("user")]),
+      resolution: Type.String({ minLength: 1 }),
+    },
+    { additionalProperties: false },
+  ),
+]);
+
 const PlanPresentationTaskSchema = Type.Object(
   {
     taskId: Type.String({ minLength: 1 }), title: Type.String({ minLength: 1 }),
@@ -21,6 +43,7 @@ const PlanPresentationSchema = Type.Object(
       Type.Literal("blocked"), Type.Literal("time_limited"), Type.Literal("complete"),
     ]),
     statusLabel: Type.String({ minLength: 1 }), tasks: Type.Array(PlanPresentationTaskSchema, { minItems: 1 }),
+    blocks: Type.Optional(Type.Array(PlanBlockSchema)),
     completedTasks: Type.Integer({ minimum: 0 }), totalTasks: Type.Integer({ minimum: 1 }),
     tokensUsed: Type.Integer({ minimum: 0 }), timeUsedSeconds: Type.Integer({ minimum: 0 }),
     timeUsage: Type.String({ minLength: 1 }),

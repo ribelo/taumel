@@ -99,13 +99,19 @@ let update_task_prompt_snippet =
 
 let update_plan_description =
   "Update the plan lifecycle: activate a draft plan to commit its task list \
-   and start continuation, or mark an active plan genuinely blocked. A plan \
-   completes automatically when every task is completed or cancelled."
+   and start continuation, mark an active plan genuinely blocked, or return a \
+   blocked plan to active once its impasse is resolved. A plan completes \
+   automatically when every task is completed or cancelled."
 
 let update_plan_status_description =
-  "Lifecycle status to set: active commits the task list and starts \
-   continuation; blocked marks a genuine impasse requiring user input or an \
-   external-state change."
+  "Lifecycle status to set: active commits a draft plan's task list and starts \
+   continuation, or returns a blocked plan to active; blocked marks a genuine \
+   impasse requiring user input or an external-state change."
+
+let update_plan_reason_description =
+  "Why the plan is blocked, or what resolved the impasse when returning a \
+   blocked plan to active. Required for both transitions."
 
 let update_plan_prompt_snippet =
-  "Activate the plan, or mark it genuinely blocked."
+  "Activate the plan, mark it genuinely blocked, or unblock it once the \
+   impasse is resolved."

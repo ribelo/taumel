@@ -121,8 +121,8 @@ export const toolContracts: readonly ToolContract[] = [
   {
     name: "update_plan",
     label: "update_plan",
-    description: "Update the plan lifecycle: activate a draft plan to commit its task list and start continuation, or mark an active plan genuinely blocked. A plan completes automatically when every task is completed or cancelled.",
-    promptSnippet: "Activate the plan, or mark it genuinely blocked.",
+    description: "Update the plan lifecycle: activate a draft plan to commit its task list and start continuation, mark an active plan genuinely blocked, or return a blocked plan to active once its impasse is resolved. A plan completes automatically when every task is completed or cancelled.",
+    promptSnippet: "Activate the plan, mark it genuinely blocked, or unblock it once the impasse is resolved.",
     parameters: toolParameters(UpdatePlanParamsSchema),
   },
   {

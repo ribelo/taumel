@@ -64,6 +64,9 @@ const patch = "*** Begin Patch\n*** End Patch\n";
 expectOk("apply_patch", { input: patch });
 expectError("apply_patch", { input: "*** Begin Patch\n*** End Patch\n", patch: "x" }, "additional");
 expectError("apply_patch", {}, "required");
+expectOk("update_plan", { status: "active" });
+expectOk("update_plan", { status: "blocked", reason: "Need user input." });
+expectError("update_plan", { status: "paused" }, "constant");
 
 const constrainedTools = toolContracts.filter((tool) => Object.hasOwn(tool, "constrainedSampling"));
 assert(constrainedTools.length === 1, "only apply_patch should use constrained sampling");

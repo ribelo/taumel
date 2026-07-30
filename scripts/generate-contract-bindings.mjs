@@ -94,7 +94,10 @@ function schemaToTs(schema, namedSchemas, currentName) {
       case "null":
         return "null";
       case "array":
-        return `readonly ${schemaToTs(schema.items, namedSchemas, currentName)}[]`;
+        {
+          const item = schemaToTs(schema.items, namedSchemas, currentName);
+          return `readonly ${item.includes(" | ") ? `(${item})` : item}[]`;
+        }
       case "object":
         if (schema.patternProperties && typeof schema.patternProperties === "object") {
           return "unknown";

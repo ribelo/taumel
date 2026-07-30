@@ -1,4 +1,5 @@
 import Type, { type Static, type TSchema } from "typebox";
+import { PlanBlockSchema } from "./plan-presentation-contract.ts";
 
 export const ToolAllowlistSchema = Type.Union([
   Type.Object({ kind: Type.Literal("none") }, { additionalProperties: false }),
@@ -158,6 +159,8 @@ export const PlanStateSchema = Type.Union([
       Type.Literal("blocked"), Type.Literal("time_limited"), Type.Literal("complete"),
     ]),
     tasks: Type.Array(PlanTaskSchema, { minItems: 1 }),
+    // Absent only on entries predating block history (^plan-ax49).
+    blocks: Type.Optional(Type.Array(PlanBlockSchema)),
     tokensUsed: Type.Integer({ minimum: 0 }), timeUsedSeconds: Type.Integer({ minimum: 0 }),
     timeLimitSeconds: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
     // Absent on legacy entries; OCaml decode defaults missing to false (^plan-w247).

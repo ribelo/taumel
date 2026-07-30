@@ -16,7 +16,7 @@ export const TOOL_DESCRIPTIONS = {
     "Create one or more tasks for the current plan. Tasks are the living breakdown of the work: order, dependencies, and completion state drive continuation and complete the plan when every task is completed or cancelled. Creating a task while no plan exists creates a draft plan; activate it with update_plan to start continuation. Tasks may be created while the plan is in draft, or to extend a completed plan once the turn in which it completed has ended; extending a completed plan reopens it to active.",
   update_task:
     "Update one task's status, title, description, or dependencies. Content edits require a draft plan; status changes require an active or draft plan. Setting in_progress requires every depended task to be completed or cancelled. Mark a task completed only when its work is verifiably done; cancel tasks that are no longer needed. User-authored task text and cancellation are reserved to the user.",
-  update_plan: "Update the plan lifecycle: activate a draft plan to commit its task list and start continuation, or mark an active plan genuinely blocked. A plan completes automatically when every task is completed or cancelled.",
+  update_plan: "Update the plan lifecycle: activate a draft plan to commit its task list and start continuation, mark an active plan genuinely blocked, or return a blocked plan to active once its impasse is resolved. A plan completes automatically when every task is completed or cancelled.",
   cron_create:
     "Schedule a prompt in this Pi session with a standard 5-field cron expression evaluated in the host\u2019s local timezone. Tasks run only while the session is open.",
   cron_list: "List this Pi session\u2019s cron tasks and scheduling state.",
@@ -65,7 +65,7 @@ export const PROMPT_SNIPPETS = {
   get_plan: "Inspect the current plan, tasks, status, usage, and automation state.",
   create_task: "Create one or more plan tasks while the plan is in draft or a completed plan is extension-unlocked.",
   update_task: "Update one plan task's status or content within editability rules.",
-  update_plan: "Activate the plan, or mark it genuinely blocked.",
+  update_plan: "Activate the plan, mark it genuinely blocked, or unblock it once the impasse is resolved.",
   cron_create:
     "Create a recurring or one-shot cron task. Tell the user the returned task id and that /cron manages crons.",
   cron_list: "List cron tasks.",
@@ -135,7 +135,9 @@ export const PARAM_DESCRIPTIONS = {
   "create_task.tasks.items.depends_on":
     "Task identities that must reach completed or cancelled before this task may enter in_progress. May reference identities supplied earlier in this call.",
   "update_plan.status":
-    "Lifecycle status to set: active commits the task list and starts continuation; blocked marks a genuine impasse requiring user input or an external-state change.",
+    "Lifecycle status to set: active commits a draft plan's task list and starts continuation, or returns a blocked plan to active; blocked marks a genuine impasse requiring user input or an external-state change.",
+  "update_plan.reason":
+    "Why the plan is blocked, or what resolved the impasse when returning a blocked plan to active. Required for both transitions.",
   "ralph_continue.task_id": "Ralph task ID from the Ralph session prompt.",
   "ralph_finish.task_id": "Ralph task ID from the Ralph session prompt.",
   "exec_command.cmd": "The bash command to run.",
@@ -362,6 +364,7 @@ export const REQUIREMENT_CHECKS = [
   ["plan-gt13", "snippet", "update_task"],
   ["plan-gt14", "tool", "update_plan"],
   ["plan-gt15", "param", "update_plan.status"],
+  ["plan-h8ua", "param", "update_plan.reason"],
   ["plan-gt16", "snippet", "update_plan"],
   ["cron-tl05", "tool", "cron_create"],
   ["cron-tl10", "snippet", "cron_create"],

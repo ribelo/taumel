@@ -12,7 +12,8 @@ let apply_plan_transition ctx ~(previous : Taumel.Plan.store)
   let completed_now =
     match previous with
     | Some prev ->
-        prev.status <> Taumel.Plan.Complete && plan.status = Taumel.Plan.Complete
+        prev.status <> Taumel.Plan.Complete
+        && plan.status = Taumel.Plan.Complete
     | None -> plan.status = Taumel.Plan.Complete
   in
   if completed_now then (
@@ -38,8 +39,29 @@ let js_task (task : Taumel.Plan.task) =
       ("origin", js_string (Taumel.Plan.task_origin_to_string task.origin));
     |]
 
-let js_plan (plan : Taumel.Plan.t) =
-  Unsafe.obj
+let js_block = function
+  | Taumel.Plan.Open entry ->
+      Unsafe.obj
+        [|
+          ("blockedAt", js_number (float_of_int entry.blocked_at));
+          ("reason", js_string entry.reason);
+          ("source", js_string (Taumel.Plan.block_source_to_string entry.source));
+        |]
+  | Taumel.Plan.Closed entry ->
+      Unsafe.obj
+        [|
+          ("blockedAt", js_number (float_of_int entry.blocked_at));
+          ("reason", js_string entry.reason);
+          ("source", js_string (Taumel.Plan.block_source_to_string entry.source));
+          ("clearedAt", js_number (float_of_int entry.cleared_at));
+          ( "clearedBy",
+            js_string (Taumel.Plan.block_cleared_by_to_string entry.cleared_by)
+          );
+          ("resolution", js_string entry.resolution);
+        |]
+
+let js_plan ?(include_blocks = true) (plan : Taumel.Plan.t) =
+  let fields =
     [|
       ("planId", js_string plan.plan_id);
       ("sessionId", js_string plan.session_id);
@@ -58,6 +80,15 @@ let js_plan (plan : Taumel.Plan.t) =
       ("createdAt", js_number (float_of_int plan.created_at));
       ("updatedAt", js_number (float_of_int plan.updated_at));
     |]
+  in
+  if include_blocks then
+    Unsafe.obj
+      (Array.append fields
+         [|
+           ( "blocks",
+             js_array (List.map js_block (Taumel.Plan.block_entries plan)) );
+         |])
+  else Unsafe.obj fields
 
 let js_automation automation =
   Unsafe.obj
@@ -67,11 +98,11 @@ let js_automation automation =
         js_bool (Taumel.Plan.automation_requires_user_input automation) );
     |]
 
-let details ?created_task_ids plan automation =
+let details ?created_task_ids ?(include_blocks = true) plan automation =
   let plan_value =
     match plan with
     | None -> Unsafe.inject Js.null
-    | Some plan -> inject (js_plan plan)
+    | Some plan -> inject (js_plan ~include_blocks plan)
   in
   let fields =
     [|
@@ -91,7 +122,8 @@ let model_state_text plan automation =
         time_used_seconds,
         time_limit_seconds,
         extension_unlocked,
-        tasks ) =
+        tasks,
+        blocks ) =
     match plan with
     | None ->
         ( Taumel.Shared.Null,
@@ -99,14 +131,17 @@ let model_state_text plan automation =
           0,
           Taumel.Shared.Null,
           false,
+          Taumel.Shared.Array [],
           Taumel.Shared.Array [] )
     | Some (plan : Taumel.Plan.t) ->
-        let tasks =
+        let tasks, blocks =
           match Taumel.Plan.to_json plan with
           | Taumel.Shared.Object fields ->
-              Option.value ~default:(Taumel.Shared.Array [])
-                (List.assoc_opt "tasks" fields)
-          | _ -> Taumel.Shared.Array []
+              ( Option.value ~default:(Taumel.Shared.Array [])
+                  (List.assoc_opt "tasks" fields),
+                Option.value ~default:(Taumel.Shared.Array [])
+                  (List.assoc_opt "blocks" fields) )
+          | _ -> (Taumel.Shared.Array [], Taumel.Shared.Array [])
         in
         ( Taumel.Shared.String (Taumel.Plan.status_to_string plan.status),
           plan.tokens_used,
@@ -115,7 +150,8 @@ let model_state_text plan automation =
           | None -> Taumel.Shared.Null
           | Some value -> Taumel.Shared.Number (float_of_int value)),
           plan.extension_unlocked,
-          tasks )
+          tasks,
+          blocks )
   in
   Taumel.Shared.encode_json
     (Taumel.Shared.Object
@@ -128,6 +164,7 @@ let model_state_text plan automation =
          ("timeLimitSeconds", time_limit_seconds);
          ("extensionUnlocked", Taumel.Shared.Bool extension_unlocked);
          ("tasks", tasks);
+         ("blocks", blocks);
          ( "automation",
            Taumel.Shared.Object
              [
@@ -211,7 +248,9 @@ let plan_continuation raw_facts =
             ~details:
               (decode_ojs_contract
                  Tool_contracts.PlanPresentationDetails.t_of_js
-                 (ojs_of_js (details !current_plan !plan_automation)))
+                 (ojs_of_js
+                    (details ~include_blocks:false !current_plan
+                       !plan_automation)))
             ()
           |> Tool_contracts.PlanContinuationSend.t_to_js |> inject)
 
@@ -357,20 +396,36 @@ let prepare_update_plan params ctx =
         | `V_blocked -> Taumel.Plan.Blocked
       in
       let previous = !current_plan in
+      let same_status =
+        match previous with
+        | Some (plan : Taumel.Plan.t) -> plan.status = status
+        | None -> false
+      in
       match
-        Taumel.Plan.update_plan ~now:(now_seconds ()) status !current_plan
+        Taumel.Plan.update_plan
+          ?reason:(Tool_contracts.UpdatePlanParams.get_reason params)
+          ~now:(now_seconds ()) status !current_plan
       with
       | Error message -> error_obj message
       | Ok plan ->
-          (match status with
-          | Taumel.Plan.Blocked ->
-              current_plan := Some plan;
-              pending_plan_terminal_status := Some Taumel.Plan.Pending_blocked;
-              Session_sync.account_plan_turn_end ctx;
-              pending_plan_terminal_status := None
-          | _ -> apply_plan_transition ctx ~previous plan);
-          tool_result !current_plan
-            (model_state_text !current_plan !plan_automation))
+          if same_status then
+            let message =
+              match status with
+              | Taumel.Plan.Active -> "Plan already active."
+              | Taumel.Plan.Blocked -> "Plan already blocked."
+              | _ -> assert false
+            in
+            tool_result !current_plan message
+          else (
+            (match status with
+            | Taumel.Plan.Blocked ->
+                current_plan := Some plan;
+                pending_plan_terminal_status := Some Taumel.Plan.Pending_blocked;
+                Session_sync.account_plan_turn_end ctx;
+                pending_plan_terminal_status := None
+            | _ -> apply_plan_transition ctx ~previous plan);
+            tool_result !current_plan
+              (model_state_text !current_plan !plan_automation)))
 
 let create_from_cron raw_facts =
   let facts =

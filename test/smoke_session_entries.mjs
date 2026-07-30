@@ -30,6 +30,19 @@ const persisted = (customType, data, extra = {}) => ({
 });
 const manager = (entries) => ({ getEntries: () => entries });
 const wire = ({ type, customType, data }) => ({ type, customType, data });
+const planState = {
+  planId: "plan-test", sessionId: "session-test", status: "active",
+  tasks: [{
+    taskId: "task-test", title: "Ship", description: null, status: "pending",
+    depends_on: [], origin: "agent",
+  }],
+  blocks: [{
+    blockedAt: 1, reason: "Need input.", source: "agent",
+    clearedAt: 2, clearedBy: "user", resolution: "Input supplied.",
+  }],
+  tokensUsed: 0, timeUsedSeconds: 0, timeLimitSeconds: null,
+  extensionUnlocked: false, createdAt: 1, updatedAt: 2,
+};
 
 for (const persistedEntry of [
   persisted("taumel.childSession", {
@@ -42,6 +55,7 @@ for (const persistedEntry of [
     version: 1, tools: { disabled: [] }, skills: { disabled: [] },
   }),
   persisted("taumel.plan", null),
+  persisted("taumel.plan", planState),
   persisted("taumel.plan_automation", null),
   persisted("taumel.ralph", { version: 1, tasks: [] }),
   persisted("taumel.agents.v4", {
@@ -150,6 +164,17 @@ for (const invalid of [
   { type: "custom", customType: "taumel.unknown", data: {} },
   { type: "custom", customType: "taumel.permissions", data: { kind: "ralph" } },
   { customType: "taumel.plan", data: null },
+  wire(persisted("taumel.plan", {
+    ...planState,
+    blocks: [{ blockedAt: 1, reason: "Need input.", source: "host" }],
+  })),
+  wire(persisted("taumel.plan", {
+    ...planState,
+    blocks: [{
+      blockedAt: 1, reason: "Need input.", source: "agent",
+      clearedAt: 2, clearedBy: "user",
+    }],
+  })),
   wire(persisted("taumel.cron", {
     version: 1, enabled: true,
     tasks: [{
