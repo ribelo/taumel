@@ -435,7 +435,7 @@ let test_plan_state_machine () =
   assert_int "tokens accounted" 11 plan.tokens_used;
   assert_bool "time limited" (plan.status = Plan.Time_limited);
   expect_error "update_plan complete rejected"
-    (Plan.update_plan ~now:4 Plan.Complete (Some plan))
+    (Plan.update_plan ~reason:"test transition" ~now:4 Plan.Complete (Some plan))
 
 let test_ralph_ownership () =
   let task =

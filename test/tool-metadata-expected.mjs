@@ -15,7 +15,7 @@ export const TOOL_DESCRIPTIONS = {
   create_task:
     "Create one or more tasks for the current plan. Tasks are the living breakdown of the work: order, dependencies, and completion state drive continuation and complete the plan when every task is completed or cancelled. Creating a task while no plan exists creates a draft plan; activate it with update_plan to start continuation. Tasks may be created while the plan is in draft, or to extend a completed plan once the turn in which it completed has ended; extending a completed plan reopens it to active.",
   update_task:
-    "Update one task's status, title, description, or dependencies. Content edits require a draft plan; status changes require an active or draft plan. Setting in_progress requires every depended task to be completed or cancelled. Mark a task completed only when its work is verifiably done; cancel tasks that are no longer needed. User-authored task text and cancellation are reserved to the user.",
+    "Update one task's status, title, description, or dependencies. Content edits require a draft plan; status changes require an active or draft plan. Setting in_progress requires every depended task to be completed or cancelled. Mark a task completed only when its work is verifiably done; cancel tasks that are no longer needed, stating why. User-authored task text and cancellation are reserved to the user.",
   update_plan: "Update the plan lifecycle: activate a draft plan to commit its task list and start continuation, mark an active plan genuinely blocked, or return a blocked plan to active once its impasse is resolved. A plan completes automatically when every task is completed or cancelled.",
   cron_create:
     "Schedule a prompt in this Pi session with a standard 5-field cron expression evaluated in the host\u2019s local timezone. Tasks run only while the session is open.",
@@ -134,6 +134,8 @@ export const PARAM_DESCRIPTIONS = {
   "create_task.tasks.items.description": "Optional longer specification of this step.",
   "create_task.tasks.items.depends_on":
     "Task identities that must reach completed or cancelled before this task may enter in_progress. May reference identities supplied earlier in this call.",
+  "update_task.reason":
+    "Why this task is being cancelled. Required when setting status to cancelled.",
   "update_plan.status":
     "Lifecycle status to set: active commits a draft plan's task list and starts continuation, or returns a blocked plan to active; blocked marks a genuine impasse requiring user input or an external-state change.",
   "update_plan.reason":
@@ -361,6 +363,7 @@ export const REQUIREMENT_CHECKS = [
   ["plan-gt10", "param", "create_task.tasks.items.depends_on"],
   ["plan-5n6h", "snippet", "create_task"],
   ["plan-gt12", "tool", "update_task"],
+  ["plan-7mt5", "param", "update_task.reason"],
   ["plan-gt13", "snippet", "update_task"],
   ["plan-gt14", "tool", "update_plan"],
   ["plan-gt15", "param", "update_plan.status"],

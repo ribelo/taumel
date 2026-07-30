@@ -10,7 +10,7 @@ import {
   type ModalTheme,
   type ModalUi,
 } from "./modal.ts";
-import { planTaskStatusColor } from "./tool-renderer-kit.ts";
+import { planTaskCancellationDetail, planTaskStatusColor } from "./tool-renderer-kit.ts";
 import { isObjectLike } from "./util.ts";
 
 type PlanTask = {
@@ -18,6 +18,7 @@ type PlanTask = {
   readonly title: string;
   readonly description: string | null;
   readonly status: string;
+  readonly cancellationReason?: string;
   readonly origin: string;
   readonly depends_on: readonly string[];
 };
@@ -141,11 +142,13 @@ function renderTaskRow(
 ): string[] {
   // ^plan-2fnt: status leads in color and is never truncated; metadata degrades.
   const deps = task.depends_on.length === 0 ? "" : ` · after ${task.depends_on.join(", ")}`;
+  const cancellation = planTaskCancellationDetail(task);
+  const cancellationSuffix = cancellation === undefined ? "" : ` · ${cancellation}`;
   const suffixes = [
-    ` · ${task.taskId} · ${task.origin}${deps}`,
-    ` · ${task.taskId}${deps}`,
-    ` · ${task.taskId}`,
-    "",
+    ` · ${task.taskId} · ${task.origin}${deps}${cancellationSuffix}`,
+    ` · ${task.taskId}${deps}${cancellationSuffix}`,
+    ` · ${task.taskId}${cancellationSuffix}`,
+    cancellationSuffix,
   ];
   const prefix = `  ${task.status.padEnd(statusPad)}  `;
   const minTitle = 8;

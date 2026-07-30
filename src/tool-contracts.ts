@@ -294,6 +294,9 @@ export const UpdateTaskParamsSchema = Type.Object(
     title: Type.Optional(Type.String()),
     description: Type.Optional(Type.String()),
     depends_on: Type.Optional(Type.Array(Type.String())),
+    reason: Type.Optional(Type.String({
+      description: "Why this task is being cancelled. Required when setting status to cancelled.",
+    })),
   },
   { $id: "UpdateTaskParams", additionalProperties: false },
 );
@@ -303,9 +306,9 @@ export const UpdatePlanParamsSchema = Type.Object(
     status: Type.Union([Type.Literal("active"), Type.Literal("blocked")], {
       description: "Lifecycle status to set: active commits a draft plan's task list and starts continuation, or returns a blocked plan to active; blocked marks a genuine impasse requiring user input or an external-state change.",
     }),
-    reason: Type.Optional(Type.String({
+    reason: Type.String({ minLength: 1,
       description: "Why the plan is blocked, or what resolved the impasse when returning a blocked plan to active. Required for both transitions.",
-    })),
+    }),
   },
   { $id: "UpdatePlanParams", additionalProperties: false },
 );

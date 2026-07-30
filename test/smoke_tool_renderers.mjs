@@ -130,6 +130,12 @@ function resultFor(name) {
     const tasks = [
       { taskId: "task-x7aa", title: "foundation", status: "completed", origin: "user", depends_on: [] },
       { taskId: "task-jw2q", title: "ship renderer coverage", status: name === "update_task" ? "completed" : "pending", origin: "agent", depends_on: ["task-x7aa"] },
+      ...(name === "get_plan"
+        ? [{
+            taskId: "task-old1", title: "obsolete path", status: "cancelled",
+            cancellationReason: "Superseded by the new path.", origin: "agent", depends_on: [],
+          }]
+        : []),
     ];
     return {
       content: [{ type: "text", text: "Plan updated." }],
@@ -797,6 +803,10 @@ assert(!createTaskExpanded.includes("Plan ID") && !createTaskExpanded.includes("
 assert(!/•\s*task-jw2q|• pending/.test(createTaskExpanded.split("\n").find((line) => line.includes("task-jw2q")) ?? ""), `task rows must not use a status-dot glyph (^render-rffp): ${createTaskExpanded}`);
 const getPlanExpanded = renderText(renderersForTool("get_plan").renderResult(resultFor("get_plan"), { expanded: true, isPartial: false }, theme, { args: {} }));
 assert(getPlanExpanded.includes("task-x7aa [completed/user]: foundation") && getPlanExpanded.includes("task-jw2q [pending/agent]: ship renderer coverage"), `get_plan expanded should list every plan task: ${getPlanExpanded}`);
+assert(getPlanExpanded.includes("task-old1 [cancelled/agent]: obsolete path") && getPlanExpanded.includes("Reason: Superseded by the new path."), `cancelled plan rows should show the cancellation reason: ${getPlanExpanded}`);
+const markedPlanTheme = { ...theme, fg: (color, value) => `<${color}>${value}</${color}>` };
+const markedGetPlanExpanded = renderText(renderersForTool("get_plan").renderResult(resultFor("get_plan"), { expanded: true, isPartial: false }, markedPlanTheme, { args: {} }));
+assert(markedGetPlanExpanded.includes("<dim> · Reason: Superseded by the new path.</dim>"), `cancelled reason should render dim inline: ${markedGetPlanExpanded}`);
 const pendingPlanCompact = renderText(renderersForTool("update_plan").renderResult({
   content: [{ type: "text", text: "Plan updated." }],
   details: {
@@ -882,7 +892,10 @@ const planContinuationMessage = {
         { taskId: "task-x7aa", title: "foundation", status: "completed", origin: "user", depends_on: [] },
         { taskId: "task-ab12", title: "wire renderer", status: "in_progress", origin: "agent", depends_on: ["task-x7aa"] },
         { taskId: "task-cd34", title: "cover edges", status: "pending", origin: "agent", depends_on: ["task-ab12"] },
-        { taskId: "task-ef56", title: "obsolete path", status: "cancelled", origin: "agent", depends_on: [] },
+        {
+          taskId: "task-ef56", title: "obsolete path", status: "cancelled",
+          cancellationReason: "Superseded.", origin: "agent", depends_on: [],
+        },
         { taskId: "task-gh78", title: "ship", status: "pending", origin: "user", depends_on: ["task-cd34"] },
       ],
     },

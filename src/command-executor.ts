@@ -15,6 +15,7 @@ import { executeVisibilityManager, saveProjectVisibility } from "./visibility.ts
 import { showUsageInspection } from "./usage-inspection.ts";
 import { executeTasksModal } from "./tasks-modal.ts";
 import { executePsModal } from "./ps-modal.ts";
+import { planTaskCancellationDetail } from "./tool-renderer-kit.ts";
 import {
   applyChildSessionUpdate,
   createChildSession,
@@ -67,7 +68,7 @@ type PlanView = {
 };
 type PlanTaskView = {
   readonly taskId?: unknown; readonly title?: unknown; readonly status?: unknown;
-  readonly origin?: unknown; readonly depends_on?: unknown;
+  readonly origin?: unknown; readonly depends_on?: unknown; readonly cancellationReason?: unknown;
 };
 type PlanBlockView = {
   readonly blockedAt?: unknown; readonly reason?: unknown; readonly source?: unknown;
@@ -194,7 +195,8 @@ async function showPlanInspection(result: CommandResultLike, ctx: unknown): Prom
               const taskStatus = typeof task.status === "string" ? task.status : "unknown";
               const origin = typeof task.origin === "string" ? task.origin : "unknown";
               const dependencies = Array.isArray(task.depends_on) ? task.depends_on.filter((value): value is string => typeof value === "string") : [];
-              return `${id} [${taskStatus}/${origin}] ${title}${dependencies.length === 0 ? "" : ` (depends on ${dependencies.join(", ")})`}`;
+              const cancellation = planTaskCancellationDetail(task);
+              return `${id} [${taskStatus}/${origin}] ${title}${dependencies.length === 0 ? "" : ` (depends on ${dependencies.join(", ")})`}${cancellation === undefined ? "" : ` · ${cancellation}`}`;
             }) : []),
           ]
         : [candidate];

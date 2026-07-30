@@ -7,6 +7,7 @@ type t = {
   title : string;
   description : string option;
   status : status;
+  cancellation_reason : string option;
   depends_on : string list;
   origin : origin;
 }
@@ -27,6 +28,7 @@ type update = {
   title : string option;
   description : description_update;
   status : status option;
+  reason : string option;
   depends_on : string list option;
 }
 
@@ -35,6 +37,7 @@ let no_update =
     title = None;
     description = Keep_description;
     status = None;
+    reason = None;
     depends_on = None;
   }
 
@@ -64,6 +67,12 @@ let dependency_finished (task : t) =
   task.status = Completed || task.status = Cancelled
 
 let normalize_title title = Shared.require_non_empty "plan task title" title
+
+let normalize_cancellation_reason = function
+  | None -> Error "cancelling a plan task requires a non-empty reason"
+  | Some reason ->
+      Shared.require_non_empty "plan task cancellation reason" reason
+      |> Result.map Option.some
 
 let normalize_explicit_id = function
   | None -> Ok None
@@ -141,7 +150,7 @@ let blockers_error blockers =
   ^ payload ^ "; complete or cancel the blocking tasks first"
 
 let to_json (task : t) =
-  Shared.Object
+  let fields =
     [
       ("taskId", Shared.String task.task_id);
       ("title", Shared.String task.title);
@@ -151,6 +160,11 @@ let to_json (task : t) =
         Shared.Array (List.map (fun id -> Shared.String id) task.depends_on) );
       ("origin", Shared.String (origin_to_string task.origin));
     ]
+  in
+  Shared.Object
+    (match task.cancellation_reason with
+    | None -> fields
+    | Some reason -> ("cancellationReason", Shared.String reason) :: fields)
 
 let continuation_to_json (tasks : t list) (task : t) =
   let blockers = blocking_dependencies tasks task in
@@ -197,10 +211,13 @@ let of_json index = function
         | _ -> Error (path ^ "." ^ name ^ " must be null or a string")
       in
       let ( let* ) = Result.bind in
+      let fields_without_cancellation_reason =
+        List.filter (fun (name, _) -> name <> "cancellationReason") fields
+      in
       let* () =
         Shared.json_exact_fields path
           [ "taskId"; "title"; "description"; "status"; "depends_on"; "origin" ]
-          fields
+          fields_without_cancellation_reason
       in
       let* task_id = string_field "taskId" in
       let* title = string_field "title" in
@@ -210,6 +227,25 @@ let of_json index = function
         match status_of_string status_name with
         | Some status -> Ok status
         | None -> Error ("unknown plan task status: " ^ status_name)
+      in
+      let* cancellation_reason =
+        match (status, List.assoc_opt "cancellationReason" fields) with
+        | Cancelled, Some (Shared.String reason) ->
+            let trimmed = String.trim reason in
+            if trimmed = "" then
+              Error (path ^ ".cancellationReason must not be empty")
+            else if trimmed <> reason then
+              Error
+                (path
+               ^ ".cancellationReason must not have surrounding whitespace")
+            else Ok (Some reason)
+        | Cancelled, _ ->
+            Error (path ^ ".cancelled task requires cancellationReason")
+        | _, None -> Ok None
+        | _, Some _ ->
+            Error
+              (path
+             ^ ".cancellationReason is permitted only on a cancelled task")
       in
       let* depends_on = string_list_field path fields "depends_on" in
       let* origin_name = string_field "origin" in
@@ -225,7 +261,16 @@ let of_json index = function
           Error (path ^ ".title must not have surrounding whitespace")
         else Result.map (fun _ -> ()) (normalize_title title)
       in
-      Ok { task_id; title; description; status; depends_on; origin }
+      Ok
+        {
+          task_id;
+          title;
+          description;
+          status;
+          cancellation_reason;
+          depends_on;
+          origin;
+        }
   | _ -> Error (Printf.sprintf "tasks[%d] must be an object" index)
 
 let list_of_json = function

@@ -91,8 +91,8 @@ let update_task_description =
    edits require a draft plan; status changes require an active or draft plan. \
    Setting in_progress requires every depended task to be completed or \
    cancelled. Mark a task completed only when its work is verifiably done; \
-   cancel tasks that are no longer needed. User-authored task text and \
-   cancellation are reserved to the user."
+   cancel tasks that are no longer needed, stating why. User-authored task \
+   text and cancellation are reserved to the user."
 
 let update_task_prompt_snippet =
   "Update one plan task's status or content within editability rules."

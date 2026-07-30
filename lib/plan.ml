@@ -27,6 +27,7 @@ type task = Plan_task.t = {
   title : string;
   description : string option;
   status : task_status;
+  cancellation_reason : string option;
   depends_on : string list;
   origin : task_origin;
 }
@@ -47,6 +48,7 @@ type task_update = Plan_task.update = {
   title : string option;
   description : description_update;
   status : task_status option;
+  reason : string option;
   depends_on : string list option;
 }
 
@@ -265,6 +267,7 @@ let make_tasks ~session_id ~now:_ ~origin ~(existing : task list)
               title;
               description = creation.description;
               status = Pending;
+              cancellation_reason = None;
               depends_on = creation.depends_on;
               origin;
             }
@@ -402,12 +405,23 @@ let apply_task_patch (task : task) patch =
     | Set_description description -> Some description
     | Clear_description -> None
   in
+  let* cancellation_reason =
+    match (patch.status, patch.reason) with
+    | Some Cancelled, reason -> Plan_task.normalize_cancellation_reason reason
+    | Some _, _ -> Ok None
+    | None, None -> Ok task.cancellation_reason
+    | None, Some _ ->
+        Error
+          "plan task cancellation reason may be provided only when setting \
+           status to cancelled"
+  in
   Ok
     {
       task with
       title;
       description;
       status = Option.value patch.status ~default:task.status;
+      cancellation_reason;
       depends_on = Option.value patch.depends_on ~default:task.depends_on;
     }
 
@@ -435,15 +449,16 @@ let update_task_for ~user ~now ~task_id patch (store : store) =
             else if task.origin = User && status_change && plan.status <> Active
             then
               Some
-                (Plan_status.edit_error "change a user-authored task's status"
-                   plan.status)
+                (Plan_status.edit_error ~capability:Plan_status.Status_change
+                   "change a user-authored task's status" plan.status)
             else if content_change && not (content_editable plan.status) then
               Some
-                (Plan_status.edit_error "edit plan task content or dependencies"
-                   plan.status)
+                (Plan_status.edit_error ~capability:Plan_status.Content_edit
+                   "edit plan task content or dependencies" plan.status)
             else if status_change && not (status_editable plan.status) then
               Some
-                (Plan_status.edit_error "change a plan task status" plan.status)
+                (Plan_status.edit_error ~capability:Plan_status.Status_change
+                   "change a plan task status" plan.status)
             else None
           in
           match agent_error with
@@ -477,8 +492,10 @@ let update_task ~now ~task_id patch store =
 let user_update_task ~now ~task_id patch store =
   update_task_for ~user:true ~now ~task_id patch store
 
-let update_task_status ~now ~task_id status store =
-  update_task ~now ~task_id { no_task_update with status = Some status } store
+let update_task_status ?reason ~now ~task_id status store =
+  update_task ~now ~task_id
+    { no_task_update with status = Some status; reason }
+    store
 
 let next_advance_status = function
   | Pending -> Some In_progress
@@ -518,7 +535,13 @@ let user_cancel_task ~now ~task_id (store : store) =
             ("cannot cancel a " ^ task_status_to_string task.status ^ " task")
       | Pending | In_progress ->
           user_update_task ~now ~task_id
-            { no_task_update with status = Some Cancelled }
+            {
+              no_task_update with
+              status = Some Cancelled;
+              reason =
+                Some
+                  "Cancelled by the user through /tasks or /plan task cancel.";
+            }
             store)
 
 (* ^plan-tk04: keep >=1 task; strip inbound depends_on (^plan-md05 read-only). *)
@@ -545,38 +568,40 @@ let user_delete_task ~now ~task_id (store : store) =
               (apply_completion_invariant ~now
                  { plan with tasks = remaining; updated_at = now }))
 
-let update_plan ?reason ~now status (store : store) =
+let update_plan ~reason ~now status (store : store) =
   match store with
   | None -> Error "cannot update plan because this session has no plan"
   | Some plan -> (
-      match (status, plan.status) with
-      | Active, Draft ->
-          (* ^plan-oua0: all-done activate lands complete in the same transition. *)
-          Ok (apply_completion_invariant ~now (with_status ~now Active plan))
-      | Active, Blocked ->
-          let resolution = Option.value reason ~default:"" in
-          Result.map
-            (fun blocks ->
-              apply_completion_invariant ~now
-                (with_status ~now Active { plan with blocks }))
-            (Plan_block.close_open ~now ~cleared_by:Plan_block.agent_clearer
-               ~resolution plan.blocks)
-      | Active, Active | Blocked, Blocked -> Ok plan
-      | Blocked, Active ->
-          let reason = Option.value reason ~default:"" in
-          Result.map
-            (fun blocks -> with_status ~now Blocked { plan with blocks })
-            (Plan_block.open_entry ~now ~reason ~source:Plan_block.agent_source
-               plan.blocks)
-      | (Draft | Paused | Time_limited | Complete), _ ->
-          Error
-            "update_plan accepts only active or blocked; draft, paused, \
-             time_limited, complete, time limits, and automation are user or \
-             system controlled"
-      | ((Active | Blocked) as requested), current ->
-          Error
-            (Plan_status.update_plan_error
-               ~extension_unlocked:plan.extension_unlocked ~requested current))
+      let reason = String.trim reason in
+      if reason = "" then Error "update_plan requires a non-empty reason"
+      else
+        match (status, plan.status) with
+        | Active, Draft ->
+            (* ^plan-oua0: all-done activate lands complete in the same transition. *)
+            Ok (apply_completion_invariant ~now (with_status ~now Active plan))
+        | Active, Blocked ->
+            Result.map
+              (fun blocks ->
+                apply_completion_invariant ~now
+                  (with_status ~now Active { plan with blocks }))
+              (Plan_block.close_open ~now ~cleared_by:Plan_block.agent_clearer
+                 ~resolution:reason plan.blocks)
+        | Active, Active | Blocked, Blocked -> Ok plan
+        | Blocked, Active ->
+            Result.map
+              (fun blocks -> with_status ~now Blocked { plan with blocks })
+              (Plan_block.open_entry ~now ~reason
+                 ~source:Plan_block.agent_source plan.blocks)
+        | (Draft | Paused | Time_limited | Complete), _ ->
+            Error
+              "update_plan accepts only active or blocked; draft, paused, \
+               time_limited, complete, time limits, and automation are user or \
+               system controlled"
+        | ((Active | Blocked) as requested), current ->
+            Error
+              (Plan_status.update_plan_error
+                 ~extension_unlocked:plan.extension_unlocked ~requested current)
+      )
 
 let final_unrecoverable_error ~now (store : store) =
   match store with

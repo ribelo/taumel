@@ -43,6 +43,14 @@ const planState = {
   tokensUsed: 0, timeUsedSeconds: 0, timeLimitSeconds: null,
   extensionUnlocked: false, createdAt: 1, updatedAt: 2,
 };
+const cancelledPlanState = {
+  ...planState,
+  status: "complete",
+  tasks: [{
+    taskId: "task-cancelled", title: "Obsolete", description: null,
+    status: "cancelled", cancellationReason: "Superseded.", depends_on: [], origin: "agent",
+  }],
+};
 
 for (const persistedEntry of [
   persisted("taumel.childSession", {
@@ -56,6 +64,7 @@ for (const persistedEntry of [
   }),
   persisted("taumel.plan", null),
   persisted("taumel.plan", planState),
+  persisted("taumel.plan", cancelledPlanState),
   persisted("taumel.plan_automation", null),
   persisted("taumel.ralph", { version: 1, tasks: [] }),
   persisted("taumel.agents.v4", {
@@ -167,6 +176,14 @@ for (const invalid of [
   wire(persisted("taumel.plan", {
     ...planState,
     blocks: [{ blockedAt: 1, reason: "Need input.", source: "host" }],
+  })),
+  wire(persisted("taumel.plan", {
+    ...cancelledPlanState,
+    tasks: [{ ...cancelledPlanState.tasks[0], cancellationReason: undefined }],
+  })),
+  wire(persisted("taumel.plan", {
+    ...planState,
+    tasks: [{ ...planState.tasks[0], cancellationReason: "Unexpected." }],
   })),
   wire(persisted("taumel.plan", {
     ...planState,

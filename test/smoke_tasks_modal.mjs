@@ -73,6 +73,10 @@ function makeUi(handlers) {
   const plan = planPresentation([
     task({ taskId: "task-aa11", status: "pending", depends_on: ["task-zz99"] }),
     task({ taskId: "task-bb22", title: "Review", status: "in_progress", depends_on: [], origin: "agent" }),
+    task({
+      taskId: "task-cc33", title: "Obsolete", status: "cancelled",
+      cancellationReason: "Cancelled through /plan task cancel.", depends_on: [], origin: "agent",
+    }),
   ]);
   const coreCalls = [];
   const core = {
@@ -82,7 +86,7 @@ function makeUi(handlers) {
         return {
           ok: true,
           action: "command_result",
-          message: "Plan active: 0/2 tasks (0s)",
+          message: "Plan active: 1/3 tasks (0s)",
           details: { plan, automation: { continuation: "enabled", requiresUserInput: false } },
           planInspection: true,
         };
@@ -94,11 +98,12 @@ function makeUi(handlers) {
     drive(component) {
       const first = component.render(120).join("\n");
       assert.match(first, /\[accent\]Plan active/);
-      assert.match(first, /0\/2 tasks/);
+      assert.match(first, /1\/3 tasks/);
       assert.match(first, /task-aa11/);
       assert.match(first, /\[dim\]pending/);
       assert.match(first, /after task-zz99/);
       assert.match(first, /\[warning\]in_progress/);
+      assert.match(first, /\[dim\].*Reason: Cancelled through \/plan task cancel\./);
       assert.match(first, /\[accent\]›/);
       assert.match(first, /a add · e edit · s advance · x cancel · d delete · q close/);
       component.handleInput("\x1b[B");
@@ -158,7 +163,13 @@ function makeUi(handlers) {
       } else if (input.startsWith("task cancel ")) {
         const id = input.split(" ")[2];
         plan = planPresentation(plan.tasks.map((entry) => (
-          entry.taskId === id ? { ...entry, status: "cancelled" } : entry
+          entry.taskId === id
+            ? {
+                ...entry,
+                status: "cancelled",
+                cancellationReason: "Cancelled by the user through /tasks or /plan task cancel.",
+              }
+            : entry
         )));
       } else if (input.startsWith("task delete ")) {
         const id = input.split(" ")[2];

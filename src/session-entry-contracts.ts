@@ -1,5 +1,5 @@
 import Type, { type Static, type TSchema } from "typebox";
-import { PlanBlockSchema } from "./plan-presentation-contract.ts";
+import { PlanBlockSchema, PlanTaskSchema } from "./plan-presentation-contract.ts";
 
 export const ToolAllowlistSchema = Type.Union([
   Type.Object({ kind: Type.Literal("none") }, { additionalProperties: false }),
@@ -138,17 +138,6 @@ export const VisibilityStateV1Schema = Type.Object({
   version: Type.Literal(1), tools: VisibilityCategorySchema, skills: VisibilityCategorySchema,
 }, { $id: "VisibilityStateV1", additionalProperties: false });
 export type VisibilityStateV1 = Static<typeof VisibilityStateV1Schema>;
-
-const PlanTaskSchema = Type.Object({
-  taskId: Type.String({ minLength: 1 }), title: Type.String({ minLength: 1 }),
-  description: Type.Union([Type.String(), Type.Null()]),
-  status: Type.Union([
-    Type.Literal("pending"), Type.Literal("in_progress"),
-    Type.Literal("completed"), Type.Literal("cancelled"),
-  ]),
-  depends_on: Type.Array(Type.String({ minLength: 1 })),
-  origin: Type.Union([Type.Literal("user"), Type.Literal("agent")]),
-}, { additionalProperties: false });
 
 export const PlanStateSchema = Type.Union([
   Type.Null(),

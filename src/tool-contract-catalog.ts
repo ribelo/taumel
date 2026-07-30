@@ -114,7 +114,7 @@ export const toolContracts: readonly ToolContract[] = [
     name: "update_task",
     label: "update_task",
     description:
-      "Update one task's status, title, description, or dependencies. Content edits require a draft plan; status changes require an active or draft plan. Setting in_progress requires every depended task to be completed or cancelled. Mark a task completed only when its work is verifiably done; cancel tasks that are no longer needed. User-authored task text and cancellation are reserved to the user.",
+      "Update one task's status, title, description, or dependencies. Content edits require a draft plan; status changes require an active or draft plan. Setting in_progress requires every depended task to be completed or cancelled. Mark a task completed only when its work is verifiably done; cancel tasks that are no longer needed, stating why. User-authored task text and cancellation are reserved to the user.",
     promptSnippet: "Update one plan task's status or content within editability rules.",
     parameters: toolParameters(UpdateTaskParamsSchema),
   },

@@ -41,51 +41,37 @@ let create_task_error = function
       "cannot create plan tasks because the current status is active; ask the \
        user to run /plan draft to enable editing"
   | Blocked ->
-      "cannot create plan tasks because the current status is blocked; call \
-       update_plan with status active and a non-empty resolution to unblock, \
-       or ask the user to run /plan draft to enable editing"
+      "cannot create plan tasks because the current status is blocked; ask the \
+       user to run /plan draft to enable editing"
   | Paused ->
       "cannot create plan tasks because the current status is paused; the user \
-       must run /plan resume to continue, or /plan draft to enable editing"
+       must run /plan draft to enable editing"
   | Time_limited ->
       "cannot create plan tasks because the current status is time_limited; \
-       the user must run /plan resume with a usable time limit, or /plan draft \
-       to enable editing"
+       the user must run /plan draft to enable editing"
   | Complete ->
       "cannot create plan tasks because the current status is complete; a \
        completed plan may be extended after its turn ends"
 
-let edit_error action = function
-  | Draft ->
-      Printf.sprintf
-        "cannot %s because the current status is draft; ask the user to run \
-         /plan resume to activate the plan"
-        action
-  | Active ->
-      Printf.sprintf
-        "cannot %s because the current status is active; ask the user to run \
-         /plan draft to enable content editing"
-        action
-  | Blocked ->
-      Printf.sprintf
-        "cannot %s because the current status is blocked; call update_plan \
-         with status active and a non-empty resolution to unblock"
-        action
-  | Paused ->
-      Printf.sprintf
-        "cannot %s because the current status is paused; the user must run \
-         /plan resume"
-        action
-  | Time_limited ->
-      Printf.sprintf
-        "cannot %s because the current status is time_limited; the user must \
-         run /plan resume with a usable time limit"
-        action
-  | Complete ->
-      Printf.sprintf
-        "cannot %s because the current status is complete; ask the user to run \
-         /plan draft to enable editing"
-        action
+type task_capability = Status_change | Content_edit
+
+let edit_error ~capability action status =
+  let remedy =
+    match (capability, status) with
+    | Content_edit, _ -> "ask the user to run /plan draft to enable editing"
+    | Status_change, Draft ->
+        "ask the user to run /plan resume to activate the plan"
+    | Status_change, Blocked ->
+        "call update_plan with status active and a non-empty resolution to \
+         unblock"
+    | Status_change, (Paused | Time_limited) -> "the user must run /plan resume"
+    | Status_change, Complete ->
+        "ask the user to run /plan draft to enable editing"
+    | Status_change, Active ->
+        invalid_arg "active plans permit task status changes"
+  in
+  Printf.sprintf "cannot %s because the current status is %s; %s" action
+    (to_string status) remedy
 
 let update_plan_error ~extension_unlocked ~requested current =
   match (requested, current) with

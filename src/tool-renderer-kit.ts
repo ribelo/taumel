@@ -73,6 +73,14 @@ export function planTaskStatusColor(status: string): string {
   }
 }
 
+export function planTaskCancellationDetail(
+  task: { readonly status?: unknown; readonly cancellationReason?: unknown },
+): string | undefined {
+  if (task.status !== "cancelled" || typeof task.cancellationReason !== "string") return undefined;
+  const reason = oneLine(task.cancellationReason);
+  return reason === "" ? undefined : `Reason: ${reason}`;
+}
+
 /** Labeled dim/toolOutput row; omit when value is absent or blank. */
 export function labeled(label: string, value: string | undefined, theme: unknown): Entry[] {
   if (value === undefined || value.trim() === "") return [];
@@ -120,10 +128,11 @@ export function planTaskRow(task: ToolRenderFields, theme: unknown): Entry[] {
   const title = stringFieldOrUndefined(task, "title") ?? "";
   const taskStatus = stringFieldOrUndefined(task, "status") ?? "unknown";
   const origin = stringFieldOrUndefined(task, "origin") ?? "unknown";
+  const cancellation = planTaskCancellationDetail(task);
   // ^render-rffp: status as colored text only — no status-dot glyph in task rows.
   const statusText = themeFg(theme, planTaskStatusColor(taskStatus), taskStatus);
   const entries: Entry[] = [{
-    text: `${themeFg(theme, "dim", id)} ${themeFg(theme, "dim", "[")}${statusText}${themeFg(theme, "dim", `/${origin}]:`)} ${themeFg(theme, "toolOutput", title)}`,
+    text: `${themeFg(theme, "dim", id)} ${themeFg(theme, "dim", "[")}${statusText}${themeFg(theme, "dim", `/${origin}]:`)} ${themeFg(theme, "toolOutput", title)}${cancellation === undefined ? "" : themeFg(theme, "dim", ` · ${cancellation}`)}`,
   }];
   const dependencies = task["depends_on"];
   if (Array.isArray(dependencies) && dependencies.length > 0) {

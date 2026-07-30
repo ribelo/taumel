@@ -27,6 +27,7 @@ type task = Plan_task.t = {
   title : string;
   description : string option;
   status : task_status;
+  cancellation_reason : string option;
   depends_on : string list;
   origin : task_origin;
 }
@@ -47,6 +48,7 @@ type task_update = Plan_task.update = {
   title : string option;
   description : description_update;
   status : task_status option;
+  reason : string option;
   depends_on : string list option;
 }
 
@@ -165,7 +167,12 @@ val user_update_task :
   now:int -> task_id:string -> task_update -> store -> (t, string) result
 
 val update_task_status :
-  now:int -> task_id:string -> task_status -> store -> (t, string) result
+  ?reason:string ->
+  now:int ->
+  task_id:string ->
+  task_status ->
+  store ->
+  (t, string) result
 
 val user_advance_task : now:int -> task_id:string -> store -> (t, string) result
 
@@ -176,7 +183,7 @@ val user_delete_task : now:int -> task_id:string -> store -> (t, string) result
 val unfinished_tasks : t -> task list
 
 val update_plan :
-  ?reason:string -> now:int -> status -> store -> (t, string) result
+  reason:string -> now:int -> status -> store -> (t, string) result
 
 val final_unrecoverable_error : now:int -> store -> store
 

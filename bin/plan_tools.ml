@@ -29,7 +29,7 @@ let apply_plan_transition ctx ~(previous : Taumel.Plan.store)
     Session_sync.save_plan_state ctx)
 
 let js_task (task : Taumel.Plan.task) =
-  Unsafe.obj
+  let fields =
     [|
       ("taskId", js_string task.task_id);
       ("title", js_string task.title);
@@ -38,6 +38,12 @@ let js_task (task : Taumel.Plan.task) =
       ("depends_on", js_array (List.map js_string task.depends_on));
       ("origin", js_string (Taumel.Plan.task_origin_to_string task.origin));
     |]
+  in
+  match task.cancellation_reason with
+  | None -> Unsafe.obj fields
+  | Some reason ->
+      Unsafe.obj
+        (Array.append fields [| ("cancellationReason", js_string reason) |])
 
 let js_block = function
   | Taumel.Plan.Open entry ->
@@ -369,6 +375,7 @@ let prepare_update_task params ctx =
           status =
             Option.map task_status
               (Boundary_contracts.UpdateTaskParams.get_status params);
+          reason = Tool_contracts.UpdateTaskParams.get_reason params;
           depends_on = Tool_contracts.UpdateTaskParams.get_depends_on params;
         }
       in
@@ -403,7 +410,7 @@ let prepare_update_plan params ctx =
       in
       match
         Taumel.Plan.update_plan
-          ?reason:(Tool_contracts.UpdatePlanParams.get_reason params)
+          ~reason:(Tool_contracts.UpdatePlanParams.get_reason params)
           ~now:(now_seconds ()) status !current_plan
       with
       | Error message -> error_obj message

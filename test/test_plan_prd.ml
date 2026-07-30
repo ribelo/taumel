@@ -23,9 +23,9 @@ let contains text fragment =
 let creation ?id ?description ?(depends_on = []) title : Plan.task_creation =
   { id; title; description; depends_on }
 
-let patch ?title ?(description = Plan.Keep_description) ?status ?depends_on () :
-    Plan.task_update =
-  { title; description; status; depends_on }
+let patch ?title ?(description = Plan.Keep_description) ?status ?reason
+    ?depends_on () : Plan.task_update =
+  { title; description; status; reason; depends_on }
 
 let agent_plan ?(session = "agent-birth") () =
   expect_ok "agent plan"
@@ -83,16 +83,21 @@ let test_lifecycle_and_editability () =
   let draft = agent_plan ~session:"lifecycle" () in
   ignore
     (expect_error "update_plan complete rejected"
-       (Plan.update_plan ~now:2 Plan.Complete (Some draft)));
+       (Plan.update_plan ~reason:"test transition" ~now:2 Plan.Complete
+          (Some draft)));
   let active =
-    expect_ok "activate" (Plan.update_plan ~now:2 Plan.Active (Some draft))
+    expect_ok "activate"
+      (Plan.update_plan ~reason:"test transition" ~now:2 Plan.Active
+         (Some draft))
   in
   ignore
     (expect_error "agent cannot pause"
-       (Plan.update_plan ~now:3 Plan.Paused (Some active)));
+       (Plan.update_plan ~reason:"test transition" ~now:3 Plan.Paused
+          (Some active)));
   ignore
     (expect_ok "active reactivation is idempotent"
-       (Plan.update_plan ~now:3 Plan.Active (Some active)));
+       (Plan.update_plan ~reason:"test transition" ~now:3 Plan.Active
+          (Some active)));
   ignore
     (expect_error "active content frozen"
        (Plan.update_task ~now:3 ~task_id:(List.hd active.tasks).task_id
@@ -123,14 +128,13 @@ let test_lifecycle_and_editability () =
 (* ^plan-5sl5 ^plan-w45d ^plan-q1gi: agent block/unblock and idempotence. *)
 let test_agent_block_lifecycle () =
   let active = active_plan ~session:"agent-block" () in
-  let missing_reason =
+  let empty_reason =
     expect_error "block reason required"
-      (Plan.update_plan ~now:2 Plan.Blocked (Some active))
+      (Plan.update_plan ~reason:"  " ~now:2 Plan.Blocked (Some active))
   in
-  assert_bool "missing block reason named"
-    (contains missing_reason "non-empty reason");
-  assert_bool "missing block reason leaves state"
-    (Plan.block_entries active = []);
+  assert_bool "empty block reason named"
+    (contains empty_reason "non-empty reason");
+  assert_bool "empty block reason leaves state" (Plan.block_entries active = []);
   let blocked =
     expect_ok "agent blocks with reason"
       (Plan.update_plan ~reason:"  Waiting for credentials.  " ~now:3
@@ -143,16 +147,17 @@ let test_agent_block_lifecycle () =
   assert_bool "block timestamp" (opened.blocked_at = 3);
   let blocked_again =
     expect_ok "same blocked idempotent"
-      (Plan.update_plan ~now:4 Plan.Blocked (Some blocked))
+      (Plan.update_plan ~reason:"No lifecycle change." ~now:4 Plan.Blocked
+         (Some blocked))
   in
   assert_bool "same blocked leaves one entry"
     (Plan.block_entries blocked_again = Plan.block_entries blocked);
-  let missing_resolution =
+  let empty_resolution =
     expect_error "unblock resolution required"
-      (Plan.update_plan ~now:5 Plan.Active (Some blocked))
+      (Plan.update_plan ~reason:" \t " ~now:5 Plan.Active (Some blocked))
   in
-  assert_bool "missing resolution named"
-    (contains missing_resolution "non-empty resolution");
+  assert_bool "empty resolution named"
+    (contains empty_resolution "non-empty reason");
   let active_again =
     expect_ok "agent unblocks"
       (Plan.update_plan ~reason:"  Credentials supplied.  " ~now:6 Plan.Active
@@ -167,7 +172,8 @@ let test_agent_block_lifecycle () =
   assert_bool "agent clearedAt" (closed.cleared_at = 6);
   let active_same =
     expect_ok "same active idempotent"
-      (Plan.update_plan ~now:7 Plan.Active (Some active_again))
+      (Plan.update_plan ~reason:"test transition" ~now:7 Plan.Active
+         (Some active_again))
   in
   assert_bool "same active unchanged" (active_same = active_again)
 
@@ -239,7 +245,8 @@ let test_lifecycle_rejection_messages () =
   in
   assert_bool "blocked rejection status and remedy"
     (contains blocked_error "current status is blocked"
-    && contains blocked_error "update_plan with status active");
+    && contains blocked_error "/plan draft"
+    && not (contains blocked_error "update_plan with status active"));
   let paused =
     expect_ok "paused status error source"
       (Plan.apply_command ~session_id:"status-errors-paused" ~now:2 "pause"
@@ -253,7 +260,38 @@ let test_lifecycle_rejection_messages () =
   in
   assert_bool "paused rejection status and remedy"
     (contains paused_error "current status is paused"
-    && contains paused_error "/plan resume");
+    && contains paused_error "/plan draft"
+    && not (contains paused_error "/plan resume"));
+  let agent_draft = agent_plan ~session:"status-errors-capability" () in
+  let agent_active =
+    expect_ok "activate capability source"
+      (Plan.update_plan ~reason:"Start work." ~now:2 Plan.Active
+         (Some agent_draft))
+  in
+  let agent_blocked =
+    expect_ok "block capability source"
+      (Plan.update_plan ~reason:"Need input." ~now:3 Plan.Blocked
+         (Some agent_active))
+  in
+  let agent_task = List.hd agent_blocked.tasks in
+  let content_error =
+    expect_error "blocked content rejection"
+      (Plan.update_task ~now:4 ~task_id:agent_task.task_id
+         (patch ~title:"rewrite" ())
+         (Some agent_blocked))
+  in
+  assert_bool "content rejection restores content capability"
+    (contains content_error "/plan draft"
+    && not (contains content_error "update_plan with status active"));
+  let status_error =
+    expect_error "blocked status rejection"
+      (Plan.update_task ~now:4 ~task_id:agent_task.task_id
+         (patch ~status:Plan.In_progress ())
+         (Some agent_blocked))
+  in
+  assert_bool "status rejection restores status capability"
+    (contains status_error "update_plan with status active"
+    && not (contains status_error "/plan draft"));
   let complete_source = active_plan ~session:"status-errors-complete" () in
   let complete =
     expect_ok "complete status error source"
@@ -303,8 +341,79 @@ let test_user_task_protection () =
   ignore
     (expect_ok "user edit unrestricted"
        (Plan.user_update_task ~now:5 ~task_id:user_task.task_id
-          (patch ~title:"user rewrite" ~status:Plan.Cancelled ())
+          (patch ~title:"user rewrite" ~status:Plan.Cancelled
+             ~reason:"Cancelled by the user." ())
           (Some draft)))
+
+(* ^plan-i4u9 ^plan-rx0w: cancellation reasons are required, trimmed, and cleared. *)
+let test_agent_task_cancellation_reason () =
+  let draft =
+    expect_ok "cancellation plan"
+      (Plan.create_tasks ~session_id:"cancellation-reason" ~now:1
+         [
+           creation ~id:"cancel-target" "Target";
+           creation ~id:"remaining-work" "Remaining";
+         ]
+         None)
+  in
+  let active =
+    expect_ok "activate cancellation plan"
+      (Plan.update_plan ~reason:"Start cancellation test." ~now:2 Plan.Active
+         (Some draft))
+  in
+  let missing_error =
+    expect_error "agent cancellation reason missing"
+      (Plan.update_task ~now:3 ~task_id:"cancel-target"
+         (patch ~status:Plan.Cancelled ())
+         (Some active))
+  in
+  assert_bool "missing cancellation reason rejected"
+    (contains missing_error "non-empty reason");
+  assert_bool "missing cancellation reason leaves task pending"
+    ((List.find
+        (fun (task : Plan.task) -> task.task_id = "cancel-target")
+        active.tasks)
+       .status = Plan.Pending);
+  let empty_error =
+    expect_error "agent cancellation reason empty"
+      (Plan.update_task ~now:3 ~task_id:"cancel-target"
+         (patch ~status:Plan.Cancelled ~reason:" \t " ())
+         (Some active))
+  in
+  assert_bool "empty cancellation reason rejected"
+    (contains empty_error "cancellation reason");
+  let cancelled =
+    expect_ok "agent cancellation reason stored"
+      (Plan.update_task ~now:4 ~task_id:"cancel-target"
+         (patch ~status:Plan.Cancelled ~reason:"  Superseded by new work.  " ())
+         (Some active))
+  in
+  let cancelled_task =
+    List.find
+      (fun (task : Plan.task) -> task.task_id = "cancel-target")
+      cancelled.tasks
+  in
+  assert_bool "cancelled task stores trimmed reason"
+    (cancelled_task.cancellation_reason = Some "Superseded by new work.");
+  assert_bool "continuation payload omits cancelled task reason"
+    (not
+       (contains
+          (Plan.continuation_followup_prompt cancelled)
+          "Superseded by new work."));
+  let reopened =
+    expect_ok "leaving cancelled clears reason"
+      (Plan.update_task ~now:5 ~task_id:"cancel-target"
+         (patch ~status:Plan.Pending ())
+         (Some cancelled))
+  in
+  let reopened_task =
+    List.find
+      (fun (task : Plan.task) -> task.task_id = "cancel-target")
+      reopened.tasks
+  in
+  assert_bool "reopened task clears cancellation reason"
+    (reopened_task.status = Plan.Pending
+    && reopened_task.cancellation_reason = None)
 
 let test_dependencies_and_atomic_batch () =
   let plan =
@@ -372,12 +481,15 @@ let unlock_complete plan ~session ~now =
 let test_completion_invariant () =
   let draft = agent_plan ~session:"completion" () in
   let active =
-    expect_ok "activate" (Plan.update_plan ~now:2 Plan.Active (Some draft))
+    expect_ok "activate"
+      (Plan.update_plan ~reason:"test transition" ~now:2 Plan.Active
+         (Some draft))
   in
   let task = List.hd active.tasks in
   ignore
     (expect_error "update_plan complete rejected"
-       (Plan.update_plan ~now:3 Plan.Complete (Some active)));
+       (Plan.update_plan ~reason:"test transition" ~now:3 Plan.Complete
+          (Some active)));
   let complete =
     expect_ok "last task completes plan"
       (Plan.update_task ~now:3 ~task_id:task.task_id
@@ -389,12 +501,13 @@ let test_completion_invariant () =
   let cancelled_draft = agent_plan ~session:"completion-cancel" () in
   let cancelled_active =
     expect_ok "activate cancel path"
-      (Plan.update_plan ~now:2 Plan.Active (Some cancelled_draft))
+      (Plan.update_plan ~reason:"test transition" ~now:2 Plan.Active
+         (Some cancelled_draft))
   in
   let cancelled =
     expect_ok "all-cancelled completes"
       (Plan.update_task ~now:3 ~task_id:(List.hd cancelled_active.tasks).task_id
-         (patch ~status:Plan.Cancelled ())
+         (patch ~status:Plan.Cancelled ~reason:"No longer needed." ())
          (Some cancelled_active))
   in
   assert_bool "cancelled auto-complete" (cancelled.status = Plan.Complete);
@@ -408,7 +521,8 @@ let test_completion_invariant () =
   assert_bool "draft exempt" (draft_finished.status = Plan.Draft);
   let activated_done =
     expect_ok "activate all-done lands complete"
-      (Plan.update_plan ~now:3 Plan.Active (Some draft_finished))
+      (Plan.update_plan ~reason:"test transition" ~now:3 Plan.Active
+         (Some draft_finished))
   in
   assert_bool "activate all-done" (activated_done.status = Plan.Complete);
   let paused =
@@ -418,7 +532,8 @@ let test_completion_invariant () =
     |> fun result ->
     let plan =
       expect_ok "activate paused path"
-        (Plan.update_plan ~now:2 Plan.Active result.plan)
+        (Plan.update_plan ~reason:"test transition" ~now:2 Plan.Active
+           result.plan)
     in
     expect_ok "pause"
       (Plan.apply_command ~session_id:"completion-paused" ~now:3 "pause"
@@ -450,7 +565,8 @@ let test_completion_invariant () =
     let draft = agent_plan ~session:"completion-blocked" () in
     let active =
       expect_ok "activate blocked path"
-        (Plan.update_plan ~now:2 Plan.Active (Some draft))
+        (Plan.update_plan ~reason:"test transition" ~now:2 Plan.Active
+           (Some draft))
     in
     expect_ok "block"
       (Plan.update_plan ~reason:"test block" ~now:3 Plan.Blocked (Some active))
@@ -489,7 +605,8 @@ let test_completion_invariant () =
            (Some draft))
     in
     expect_ok "activate to complete"
-      (Plan.update_plan ~now:3 Plan.Active (Some finished))
+      (Plan.update_plan ~reason:"test transition" ~now:3 Plan.Active
+         (Some finished))
   in
   let unlocked =
     unlock_complete resume_source ~session:"completion-resume" ~now:4
@@ -507,7 +624,8 @@ let test_completion_invariant () =
     let draft = agent_plan ~session:"completion-block-tool" () in
     let active =
       expect_ok "activate block tool"
-        (Plan.update_plan ~now:2 Plan.Active (Some draft))
+        (Plan.update_plan ~reason:"test transition" ~now:2 Plan.Active
+           (Some draft))
     in
     expect_ok "blocked unchanged"
       (Plan.update_plan ~reason:"test block" ~now:3 Plan.Blocked (Some active))
@@ -518,7 +636,8 @@ let complete_plan ?(session = "extension") () =
   let draft = agent_plan ~session () in
   let active =
     expect_ok "activate complete plan"
-      (Plan.update_plan ~now:2 Plan.Active (Some draft))
+      (Plan.update_plan ~reason:"test transition" ~now:2 Plan.Active
+         (Some draft))
   in
   let task = List.hd active.tasks in
   expect_ok "finish sole task auto-completes"
@@ -815,8 +934,9 @@ let persisted_plan ?(status = "active") ?(tokens = 0.) ?(time = 0.)
     | None -> fields
     | Some value -> ("blocks", value) :: fields)
 
-let persisted_task ?(status = "pending") ?(depends_on = []) id title =
-  Shared.Object
+let persisted_task ?(status = "pending") ?cancellation_reason ?(depends_on = [])
+    id title =
+  let fields =
     [
       ("taskId", Shared.String id);
       ("title", Shared.String title);
@@ -827,6 +947,11 @@ let persisted_task ?(status = "pending") ?(depends_on = []) id title =
           (List.map (fun dependency -> Shared.String dependency) depends_on) );
       ("origin", Shared.String "agent");
     ]
+  in
+  Shared.Object
+    (match cancellation_reason with
+    | None -> fields
+    | Some reason -> ("cancellationReason", Shared.String reason) :: fields)
 
 let persisted_block ?(source = "agent") ?cleared_at ?cleared_by ?resolution
     ?(blocked_at = 2.) ?(reason = "Need input.") () =
@@ -958,6 +1083,63 @@ let test_persistence () =
                      [
                        persisted_task ~depends_on:[ "b" ] "a" "A";
                        persisted_task ~depends_on:[ "a" ] "b" "B";
+                     ]))
+             ())));
+  (* ^plan-ezxt: persistence enforces cancellationReason/status coupling. *)
+  let cancelled_state =
+    persisted_plan ~status:"complete"
+      ~tasks:
+        (Some
+           (Shared.Array
+              [
+                persisted_task ~status:"cancelled"
+                  ~cancellation_reason:"Cancelled by the user." "cancelled-task"
+                  "Cancelled";
+              ]))
+      ()
+  in
+  let decoded_cancelled =
+    expect_ok "cancelled task reason decodes"
+      (Plan.codec.decode cancelled_state)
+    |> Option.get
+  in
+  assert_bool "cancelled task reason persists"
+    ((List.hd decoded_cancelled.tasks).cancellation_reason
+   = Some "Cancelled by the user.");
+  ignore
+    (expect_error "cancelled task missing reason"
+       (Plan.codec.decode
+          (persisted_plan ~status:"complete"
+             ~tasks:
+               (Some
+                  (Shared.Array
+                     [
+                       persisted_task ~status:"cancelled" "cancelled-task"
+                         "Cancelled";
+                     ]))
+             ())));
+  ignore
+    (expect_error "cancelled task empty reason"
+       (Plan.codec.decode
+          (persisted_plan ~status:"complete"
+             ~tasks:
+               (Some
+                  (Shared.Array
+                     [
+                       persisted_task ~status:"cancelled"
+                         ~cancellation_reason:"  " "cancelled-task" "Cancelled";
+                     ]))
+             ())));
+  ignore
+    (expect_error "non-cancelled task has reason"
+       (Plan.codec.decode
+          (persisted_plan
+             ~tasks:
+               (Some
+                  (Shared.Array
+                     [
+                       persisted_task ~cancellation_reason:"Unexpected."
+                         "pending-task" "Pending";
                      ]))
              ())));
   (* ^plan-909m: malformed block histories are rejected at decode. *)
@@ -1160,8 +1342,11 @@ let test_task_manager_commands () =
          ("task cancel " ^ second_id)
          second.plan)
   in
-  assert_bool "cancelled"
-    ((List.nth (Option.get cancelled.plan).tasks 1).status = Plan.Cancelled);
+  let cancelled_task = List.nth (Option.get cancelled.plan).tasks 1 in
+  assert_bool "cancelled" (cancelled_task.status = Plan.Cancelled);
+  assert_bool "user command cancellation reason"
+    (cancelled_task.cancellation_reason
+   = Some "Cancelled by the user through /tasks or /plan task cancel.");
   let deleted =
     expect_ok "task delete"
       (Plan.apply_command ~session_id:"tasks-modal" ~now:8
@@ -1197,6 +1382,7 @@ let () =
   test_system_and_user_block_history ();
   test_lifecycle_rejection_messages ();
   test_user_task_protection ();
+  test_agent_task_cancellation_reason ();
   test_dependencies_and_atomic_batch ();
   test_completion_invariant ();
   test_extension_unlock ();
