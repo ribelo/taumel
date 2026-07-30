@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 const projectRoot = realpathSync(fileURLToPath(new URL("..", import.meta.url)));
 const artifact = new URL("../dist/taumel.cjs", import.meta.url);
 const require = createRequire(import.meta.url);
+process.env.EXA_API_KEY = "artifact-smoke-key";
 require(fileURLToPath(artifact));
 
 const bootstrap = globalThis.taumel;
