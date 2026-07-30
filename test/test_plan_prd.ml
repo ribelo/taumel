@@ -452,6 +452,24 @@ let test_block_close_invariants () =
        (Plan_block.close_carried ~now:6 ~cleared_by:Plan_block.user_clearer
           ~resolution:"Done." carried Plan_block.empty))
 
+let test_blocked_completion_clock_rollback () =
+  let active = active_plan ~session:"rollback" () in
+  let blocked =
+    expect_ok "block before rollback"
+      (Plan.update_plan ~reason:"Need input." ~now:5 Plan.Request_blocked
+         (Some active))
+  in
+  let rollback_error =
+    expect_error "blocked completion with rolled-back clock"
+      (Plan.user_update_task ~now:4 ~task_id:(List.hd blocked.tasks).task_id
+         (patch ~status:Plan.Completed ())
+         (Some blocked))
+  in
+  assert_bool "rollback close rejected"
+    (contains rollback_error "must not precede");
+  assert_bool "rolled-back completion leaves task pending"
+    ((List.hd blocked.tasks).status = Plan.Pending)
+
 let test_dependencies_and_atomic_batch () =
   let plan =
     expect_ok "batch"
@@ -1441,6 +1459,7 @@ let () =
   test_user_task_protection ();
   test_agent_task_cancellation_reason ();
   test_block_close_invariants ();
+  test_blocked_completion_clock_rollback ();
   test_dependencies_and_atomic_batch ();
   test_completion_invariant ();
   test_extension_unlock ();

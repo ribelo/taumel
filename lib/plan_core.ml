@@ -378,19 +378,17 @@ let unfinished_tasks (plan : t) = List.filter Plan_task.unfinished plan.tasks
 (* ^plan-zv0s: committed statuses complete themselves when no unfinished work remains. *)
 let apply_completion_invariant ~now (plan : t) =
   match plan.status with
-  | Blocked open_entry when unfinished_tasks plan = [] -> (
-      match
-        Plan_block.close_carried ~now ~cleared_by:Plan_block.user_clearer
-          ~resolution:
-            "Plan completed automatically because every task is completed or \
-             cancelled."
-          open_entry plan.blocks
-      with
-      | Ok blocks -> with_status ~now Complete { plan with blocks }
-      | Error _ -> plan)
+  | Blocked open_entry when unfinished_tasks plan = [] ->
+      Result.map
+        (fun blocks -> with_status ~now Complete { plan with blocks })
+        (Plan_block.close_carried ~now ~cleared_by:Plan_block.user_clearer
+           ~resolution:
+             "Plan completed automatically because every task is completed or \
+              cancelled."
+           open_entry plan.blocks)
   | (Active | Paused | Time_limited) when unfinished_tasks plan = [] ->
-      with_status ~now Complete plan
-  | _ -> plan
+      Ok (with_status ~now Complete plan)
+  | _ -> Ok plan
 
 let apply_task_patch (task : task) patch =
   let ( let* ) = Result.bind in
@@ -482,9 +480,8 @@ let update_task_for ~user ~now ~task_id patch (store : store) =
                   | [] -> Ok ()
                   | blockers -> Error (Plan_task.blockers_error blockers)
               in
-              Ok
-                (apply_completion_invariant ~now
-                   { plan with tasks = candidate_tasks; updated_at = now })))
+              apply_completion_invariant ~now
+                { plan with tasks = candidate_tasks; updated_at = now }))
 
 let update_task ~now ~task_id patch store =
   update_task_for ~user:false ~now ~task_id patch store
@@ -564,9 +561,8 @@ let user_delete_task ~now ~task_id (store : store) =
         match Plan_task.validate_graph remaining with
         | Error _ as error -> error
         | Ok () ->
-            Ok
-              (apply_completion_invariant ~now
-                 { plan with tasks = remaining; updated_at = now }))
+            apply_completion_invariant ~now
+              { plan with tasks = remaining; updated_at = now })
 
 let update_plan ~reason ~now requested (store : store) =
   match store with
@@ -578,15 +574,14 @@ let update_plan ~reason ~now requested (store : store) =
         match (requested, plan.status) with
         | Request_active, Draft ->
             (* ^plan-oua0: all-done activate lands complete in the same transition. *)
-            Ok (apply_completion_invariant ~now (with_status ~now Active plan))
+            apply_completion_invariant ~now (with_status ~now Active plan)
         | Request_active, Blocked open_entry ->
-            Result.map
-              (fun blocks ->
-                apply_completion_invariant ~now
-                  (with_status ~now Active { plan with blocks }))
+            Result.bind
               (Plan_block.close_carried ~now
                  ~cleared_by:Plan_block.agent_clearer ~resolution:reason
-                 open_entry plan.blocks)
+                 open_entry plan.blocks) (fun blocks ->
+                apply_completion_invariant ~now
+                  (with_status ~now Active { plan with blocks }))
         | Request_active, Active | Request_blocked, Blocked _ -> Ok plan
         | Request_blocked, Active ->
             Result.map

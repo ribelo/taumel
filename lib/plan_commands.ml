@@ -185,7 +185,7 @@ let apply_command_resume ~now ~automation args (store : store) =
           in
           match validate_time_limit time_limit_seconds with
           | Error _ as error -> error
-          | Ok () -> (
+          | Ok () ->
               if
                 plan.status = Time_limited
                 && Option.fold ~none:false
@@ -198,7 +198,8 @@ let apply_command_resume ~now ~automation args (store : store) =
                    /plan resume --time-limit <duration> or /plan resume \
                    --no-time-limit"
               else
-                match
+                let ( let* ) = Result.bind in
+                let* plan =
                   match plan.status with
                   | Blocked open_entry ->
                       Plan_block.close_carried ~now
@@ -207,25 +208,20 @@ let apply_command_resume ~now ~automation args (store : store) =
                         plan.blocks
                       |> Result.map (fun blocks -> { plan with blocks })
                   | _ -> Ok plan
-                with
-                | Error _ as error -> error
-                | Ok plan ->
-                    let plan =
-                      (* ^plan-oua0: all-done resume lands complete with no continuation. *)
-                      apply_completion_invariant ~now
-                        {
-                          (with_status ~now Active plan) with
-                          time_limit_seconds;
-                        }
-                    in
-                    if plan.status = Complete then
-                      Ok
-                        (command_result ~automation:Automation_enabled
-                           ~changed:true ~message:"Plan complete." (Some plan))
-                    else
-                      Ok
-                        (command_result ~automation:Automation_enabled
-                           ~followup:true ~changed:true (Some plan)))))
+                in
+                let* plan =
+                  (* ^plan-oua0: all-done resume lands complete with no continuation. *)
+                  apply_completion_invariant ~now
+                    { (with_status ~now Active plan) with time_limit_seconds }
+                in
+                if plan.status = Complete then
+                  Ok
+                    (command_result ~automation:Automation_enabled ~changed:true
+                       ~message:"Plan complete." (Some plan))
+                else
+                  Ok
+                    (command_result ~automation:Automation_enabled
+                       ~followup:true ~changed:true (Some plan))))
 
 let apply_command ?(automation = Automation_enabled) ~session_id ~now args store
     =
