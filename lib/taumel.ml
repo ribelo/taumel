@@ -19,6 +19,7 @@ module Exa = Exa
 module File_read = File_read
 module Footer_model = Footer_model
 module Plan = Plan
+module Plan_block = Plan_block
 module Global_settings = Global_settings
 module Mutation_plan = Mutation_plan
 module Permissions = Permissions

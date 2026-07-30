@@ -14,6 +14,14 @@ type task_status = Plan_task.status =
 
 type task_origin = Plan_task.origin = User | Agent
 
+type block_source = Plan_block.source
+
+type block_cleared_by = Plan_block.cleared_by
+
+type block = Plan_block.entry =
+  | Open of Plan_block.open_entry
+  | Closed of Plan_block.closed_entry
+
 type task = Plan_task.t = {
   task_id : string;
   title : string;
@@ -47,6 +55,7 @@ type t = private {
   session_id : string;
   status : status;
   tasks : task list;
+  blocks : Plan_block.t;
   tokens_used : int;
   time_used_seconds : int;
   time_limit_seconds : int option;
@@ -108,6 +117,12 @@ val task_origin_to_string : task_origin -> string
 
 val task_origin_of_string : string -> task_origin option
 
+val block_source_to_string : block_source -> string
+
+val block_cleared_by_to_string : block_cleared_by -> string
+
+val block_entries : t -> block list
+
 val no_task_update : task_update
 
 val completed_task_count : task list -> int
@@ -160,7 +175,8 @@ val user_delete_task : now:int -> task_id:string -> store -> (t, string) result
 
 val unfinished_tasks : t -> task list
 
-val update_plan : now:int -> status -> store -> (t, string) result
+val update_plan :
+  ?reason:string -> now:int -> status -> store -> (t, string) result
 
 val final_unrecoverable_error : now:int -> store -> store
 
@@ -343,6 +359,8 @@ val update_task_prompt_snippet : string
 val update_plan_description : string
 
 val update_plan_status_description : string
+
+val update_plan_reason_description : string
 
 val update_plan_prompt_snippet : string
 

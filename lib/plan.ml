@@ -14,6 +14,14 @@ type task_status = Plan_task.status =
 
 type task_origin = Plan_task.origin = User | Agent
 
+type block_source = Plan_block.source
+
+type block_cleared_by = Plan_block.cleared_by
+
+type block = Plan_block.entry =
+  | Open of Plan_block.open_entry
+  | Closed of Plan_block.closed_entry
+
 type task = Plan_task.t = {
   task_id : string;
   title : string;
@@ -47,6 +55,7 @@ type t = {
   session_id : string;
   status : status;
   tasks : task list;
+  blocks : Plan_block.t;
   tokens_used : int;
   time_used_seconds : int;
   time_limit_seconds : int option;
@@ -108,6 +117,12 @@ let task_origin_to_string = Plan_task.origin_to_string
 
 let task_origin_of_string = Plan_task.origin_of_string
 
+let block_source_to_string = Plan_block.source_to_string
+
+let block_cleared_by_to_string = Plan_block.cleared_by_to_string
+
+let block_entries (plan : t) = Plan_block.entries plan.blocks
+
 let no_task_update = Plan_task.no_update
 
 let completed_task_count (tasks : task list) =
@@ -147,7 +162,8 @@ let handle_rng = Random.State.make_self_init ()
 
 let next_plan_id () =
   "plan-"
-  ^ Shared.nano_id (Random.State.full_int handle_rng Shared.nano_id_namespace_size)
+  ^ Shared.nano_id
+      (Random.State.full_int handle_rng Shared.nano_id_namespace_size)
 
 module String_set = Set.Make (String)
 
@@ -184,6 +200,7 @@ let create_record ?time_limit_seconds ~session_id ~now ~status tasks =
     session_id;
     status;
     tasks;
+    blocks = Plan_block.empty;
     tokens_used = 0;
     time_used_seconds = 0;
     time_limit_seconds;
@@ -268,14 +285,7 @@ let create_tasks ~session_id ~now creations (store : store) =
         match plan.status with
         | Draft -> Ok ()
         | Complete when plan.extension_unlocked -> Ok ()
-        | Complete ->
-            Error
-              "cannot create plan tasks because a completed plan may be \
-               extended after its turn ends"
-        | Active | Paused | Blocked | Time_limited ->
-            Error
-              "cannot create plan tasks because agent task creation requires a \
-               draft plan"
+        | status -> Error (Plan_status.create_task_error status)
       in
       let* tasks =
         make_tasks ~session_id ~now ~origin:Agent ~existing:plan.tasks creations
@@ -302,6 +312,12 @@ let add_user_task ?id ?description ?(depends_on = []) ?time_limit_seconds
     ?(create_status = Active) ~session_id ~now title (store : store) =
   let ( let* ) = Result.bind in
   let* () = validate_time_limit time_limit_seconds in
+  let* () =
+    match (store, create_status) with
+    | None, (Draft | Active) -> Ok ()
+    | None, _ -> Error "a new plan may be created only in draft or active"
+    | Some _, _ -> Ok ()
+  in
   let* () =
     match store with None -> Ok () | Some plan -> ensure_owner session_id plan
   in
@@ -332,7 +348,8 @@ let add_user_task ?id ?description ?(depends_on = []) ?time_limit_seconds
         | None -> false
       then
         Error
-          "cannot raise a time-limited plan's limit without resuming the plan"
+          "cannot raise the limit because the current status is time_limited; \
+           the user must run /plan resume with a usable time limit"
       else
         let () =
           remember_task_ids session_id
@@ -358,7 +375,17 @@ let unfinished_tasks (plan : t) = List.filter Plan_task.unfinished plan.tasks
 (* ^plan-zv0s: committed statuses complete themselves when no unfinished work remains. *)
 let apply_completion_invariant ~now (plan : t) =
   match plan.status with
-  | (Active | Paused | Blocked | Time_limited) when unfinished_tasks plan = [] ->
+  | Blocked when unfinished_tasks plan = [] ->
+      let blocks =
+        Result.get_ok
+          (Plan_block.close_open ~now ~cleared_by:Plan_block.user_clearer
+             ~resolution:
+               "Plan completed automatically because every task is completed \
+                or cancelled."
+             plan.blocks)
+      in
+      with_status ~now Complete { plan with blocks }
+  | (Active | Paused | Time_limited) when unfinished_tasks plan = [] ->
       with_status ~now Complete plan
   | _ -> plan
 
@@ -408,13 +435,15 @@ let update_task_for ~user ~now ~task_id patch (store : store) =
             else if task.origin = User && status_change && plan.status <> Active
             then
               Some
-                "agent may change a user-authored task's status only while the \
-                 plan is active"
+                (Plan_status.edit_error "change a user-authored task's status"
+                   plan.status)
             else if content_change && not (content_editable plan.status) then
               Some
-                "plan task content and dependencies may be edited only in draft"
+                (Plan_status.edit_error "edit plan task content or dependencies"
+                   plan.status)
             else if status_change && not (status_editable plan.status) then
-              Some "plan task status may be changed only in active or draft"
+              Some
+                (Plan_status.edit_error "change a plan task status" plan.status)
             else None
           in
           match agent_error with
@@ -516,7 +545,7 @@ let user_delete_task ~now ~task_id (store : store) =
               (apply_completion_invariant ~now
                  { plan with tasks = remaining; updated_at = now }))
 
-let update_plan ~now status (store : store) =
+let update_plan ?reason ~now status (store : store) =
   match store with
   | None -> Error "cannot update plan because this session has no plan"
   | Some plan -> (
@@ -524,18 +553,40 @@ let update_plan ~now status (store : store) =
       | Active, Draft ->
           (* ^plan-oua0: all-done activate lands complete in the same transition. *)
           Ok (apply_completion_invariant ~now (with_status ~now Active plan))
-      | Blocked, Active -> Ok (with_status ~now Blocked plan)
+      | Active, Blocked ->
+          let resolution = Option.value reason ~default:"" in
+          Result.map
+            (fun blocks ->
+              apply_completion_invariant ~now
+                (with_status ~now Active { plan with blocks }))
+            (Plan_block.close_open ~now ~cleared_by:Plan_block.agent_clearer
+               ~resolution plan.blocks)
+      | Active, Active | Blocked, Blocked -> Ok plan
+      | Blocked, Active ->
+          let reason = Option.value reason ~default:"" in
+          Result.map
+            (fun blocks -> with_status ~now Blocked { plan with blocks })
+            (Plan_block.open_entry ~now ~reason ~source:Plan_block.agent_source
+               plan.blocks)
       | (Draft | Paused | Time_limited | Complete), _ ->
           Error
             "update_plan accepts only active or blocked; draft, paused, \
              time_limited, complete, time limits, and automation are user or \
              system controlled"
-      | Active, _ -> Error "update_plan can activate only a draft plan"
-      | Blocked, _ -> Error "update_plan can block only an active plan")
+      | ((Active | Blocked) as requested), current ->
+          Error
+            (Plan_status.update_plan_error
+               ~extension_unlocked:plan.extension_unlocked ~requested current))
 
 let final_unrecoverable_error ~now (store : store) =
   match store with
-  | Some plan when plan.status = Active -> Some (with_status ~now Blocked plan)
+  | Some plan when plan.status = Active ->
+      let blocks =
+        Result.get_ok
+          (Plan_block.open_entry ~now ~reason:"Final unrecoverable turn error."
+             ~source:Plan_block.system_source plan.blocks)
+      in
+      Some (with_status ~now Blocked { plan with blocks })
   | _ -> store
 
 let get store = store
@@ -577,16 +628,19 @@ let time_limit_reached (plan : t) time_used_seconds =
   | Some limit -> time_used_seconds >= limit
   | None -> false
 
+let add_usage ~now ~time_delta_seconds usage (plan : t) =
+  let tokens_used = plan.tokens_used + token_delta usage in
+  let time_used_seconds = plan.time_used_seconds + max 0 time_delta_seconds in
+  { plan with tokens_used; time_used_seconds; updated_at = now }
+
 let account_usage ~now ~time_delta_seconds usage (plan : t) =
   if plan.status <> Active then plan
   else
-    let tokens_used = plan.tokens_used + token_delta usage in
-    let time_used_seconds = plan.time_used_seconds + max 0 time_delta_seconds in
+    let plan = add_usage ~now ~time_delta_seconds usage plan in
     let status =
-      if time_limit_reached plan time_used_seconds then Time_limited
+      if time_limit_reached plan plan.time_used_seconds then Time_limited
       else plan.status
     in
-    let plan = { plan with tokens_used; time_used_seconds; updated_at = now } in
     if status = plan.status then plan else with_status ~now status plan
 
 type turn_accounting_result = {
@@ -597,57 +651,46 @@ type turn_accounting_result = {
 
 type pending_terminal_status = Pending_complete | Pending_blocked
 
-let status_of_pending_terminal = function
-  | Pending_complete -> Complete
-  | Pending_blocked -> Blocked
-
 let account_turn_end ?pending_terminal_status ~session_id ~now
     ~active_time_seconds ~last_accounting_key ~latest_usage (store : store) =
-  let accounting_store =
-    match (pending_terminal_status, store) with
-    | Some _, Some plan -> Some { plan with status = Active }
-    | _ -> store
-  in
   let result =
-    match (accounting_store, latest_usage) with
-    | Some plan, Some (branch_length, usage) when plan.status = Active ->
+    match (store, latest_usage) with
+    | Some plan, Some (branch_length, usage)
+      when plan.status = Active || Option.is_some pending_terminal_status ->
         let key = account_turn_key ~session_id ~branch_length usage in
         if last_accounting_key = Some key then
           {
-            plan = accounting_store;
+            plan = store;
             accounting_key = last_accounting_key;
             changed = false;
           }
         else
-          {
-            plan =
-              Some
-                (account_usage ~now ~time_delta_seconds:active_time_seconds
-                   usage plan);
-            accounting_key = Some key;
-            changed = true;
-          }
+          let plan =
+            match pending_terminal_status with
+            | Some _ ->
+                add_usage ~now ~time_delta_seconds:active_time_seconds usage
+                  plan
+            | None ->
+                account_usage ~now ~time_delta_seconds:active_time_seconds usage
+                  plan
+          in
+          { plan = Some plan; accounting_key = Some key; changed = true }
     | _ ->
-        {
-          plan = accounting_store;
-          accounting_key = last_accounting_key;
-          changed = false;
-        }
+        { plan = store; accounting_key = last_accounting_key; changed = false }
   in
   (* Terminal status is applied here when update_plan completes mid-turn; the
      extension unlock waits for a later natural turn-end so same-turn extend
      stays rejected (^plan-x47h, ^plan-zty5). *)
   let result =
     match (pending_terminal_status, result.plan) with
-    | Some pending, Some plan ->
+    | Some Pending_complete, Some plan when plan.status = Active ->
         {
           result with
-          plan =
-            Some (with_status ~now (status_of_pending_terminal pending) plan);
+          plan = Some (with_status ~now Complete plan);
           changed = true;
         }
     | Some _, None -> { result with changed = true }
-    | None, _ -> result
+    | Some _, Some _ | None, _ -> result
   in
   match (pending_terminal_status, result.plan) with
   | None, Some plan when plan.status = Complete && not plan.extension_unlocked
@@ -761,8 +804,8 @@ let split_command = Shared.split_command
 let task_command_ok ~(before : store) message (plan : t) =
   let message =
     match before with
-    | Some previous
-      when previous.status <> Complete && plan.status = Complete ->
+    | Some previous when previous.status <> Complete && plan.status = Complete
+      ->
         "Plan complete."
     | _ -> message
   in
@@ -841,8 +884,8 @@ let apply_command_text ~session_id ~now input (store : store) =
         match (store, setting) with
         | Some plan, Some None when plan.status = Time_limited ->
             Error
-              "cannot remove a reached time limit while appending a task; use \
-               /plan resume --no-time-limit"
+              "cannot remove a reached time limit while the current status is \
+               time_limited; use /plan resume --no-time-limit"
         | _ ->
             let requested_limit = Option.bind setting Fun.id in
             Result.map
@@ -863,9 +906,7 @@ let apply_command_pause ~now (store : store) =
   | Some plan when plan.status = Paused ->
       Ok (command_result ~message:"Plan already paused." store)
   | Some plan when plan.status <> Active ->
-      Error
-        "cannot pause this plan without erasing why continuation stopped; use \
-         /plan draft to enable editing"
+      Error (Plan_status.pause_error plan.status)
   | Some plan ->
       Ok
         (command_result ~automation:Automation_enabled ~changed:true
@@ -878,6 +919,16 @@ let apply_command_draft ~now (store : store) =
   | Some plan when plan.status = Draft ->
       Ok (command_result ~message:"Plan already in draft." store)
   | Some plan ->
+      let plan =
+        if plan.status = Blocked then
+          let blocks =
+            Result.get_ok
+              (Plan_block.close_open ~now ~cleared_by:Plan_block.user_clearer
+                 ~resolution:"The user moved the plan to draft." plan.blocks)
+          in
+          { plan with blocks }
+        else plan
+      in
       Ok
         (command_result ~changed:true ~message:"Plan moved to draft."
            (Some (with_status ~now Draft plan)))
@@ -912,10 +963,22 @@ let apply_command_resume ~now ~automation args (store : store) =
                      time_limit_seconds
               then
                 Error
-                  "cannot resume plan because its time limit is already \
-                   reached; use /plan resume --time-limit <duration> or /plan \
-                   resume --no-time-limit"
+                  "cannot resume plan because the current status is \
+                   time_limited and its time limit is already reached; use \
+                   /plan resume --time-limit <duration> or /plan resume \
+                   --no-time-limit"
               else
+                let plan =
+                  if plan.status = Blocked then
+                    let blocks =
+                      Result.get_ok
+                        (Plan_block.close_open ~now
+                           ~cleared_by:Plan_block.user_clearer
+                           ~resolution:"The user resumed the plan." plan.blocks)
+                    in
+                    { plan with blocks }
+                  else plan
+                in
                 let plan =
                   (* ^plan-oua0: all-done resume lands complete with no continuation. *)
                   apply_completion_invariant ~now
@@ -927,8 +990,8 @@ let apply_command_resume ~now ~automation args (store : store) =
                        ~message:"Plan complete." (Some plan))
                 else
                   Ok
-                    (command_result ~automation:Automation_enabled ~followup:true
-                       ~changed:true (Some plan))))
+                    (command_result ~automation:Automation_enabled
+                       ~followup:true ~changed:true (Some plan))))
 
 let apply_command ?(automation = Automation_enabled) ~session_id ~now args store
     =
@@ -1060,8 +1123,8 @@ let time_limit_prompt (plan : t) =
 
 let to_json (plan : t) =
   Plan_codec.encode ~plan_id:plan.plan_id ~session_id:plan.session_id
-    ~status:plan.status ~tasks:plan.tasks ~tokens_used:plan.tokens_used
-    ~time_used_seconds:plan.time_used_seconds
+    ~status:plan.status ~tasks:plan.tasks ~blocks:plan.blocks
+    ~tokens_used:plan.tokens_used ~time_used_seconds:plan.time_used_seconds
     ~time_limit_seconds:plan.time_limit_seconds
     ~extension_unlocked:plan.extension_unlocked ~created_at:plan.created_at
     ~updated_at:plan.updated_at
@@ -1076,6 +1139,7 @@ let of_json json =
            session_id = decoded.session_id;
            status = decoded.status;
            tasks = decoded.tasks;
+           blocks = decoded.blocks;
            tokens_used = decoded.tokens_used;
            time_used_seconds = decoded.time_used_seconds;
            time_limit_seconds = decoded.time_limit_seconds;
@@ -1122,6 +1186,8 @@ let update_task_prompt_snippet = Plan_prompt.update_task_prompt_snippet
 let update_plan_description = Plan_prompt.update_plan_description
 
 let update_plan_status_description = Plan_prompt.update_plan_status_description
+
+let update_plan_reason_description = Plan_prompt.update_plan_reason_description
 
 let update_plan_prompt_snippet = Plan_prompt.update_plan_prompt_snippet
 

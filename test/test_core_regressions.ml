@@ -1101,7 +1101,8 @@ let test_plan_continuation_planning () =
   | Plan.No_continuation ->
       fail "plan continuation" "expected active continuation");
   let blocked =
-    expect_ok "block plan" (Plan.update_plan ~now:11 Plan.Blocked (Some plan))
+    expect_ok "block plan"
+      (Plan.update_plan ~reason:"test block" ~now:11 Plan.Blocked (Some plan))
   in
   match Plan.plan_continuation ~initial:false (facts blocked) with
   | Plan.No_continuation -> ()

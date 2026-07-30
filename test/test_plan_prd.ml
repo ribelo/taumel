@@ -35,6 +35,16 @@ let active_plan ?(session = "active") () =
   expect_ok "user plan"
     (Plan.add_user_task ~session_id:session ~now:1 " first task " None)
 
+let only_open_block plan =
+  match Plan.block_entries plan with
+  | [ Plan.Open entry ] -> entry
+  | _ -> failwith "expected exactly one open plan block"
+
+let only_closed_block plan =
+  match Plan.block_entries plan with
+  | [ Plan.Closed entry ] -> entry
+  | _ -> failwith "expected exactly one closed plan block"
+
 let test_birth_and_identity () =
   let draft = agent_plan () in
   assert_bool "agent births draft" (draft.status = Plan.Draft);
@@ -81,7 +91,7 @@ let test_lifecycle_and_editability () =
     (expect_error "agent cannot pause"
        (Plan.update_plan ~now:3 Plan.Paused (Some active)));
   ignore
-    (expect_error "active cannot reactivate"
+    (expect_ok "active reactivation is idempotent"
        (Plan.update_plan ~now:3 Plan.Active (Some active)));
   ignore
     (expect_error "active content frozen"
@@ -90,7 +100,7 @@ let test_lifecycle_and_editability () =
           (Some active)));
   let blocked =
     expect_ok "blocked bypasses completion"
-      (Plan.update_plan ~now:4 Plan.Blocked (Some active))
+      (Plan.update_plan ~reason:"test block" ~now:4 Plan.Blocked (Some active))
   in
   let resumed =
     expect_ok "user resumes blocked"
@@ -109,6 +119,156 @@ let test_lifecycle_and_editability () =
        (Plan.update_task ~now:7 ~task_id:(List.hd drafted.tasks).task_id
           (patch ~title:"rewritten" ())
           (Some drafted)))
+
+(* ^plan-5sl5 ^plan-w45d ^plan-q1gi: agent block/unblock and idempotence. *)
+let test_agent_block_lifecycle () =
+  let active = active_plan ~session:"agent-block" () in
+  let missing_reason =
+    expect_error "block reason required"
+      (Plan.update_plan ~now:2 Plan.Blocked (Some active))
+  in
+  assert_bool "missing block reason named"
+    (contains missing_reason "non-empty reason");
+  assert_bool "missing block reason leaves state"
+    (Plan.block_entries active = []);
+  let blocked =
+    expect_ok "agent blocks with reason"
+      (Plan.update_plan ~reason:"  Waiting for credentials.  " ~now:3
+         Plan.Blocked (Some active))
+  in
+  let opened = only_open_block blocked in
+  assert_bool "block reason trimmed" (opened.reason = "Waiting for credentials.");
+  assert_bool "agent block source"
+    (Plan.block_source_to_string opened.source = "agent");
+  assert_bool "block timestamp" (opened.blocked_at = 3);
+  let blocked_again =
+    expect_ok "same blocked idempotent"
+      (Plan.update_plan ~now:4 Plan.Blocked (Some blocked))
+  in
+  assert_bool "same blocked leaves one entry"
+    (Plan.block_entries blocked_again = Plan.block_entries blocked);
+  let missing_resolution =
+    expect_error "unblock resolution required"
+      (Plan.update_plan ~now:5 Plan.Active (Some blocked))
+  in
+  assert_bool "missing resolution named"
+    (contains missing_resolution "non-empty resolution");
+  let active_again =
+    expect_ok "agent unblocks"
+      (Plan.update_plan ~reason:"  Credentials supplied.  " ~now:6 Plan.Active
+         (Some blocked))
+  in
+  assert_bool "agent unblock active" (active_again.status = Plan.Active);
+  let closed = only_closed_block active_again in
+  assert_bool "agent resolution trimmed"
+    (closed.resolution = "Credentials supplied.");
+  assert_bool "agent clearedBy"
+    (Plan.block_cleared_by_to_string closed.cleared_by = "agent");
+  assert_bool "agent clearedAt" (closed.cleared_at = 6);
+  let active_same =
+    expect_ok "same active idempotent"
+      (Plan.update_plan ~now:7 Plan.Active (Some active_again))
+  in
+  assert_bool "same active unchanged" (active_same = active_again)
+
+(* ^plan-vdhy ^plan-tndz: every non-agent exit closes or opens history. *)
+let test_system_and_user_block_history () =
+  let blocked session =
+    let active = active_plan ~session () in
+    expect_ok "block for user closure"
+      (Plan.update_plan ~reason:"Need input." ~now:2 Plan.Blocked (Some active))
+  in
+  let resumed =
+    expect_ok "user resume closes block"
+      (Plan.apply_command ~session_id:"block-resume" ~now:3 "resume"
+         (Some (blocked "block-resume")))
+    |> fun result -> Option.get result.plan
+  in
+  let resume_entry = only_closed_block resumed in
+  assert_bool "resume cleared by user"
+    (Plan.block_cleared_by_to_string resume_entry.cleared_by = "user");
+  assert_bool "resume resolution names cause"
+    (contains resume_entry.resolution "resumed");
+  let drafted =
+    expect_ok "user draft closes block"
+      (Plan.apply_command ~session_id:"block-draft" ~now:3 "draft"
+         (Some (blocked "block-draft")))
+    |> fun result -> Option.get result.plan
+  in
+  let draft_entry = only_closed_block drafted in
+  assert_bool "draft cleared by user"
+    (Plan.block_cleared_by_to_string draft_entry.cleared_by = "user");
+  assert_bool "draft resolution names cause"
+    (contains draft_entry.resolution "draft");
+  let completion_source = blocked "block-completion" in
+  let completed =
+    expect_ok "completion closes block"
+      (Plan.user_update_task ~now:3
+         ~task_id:(List.hd completion_source.tasks).task_id
+         (patch ~status:Plan.Completed ())
+         (Some completion_source))
+  in
+  let completion_entry = only_closed_block completed in
+  assert_bool "completion status" (completed.status = Plan.Complete);
+  assert_bool "completion cleared by user"
+    (Plan.block_cleared_by_to_string completion_entry.cleared_by = "user");
+  assert_bool "completion resolution names cause"
+    (contains completion_entry.resolution "completed automatically");
+  let system_blocked =
+    Plan.final_unrecoverable_error ~now:4
+      (Some (active_plan ~session:"system-block" ()))
+    |> Option.get
+  in
+  let system_entry = only_open_block system_blocked in
+  assert_bool "system block source"
+    (Plan.block_source_to_string system_entry.source = "system");
+  assert_bool "system reason"
+    (contains system_entry.reason "unrecoverable turn error")
+
+(* ^plan-q0ri: lifecycle rejections name current status and its remedy. *)
+let test_lifecycle_rejection_messages () =
+  let active = active_plan ~session:"status-errors" () in
+  let blocked =
+    expect_ok "blocked status error source"
+      (Plan.update_plan ~reason:"Need input." ~now:2 Plan.Blocked (Some active))
+  in
+  let blocked_error =
+    expect_error "blocked create rejection"
+      (Plan.create_task ~session_id:"status-errors" ~now:3 "extra"
+         (Some blocked))
+  in
+  assert_bool "blocked rejection status and remedy"
+    (contains blocked_error "current status is blocked"
+    && contains blocked_error "update_plan with status active");
+  let paused =
+    expect_ok "paused status error source"
+      (Plan.apply_command ~session_id:"status-errors-paused" ~now:2 "pause"
+         (Some (active_plan ~session:"status-errors-paused" ())))
+    |> fun result -> Option.get result.plan
+  in
+  let paused_error =
+    expect_error "paused create rejection"
+      (Plan.create_task ~session_id:"status-errors-paused" ~now:3 "extra"
+         (Some paused))
+  in
+  assert_bool "paused rejection status and remedy"
+    (contains paused_error "current status is paused"
+    && contains paused_error "/plan resume");
+  let complete_source = active_plan ~session:"status-errors-complete" () in
+  let complete =
+    expect_ok "complete status error source"
+      (Plan.update_task ~now:2 ~task_id:(List.hd complete_source.tasks).task_id
+         (patch ~status:Plan.Completed ())
+         (Some complete_source))
+  in
+  let complete_error =
+    expect_error "complete create rejection"
+      (Plan.create_task ~session_id:"status-errors-complete" ~now:4 "extra"
+         (Some complete))
+  in
+  assert_bool "complete rejection status and remedy"
+    (contains complete_error "current status is complete"
+    && contains complete_error "after its turn ends")
 
 let test_user_task_protection () =
   let active = active_plan ~session:"user-protection" () in
@@ -233,8 +393,7 @@ let test_completion_invariant () =
   in
   let cancelled =
     expect_ok "all-cancelled completes"
-      (Plan.update_task ~now:3
-         ~task_id:(List.hd cancelled_active.tasks).task_id
+      (Plan.update_task ~now:3 ~task_id:(List.hd cancelled_active.tasks).task_id
          (patch ~status:Plan.Cancelled ())
          (Some cancelled_active))
   in
@@ -293,7 +452,8 @@ let test_completion_invariant () =
       expect_ok "activate blocked path"
         (Plan.update_plan ~now:2 Plan.Active (Some draft))
     in
-    expect_ok "block" (Plan.update_plan ~now:3 Plan.Blocked (Some active))
+    expect_ok "block"
+      (Plan.update_plan ~reason:"test block" ~now:3 Plan.Blocked (Some active))
   in
   let blocked_complete =
     expect_ok "user completes blocked"
@@ -350,7 +510,7 @@ let test_completion_invariant () =
         (Plan.update_plan ~now:2 Plan.Active (Some draft))
     in
     expect_ok "blocked unchanged"
-      (Plan.update_plan ~now:3 Plan.Blocked (Some active))
+      (Plan.update_plan ~reason:"test block" ~now:3 Plan.Blocked (Some active))
   in
   assert_bool "blocked stays blocked" (blocked_still.status = Plan.Blocked)
 
@@ -395,8 +555,9 @@ let test_extension_unlock () =
          (patch ~status:Plan.Pending ())
          (Some unlocked))
   in
-  assert_bool "status stays active/draft-only"
-    (contains status_error "active or draft");
+  assert_bool "complete status rejection names remedy"
+    (contains status_error "current status is complete"
+    && contains status_error "/plan draft");
   let extended =
     expect_ok "extension batch"
       (Plan.create_tasks ~session_id:"extension" ~now:6
@@ -412,7 +573,8 @@ let test_extension_unlock () =
   let complete_again =
     List.fold_left
       (fun plan (task : Plan.task) ->
-        if task.status = Plan.Completed || task.status = Plan.Cancelled then plan
+        if task.status = Plan.Completed || task.status = Plan.Cancelled then
+          plan
         else
           expect_ok "finish for reopen"
             (Plan.update_task ~now:7 ~task_id:task.task_id
@@ -470,7 +632,7 @@ let test_extension_unlock () =
     ((Option.get paused_append.plan).status = Plan.Paused);
   let blocked =
     expect_ok "block sticky"
-      (Plan.update_plan ~now:9 Plan.Blocked
+      (Plan.update_plan ~reason:"test block" ~now:9 Plan.Blocked
          (Some
             ( expect_ok "resume to block"
                 (Plan.apply_command ~session_id:"extension-text" ~now:9 "resume"
@@ -617,7 +779,8 @@ let test_continuation () =
     | _ -> false)
 
 let persisted_plan ?(status = "active") ?(tokens = 0.) ?(time = 0.)
-    ?(limit = Shared.Null) ?(created = 1.) ?(updated = 1.) ?(tasks = None) () =
+    ?(limit = Shared.Null) ?(created = 1.) ?(updated = 1.) ?(tasks = None)
+    ?blocks () =
   let tasks =
     Option.value tasks
       ~default:
@@ -634,7 +797,7 @@ let persisted_plan ?(status = "active") ?(tokens = 0.) ?(time = 0.)
                ];
            ])
   in
-  Shared.Object
+  let fields =
     [
       ("planId", Shared.String "p");
       ("sessionId", Shared.String "persisted-session");
@@ -646,6 +809,11 @@ let persisted_plan ?(status = "active") ?(tokens = 0.) ?(time = 0.)
       ("createdAt", Shared.Number created);
       ("updatedAt", Shared.Number updated);
     ]
+  in
+  Shared.Object
+    (match blocks with
+    | None -> fields
+    | Some value -> ("blocks", value) :: fields)
 
 let persisted_task ?(status = "pending") ?(depends_on = []) id title =
   Shared.Object
@@ -660,6 +828,32 @@ let persisted_task ?(status = "pending") ?(depends_on = []) id title =
       ("origin", Shared.String "agent");
     ]
 
+let persisted_block ?(source = "agent") ?cleared_at ?cleared_by ?resolution
+    ?(blocked_at = 2.) ?(reason = "Need input.") () =
+  let fields =
+    [
+      ("blockedAt", Shared.Number blocked_at);
+      ("reason", Shared.String reason);
+      ("source", Shared.String source);
+    ]
+  in
+  let fields =
+    match cleared_at with
+    | None -> fields
+    | Some value -> ("clearedAt", Shared.Number value) :: fields
+  in
+  let fields =
+    match cleared_by with
+    | None -> fields
+    | Some value -> ("clearedBy", Shared.String value) :: fields
+  in
+  let fields =
+    match resolution with
+    | None -> fields
+    | Some value -> ("resolution", Shared.String value) :: fields
+  in
+  Shared.Object fields
+
 let test_persistence () =
   let plan = agent_plan ~session:"codec" () in
   let decoded =
@@ -668,6 +862,29 @@ let test_persistence () =
   in
   assert_bool "round trip" (decoded.tasks = plan.tasks);
   assert_bool "round trip locked" (not decoded.extension_unlocked);
+  let blocked =
+    expect_ok "block history round trip source"
+      (Plan.update_plan ~reason:"Waiting." ~now:2 Plan.Blocked
+         (Some (active_plan ~session:"codec-block" ())))
+  in
+  let decoded_blocked =
+    expect_ok "open block round trip"
+      (Plan.codec.decode (Plan.codec.encode (Some blocked)))
+    |> Option.get
+  in
+  assert_bool "open block round trip"
+    (Plan.block_entries decoded_blocked = Plan.block_entries blocked);
+  let cleared =
+    expect_ok "clear block for round trip"
+      (Plan.update_plan ~reason:"Ready." ~now:3 Plan.Active (Some blocked))
+  in
+  let decoded_cleared =
+    expect_ok "closed block round trip"
+      (Plan.codec.decode (Plan.codec.encode (Some cleared)))
+    |> Option.get
+  in
+  assert_bool "closed block round trip"
+    (Plan.block_entries decoded_cleared = Plan.block_entries cleared);
   let unlocked_complete =
     unlock_complete
       (complete_plan ~session:"codec-unlock" ())
@@ -692,6 +909,12 @@ let test_persistence () =
     |> Option.get
   in
   assert_bool "absent field locks" (not decoded_absent.extension_unlocked);
+  (* ^plan-ax49: missing blocks defaults empty for an otherwise valid plan. *)
+  assert_bool "missing blocks decodes empty"
+    (Plan.block_entries decoded_absent = []);
+  ignore
+    (expect_error "missing blocks rejects blocked status"
+       (Plan.codec.decode (persisted_plan ~status:"blocked" ())));
   ignore
     (expect_error "empty tasks"
        (Plan.codec.decode (persisted_plan ~tasks:(Some (Shared.Array [])) ())));
@@ -737,6 +960,60 @@ let test_persistence () =
                        persisted_task ~depends_on:[ "a" ] "b" "B";
                      ]))
              ())));
+  (* ^plan-909m: malformed block histories are rejected at decode. *)
+  let block_array entries = Shared.Array entries in
+  ignore
+    (expect_error "empty block reason"
+       (Plan.codec.decode
+          (persisted_plan ~status:"blocked"
+             ~blocks:(block_array [ persisted_block ~reason:"  " () ])
+             ())));
+  ignore
+    (expect_error "unknown block source"
+       (Plan.codec.decode
+          (persisted_plan ~status:"blocked"
+             ~blocks:(block_array [ persisted_block ~source:"host" () ])
+             ())));
+  ignore
+    (expect_error "unknown block clearedBy"
+       (Plan.codec.decode
+          (persisted_plan
+             ~blocks:
+               (block_array
+                  [
+                    persisted_block ~cleared_at:3. ~cleared_by:"system"
+                      ~resolution:"Fixed." ();
+                  ])
+             ())));
+  ignore
+    (expect_error "block clearing precedes opening"
+       (Plan.codec.decode
+          (persisted_plan
+             ~blocks:
+               (block_array
+                  [
+                    persisted_block ~blocked_at:3. ~cleared_at:2.
+                      ~cleared_by:"user" ~resolution:"Fixed." ();
+                  ])
+             ())));
+  ignore
+    (expect_error "cleared block lacks resolution"
+       (Plan.codec.decode
+          (persisted_plan
+             ~blocks:
+               (block_array
+                  [ persisted_block ~cleared_at:3. ~cleared_by:"user" () ])
+             ())));
+  ignore
+    (expect_error "multiple open blocks"
+       (Plan.codec.decode
+          (persisted_plan ~status:"blocked"
+             ~blocks:(block_array [ persisted_block (); persisted_block () ])
+             ())));
+  ignore
+    (expect_error "open block requires blocked status"
+       (Plan.codec.decode
+          (persisted_plan ~blocks:(block_array [ persisted_block () ]) ())));
   let legacy =
     match persisted_plan () with
     | Shared.Object fields ->
@@ -916,6 +1193,9 @@ let test_task_manager_commands () =
 let () =
   test_birth_and_identity ();
   test_lifecycle_and_editability ();
+  test_agent_block_lifecycle ();
+  test_system_and_user_block_history ();
+  test_lifecycle_rejection_messages ();
   test_user_task_protection ();
   test_dependencies_and_atomic_batch ();
   test_completion_invariant ();

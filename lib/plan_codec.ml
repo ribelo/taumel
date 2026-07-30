@@ -3,6 +3,7 @@ type decoded = {
   session_id : string;
   status : Plan_status.t;
   tasks : Plan_task.t list;
+  blocks : Plan_block.t;
   tokens_used : int;
   time_used_seconds : int;
   time_limit_seconds : int option;
@@ -11,14 +12,16 @@ type decoded = {
   updated_at : int;
 }
 
-let encode ~plan_id ~session_id ~status ~tasks ~tokens_used ~time_used_seconds
-    ~time_limit_seconds ~extension_unlocked ~created_at ~updated_at =
+let encode ~plan_id ~session_id ~status ~tasks ~blocks ~tokens_used
+    ~time_used_seconds ~time_limit_seconds ~extension_unlocked ~created_at
+    ~updated_at =
   Shared.Object
     [
       ("planId", Shared.String plan_id);
       ("sessionId", Shared.String session_id);
       ("status", Shared.String (Plan_status.to_string status));
       ("tasks", Shared.Array (List.map Plan_task.to_json tasks));
+      ("blocks", Plan_block.to_json blocks);
       ("tokensUsed", Shared.Number (float_of_int tokens_used));
       ("timeUsedSeconds", Shared.Number (float_of_int time_used_seconds));
       ("timeLimitSeconds", Shared.option_int_to_json time_limit_seconds);
@@ -74,8 +77,10 @@ let decode = function
         | None -> Ok ()
       in
       (* ^plan-w247: extensionUnlocked may be absent and defaults to locked. *)
-      let fields_without_extension =
-        List.filter (fun (name, _) -> name <> "extensionUnlocked") fields
+      let fields_without_optional =
+        List.filter
+          (fun (name, _) -> name <> "extensionUnlocked" && name <> "blocks")
+          fields
       in
       let* () =
         Shared.json_exact_fields "plan"
@@ -90,7 +95,7 @@ let decode = function
             "createdAt";
             "updatedAt";
           ]
-          fields_without_extension
+          fields_without_optional
       in
       let* plan_id = string_field "planId" in
       let* session_id = string_field "sessionId" in
@@ -104,6 +109,13 @@ let decode = function
         match List.assoc_opt "tasks" fields with
         | Some value -> Plan_task.list_of_json value
         | None -> Error "tasks must be an array"
+      in
+      (* ^plan-ax49: old entries without blocks decode empty, then lifecycle
+         validation below rejects an old blocked plan. *)
+      let* blocks =
+        match List.assoc_opt "blocks" fields with
+        | None -> Ok Plan_block.empty
+        | Some value -> Plan_block.of_json value
       in
       let* tokens_used = int_field "tokensUsed" in
       let* time_used_seconds = int_field "timeUsedSeconds" in
@@ -142,6 +154,14 @@ let decode = function
             Error "time_limited status requires a reached timeLimitSeconds"
         | _ -> Ok ()
       in
+      let* () =
+        match (status, Plan_block.has_open blocks) with
+        | Plan_status.Blocked, true -> Ok ()
+        | Plan_status.Blocked, false ->
+            Error "blocked status requires exactly one open blocks entry"
+        | _, true -> Error "an open blocks entry requires blocked plan status"
+        | _, false -> Ok ()
+      in
       Ok
         (Some
            {
@@ -149,6 +169,7 @@ let decode = function
              session_id;
              status;
              tasks;
+             blocks;
              tokens_used;
              time_used_seconds;
              time_limit_seconds;
