@@ -11,7 +11,8 @@ traces_to:
 ## Intent
 
 The skill resolver expands `$name` skill mentions found anywhere in a submitted
-prompt into full skill blocks. A message such as `yada $foo yada $bar` splits
+prompt — and, transitively, `$name` mentions found in the bodies of resolved
+skills — into full skill blocks. A message such as `yada $foo yada $bar` splits
 into **N + 1 messages**: one rendered skill block per unique resolved mention
 (before the user's prose), then the user's prose as a normal user message. It
 combines codex's `$name` trigger syntax with Pi's eager inlining.
@@ -44,7 +45,7 @@ thin bridge that registers the `input` handler and the `skill` renderer.
 
 ### Scope and hook
 
-- The system shall resolve `$name` skill mentions found anywhere in a submitted prompt by emitting each resolved skill as a separate custom message via `pi.sendMessage()`, then sending the original prose unchanged via `pi.sendUserMessage()`, and returning `{ action: "handled" }` from Pi's `input` event. ^skr-sc01
+- The system shall resolve `$name` skill mentions found anywhere in a submitted prompt and, transitively, in the bodies of resolved skills by emitting each resolved skill as a separate custom message via `pi.sendMessage()`, then sending the original prose unchanged via `pi.sendUserMessage()`, and returning `{ action: "handled" }` from Pi's `input` event. ^skr-sc01
 - The system shall place discovery, mention recognition, and per‑skill block assembly in the OCaml core; the TypeScript host shall register the `input` handler and the `skill` message renderer. ^skr-sc02
 - The system shall run always‑on under session-effective skill visibility controls, staying inert unless the prompt contains at least one mention that resolves to a known enabled skill. ^skr-sc03
 - When `sendUserMessage` re‑triggers the `input` event with the unchanged prose, the system shall allow that one re-entry to return `{ action: "continue" }`, allowing the turn to proceed without infinite recursion while preserving the literal `$name` text. ^skr-sc04
@@ -74,7 +75,14 @@ thin bridge that registers the `input` handler and the `skill` renderer.
 - The system shall send the user's prose via `pi.sendUserMessage()` after all skill messages, so skills precede the prose in the transcript and for the model. ^skr-em03
 - The OCaml core shall return one ordered per‑skill block payload per mention; the TypeScript handler shall iterate them, calling `pi.sendMessage({ customType: "skill", content: block, display: true })` for each. ^skr-em04
 - The system shall register a message renderer for `skill` that draws each block as a collapsed‑by‑default, collapsible skill component (header = `skill: <name>`, body expandable), and never as raw markup. ^skr-em05
-- The system shall attach renderer-visible provenance to each skill custom message indicating that the harness injected the skill because the user mentioned `$name`, without modifying the `<skill>` block content sent to the model. ^skr-em06
+- The system shall attach renderer-visible provenance to each skill custom message indicating, for a direct mention, that the harness injected the skill because the user mentioned `$name`, and, for a nested mention, that the harness injected the skill because the skill `$parent` mentions `$name`, in both cases without modifying the `<skill>` block content sent to the model. ^skr-em06
+
+### Nested expansion
+
+- When a resolved skill's body contains a mention of another known enabled skill, the system shall resolve that mention transitively and emit the nested skill as its own custom message. ^skr-pvy4
+- The system shall share one visited set across direct and nested mentions within a turn, reading and emitting each matched skill at most once per turn, so cyclically referencing skills each resolve exactly once. ^skr-lxjt
+- The system shall emit nested skills breadth-first after all direct mentions, ordered by first discovery across emitted bodies. ^skr-073y
+- The system shall apply direct-mention handling to mentions found in skill bodies unchanged: the token rules of **skr-tk01** through **skr-tk06**, the disabled-skill skip of **skr-vs01**, the invocation-flag override of **skr-ds04**, and the read-failure handling of **skr-er01**. ^skr-tl39
 
 ### Errors
 
@@ -88,6 +96,6 @@ thin bridge that registers the `input` handler and the `skill` renderer.
 
 ### Architecture
 
-- The system shall place recognition and assembly in a pure `lib/skill_resolver.ml` — `mentions` extracts ordered, deduplicated candidate names from raw text, and a block‑assembly function builds one skill block's content from its name, location, base directory, and body — with no I/O. ^skr-ar01
+- The system shall place recognition and assembly in a pure `lib/skill_resolver.ml` — `mentions` extracts ordered, deduplicated candidate names from raw text, a block‑assembly function builds one skill block's content from its name, location, base directory, and body, and a closure function discovers nested mentions breadth‑first from bodies supplied by an injected fetch — with no I/O. ^skr-ar01
 - The system shall confine discovery, body reads, and frontmatter stripping to an impure `bin/skill_tools.ml` that delegates recognition and assembly to `lib/skill_resolver.ml` and returns the ordered per‑skill block payloads. ^skr-ar02
-- The system shall unit‑test the pure functions filesystem‑free, covering boundaries and non‑matches, escapes, the leading‑letter and case rules, miss pass‑through, deduplication with first‑appearance order, and the exact block form. ^skr-ar03
+- The system shall unit‑test the pure functions filesystem‑free, covering boundaries and non‑matches, escapes, the leading‑letter and case rules, miss pass‑through, deduplication with first‑appearance order, the exact block form, and the closure's cycles, self‑references, shared dependencies, breadth‑first discovery order, and parent attribution. ^skr-ar03
