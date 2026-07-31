@@ -441,8 +441,17 @@ const compactWait = renderText(renderersForTool("agent_wait").renderResult(
   theme,
   { args: argsFor("agent_wait") },
 ));
-// agentui-s3jx: a single observed run is named with colored status and duration.
+// agentui-s3jx: a single observed run is named with duration; the semantic
+// color lives on the status dot while the status word stays plain.
 assert(/^• agent_wait · worker-1 · completed · 12s$/.test(compactWait), `agent_wait single-run compact slot wrong: ${compactWait}`);
+const colorWait = renderText(renderersForTool("agent_wait").renderResult(
+  resultFor("agent_wait"),
+  { expanded: false, isPartial: false },
+  { fg: (color, value) => `<${color}>${value}</${color}>`, bold: (value) => value },
+  { args: argsFor("agent_wait") },
+));
+assert(colorWait.startsWith("<success>•</success>"), `agent_wait single-run dot should carry the semantic color: ${colorWait}`);
+assert(colorWait.includes(" · completed · "), `agent_wait single-run status word should stay uncolored: ${colorWait}`);
 
 // agentui-hdst: counts stay for multi-run waits.
 const multiWaitResult = resultFor("agent_wait");

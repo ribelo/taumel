@@ -370,6 +370,7 @@ function buildAgent(name: string, result: unknown, options: unknown, theme: unkn
     ?? (name === "finder" || name === "oracle" ? name : "generic");
   const status = stringFieldOrUndefined(details, "status")
     ?? stringFieldOrUndefined(details, "outcome");
+  let dotColor = dotFromDetails(details);
   let subject: string;
   let trailing = "";
   if (name === "agent_list") subject = `${agents.length} agent${agents.length === 1 ? "" : "s"}`;
@@ -378,17 +379,19 @@ function buildAgent(name: string, result: unknown, options: unknown, theme: unkn
     const total = results.length + pending;
     const singleRun = results.length === 1 && pending === 0 ? results[0] : undefined;
     if (singleRun !== undefined) {
-      // ^agentui-s3jx: a single observed run is named, with colored status and
-      // duration; counts stay for multi-run waits (^agentui-hdst).
+      // ^agentui-s3jx: a single observed run is named; the semantic color
+      // lives on the status dot and the status word stays plain; counts stay
+      // for multi-run waits (^agentui-hdst).
       const runStatus = stringFieldOrUndefined(singleRun, "status") ?? "";
       const runReason = stringFieldOrUndefined(singleRun, "reason");
       const statusText = runReason !== undefined && runStatus !== "completed"
         ? `${runStatus} (${runReason})`
         : runStatus;
       const duration = formatWaitDuration(singleRun["duration_ms"]);
+      dotColor = agentRunStatusColor(runStatus);
       subject = [
         stringFieldOrUndefined(singleRun, "agent_id") ?? agentId,
-        themeFg(theme, agentRunStatusColor(runStatus), statusText),
+        statusText,
         duration,
       ].filter((part) => part !== "").join(" · ");
     } else {
@@ -410,7 +413,7 @@ function buildAgent(name: string, result: unknown, options: unknown, theme: unkn
   } else {
     subject = [agentId, runId, kind, status].filter((part) => part !== "").join(" · ");
   }
-  const header = headerSpec(name, subject, dotFromDetails(details), theme, trailing);
+  const header = headerSpec(name, subject, dotColor, theme, trailing);
   if (!expanded) return { header, body: undefined };
   const entries: Entry[] = [];
   if (agents.length > 0) {
