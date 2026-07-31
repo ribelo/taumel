@@ -28,6 +28,8 @@ import {
   contextWithOverrides,
   type MutationPathAuthorization,
 } from "./util.ts";
+import { rememberAgentDescription } from "./agent-run-registry.ts";
+import { isToolRenderFields, type ToolRenderFields } from "./tool-renderer-kit.ts";
 import { threadSources } from "./thread-sources.ts";
 import { planContinuationMessageRenderer, notificationMessageRenderer, renderersForTool } from "./tool-renderer.ts";
 import { bindHarnessApprovalUi, clearHarnessApprovalUi, requestHarnessApproval, type ApprovalOutcome, type ApprovalResolution, type ApprovalUi } from "./approval-coordinator.ts";
@@ -748,6 +750,15 @@ export async function executeTool(
       return agentErrorToolResult(core, code, safeMessage);
     }
     return errorToolResult(core, prepared.error, { ...prepared });
+  }
+  // ^agentui-xqzc: remember spawn/send descriptions so a later single-run
+  // agent_wait can name the awaited run in its compact line.
+  if (name === "agent_spawn" || name === "finder" || name === "oracle" || name === "agent_send") {
+    const params: ToolRenderFields = isToolRenderFields(parsed.params) ? parsed.params : {};
+    rememberAgentDescription(
+      typeof params["agent_id"] === "string" ? params["agent_id"] : "",
+      typeof params["description"] === "string" ? params["description"] : undefined,
+    );
   }
   const approvalStillCurrent = () => {
     try {

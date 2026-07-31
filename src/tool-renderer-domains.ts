@@ -9,8 +9,10 @@ import {
 import {
   detailsRecord, dotFromDetails, expandedFromOptions, formatTimestampValue, fullTextEntries, headerSpec,
   labeled, labeledText, labeledTimestamp, oneLine, planTaskRow, quotedQuery, textContent, themeFg,
+  agentRunStatusColor,
   type ToolRenderFields,
 } from "./tool-renderer-kit.ts";
+import { formatWaitDuration } from "./util.ts";
 
 function domainOf(url: string): string {
   try {
@@ -339,6 +341,7 @@ function agentListEntries(item: ToolRenderFields, theme: unknown): Entry[] {
 }
 
 function agentResultEntries(item: ToolRenderFields, theme: unknown): Entry[] {
+  const duration = formatWaitDuration(item["duration_ms"]);
   return [
     ...labeled("Agent", stringFieldOrUndefined(item, "agent_id"), theme),
     ...labeled("Run ID", stringFieldOrUndefined(item, "run_id"), theme),
@@ -346,6 +349,11 @@ function agentResultEntries(item: ToolRenderFields, theme: unknown): Entry[] {
     ...labeled("Model", stringFieldOrUndefined(item, "model"), theme),
     ...labeled("Thinking", stringFieldOrUndefined(item, "thinking"), theme),
     ...labeled("Status", stringFieldOrUndefined(item, "status"), theme),
+    // ^agentui-5qzn: expanded runs carry their work and duration telemetry.
+    ...labeled("Turns", numberFieldOrUndefined(item, "turn_count")?.toString(), theme),
+    ...labeled("Tool calls", numberFieldOrUndefined(item, "tool_call_count")?.toString(), theme),
+    ...labeled("Failed tool calls", numberFieldOrUndefined(item, "failed_tool_call_count")?.toString(), theme),
+    ...labeled("Duration", duration === "" ? undefined : duration, theme),
   ];
 }
 
@@ -368,8 +376,25 @@ function buildAgent(name: string, result: unknown, options: unknown, theme: unkn
   else if (name === "agent_wait") {
     const pending = Array.isArray(details["pending_run_ids"]) ? details["pending_run_ids"].length : 0;
     const total = results.length + pending;
-    subject = `${total} run${total === 1 ? "" : "s"}`;
-    trailing = themeFg(theme, "dim", `(${results.length} ready, ${pending} pending)`);
+    const singleRun = results.length === 1 && pending === 0 ? results[0] : undefined;
+    if (singleRun !== undefined) {
+      // ^agentui-s3jx: a single observed run is named, with colored status and
+      // duration; counts stay for multi-run waits (^agentui-hdst).
+      const runStatus = stringFieldOrUndefined(singleRun, "status") ?? "";
+      const runReason = stringFieldOrUndefined(singleRun, "reason");
+      const statusText = runReason !== undefined && runStatus !== "completed"
+        ? `${runStatus} (${runReason})`
+        : runStatus;
+      const duration = formatWaitDuration(singleRun["duration_ms"]);
+      subject = [
+        stringFieldOrUndefined(singleRun, "agent_id") ?? agentId,
+        themeFg(theme, agentRunStatusColor(runStatus), statusText),
+        duration,
+      ].filter((part) => part !== "").join(" · ");
+    } else {
+      subject = `${total} run${total === 1 ? "" : "s"}`;
+      trailing = themeFg(theme, "dim", `(${results.length} ready, ${pending} pending)`);
+    }
   } else if (name === "agent_spawn") {
     // agentui-weo6 / agent-rn05: handle already encodes tier (agent-medium-…),
     // so compact subject is handle · description only.

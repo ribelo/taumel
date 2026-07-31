@@ -16,6 +16,7 @@ import {
   sendToChildSession,
 } from "./child-sessions.ts";
 import { latestTaumelCustomEntry } from "./pi-session-entries.ts";
+import { rememberAgentDescription } from "./agent-run-registry.ts";
 import { agentErrorToolResult, preparedToolResult } from "./tool-results.ts";
 import { cancelAgentApprovals } from "./approval-coordinator.ts";
 import {
@@ -683,6 +684,12 @@ export async function executeAgentPrepared(
       const runIds = Array.isArray(prepared.runIds)
         ? prepared.runIds.filter((value): value is string => typeof value === "string")
         : [];
+      // ^agentui-xqzc: backfill descriptions for runs spawned before this
+      // process (registry cold), so the result line can name them.
+      const waitSnapshot = decodeAgentManagerSnapshot(core.call("agentManagerSnapshot", [{ ctx }]));
+      for (const run of waitSnapshot.runs) {
+        if (runIds.includes(run.runId)) rememberAgentDescription(run.agentId, run.description);
+      }
       const timeoutSeconds =
         typeof prepared.timeoutSeconds === "number" ? prepared.timeoutSeconds : undefined;
       const controllers: AbortController[] = [];

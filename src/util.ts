@@ -849,6 +849,22 @@ export function formatRelativeDuration(seconds: number): string {
   return `${minutes}m`;
 }
 
+// Seconds-precision duration for run wall-clock times, mirroring
+// Plan.format_duration: 42s / 12m / 1h 59m / 2d 3h.
+export function formatWaitDuration(ms: unknown): string {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "";
+  const totalSeconds = Math.round(ms / 1000);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const restMinutes = minutes % 60;
+  if (hours < 24) return `${hours}h${restMinutes > 0 ? ` ${restMinutes}m` : ""}`;
+  const days = Math.floor(hours / 24);
+  const restHours = hours % 24;
+  return `${days}d${restHours > 0 ? ` ${restHours}h` : ""}`;
+}
+
 export function formatLocalTime(targetSeconds: number, nowMs: number): string {
   const target = new Date(targetSeconds * 1000);
   const now = new Date(nowMs);

@@ -8,6 +8,7 @@ import {
   type HeaderSpec,
 } from "./render-layout.ts";
 import { buildDomainResult } from "./tool-renderer-domains.ts";
+import { agentDescriptionFor, agentIdFromRunId } from "./agent-run-registry.ts";
 import {
   detailsRecord, dotFromDetails, expandedFromOptions, fullTextEntries, headerSpec,
   isToolRenderFields, labeled, oneLine, planTaskRow, quotedQuery, textContent, themeFg,
@@ -189,6 +190,13 @@ function subjectFromArgs(name: string, args: ToolRenderFields): string {
       return stringFieldOrUndefined(args, "agent_id") ?? "";
     case "agent_wait": {
       const runIds = stringArrayFieldOrEmpty(args, "run_ids");
+      const first = runIds[0];
+      // ^agentui-xqzc: a single awaited run is named, not counted.
+      if (runIds.length === 1 && first !== undefined) {
+        const awaitedAgentId = agentIdFromRunId(first);
+        const awaitedDescription = agentDescriptionFor(awaitedAgentId);
+        return [awaitedAgentId, awaitedDescription ?? ""].filter((part) => part !== "").join(" · ");
+      }
       return `${runIds.length} run${runIds.length === 1 ? "" : "s"}`;
     }
     case "agent_list":

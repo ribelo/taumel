@@ -1,5 +1,6 @@
 import { toolNames } from "../src/tool-contracts.ts";
 import { cronFireMessageRenderer, planContinuationMessageRenderer, notificationMessageRenderer, renderersForTool, skillMessageRenderer } from "../src/tool-renderer.ts";
+import { rememberAgentDescription } from "../src/agent-run-registry.ts";
 import { formatLocalTime } from "../src/util.ts";
 import { Box, visibleWidth } from "@earendil-works/pi-tui";
 
@@ -184,6 +185,10 @@ function resultFor(name) {
           status: "completed",
           started_at: agentWaitStartedAt,
           ended_at: agentWaitEndedAt,
+          turn_count: 4,
+          tool_call_count: 6,
+          failed_tool_call_count: 1,
+          duration_ms: 12300,
           output: "done",
           output_available: true,
         }],
@@ -418,6 +423,10 @@ for (const expected of [
   "Model: provider/model",
   "Thinking: medium",
   "Status: completed",
+  "Turns: 4",
+  "Tool calls: 6",
+  "Failed tool calls: 1",
+  "Duration: 12s",
   `Started: ${localTimeFor(agentWaitStartedAt)}`,
   `Ended: ${localTimeFor(agentWaitEndedAt)}`,
   "Response: done",
@@ -432,8 +441,41 @@ const compactWait = renderText(renderersForTool("agent_wait").renderResult(
   theme,
   { args: argsFor("agent_wait") },
 ));
-// agentui-hdst: compact wait preserves ready and pending counts.
-assert(/^• agent_wait · 1 run \(1 ready, 0 pending\)$/.test(compactWait), `agent_wait compact slot wrong: ${compactWait}`);
+// agentui-s3jx: a single observed run is named with colored status and duration.
+assert(/^• agent_wait · worker-1 · completed · 12s$/.test(compactWait), `agent_wait single-run compact slot wrong: ${compactWait}`);
+
+// agentui-hdst: counts stay for multi-run waits.
+const multiWaitResult = resultFor("agent_wait");
+multiWaitResult.details.results = [multiWaitResult.details.results[0], { ...multiWaitResult.details.results[0], run_id: "worker-1-run-2" }];
+const compactMultiWait = renderText(renderersForTool("agent_wait").renderResult(
+  multiWaitResult,
+  { expanded: false, isPartial: false },
+  theme,
+  { args: { run_ids: ["worker-1-run-1", "worker-1-run-2"] } },
+));
+assert(/^• agent_wait · 2 runs \(2 ready, 0 pending\)$/.test(compactMultiWait), `agent_wait multi-run compact slot wrong: ${compactMultiWait}`);
+
+// agentui-s3jx: a failed single run adds its reason after the status.
+const failedWaitResult = resultFor("agent_wait");
+failedWaitResult.details.results = [{ ...failedWaitResult.details.results[0], status: "failed", reason: "timeout", error: "timed out", duration_ms: 45000 }];
+const compactFailedWait = renderText(renderersForTool("agent_wait").renderResult(
+  failedWaitResult,
+  { expanded: false, isPartial: false },
+  theme,
+  { args: argsFor("agent_wait") },
+));
+assert(/^• agent_wait · worker-1 · failed \(timeout\) · 45s$/.test(compactFailedWait), `agent_wait failed-run compact slot wrong: ${compactFailedWait}`);
+
+// agentui-xqzc: a pending single-run wait names the awaited agent with its
+// remembered description instead of a run count.
+rememberAgentDescription("worker-1", "Inspect renderer coverage");
+const pendingWaitCall = renderText(renderersForTool("agent_wait").renderCall(
+  argsFor("agent_wait"),
+  theme,
+  { args: argsFor("agent_wait"), state: {}, isPartial: true },
+));
+assert(pendingWaitCall.includes("agent_wait · worker-1 · Inspect renderer coverage"), `agent_wait pending call must name the awaited run: ${pendingWaitCall}`);
+assert(pendingWaitCall.includes("(waiting for agents)"), `agent_wait pending call must keep its progress hint: ${pendingWaitCall}`);
 
 // agent-8xkn: expanded agent_list uses labeled identity fields, not a flat ·-joined line.
 const expandedAgentList = renderText(renderersForTool("agent_list").renderResult(

@@ -58,6 +58,18 @@ export function fullTextEntries(text: string, theme: unknown): Entry[] {
     : cleaned.split(/\r?\n/).map((line) => ({ text: themeFg(theme, "toolOutput", line) }));
 }
 
+/** ^agentui-s3jx: single-run agent_wait status as colored text, mirroring
+ * the completion-notification colors (agentui-f545/8elv/svxd/vr2p). */
+export function agentRunStatusColor(status: string): string {
+  switch (status) {
+    case "completed": return "success";
+    case "failed":
+    case "lost": return "error";
+    case "suspended": return "warning";
+    default: return "dim";
+  }
+}
+
 export function quotedQuery(args: ToolRenderFields): string {
   return `"${oneLine(stringFieldOrUndefined(args, "query") ?? "")}"`;
 }
