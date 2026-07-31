@@ -1121,6 +1121,15 @@ assert(compactSkill.includes("auto from $foo") && compactSkill.includes("(expand
 assert(expandedSkill.includes("because the user mentioned $foo"), `expanded skill renderer should show provenance: ${expandedSkill}`);
 assert(expandedSkill.includes("line-24"), `expanded skill renderer should show full body: ${expandedSkill}`);
 assert(!expandedSkill.includes("<skill") && !expandedSkill.includes("</skill>"), `expanded skill renderer leaked XML: ${expandedSkill}`);
+const nestedSkillMessage = {
+  customType: "skill",
+  content: skillBlock,
+  details: { trigger: "$foo", parent: "bar" },
+};
+const compactNestedSkill = renderText(renderSkill(nestedSkillMessage, { expanded: false }, theme));
+const expandedNestedSkill = renderText(renderSkill(nestedSkillMessage, { expanded: true }, theme));
+assert(compactNestedSkill.includes("auto via $bar"), `nested skill renderer should show parent origin: ${compactNestedSkill}`);
+assert(expandedNestedSkill.includes("because $bar mentions $foo"), `expanded nested skill renderer should show parent provenance: ${expandedNestedSkill}`);
 const multilineSkillBlock = [
   '<skill name="grill-me"',
   ' location="/skills/grill-me/SKILL.md">',

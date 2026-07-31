@@ -66,13 +66,18 @@ export function installSkillResolver(pi: PiLike, core: CoreBridge): void {
     }
     let sentCount = 0;
     for (const block of blocks) {
-      const { content, name } = block;
+      const { content, name, parent } = block;
       sentCount += 1;
       await pi.sendMessage({
         customType: "skill",
         content,
         display: true,
-        details: { source: "auto-skill-mention", trigger: `$${name}`, name },
+        details: {
+          source: "auto-skill-mention",
+          trigger: `$${name}`,
+          name,
+          ...(parent === undefined ? {} : { parent }),
+        },
       });
     }
     if (sentCount === 0) return { action: "continue" };

@@ -158,9 +158,9 @@ let source_paths cwd =
 
 let warning message = Tool_contracts.BridgeWarning.create ~message ()
 
-let block_payload (skill : skill) content =
+let block_payload ?parent (skill : skill) content =
   Tool_contracts.SkillBlock.create ~name:skill.name ~location:skill.path
-    ~baseDir:skill.base_dir ~content ()
+    ~baseDir:skill.base_dir ~content ?parent ()
 
 let skill_payload (skill : skill) =
   Tool_contracts.SkillInfo.create ~name:skill.name ~location:skill.path
@@ -214,28 +214,43 @@ let resolve_mentions params =
     let cwd = Tool_contracts.SkillResolveFacts.get_cwd params in
     let table = Hashtbl.create 32 in
     List.iter (fun skill -> add_skill table skill) (discover_skills cwd);
-    let blocks = ref [] in
     let warnings = ref [] in
-    List.iter
-      (fun name ->
-        match Hashtbl.find_opt table name with
-        | None -> ()
-        | Some skill when not (skill_enabled skill.name) -> ()
-        | Some skill -> (
-            match read_file skill.path with
-            | None ->
-                warnings :=
-                  warning ("Could not read skill: " ^ name) :: !warnings
-            | Some text ->
-                let body = strip_frontmatter text in
-                let block =
-                  Taumel.Skill_resolver.skill_block ~name:skill.name
-                    ~location:skill.path ~base_dir:skill.base_dir ~body
-                in
-                blocks := block_payload skill block :: !blocks))
-      names;
+    let bodies = Hashtbl.create 8 in
+    let fetch name =
+      match Hashtbl.find_opt bodies name with
+      | Some cached -> cached
+      | None ->
+          let body =
+            match Hashtbl.find_opt table name with
+            | None -> None
+            | Some skill when not (skill_enabled skill.name) -> None
+            | Some skill -> (
+                match read_file skill.path with
+                | None ->
+                    warnings :=
+                      warning ("Could not read skill: " ^ name) :: !warnings;
+                    None
+                | Some text -> Some (strip_frontmatter text))
+          in
+          Hashtbl.add bodies name body;
+          body
+    in
+    let traversal = Taumel.Skill_resolver.closure ~fetch names in
+    let blocks =
+      List.filter_map
+        (fun (name, parent) ->
+          match (Hashtbl.find_opt table name, fetch name) with
+          | Some skill, Some body ->
+              let content =
+                Taumel.Skill_resolver.skill_block ~name:skill.name
+                  ~location:skill.path ~base_dir:skill.base_dir ~body
+              in
+              Some (block_payload ?parent skill content)
+          | _ -> None)
+        traversal
+    in
     let result =
-      Tool_contracts.SkillResolveResult.create ~blocks:(List.rev !blocks)
+      Tool_contracts.SkillResolveResult.create ~blocks
         ~warnings:(List.rev !warnings) ()
     in
     Tool_contracts.SkillResolveResult.t_to_js result |> inject

@@ -28,6 +28,26 @@ let mentions text =
   in
   scan 0 [] []
 
+let closure ~fetch names =
+  let rec bfs queue seen acc =
+    match queue with
+    | [] -> List.rev acc
+    | (name, parent) :: rest ->
+        let discovered =
+          match fetch name with
+          | None -> []
+          | Some body ->
+              List.filter
+                (fun candidate -> not (List.mem candidate seen))
+                (mentions body)
+        in
+        let seen = discovered @ seen in
+        bfs
+          (rest @ List.map (fun nested -> (nested, Some name)) discovered)
+          seen ((name, parent) :: acc)
+  in
+  bfs (List.map (fun name -> (name, None)) names) names []
+
 let skill_block ~name ~location ~base_dir ~body =
   Printf.sprintf
     "<skill name=\"%s\" location=\"%s\">\n\

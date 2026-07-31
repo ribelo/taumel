@@ -177,6 +177,7 @@ export const SkillBlockSchema = Type.Object(
   {
     name: Type.String({ minLength: 1 }), location: Type.String({ minLength: 1 }),
     baseDir: Type.String(), content: Type.String({ minLength: 1 }),
+    parent: Type.Optional(Type.String({ minLength: 1 })),
   },
   { $id: "SkillBlock", additionalProperties: false },
 );

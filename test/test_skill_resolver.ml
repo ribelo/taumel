@@ -31,6 +31,49 @@ let test_block () =
      </skill>"
     block
 
+let assert_pairs label expected actual =
+  let render pairs =
+    String.concat ","
+      (List.map
+         (fun (name, parent) ->
+           match parent with None -> name | Some p -> name ^ "<" ^ p)
+         pairs)
+  in
+  assert_equal label (render expected) (render actual)
+
+let test_closure () =
+  let fetch table name = List.assoc_opt name table in
+  assert_pairs "direct only"
+    [ ("a", None); ("c", None) ]
+    (Skill.closure ~fetch:(fetch [ ("a", "do a"); ("c", "do c") ]) [ "a"; "c" ]);
+  assert_pairs "breadth first"
+    [ ("a", None); ("c", None); ("b", Some "a") ]
+    (Skill.closure
+       ~fetch:(fetch [ ("a", "use $b"); ("b", "do b"); ("c", "do c") ])
+       [ "a"; "c" ]);
+  assert_pairs "cycle"
+    [ ("a", None); ("b", Some "a") ]
+    (Skill.closure ~fetch:(fetch [ ("a", "use $b"); ("b", "use $a") ]) [ "a" ]);
+  assert_pairs "self loop"
+    [ ("a", None) ]
+    (Skill.closure ~fetch:(fetch [ ("a", "use $a again") ]) [ "a" ]);
+  assert_pairs "diamond"
+    [ ("a", None); ("b", Some "a"); ("c", Some "a"); ("d", Some "b") ]
+    (Skill.closure
+       ~fetch:
+         (fetch [ ("a", "$b $c"); ("b", "$d"); ("c", "$d too"); ("d", "done") ])
+       [ "a" ]);
+  assert_pairs "unresolvable nested"
+    [ ("a", None); ("ghost", Some "a") ]
+    (Skill.closure ~fetch:(fetch [ ("a", "mention $ghost") ]) [ "a" ]);
+  assert_pairs "escaped nested"
+    [ ("a", None) ]
+    (Skill.closure ~fetch:(fetch [ ("a", "\\$b $$c") ]) [ "a" ]);
+  assert_pairs "chain"
+    [ ("a", None); ("b", Some "a"); ("c", Some "b") ]
+    (Skill.closure ~fetch:(fetch [ ("a", "$b"); ("b", "$c"); ("c", "done") ]) [ "a" ])
+
 let () =
   test_mentions ();
-  test_block ()
+  test_block ();
+  test_closure ()

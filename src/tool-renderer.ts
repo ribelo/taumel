@@ -606,13 +606,17 @@ export function skillMessageRenderer() {
     const skill = skills[0];
     const details = detailsRecord(message);
     const trigger = stringFieldOrUndefined(details, "trigger") ?? `$${skill.name}`;
-    const provenance = `Skill "${skill.name}" was injected automatically by the harness because the user mentioned ${trigger}.`;
+    const parent = stringFieldOrUndefined(details, "parent");
+    const provenance = parent === undefined
+      ? `Skill "${skill.name}" was injected automatically by the harness because the user mentioned ${trigger}.`
+      : `Skill "${skill.name}" was injected automatically by the harness because $${parent} mentions $${skill.name}.`;
+    const origin = parent === undefined ? `auto from ${trigger}` : `auto via $${parent}`;
     return renderBlock(
       {
         header: {
           lead: themeFg(theme, "info", "• skill: "),
           subject: skill.name,
-          trailing: themeFg(theme, "dim", expanded ? skill.location : `auto from ${trigger} (expand)`),
+          trailing: themeFg(theme, "dim", expanded ? skill.location : `${origin} (expand)`),
         },
         body: expanded
           ? { mode: "rail", entries: tailEntries(`${provenance}\n\n${skill.body}`, true, theme, 5, 100000) }
