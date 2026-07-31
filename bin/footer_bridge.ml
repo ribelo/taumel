@@ -126,18 +126,15 @@ let activity_for_render () =
   let single_agent_description =
     match active_runs with [ run ] -> Some run.run_description | _ -> None
   in
-  let live_execs, single_exec_command =
-    if owner_id = "" then (0, None)
-    else
-      match Exec_session.background_activity_for_owner owner_id with
-      | count, command -> (count, command)
+  let live_execs =
+    if owner_id = "" then 0
+    else fst (Exec_session.background_activity_for_owner owner_id)
   in
   {
     Model.running_agents;
     orphaned_agents;
     single_agent_description;
     live_execs;
-    single_exec_command;
   }
 
 let snapshot_for_render host footer_data =

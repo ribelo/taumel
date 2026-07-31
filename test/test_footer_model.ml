@@ -221,9 +221,8 @@ let test_render_plan_status () =
          })
   in
   if
-    not
-      (contains_substring line "Plan active (interrupted) · 1/2 tasks · 12m/30m")
-  then failwith "rendered line omits plan status"
+    not (contains_substring line "Plan (interrupted) · 1/2 · 12m/30m")
+  then failwith "rendered line omits plan progress"
   else if contains_substring line "tokens" then
     failwith "rendered plan line includes token telemetry"
 
@@ -242,12 +241,64 @@ let sample_plan =
     session_id = "s";
   }
 
-let render_activity ?plan activity =
-  String.concat "\n"
-    (Footer.render_lines
-       ~colorize:(fun token text -> "[" ^ token ^ "]" ^ text)
-       ~width:160
-       { base_snapshot with plan; activity })
+let sample_task title status =
+  {
+    Taumel.Plan.task_id = "t-" ^ title;
+    title;
+    description = None;
+    status;
+    cancellation_reason = None;
+    depends_on = [];
+    origin = Taumel.Plan.Agent;
+  }
+
+let in_progress_plan =
+  {
+    sample_plan with
+    Taumel.Plan.tasks =
+      [
+        sample_task "Implement modal kit" Taumel.Plan.In_progress;
+        sample_task "Second task" Taumel.Plan.In_progress;
+        sample_task "Done" Taumel.Plan.Completed;
+      ];
+  }
+
+let ends_with text suffix =
+  let text_len = String.length text in
+  let suffix_len = String.length suffix in
+  text_len >= suffix_len
+  && String.sub text (text_len - suffix_len) suffix_len = suffix
+
+let visible_len text =
+  let rec loop acc index =
+    if index >= String.length text then acc
+    else
+      let code = Char.code text.[index] in
+      let len =
+        if code land 0x80 = 0 then 1
+        else if code land 0xE0 = 0xC0 then 2
+        else if code land 0xF0 = 0xE0 then 3
+        else 4
+      in
+      loop (acc + 1) (index + len)
+  in
+  loop 0 0
+
+let second_line ?(width = 160) ?(colorize = fun token text -> "[" ^ token ^ "]" ^ text) ?plan activity =
+  match
+    Footer.render_lines ~colorize ~width { base_snapshot with plan; activity }
+  with
+  | [ _; second ] -> second
+  | lines ->
+      failwith (Printf.sprintf "expected 2 lines, got %d" (List.length lines))
+
+let activity ~agents ?(orphaned = 0) ?description ~execs () =
+  {
+    Footer.running_agents = agents;
+    orphaned_agents = orphaned;
+    single_agent_description = description;
+    live_execs = execs;
+  }
 
 let test_activity_hidden_when_zero () =
   let lines =
@@ -255,95 +306,96 @@ let test_activity_hidden_when_zero () =
   in
   assert_int "no activity lines" 1 (List.length lines)
 
-let test_activity_counts () =
-  let line =
-    render_activity
-      {
-        running_agents = 2;
-        orphaned_agents = 0;
-        single_agent_description = None;
-        live_execs = 3;
-        single_exec_command = None;
-      }
-  in
+let test_activity_counts_right_aligned () =
+  let line = second_line (activity ~agents:2 ~execs:3 ()) in
   if not (contains_substring line "2 agents") then
     failwith "activity omits agent count";
   if not (contains_substring line "3 exec") then
-    failwith "activity omits exec count"
+    failwith "activity omits exec count";
+  if not (ends_with line "3 exec") then
+    failwith (Printf.sprintf "counts are not right-aligned: %S" line)
 
-let test_activity_single_labels () =
+let test_center_single_agent_description () =
   let line =
-    render_activity
-      {
-        running_agents = 1;
-        orphaned_agents = 0;
-        single_agent_description = Some "Investigate footer";
-        live_execs = 1;
-        single_exec_command = Some "sleep 30";
-      }
+    second_line (activity ~agents:1 ~description:"Investigate footer" ~execs:1 ())
   in
   if not (contains_substring line "Investigate footer") then
-    failwith "single agent label missing";
-  if not (contains_substring line "sleep 30") then
-    failwith "single exec label missing";
-  if contains_substring line "1 agents" || contains_substring line "1 exec" then
-    failwith "single labels still show counts"
+    failwith "single agent description missing from center";
+  if not (contains_substring line "1 agents") then
+    failwith "counts hidden for a single agent";
+  if not (contains_substring line "1 exec") then
+    failwith "counts hidden for a single exec"
 
 let test_activity_orphaned_error () =
   let line =
-    render_activity
-      {
-        running_agents = 1;
-        orphaned_agents = 2;
-        single_agent_description = Some "stuck";
-        live_execs = 0;
-        single_exec_command = None;
-      }
+    second_line (activity ~agents:1 ~orphaned:2 ~description:"stuck" ~execs:0 ())
   in
   if not (contains_substring line "[error]2 orphaned") then
     failwith "orphaned count missing error token"
 
-let test_activity_with_plan_separator () =
-  let line =
-    render_activity ~plan:sample_plan
-      {
-        running_agents = 2;
-        orphaned_agents = 0;
-        single_agent_description = None;
-        live_execs = 1;
-        single_exec_command = Some "make test";
-      }
-  in
-  if not (contains_substring line "Plan active") then
-    failwith "plan status missing beside activity";
-  if not (contains_substring line "│") then
-    failwith "plan/activity separator missing";
+let test_three_zones_with_plan () =
+  let line = second_line ~plan:sample_plan (activity ~agents:2 ~execs:1 ()) in
+  if not (contains_substring line "[dim]Plan") then
+    failwith "plan segment missing from left zone";
+  if contains_substring line "│" then
+    failwith "old pipe separator survives";
   if not (contains_substring line "2 agents") then
-    failwith "activity missing after plan"
+    failwith "activity missing beside plan";
+  if not (ends_with line "1 exec") then
+    failwith (Printf.sprintf "counts are not right-aligned: %S" line)
+
+let test_center_in_progress_tasks () =
+  let line = second_line ~plan:in_progress_plan (activity ~agents:0 ~execs:0 ()) in
+  if not (contains_substring line "Implement modal kit +1") then
+    failwith (Printf.sprintf "center omits first in-progress task: %S" line);
+  if contains_substring line "Second task" then
+    failwith "center shows more than the first in-progress task"
+
+let test_center_empty_without_in_progress () =
+  let line = second_line ~plan:sample_plan (activity ~agents:0 ~execs:0 ()) in
+  if contains_substring line "+1" then
+    failwith "center shows a marker without in-progress tasks"
+
+let test_plan_status_colors () =
+  let blocked =
+    second_line
+      ~plan:
+        {
+          sample_plan with
+          Taumel.Plan.status =
+            Taumel.Plan.Blocked
+              {
+                Taumel.Plan_block.blocked_at = 0;
+                reason = "waiting";
+                source = Taumel.Plan_block.agent_source;
+              };
+        }
+      (activity ~agents:0 ~execs:0 ())
+  in
+  if not (contains_substring blocked "[warning]Plan blocked") then
+    failwith (Printf.sprintf "blocked plan missing warning color: %S" blocked);
+  let complete =
+    second_line ~plan:{ sample_plan with Taumel.Plan.status = Taumel.Plan.Complete }
+      (activity ~agents:0 ~execs:0 ())
+  in
+  if not (contains_substring complete "[success]Plan complete") then
+    failwith (Printf.sprintf "complete plan missing success color: %S" complete)
+
+let test_second_line_never_exceeds_width () =
+  let line =
+    second_line ~width:40 ~colorize:(fun _ text -> text)
+      ~plan:in_progress_plan
+      (activity ~agents:2 ~orphaned:1 ~execs:3 ())
+  in
+  if visible_len line > 40 then
+    failwith (Printf.sprintf "second line wraps: %S" line);
+  if not (contains_substring line "agents") then
+    failwith (Printf.sprintf "counts lost at narrow width: %S" line)
 
 let test_activity_second_line_alone () =
-  let lines =
-    Footer.render_lines
-      ~colorize:(fun _ text -> text)
-      ~width:120
-      {
-        base_snapshot with
-        activity =
-          {
-            running_agents = 0;
-            orphaned_agents = 0;
-            single_agent_description = None;
-            live_execs = 2;
-            single_exec_command = None;
-          };
-      }
-  in
-  assert_int "activity alone second line" 2 (List.length lines);
-  match lines with
-  | [ _; second ] ->
-      if not (contains_substring second "2 exec") then
-        failwith "activity-only second line missing exec count"
-  | _ -> failwith "unexpected line count"
+  let line = second_line (activity ~agents:0 ~execs:2 ()) in
+  if not (ends_with line "2 exec") then
+    failwith (Printf.sprintf "activity-only second line not right-aligned: %S" line)
 
 let () =
   test_parse_git_numstat ();
@@ -357,8 +409,12 @@ let () =
   test_narrow_width_preserves_colored_dots ();
   test_render_plan_status ();
   test_activity_hidden_when_zero ();
-  test_activity_counts ();
-  test_activity_single_labels ();
+  test_activity_counts_right_aligned ();
+  test_center_single_agent_description ();
   test_activity_orphaned_error ();
-  test_activity_with_plan_separator ();
+  test_three_zones_with_plan ();
+  test_center_in_progress_tasks ();
+  test_center_empty_without_in_progress ();
+  test_plan_status_colors ();
+  test_second_line_never_exceeds_width ();
   test_activity_second_line_alone ()

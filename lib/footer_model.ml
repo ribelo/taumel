@@ -5,7 +5,6 @@ type activity = {
   orphaned_agents : int;
   single_agent_description : string option;
   live_execs : int;
-  single_exec_command : string option;
 }
 
 type snapshot = {
@@ -34,7 +33,6 @@ let empty_activity =
     orphaned_agents = 0;
     single_agent_description = None;
     live_execs = 0;
-    single_exec_command = None;
   }
 
 let empty_git_delta = { added = 0; removed = 0 }
@@ -282,104 +280,173 @@ let plan_status_label = function
   | Plan.Time_limited -> "Plan time limited"
   | Plan.Complete -> "Plan complete"
 
-let plan_line_raw (plan : Plan.presentation) =
-  let status = plan_status_label plan.status in
-  let automation =
-    match plan.automation with
-    | Plan.Automation_enabled -> ""
-    | Plan.Automation_interrupted -> " (interrupted)"
-  in
-  let time =
-    match plan.time_limit_seconds with
-    | None -> Plan.format_duration plan.time_used_seconds
-    | Some limit ->
-        Plan.format_duration plan.time_used_seconds
-        ^ "/" ^ Plan.format_duration limit
-  in
+(* ^footer-13xq: exceptional states earn semantic color; all other second-line
+   text stays dim. *)
+let plan_status_token = function
+  | Plan.Blocked _ -> "warning"
+  | Plan.Complete -> "success"
+  | _ -> "dim"
+
+let plan_time_text (plan : Plan.presentation) =
+  match plan.time_limit_seconds with
+  | None -> Plan.format_duration plan.time_used_seconds
+  | Some limit ->
+      Plan.format_duration plan.time_used_seconds
+      ^ "/" ^ Plan.format_duration limit
+
+(* ^footer-loua: the status label appears only for non-active statuses. *)
+let plan_zone_parts (plan : Plan.presentation) =
   let progress =
-    Printf.sprintf "%d/%d tasks" plan.completed_tasks plan.total_tasks
+    Printf.sprintf "%d/%d" plan.completed_tasks plan.total_tasks
   in
-  status ^ automation ^ " · " ^ progress ^ " · " ^ time
+  let status_parts =
+    match plan.status with
+    | Plan.Active -> [ ("Plan", "dim") ]
+    | status -> [ (plan_status_label status, plan_status_token status) ]
+  in
+  let interrupted_parts =
+    match plan.automation with
+    | Plan.Automation_enabled -> []
+    | Plan.Automation_interrupted -> [ (" (interrupted)", "warning") ]
+  in
+  status_parts @ interrupted_parts
+  @ [ (" · " ^ progress ^ " · " ^ plan_time_text plan, "dim") ]
 
-let render_plan_line ~colorize ~width (plan : Plan.presentation) =
-  colorize "dim" (take_width width (plan_line_raw plan))
+(* ^footer-tse7 / ^footer-lkk2: the center zone is the current focus — the
+   plan's first in-progress task, or the single running agent's description
+   while no plan exists. *)
+let center_zone_raw snapshot =
+  match snapshot.plan with
+  | Some plan -> (
+      let in_progress =
+        List.filter
+          (fun (task : Plan.task) -> task.Plan.status = Plan.In_progress)
+          plan.tasks
+      in
+      match in_progress with
+      | [] -> ""
+      | first :: rest -> (
+          match List.length rest with
+          | 0 -> first.Plan.title
+          | n -> Printf.sprintf "%s +%d" first.Plan.title n))
+  | None -> (
+      match snapshot.activity.single_agent_description with
+      | Some description when String.trim description <> "" ->
+          String.trim description
+      | _ -> "")
 
-let activity_has_content (activity : activity) =
-  activity.running_agents > 0
-  || activity.orphaned_agents > 0
-  || activity.live_execs > 0
+(* ^footer-gwja: counts only — no command or description text; the orphaned
+   count keeps the error color per ^footer-djhf. *)
+let activity_counts_parts activity =
+  let agents =
+    if activity.running_agents > 0 then
+      [ (Printf.sprintf "%d agents" activity.running_agents, "dim") ]
+    else []
+  in
+  let execs =
+    if activity.live_execs > 0 then
+      [ (Printf.sprintf "%d exec" activity.live_execs, "dim") ]
+    else []
+  in
+  let orphaned =
+    if activity.orphaned_agents > 0 then
+      [ (Printf.sprintf "%d orphaned" activity.orphaned_agents, "error") ]
+    else []
+  in
+  let rec intersperse = function
+    | [] -> []
+    | [ part ] -> [ part ]
+    | part :: rest -> part :: (" · ", "dim") :: intersperse rest
+  in
+  intersperse (agents @ execs @ orphaned)
 
-let agent_activity_label (activity : activity) =
-  match (activity.running_agents, activity.single_agent_description) with
-  | 1, Some description when String.trim description <> "" ->
-      String.trim description
-  | n, _ when n > 0 -> Printf.sprintf "%d agents" n
-  | _ -> ""
+let parts_width parts =
+  List.fold_left (fun acc (text, _) -> acc + visible_width text) 0 parts
 
-let exec_activity_label (activity : activity) =
-  match (activity.live_execs, activity.single_exec_command) with
-  | 1, Some command when String.trim command <> "" -> String.trim command
-  | n, _ when n > 0 -> Printf.sprintf "%d exec" n
-  | _ -> ""
+let colorize_parts ~colorize parts =
+  String.concat "" (List.map (fun (text, token) -> colorize token text) parts)
 
-let orphaned_activity_label (activity : activity) =
-  if activity.orphaned_agents > 0 then
-    Printf.sprintf "%d orphaned" activity.orphaned_agents
-  else ""
+let take_parts width parts =
+  let rec loop remaining acc = function
+    | [] -> List.rev acc
+    | (text, token) :: rest ->
+        if remaining <= 0 then List.rev acc
+        else
+          let part_width = visible_width text in
+          if part_width <= remaining then
+            loop (remaining - part_width) ((text, token) :: acc) rest
+          else List.rev ((take_width remaining text, token) :: acc)
+  in
+  loop width [] parts
 
-let render_activity_segment ~colorize ~width (activity : activity) =
-  if width <= 0 || not (activity_has_content activity) then ""
-  else
-    let parts =
-      [
-        (agent_activity_label activity, "dim");
-        (exec_activity_label activity, "dim");
-        (orphaned_activity_label activity, "error");
-      ]
-      |> List.filter (fun (label, _) -> label <> "")
-    in
-    let rec fit remaining acc = function
-      | [] -> List.rev acc
-      | (label, token) :: rest ->
-          let sep = if acc = [] then 0 else 3 in
-          let budget = remaining - sep in
-          if budget <= 0 then List.rev acc
-          else
-            let truncated = take_width budget label in
-            if truncated = "" then List.rev acc
-            else
-              fit
-                (remaining - sep - visible_width truncated)
-                ((truncated, token) :: acc)
-                rest
-    in
-    fit width [] parts
-    |> List.mapi (fun index (label, token) ->
-        let colored = colorize token label in
-        if index = 0 then colored else colorize "dim" " · " ^ colored)
-    |> String.concat ""
+(* ^footer-xd4u / ^footer-pcp3: three zones — left plan, center focus,
+   right-aligned counts — composed into exactly one terminal line; the center
+   shrinks first and the line never wraps. *)
+let compose_zones ~colorize ~width left_parts center_raw right_parts =
+  let min_gap = 2 in
+  let right_w = parts_width right_parts in
+  let left_w = parts_width left_parts in
+  let left_parts, left_w =
+    if right_w = 0 then
+      if left_w <= width then (left_parts, left_w)
+      else (take_parts width left_parts, width)
+    else
+      let budget = width - right_w - min_gap in
+      if left_w <= max 0 budget then (left_parts, left_w)
+      else if budget > 0 then (take_parts budget left_parts, budget)
+      else ([], 0)
+  in
+  let right_parts, right_w =
+    if right_w <= width then (right_parts, right_w)
+    else (take_parts width right_parts, width)
+  in
+  let gaps =
+    match (left_w > 0, right_w > 0) with
+    | true, true -> min_gap * 2
+    | true, false | false, true -> min_gap
+    | false, false -> 0
+  in
+  let center_budget = width - left_w - right_w - gaps in
+  let center =
+    if center_raw = "" || center_budget <= 0 then ""
+    else take_width center_budget center_raw
+  in
+  let center_w = visible_width center in
+  let left_s = colorize_parts ~colorize left_parts in
+  let center_s = colorize "dim" center in
+  let right_s = colorize_parts ~colorize right_parts in
+  match (left_w > 0, center_w > 0, right_w > 0) with
+  | false, false, false -> ""
+  | true, false, false -> left_s
+  | false, true, false -> center_s
+  | false, false, true -> String.make (width - right_w) ' ' ^ right_s
+  | true, true, false -> left_s ^ String.make min_gap ' ' ^ center_s
+  | false, true, true ->
+      center_s ^ String.make (width - center_w - right_w) ' ' ^ right_s
+  | true, false, true ->
+      left_s ^ String.make (width - left_w - right_w) ' ' ^ right_s
+  | true, true, true ->
+      let free = max 0 (width - left_w - center_w - right_w - (min_gap * 2)) in
+      let left_gap = min_gap + (free / 2) in
+      let right_gap = min_gap + (free - (free / 2)) in
+      left_s ^ String.make left_gap ' ' ^ center_s ^ String.make right_gap ' '
+      ^ right_s
 
 let render_second_line ~colorize ~width snapshot =
-  let activity = snapshot.activity in
-  let has_activity = activity_has_content activity in
-  match (snapshot.plan, has_activity) with
-  | None, false -> None
-  | Some plan, false -> Some (render_plan_line ~colorize ~width plan)
-  | None, true -> Some (render_activity_segment ~colorize ~width activity)
-  | Some plan, true ->
-      let sep = " │ " in
-      let sep_width = visible_width sep in
-      let plan_raw = plan_line_raw plan in
-      let plan_width = visible_width plan_raw in
-      if width <= 0 then Some ""
-      else if plan_width + sep_width >= width then
-        Some (colorize "dim" (take_width width plan_raw))
-      else
-        let activity_budget = width - plan_width - sep_width in
-        let activity_part =
-          render_activity_segment ~colorize ~width:activity_budget activity
-        in
-        Some (colorize "dim" plan_raw ^ colorize "dim" sep ^ activity_part)
+  if width <= 0 then None
+  else
+    let right_parts = activity_counts_parts snapshot.activity in
+    let left_parts =
+      match snapshot.plan with
+      | None -> []
+      | Some plan -> plan_zone_parts plan
+    in
+    match (left_parts, right_parts) with
+    | [], [] -> None
+    | _ ->
+        Some
+          (compose_zones ~colorize ~width left_parts
+             (center_zone_raw snapshot) right_parts)
 
 let render_lines ~colorize ~width snapshot =
   let primary = render_line ~colorize ~width snapshot in

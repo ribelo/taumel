@@ -5,7 +5,6 @@ type activity = {
   orphaned_agents : int;
   single_agent_description : string option;
   live_execs : int;
-  single_exec_command : string option;
 }
 
 type snapshot = {
