@@ -22,7 +22,7 @@ human-readable expanded view and a separate model-facing tool contract.
 - When an agent completion notification is expanded, the agent presentation shall omit the agent response. ^agentui-e5yj
 - When `agent_wait` observing multiple runs is displayed compactly, the agent presentation shall show the ready-run and pending-run counts. ^agentui-hdst
 - While `agent_wait` waits on exactly one run, the compact agent presentation shall show that run's agent handle in place of a run count, together with the run's task description when the description is resolvable from the current session. ^agentui-xqzc
-- When `agent_wait` returns exactly one observed run, the compact agent presentation shall show the agent handle, the run's lifecycle status colored by its semantic state, and the run's wall-clock duration, and a failed, cancelled, or lost run shall additionally show its reason. ^agentui-s3jx
+- When `agent_wait` returns exactly one observed run, the compact agent presentation shall show the agent handle, a status dot colored by the run's semantic state, the run's lifecycle status as uncolored text, and the run's wall-clock duration, and a failed, cancelled, or lost run shall additionally show its reason. ^agentui-s3jx
 - When an `agent_wait` result is expanded, the agent presentation shall show each observed run's turn count, tool-call count, failed tool-call count, and wall-clock duration as labeled fields. ^agentui-5qzn
 - When an agent completion notification reports a completed run, the agent presentation shall display a success-colored status dot. ^agentui-f545
 - If an agent completion notification reports a failed run, then the agent presentation shall display an error-colored status dot. ^agentui-8elv
