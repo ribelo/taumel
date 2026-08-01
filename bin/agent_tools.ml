@@ -14,7 +14,9 @@ let is_agent_child ctx =
   match Session_store.custom_entry_data ctx "taumel.childSession" with
   | Some data -> (
       match get_string data "kind" with
-      | "agent" | "generic" | "finder" | "oracle" -> true
+      | "agent" | "generic" | "finder" | "oracle" | "code-reviewer"
+      | "code-quality-reviewer" ->
+          true
       | _ -> false)
   | None -> false
 
@@ -92,7 +94,8 @@ let truncate_output ?owner_session_id ?agent_id ?run_id text =
 let permission_ceiling_for ~kind (parent : Taumel.Capability_profile.t) =
   let sandbox_preset =
     match kind with
-    | Taumel.Agents.Finder | Taumel.Agents.Oracle ->
+    | Taumel.Agents.Finder | Taumel.Agents.Oracle | Taumel.Agents.Code_reviewer
+    | Taumel.Agents.Code_quality_reviewer ->
         Taumel.Capability_profile.Read_only
     | Taumel.Agents.Generic -> (
         match parent.sandbox_preset with
@@ -107,6 +110,8 @@ let kind_of_tool = function
   | "agent_spawn" -> Ok Taumel.Agents.Generic
   | "finder" -> Ok Taumel.Agents.Finder
   | "oracle" -> Ok Taumel.Agents.Oracle
+  | "code_reviewer" -> Ok Taumel.Agents.Code_reviewer
+  | "code_quality_reviewer" -> Ok Taumel.Agents.Code_quality_reviewer
   | name -> Error ("unknown agent start tool: " ^ name)
 
 let tier_of_params params =
@@ -136,7 +141,9 @@ let start_details ~(identity : Taumel.Agents.identity)
          (match identity.identity_kind with
          | Taumel.Agents.Generic -> `V_generic
          | Taumel.Agents.Finder -> `V_finder
-         | Taumel.Agents.Oracle -> `V_oracle))
+         | Taumel.Agents.Oracle -> `V_oracle
+         | Taumel.Agents.Code_reviewer -> `V_code_reviewer
+         | Taumel.Agents.Code_quality_reviewer -> `V_code_quality_reviewer))
     ~model:identity.identity_model ~thinking:identity.identity_thinking ~prompt
     ~agentId:identity.identity_agent_id
     ~activeTools:identity.identity_active_tools
@@ -1039,7 +1046,9 @@ let prepare name params ctx =
   | Some message -> error_obj ("agent state is unavailable: " ^ message)
   | None -> (
       match name with
-      | "agent_spawn" | "finder" | "oracle" -> prepare_start name params ctx
+      | "agent_spawn" | "finder" | "oracle" | "code_reviewer"
+      | "code_quality_reviewer" ->
+          prepare_start name params ctx
       | "agent_send" -> prepare_send params ctx
       | "agent_wait" -> prepare_wait params ctx
       | "agent_list" -> prepare_list ctx

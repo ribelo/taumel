@@ -44,7 +44,9 @@ let assert_handle_shape label ~prefix agent_id =
   assert_true (label ^ " is valid")
     (Agents.valid_agent_id Agents.Generic agent_id
     || Agents.valid_agent_id Agents.Finder agent_id
-    || Agents.valid_agent_id Agents.Oracle agent_id)
+    || Agents.valid_agent_id Agents.Oracle agent_id
+    || Agents.valid_agent_id Agents.Code_reviewer agent_id
+    || Agents.valid_agent_id Agents.Code_quality_reviewer agent_id)
 
 let test_tiered_generic_handles_and_specialist_unchanged () =
   let mint ?effort ~kind expected_prefix =
@@ -73,10 +75,21 @@ let test_tiered_generic_handles_and_specialist_unchanged () =
        (Option.value defaulted.identity_effort ~default:Agents.Low));
   let finder = mint ~kind:Agents.Finder "finder-" in
   let oracle = mint ~kind:Agents.Oracle "oracle-" in
+  let code_reviewer = mint ~kind:Agents.Code_reviewer "code-reviewer-" in
+  let code_quality_reviewer =
+    mint ~kind:Agents.Code_quality_reviewer "code-quality-reviewer-"
+  in
   assert_true "finder not tiered"
     (not (starts_with ~prefix:"finder-low" finder.identity_agent_id));
   assert_true "oracle not tiered"
     (not (starts_with ~prefix:"oracle-high" oracle.identity_agent_id));
+  assert_true "code reviewer not tiered"
+    (not
+       (starts_with ~prefix:"code-reviewer-high" code_reviewer.identity_agent_id));
+  assert_true "code quality reviewer not tiered"
+    (not
+       (starts_with ~prefix:"code-quality-reviewer-high"
+          code_quality_reviewer.identity_agent_id));
   assert_true "low validates as generic"
     (Agents.valid_agent_id Agents.Generic low.identity_agent_id);
   assert_true "medium validates as generic"
@@ -107,7 +120,11 @@ let test_tiered_generic_handles_and_specialist_unchanged () =
       identities = [ legacy_identity ];
       runs = [ legacy_run ];
       issued_identity_counts =
-        { generic = 1; finder = 0; oracle = 0; issued_ids = [ legacy_id ] };
+        {
+          Agents.empty_issued_identity_counts with
+          generic = 1;
+          issued_ids = [ legacy_id ];
+        };
     }
   in
   (match Agents_codec.decode (Agents_codec.encode legacy_state) with
@@ -257,6 +274,12 @@ let test_specialist_tool_effect_clamps () =
   in
   let finder = Agents.specialist_tools ~kind:Agents.Finder active in
   let oracle = Agents.specialist_tools ~kind:Agents.Oracle active in
+  let code_reviewer =
+    Agents.specialist_tools ~kind:Agents.Code_reviewer active
+  in
+  let code_quality_reviewer =
+    Agents.specialist_tools ~kind:Agents.Code_quality_reviewer active
+  in
   assert_true "finder keeps read" (List.mem "read" finder);
   assert_true "finder keeps execute" (List.mem "exec_command" finder);
   assert_true "finder removes mutation" (not (List.mem "edit" finder));
@@ -264,7 +287,44 @@ let test_specialist_tool_effect_clamps () =
   assert_true "oracle keeps network" (List.mem "web_search_exa" oracle);
   assert_true "oracle removes mutation" (not (List.mem "edit" oracle));
   assert_true "oracle removes nested agents"
-    (not (List.mem "agent_spawn" oracle))
+    (not (List.mem "agent_spawn" oracle));
+  assert_true "code reviewer keeps network"
+    (List.mem "web_search_exa" code_reviewer);
+  assert_true "code reviewer removes mutation"
+    (not (List.mem "edit" code_reviewer));
+  assert_true "code quality reviewer keeps network"
+    (List.mem "web_search_exa" code_quality_reviewer);
+  assert_true "code quality reviewer removes nested agents"
+    (not (List.mem "code_reviewer" code_quality_reviewer))
+
+let test_kind_name_identity_accounting_is_extensible () =
+  let encoded = Agents_codec.encode Agents.empty_session_state in
+  let with_future_kind =
+    match encoded with
+    | Shared.Object fields ->
+        let counts =
+          match List.assoc_opt "issued_identity_counts" fields with
+          | Some (Shared.Object count_fields) ->
+              let count_fields =
+                count_fields
+                |> List.remove_assoc "code-reviewer"
+                |> List.remove_assoc "code-quality-reviewer"
+              in
+              Shared.Object
+                (("future-reviewer", Shared.Number 0.) :: count_fields)
+          | _ -> failwith "missing issued identity counts"
+        in
+        Shared.Object
+          (("issued_identity_counts", counts)
+          :: List.remove_assoc "issued_identity_counts" fields)
+    | _ -> failwith "expected encoded agent state"
+  in
+  match Agents_codec.decode with_future_kind with
+  | Error message -> failwith message
+  | Ok state ->
+      assert_true "unknown future kind count is retained"
+        (List.mem ("future-reviewer", 0)
+           state.issued_identity_counts.additional_kind_counts)
 
 let test_send_preflight_rollback_restores_state () =
   match spawn Agents.empty_session_state with
@@ -802,6 +862,14 @@ let test_agent_zwxp_codec_rejects_generic_agent_tools_and_missing_effort () =
               }))
 
 let test_routing_merge_and_validation () =
+  let reviewer_model, reviewer_thinking, reviewer_effort =
+    Agent_routing.default_routing ~kind:Agents.Code_reviewer ~effort:None
+      ~parent_model:(Some "parent/model")
+  in
+  assert_equal "code reviewer inherits parent model" "parent/model"
+    reviewer_model;
+  assert_equal "code reviewer defaults high thinking" "high" reviewer_thinking;
+  assert_true "code reviewer has no generic effort" (reviewer_effort = None);
   let base =
     match
       Agent_routing.of_taumel_json
@@ -840,6 +908,12 @@ let test_routing_merge_and_validation () =
                          ("model", Shared.String "openai/gpt-5");
                          ("thinking", Shared.String "high");
                        ] );
+                   ( "code-reviewer",
+                     Shared.Object
+                       [
+                         ("model", Shared.String "review/model");
+                         ("thinking", Shared.String "xhigh");
+                       ] );
                  ] );
            ])
     with
@@ -860,6 +934,13 @@ let test_routing_merge_and_validation () =
       assert_equal "finder model" "openai/gpt-5" entry.model;
       assert_equal "finder thinking" "high" entry.thinking
   | None -> failwith "missing finder");
+  (match
+     Agent_routing.entry_for merged ~kind:Agents.Code_reviewer ~effort:None
+   with
+  | Some entry ->
+      assert_equal "code reviewer model" "review/model" entry.model;
+      assert_equal "code reviewer thinking" "xhigh" entry.thinking
+  | None -> failwith "missing code reviewer");
   (match
      Agent_routing.of_taumel_json
        (Shared.Object
@@ -904,7 +985,11 @@ let current_to_v4_parent_snapshot state =
       let issued =
         match List.assoc_opt "issued_identity_counts" fields with
         | Some (Shared.Object count_fields) ->
-            Shared.Object (List.remove_assoc "issued_ids" count_fields)
+            Shared.Object
+              (List.filter
+                 (fun (name, _) ->
+                   List.mem name [ "agent"; "finder"; "oracle" ])
+                 count_fields)
         | Some other -> other
         | None -> Shared.Object []
       in
@@ -974,7 +1059,11 @@ let legacy_untiered_bootstrap_state () =
       identities = [ identity ];
       runs = [ run ];
       issued_identity_counts =
-        { generic = 1; finder = 0; oracle = 0; issued_ids = [ agent_id ] };
+        {
+          Agents.empty_issued_identity_counts with
+          generic = 1;
+          issued_ids = [ agent_id ];
+        };
     },
     identity,
     run )
@@ -1151,6 +1240,7 @@ let () =
   test_agent_zwxp_pending_cleanup_handle_is_never_reused ();
   test_agent_zwxp_counter_must_cover_retained_handle_position ();
   test_specialist_tool_effect_clamps ();
+  test_kind_name_identity_accounting_is_extensible ();
   test_send_preflight_rollback_restores_state ();
   test_send_matrix ();
   test_wait_is_idempotent_and_observes_announcement ();

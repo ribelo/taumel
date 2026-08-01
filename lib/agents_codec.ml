@@ -36,12 +36,18 @@ let string_list values =
 
 let encode_issued_identity_counts (counts : issued_identity_counts) =
   Shared.Object
-    [
-      ("agent", Shared.Number (float_of_int counts.generic));
-      ("finder", Shared.Number (float_of_int counts.finder));
-      ("oracle", Shared.Number (float_of_int counts.oracle));
-      ("issued_ids", string_list counts.issued_ids);
-    ]
+    ([
+       ("agent", Shared.Number (float_of_int counts.generic));
+       ("finder", Shared.Number (float_of_int counts.finder));
+       ("oracle", Shared.Number (float_of_int counts.oracle));
+       ("code-reviewer", Shared.Number (float_of_int counts.code_reviewer));
+       ( "code-quality-reviewer",
+         Shared.Number (float_of_int counts.code_quality_reviewer) );
+     ]
+    @ List.map
+        (fun (name, count) -> (name, Shared.Number (float_of_int count)))
+        counts.additional_kind_counts
+    @ [ ("issued_ids", string_list counts.issued_ids) ])
 
 let encode_identity (identity : identity) =
   Shared.Object
@@ -387,6 +393,9 @@ let kind_for_agent_id value =
   if valid_agent_id Generic value then Some Generic
   else if valid_agent_id Finder value then Some Finder
   else if valid_agent_id Oracle value then Some Oracle
+  else if valid_agent_id Code_reviewer value then Some Code_reviewer
+  else if valid_agent_id Code_quality_reviewer value then
+    Some Code_quality_reviewer
   else None
 
 let validate_state state =
@@ -439,7 +448,7 @@ let validate_state state =
           let specialist =
             match identity.identity_kind with
             | Generic -> false
-            | Finder | Oracle -> true
+            | Finder | Oracle | Code_reviewer | Code_quality_reviewer -> true
           in
           if
             List.exists
@@ -454,14 +463,18 @@ let validate_state state =
               (fun name ->
                 match (identity.identity_kind, tool_effect name) with
                 | Finder, Some (Tool_gateway.Pure | Tool_gateway.Execute)
-                | ( Oracle,
+                | ( (Oracle | Code_reviewer | Code_quality_reviewer),
                     Some
                       ( Tool_gateway.Pure | Tool_gateway.Execute
                       | Tool_gateway.Network ) )
-                | (Generic | Finder | Oracle), None
+                | ( ( Generic | Finder | Oracle | Code_reviewer
+                    | Code_quality_reviewer ),
+                    None )
                 | Generic, Some _ ->
                     false
-                | (Finder | Oracle), Some _ -> true)
+                | ( (Finder | Oracle | Code_reviewer | Code_quality_reviewer),
+                    Some _ ) ->
+                    true)
               identity.identity_active_tools
           then
             Error
@@ -577,12 +590,14 @@ let validate_state state =
       0 issued_kinds
   in
   if
-    counts.generic < issued_count_for Generic
-    || counts.finder < issued_count_for Finder
-    || counts.oracle < issued_count_for Oracle
-    || counts.generic > nano_id_namespace_size
-    || counts.finder > nano_id_namespace_size
-    || counts.oracle > nano_id_namespace_size
+    List.exists
+      (fun kind ->
+        issued_count counts kind < issued_count_for kind
+        || issued_count counts kind > nano_id_namespace_size)
+      [ Generic; Finder; Oracle; Code_reviewer; Code_quality_reviewer ]
+    || List.exists
+         (fun (_, count) -> count < 0 || count > nano_id_namespace_size)
+         counts.additional_kind_counts
   then Error "issued_identity_counts are inconsistent with persisted identities"
   else
     let cleanup_keys =
@@ -621,11 +636,6 @@ let decode = function
           let* issued_identity_counts =
             match List.assoc_opt "issued_identity_counts" fields with
             | Some (Shared.Object count_fields) ->
-                let* () =
-                  Shared.json_exact_fields "issued_identity_counts"
-                    [ "agent"; "finder"; "oracle"; "issued_ids" ]
-                    count_fields
-                in
                 let* generic =
                   Shared.json_required_int "issued_identity_counts" count_fields
                     "agent"
@@ -638,6 +648,18 @@ let decode = function
                   Shared.json_required_int "issued_identity_counts" count_fields
                     "oracle"
                 in
+                let optional_count name =
+                  match List.assoc_opt name count_fields with
+                  | None -> Ok 0
+                  | Some value ->
+                      Shared.json_int
+                        (Shared.json_path "issued_identity_counts" name)
+                        value
+                in
+                let* code_reviewer = optional_count "code-reviewer" in
+                let* code_quality_reviewer =
+                  optional_count "code-quality-reviewer"
+                in
                 let* issued_ids =
                   match List.assoc_opt "issued_ids" count_fields with
                   | Some value ->
@@ -646,9 +668,49 @@ let decode = function
                   | None ->
                       Error "issued_identity_counts.issued_ids is required"
                 in
-                if generic < 0 || finder < 0 || oracle < 0 then
-                  Error "issued_identity_counts must be non-negative"
-                else Ok { generic; finder; oracle; issued_ids }
+                let known =
+                  [
+                    "agent";
+                    "finder";
+                    "oracle";
+                    "code-reviewer";
+                    "code-quality-reviewer";
+                    "issued_ids";
+                  ]
+                in
+                let rec decode_additional acc = function
+                  | [] -> Ok (List.rev acc)
+                  | (name, _) :: rest when List.mem name known ->
+                      decode_additional acc rest
+                  | (name, value) :: rest ->
+                      let* count =
+                        Shared.json_int
+                          (Shared.json_path "issued_identity_counts" name)
+                          value
+                      in
+                      decode_additional ((name, count) :: acc) rest
+                in
+                let* additional_kind_counts =
+                  decode_additional [] count_fields
+                in
+                if
+                  generic < 0 || finder < 0 || oracle < 0 || code_reviewer < 0
+                  || code_quality_reviewer < 0
+                  || List.exists
+                       (fun (_, count) -> count < 0)
+                       additional_kind_counts
+                then Error "issued_identity_counts must be non-negative"
+                else
+                  Ok
+                    {
+                      generic;
+                      finder;
+                      oracle;
+                      code_reviewer;
+                      code_quality_reviewer;
+                      additional_kind_counts;
+                      issued_ids;
+                    }
             | Some _ -> Error "issued_identity_counts must be an object"
             | None -> Error "issued_identity_counts is required"
           in

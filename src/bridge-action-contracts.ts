@@ -235,6 +235,7 @@ export const PreparedExaApprovalSchema = Type.Object(
 );
 const AgentKindSchema = Type.Union([
   Type.Literal("generic"), Type.Literal("finder"), Type.Literal("oracle"),
+  Type.Literal("code-reviewer"), Type.Literal("code-quality-reviewer"),
 ]);
 const AgentRunStatusSchema = Type.Union([
   Type.Literal("running"), Type.Literal("suspended"), Type.Literal("completed"),

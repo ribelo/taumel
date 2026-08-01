@@ -1,6 +1,11 @@
 type custom_entry = { custom_type : string; data : Shared.json }
 
-type agent_kind = Generic | Finder | Oracle
+type agent_kind =
+  | Generic
+  | Finder
+  | Oracle
+  | Code_reviewer
+  | Code_quality_reviewer
 
 type worktree_agent = {
   agent_id : string;
@@ -95,6 +100,8 @@ let decode_agent_kind = function
   | "generic" -> Ok Generic
   | "finder" -> Ok Finder
   | "oracle" -> Ok Oracle
+  | "code-reviewer" -> Ok Code_reviewer
+  | "code-quality-reviewer" -> Ok Code_quality_reviewer
   | value -> Error ("invalid child session agentKind: " ^ value)
 
 let validate_optional_positive_int fields name =
@@ -200,7 +207,12 @@ let persisted_agent_id = function
 
 let rejects_escalation = function
   | Ralph_metadata -> false
-  | Agent_metadata { agent_kind = Finder | Oracle; _ } -> true
+  | Agent_metadata
+      {
+        agent_kind = Finder | Oracle | Code_reviewer | Code_quality_reviewer;
+        _;
+      } ->
+      true
   | Agent_metadata { workspace = Worktree_workspace _; _ } -> true
   | Agent_metadata _ -> false
 

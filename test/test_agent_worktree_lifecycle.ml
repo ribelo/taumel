@@ -83,9 +83,8 @@ let test_spawn_persists_worktree_binding () =
                runs = [];
                issued_identity_counts =
                  {
-                   Agents.generic = 1;
-                   finder = 0;
-                   oracle = 0;
+                   Agents.empty_issued_identity_counts with
+                   generic = 1;
                    issued_ids = [ identity.identity_agent_id ];
                  };
                cleanup_pending = [];

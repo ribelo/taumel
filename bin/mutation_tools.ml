@@ -266,7 +266,7 @@ let prepare_exec_command params ctx =
           | Taumel.Sandbox.Require_escalated _
             when child_rejects_escalation child_metadata ->
               error_obj
-                "command escalation is rejected for finder, oracle, and \
+                "command escalation is rejected for specialist and \
                  worktree-isolated agents"
           | _ -> (
               let worktree_ctx = child_worktree_context child_metadata in

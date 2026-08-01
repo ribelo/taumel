@@ -13,6 +13,8 @@ import {
   AgentSpawnParamsSchema,
   FinderParamsSchema,
   OracleParamsSchema,
+  CodeReviewerParamsSchema,
+  CodeQualityReviewerParamsSchema,
   AgentSendParamsSchema,
   AgentWaitParamsSchema,
   AgentCloseParamsSchema,
@@ -422,6 +424,8 @@ export const dtsSchemas = [
   ["AgentSpawnParams", AgentSpawnParamsSchema],
   ["FinderParams", FinderParamsSchema],
   ["OracleParams", OracleParamsSchema],
+  ["CodeReviewerParams", CodeReviewerParamsSchema],
+  ["CodeQualityReviewerParams", CodeQualityReviewerParamsSchema],
   ["AgentSendParams", AgentSendParamsSchema],
   ["AgentWaitParams", AgentWaitParamsSchema],
   ["AgentCloseParams", AgentCloseParamsSchema],
@@ -457,6 +461,8 @@ export const toolParamSchemas = [
   { name: "agent_spawn", interfaceName: "AgentSpawnParams", schema: AgentSpawnParamsSchema },
   { name: "finder", interfaceName: "FinderParams", schema: FinderParamsSchema },
   { name: "oracle", interfaceName: "OracleParams", schema: OracleParamsSchema },
+  { name: "code_reviewer", interfaceName: "CodeReviewerParams", schema: CodeReviewerParamsSchema },
+  { name: "code_quality_reviewer", interfaceName: "CodeQualityReviewerParams", schema: CodeQualityReviewerParamsSchema },
   { name: "agent_send", interfaceName: "AgentSendParams", schema: AgentSendParamsSchema },
   { name: "agent_wait", interfaceName: "AgentWaitParams", schema: AgentWaitParamsSchema },
   { name: "agent_list", interfaceName: "EmptyParams", schema: EmptyParamsSchema },
@@ -522,7 +528,7 @@ export function parseToolParams(toolName: string, rawParams: unknown): ParseTool
     }
   }
   if (
-    (toolName === "agent_spawn" || toolName === "oracle") &&
+    (toolName === "agent_spawn" || toolName === "oracle" || toolName === "code_reviewer" || toolName === "code_quality_reviewer") &&
     typeof params === "object" && params !== null
   ) {
     const message = (params as { message?: unknown }).message;

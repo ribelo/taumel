@@ -77,6 +77,10 @@ function argsFor(name) {
       return { query: "inspect renderer coverage", description: "Locate renderer coverage" };
     case "oracle":
       return { message: "inspect renderer coverage", description: "Review renderer coverage" };
+    case "code_reviewer":
+      return { message: "review HEAD~1..HEAD", description: "Review latest changes" };
+    case "code_quality_reviewer":
+      return { message: "review HEAD~1..HEAD", description: "Review code quality" };
     case "agent_send":
       return { agent_id: "worker-1", message: "continue", description: "Continue renderer work" };
     case "agent_wait":
@@ -163,10 +167,12 @@ function resultFor(name) {
   if (name === "read_thread") {
     return { content: [{ type: "text", text: longLines }], details: { ok: true, thread: { id: "thread-1", title: "Thread 1" } } };
   }
-  if (name === "agent_spawn" || name === "finder" || name === "oracle") {
+  if (name === "agent_spawn" || name === "finder" || name === "oracle"
+    || name === "code_reviewer" || name === "code_quality_reviewer") {
     const kind = name === "agent_spawn" ? "generic" : name;
-    const agentId = name === "agent_spawn" ? "agent-7k2m" : `${kind}-2sk2`;
-    return { content: [{ type: "text", text: "agent started" }], details: { ok: true, kind, agentId, runId: `${agentId}-run-1`, tier: name === "agent_spawn" ? "medium" : undefined, model: "provider/model", thinking: kind === "oracle" ? "high" : "low", status: "running" } };
+    const handleKind = kind.replaceAll("_", "-");
+    const agentId = name === "agent_spawn" ? "agent-7k2m" : `${handleKind}-2sk2`;
+    return { content: [{ type: "text", text: "agent started" }], details: { ok: true, kind: handleKind, agentId, runId: `${agentId}-run-1`, tier: name === "agent_spawn" ? "medium" : undefined, model: "provider/model", thinking: name === "agent_spawn" || kind === "finder" ? "low" : "high", status: "running" } };
   }
   if (name === "agent_send") {
     return { content: [{ type: "text", text: "agent message sent" }], details: { ok: true, agentId: "worker-1", outcome: "message_sent", runId: "worker-1-run-1", status: "running" } };
@@ -330,14 +336,14 @@ assert(
   renderersForTool("write_stdin").renderCall({ session_id: 7 }, theme, { isPartial: false }).render(120).length === 0,
   "completed write_stdin call placeholder should render zero lines, not a blank top-margin row",
 );
-for (const name of ["agent_spawn", "finder", "oracle", "agent_send", "agent_wait", "agent_list", "agent_close"]) {
+for (const name of ["agent_spawn", "finder", "oracle", "code_reviewer", "code_quality_reviewer", "agent_send", "agent_wait", "agent_list", "agent_close"]) {
   assert(
     renderersForTool(name).renderCall(argsFor(name), theme, { isPartial: false }).render(120).length === 0,
     `completed ${name} call placeholder should leave exactly one visible tool slot`,
   );
 }
 
-// agent-rn07: Pi retains the component returned for the pending call and stacks
+// agent-pce5: Pi retains the component returned for the pending call and stacks
 // the result component beneath it. Settling must therefore hide the original
 // component, not merely return an empty component from a later renderCall call.
 {
@@ -401,6 +407,26 @@ const spawnedFinder = renderText(renderersForTool("finder").renderResult(
 ));
 // agentui-s0qm: compact Finder uses the handle and task description.
 assert(/^• finder · finder-2sk2 · Locate renderer coverage$/.test(spawnedFinder), `finder compact slot wrong: ${spawnedFinder}`);
+for (const [name, description, kind] of [
+  ["code_reviewer", "Review latest changes", "code-reviewer"],
+  ["code_quality_reviewer", "Review code quality", "code-quality-reviewer"],
+]) {
+  const compact = renderText(renderersForTool(name).renderResult(
+    resultFor(name), { expanded: false, isPartial: false }, theme, { args: argsFor(name) },
+  ));
+  assert(compact === `• ${name} · ${kind}-2sk2 · ${description}`,
+    `${name} compact slot wrong: ${compact}`);
+  const expanded = renderText(renderersForTool(name).renderResult(
+    resultFor(name), { expanded: true, isPartial: false }, theme, { args: argsFor(name) },
+  ));
+  for (const expected of [
+    `Agent: ${kind}-2sk2`, `Kind: ${kind}`, "Model: provider/model",
+    "Thinking: high", "Status: running", `Description: ${description}`,
+    "Message: review HEAD~1..HEAD",
+  ]) assert(expanded.includes(expected), `${name} expanded slot missing ${expected}: ${expanded}`);
+  assert(!expanded.includes("$code-review") && !expanded.includes("<skill"),
+    `${name} expanded slot exposed injected rubric context: ${expanded}`);
+}
 const sentAgent = renderText(renderersForTool("agent_send").renderResult(
   resultFor("agent_send"),
   { expanded: false, isPartial: false },

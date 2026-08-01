@@ -9,6 +9,8 @@ import {
   AgentWaitParamsSchema,
   FinderParamsSchema,
   OracleParamsSchema,
+  CodeReviewerParamsSchema,
+  CodeQualityReviewerParamsSchema,
 } from "./tool-agent-contracts.ts";
 import {
   CrawlingExaParamsSchema,
@@ -262,7 +264,7 @@ export const toolContracts: readonly ToolContract[] = [
     promptSnippet: "Start a durable generic agent for substantial asynchronous execution.",
     promptGuidelines: [
       "For agent_spawn, choose tier by task complexity and scope. Use low for straightforward, well-defined work: a one-file change or simple mechanical refactor across the codebase; bounded delegated internet research; or one known check or bounded evidence collection. Use medium for well-scoped work requiring reasoning across several files; focused independent research across multiple sources; or reproducing and verifying a workflow across several components. Use high for difficult, open-ended, or repository-wide work: broad cross-cutting changes; comprehensive independent research requiring broad source synthesis; or repository-wide failure investigation and validation. Medium is the default.",
-      "Use agent_spawn for substantial delegated execution that does not fit finder or oracle, especially independent multi-step work, parallel disjoint work, or work with extensive intermediate output that the parent does not need.",
+      "Use agent_spawn for substantial delegated execution that does not fit finder, oracle, code_reviewer, or code_quality_reviewer, especially independent multi-step work, parallel disjoint work, or work with extensive intermediate output that the parent does not need.",
       "Use agent_spawn to create a new identity when substantial delegated execution has a materially different objective, files, component, or constraints and an existing agent's retained context would not help.",
       "When using agent_spawn, remember that the child has its own conversation and does not inherit the parent conversation. Include all relevant decisions, context, constraints, and validation instructions in message, or reference paths to files that contain them.",
     ],
@@ -289,6 +291,28 @@ export const toolContracts: readonly ToolContract[] = [
       "Use oracle when the primary outcome is independent reasoning, judgment, critique, diagnosis, planning, review, or a recommendation rather than carrying out the resulting action.",
     ],
     parameters: toolParameters(OracleParamsSchema),
+  },
+  {
+    name: "code_reviewer",
+    label: "code reviewer",
+    description:
+      "Create a durable, read-only code reviewer and start an asynchronous run that reviews caller-identified changes against the correctness, security, and developer-experience rubric. The identity can be continued with agent_send; the call returns after the review request is accepted, without waiting for completion.",
+    promptSnippet: "Start a read-only code reviewer for correctness, security, and developer experience.",
+    promptGuidelines: [
+      "Use code_reviewer when the deliverable is a review of identified changes for correctness, security, and developer experience.",
+    ],
+    parameters: toolParameters(CodeReviewerParamsSchema),
+  },
+  {
+    name: "code_quality_reviewer",
+    label: "code quality reviewer",
+    description:
+      "Create a durable, read-only code quality reviewer and start an asynchronous run that reviews caller-identified changes against the maintainability rubric. The identity can be continued with agent_send; the call returns after the review request is accepted, without waiting for completion.",
+    promptSnippet: "Start a read-only code quality reviewer for maintainability and structure.",
+    promptGuidelines: [
+      "Use code_quality_reviewer when the deliverable is a review of identified changes for maintainability, structure, abstraction quality, and test quality.",
+    ],
+    parameters: toolParameters(CodeQualityReviewerParamsSchema),
   },
   {
     name: "agent_send",

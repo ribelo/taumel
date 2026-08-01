@@ -367,7 +367,9 @@ function buildAgent(name: string, result: unknown, options: unknown, theme: unkn
     ?? "";
   const runId = stringFieldOrUndefined(details, "runId") ?? "";
   const kind = stringFieldOrUndefined(details, "kind")
-    ?? (name === "finder" || name === "oracle" ? name : "generic");
+    ?? (["finder", "oracle", "code_reviewer", "code_quality_reviewer"].includes(name)
+      ? name.replaceAll("_", "-")
+      : "generic");
   const status = stringFieldOrUndefined(details, "status")
     ?? stringFieldOrUndefined(details, "outcome");
   let dotColor = dotFromDetails(details);
@@ -399,11 +401,11 @@ function buildAgent(name: string, result: unknown, options: unknown, theme: unkn
       trailing = themeFg(theme, "dim", `(${results.length} ready, ${pending} pending)`);
     }
   } else if (name === "agent_spawn") {
-    // agentui-weo6 / agent-rn05: handle already encodes tier (agent-medium-…),
+    // agentui-weo6 / agent-9ach: handle already encodes tier (agent-medium-…),
     // so compact subject is handle · description only.
     subject = [agentId, stringFieldOrUndefined(args, "description")]
       .filter((part) => part !== undefined && part !== "").join(" · ");
-  } else if (name === "finder" || name === "oracle") {
+  } else if (["finder", "oracle", "code_reviewer", "code_quality_reviewer"].includes(name)) {
     subject = [agentId, stringFieldOrUndefined(args, "description")].filter((part) => part !== undefined && part !== "").join(" · ");
   } else if (name === "agent_send") {
     subject = [agentId, stringFieldOrUndefined(args, "description")].filter((part) => part !== undefined && part !== "").join(" · ");
@@ -456,7 +458,7 @@ function buildAgent(name: string, result: unknown, options: unknown, theme: unkn
 }
 
 export function buildDomainResult(name: string, result: unknown, options: unknown, theme: unknown, args: ToolRenderFields): Block | undefined {
-  if (["agent_spawn", "agent_send", "agent_wait", "agent_list", "agent_close", "finder", "oracle"].includes(name)) {
+  if (["agent_spawn", "agent_send", "agent_wait", "agent_list", "agent_close", "finder", "oracle", "code_reviewer", "code_quality_reviewer"].includes(name)) {
     return buildAgent(name, result, options, theme, args);
   }
   if (name === "get_plan" || name === "create_task" || name === "update_task" || name === "update_plan") return buildPlan(name, result, options, theme, args);

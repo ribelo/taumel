@@ -9,6 +9,8 @@ for (const name of [
   "agent_close",
   "finder",
   "oracle",
+  "code_reviewer",
+  "code_quality_reviewer",
 ]) {
   assert.ok(toolNames.includes(name), `missing tool contract: ${name}`);
 }
@@ -29,6 +31,12 @@ assert.equal(parseToolParams("finder", { query: "find auth", description: "Locat
 assert.equal(parseToolParams("finder", { query: "find auth", description: "Locate authentication code", isolation: "worktree" }).ok, true);
 assert.equal(parseToolParams("oracle", { message: "review architecture", description: "Review system architecture" }).ok, true);
 assert.equal(parseToolParams("oracle", { message: "review architecture", description: "Review system architecture", isolation: "none" }).ok, true);
+for (const name of ["code_reviewer", "code_quality_reviewer"]) {
+  assert.equal(parseToolParams(name, { message: "review HEAD~1..HEAD", description: "Review latest changes" }).ok, true);
+  assert.equal(parseToolParams(name, { message: "review HEAD~1..HEAD", description: "Review latest changes", isolation: "worktree" }).ok, true);
+  assert.equal(parseToolParams(name, { message: "   ", description: "Review latest changes" }).ok, false);
+  assert.equal(parseToolParams(name, { message: "review", description: "Review latest changes", tier: "high" }).ok, false);
+}
 assert.equal(parseToolParams("finder", { query: "x", tier: "low" }).ok, false);
 
 assert.equal(parseToolParams("agent_send", { agent_id: "a1", message: "continue", description: "Continue agent work" }).ok, true);

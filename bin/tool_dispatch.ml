@@ -30,7 +30,8 @@ let prepare raw_facts =
   | Ok () -> (
       match name with
       | "agent_spawn" | "agent_send" | "agent_wait" | "agent_list"
-      | "agent_close" | "finder" | "oracle" ->
+      | "agent_close" | "finder" | "oracle" | "code_reviewer"
+      | "code_quality_reviewer" ->
           Agent_tools.prepare name params ctx
       | "exec_command" -> Mutation_tools.prepare_exec_command params ctx
       | "write_stdin" -> Mutation_tools.prepare_write_stdin params

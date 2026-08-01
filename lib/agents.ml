@@ -21,7 +21,12 @@ let nano_id = Shared.nano_id
 
 let valid_nano_id = Shared.valid_nano_id
 
-type agent_kind = Generic | Finder | Oracle
+type agent_kind =
+  | Generic
+  | Finder
+  | Oracle
+  | Code_reviewer
+  | Code_quality_reviewer
 
 type effort = Low | Medium | High
 
@@ -103,6 +108,9 @@ type issued_identity_counts = {
   generic : int;
   finder : int;
   oracle : int;
+  code_reviewer : int;
+  code_quality_reviewer : int;
+  additional_kind_counts : (string * int) list;
   issued_ids : string list;
 }
 
@@ -154,7 +162,15 @@ type wait_result = {
 }
 
 let empty_issued_identity_counts =
-  { generic = 0; finder = 0; oracle = 0; issued_ids = [] }
+  {
+    generic = 0;
+    finder = 0;
+    oracle = 0;
+    code_reviewer = 0;
+    code_quality_reviewer = 0;
+    additional_kind_counts = [];
+    issued_ids = [];
+  }
 
 let empty_session_state =
   {
@@ -168,11 +184,15 @@ let agent_kind_to_string = function
   | Generic -> "generic"
   | Finder -> "finder"
   | Oracle -> "oracle"
+  | Code_reviewer -> "code-reviewer"
+  | Code_quality_reviewer -> "code-quality-reviewer"
 
 let agent_kind_of_string = function
   | "generic" -> Ok Generic
   | "finder" -> Ok Finder
   | "oracle" -> Ok Oracle
+  | "code-reviewer" -> Ok Code_reviewer
+  | "code-quality-reviewer" -> Ok Code_quality_reviewer
   | value -> Error ("invalid agent kind: " ^ value)
 
 let effort_to_string = function
@@ -315,6 +335,8 @@ let agent_tools =
     "agent_close";
     "finder";
     "oracle";
+    "code_reviewer";
+    "code_quality_reviewer";
   ]
 
 let unique_names names =
@@ -346,7 +368,7 @@ let specialist_tools ~kind parent_tools =
             match tool_effect name with
             | Some Tool_gateway.Pure | Some Tool_gateway.Execute -> true
             | _ -> false)
-    | Oracle ->
+    | Oracle | Code_reviewer | Code_quality_reviewer ->
         parent
         |> List.filter (fun name ->
             match tool_effect name with
@@ -437,19 +459,25 @@ let kind_prefix = function
   | Generic -> "agent"
   | Finder -> "finder"
   | Oracle -> "oracle"
+  | Code_reviewer -> "code-reviewer"
+  | Code_quality_reviewer -> "code-quality-reviewer"
 
 let issued_count counts = function
   | Generic -> counts.generic
   | Finder -> counts.finder
   | Oracle -> counts.oracle
+  | Code_reviewer -> counts.code_reviewer
+  | Code_quality_reviewer -> counts.code_quality_reviewer
 
 let with_issued_count counts kind value =
   match kind with
   | Generic -> { counts with generic = value }
   | Finder -> { counts with finder = value }
   | Oracle -> { counts with oracle = value }
+  | Code_reviewer -> { counts with code_reviewer = value }
+  | Code_quality_reviewer -> { counts with code_quality_reviewer = value }
 
-(* Generic: agent-<tier>-<nano4>; specialists: finder-/oracle-<nano4>. ^agent-id02 *)
+(* Generic: agent-<tier>-<nano4>; specialists: <kind>-<nano4>. ^agent-ym73 *)
 let mint_handle_prefix kind ~effort =
   match kind with
   | Generic ->
@@ -457,6 +485,8 @@ let mint_handle_prefix kind ~effort =
       "agent-" ^ effort_to_string tier
   | Finder -> "finder"
   | Oracle -> "oracle"
+  | Code_reviewer -> "code-reviewer"
+  | Code_quality_reviewer -> "code-quality-reviewer"
 
 let matches_handle_prefix prefix value =
   let prefix_length = String.length prefix in
@@ -465,10 +495,11 @@ let matches_handle_prefix prefix value =
   && value.[prefix_length] = '-'
   && valid_nano_id (String.sub value (prefix_length + 1) nano_id_length)
 
-(* Tiered + legacy agent-<nano4> for Generic. ^agent-id02 / ^agent-zpfx *)
+(* Tiered + legacy agent-<nano4> for Generic. ^agent-ym73 / ^agent-zpfx *)
 let valid_agent_id kind value =
   match kind with
-  | Finder | Oracle -> matches_handle_prefix (kind_prefix kind) value
+  | Finder | Oracle | Code_reviewer | Code_quality_reviewer ->
+      matches_handle_prefix (kind_prefix kind) value
   | Generic ->
       matches_handle_prefix "agent-low" value
       || matches_handle_prefix "agent-medium" value
@@ -505,7 +536,7 @@ let default_thinking_for_kind ~effort = function
       | Some High -> "high"
       | Some Medium | None -> "medium")
   | Finder -> "low"
-  | Oracle -> "high"
+  | Oracle | Code_reviewer | Code_quality_reviewer -> "high"
 
 let create_run ~now ~agent_id ~run_id ~description =
   {
@@ -571,7 +602,7 @@ let record_spawn state ~now ~owner_session_id ~kind ?effort ~model ~thinking
     let effort =
       match kind with
       | Generic -> Some (Option.value effort ~default:Medium)
-      | Finder | Oracle -> None
+      | Finder | Oracle | Code_reviewer | Code_quality_reviewer -> None
     in
     match generate_agent_id state kind ~owner_session_id ~effort with
     | Error _ as error -> error
@@ -591,7 +622,8 @@ let record_spawn state ~now ~owner_session_id ~kind ?effort ~model ~thinking
             identity_network_allowed =
               (match kind with
               | Finder -> false
-              | Generic | Oracle -> network_allowed);
+              | Generic | Oracle | Code_reviewer | Code_quality_reviewer ->
+                  network_allowed);
             identity_workspace_binding = workspace_binding;
             identity_child_session_file = None;
             identity_child_session_id = None;

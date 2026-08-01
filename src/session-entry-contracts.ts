@@ -40,7 +40,10 @@ export const WorktreeWorkspaceBindingSchema = Type.Object(
 
 const ChildAgentMetadataFields = {
   kind: Type.Literal("agent"),
-  agentKind: Type.Union([Type.Literal("generic"), Type.Literal("finder"), Type.Literal("oracle")]),
+  agentKind: Type.Union([
+    Type.Literal("generic"), Type.Literal("finder"), Type.Literal("oracle"),
+    Type.Literal("code-reviewer"), Type.Literal("code-quality-reviewer"),
+  ]),
   agentId: Type.String({ minLength: 1 }),
   modelId: Type.String({ minLength: 1 }),
   thinkingLevel: Type.String({ minLength: 1 }),
@@ -190,7 +193,10 @@ const NullableInteger = Type.Union([
 ]);
 const AgentIdentitySchema = Type.Object({
   agent_id: Type.String(), owner_session_id: Type.String(), issued_run_count: Type.Integer({ minimum: 1, maximum: 2147483647 }),
-  kind: Type.Union([Type.Literal("generic"), Type.Literal("finder"), Type.Literal("oracle")]),
+  kind: Type.Union([
+    Type.Literal("generic"), Type.Literal("finder"), Type.Literal("oracle"),
+    Type.Literal("code-reviewer"), Type.Literal("code-quality-reviewer"),
+  ]),
   effort: Type.Union([Type.Literal("low"), Type.Literal("medium"), Type.Literal("high"), Type.Null()]),
   model: Type.String(), thinking: Type.String(), active_tools: Type.Array(Type.String()),
   permission_ceiling: CapabilityProfileSchema, network_allowed: Type.Boolean(),
@@ -238,14 +244,14 @@ export const AgentsStateV6Schema = Type.Object({
       oracle: Type.Integer({ minimum: 0, maximum: 2147483647 }),
       issued_ids: Type.Array(
         Type.String({
-          // Tiered generic agent-<tier>-<nano4>, legacy agent-<nano4>, and specialist finder-/oracle-<nano4>.
+          // Tiered generic, legacy generic, and specialist kind handles.
           pattern:
-            "^(?:agent(?:-(?:low|medium|high))?|finder|oracle)-[abcdefghjkmnpqrstuvwxyz23456789]{4}$",
+            "^(?:agent(?:-(?:low|medium|high))?|finder|oracle|code-reviewer|code-quality-reviewer)-[abcdefghjkmnpqrstuvwxyz23456789]{4}$",
         }),
         { uniqueItems: true },
       ),
     },
-    { additionalProperties: false },
+    { additionalProperties: Type.Integer({ minimum: 0, maximum: 2147483647 }) },
   ),
   identities: Type.Array(AgentIdentitySchema), runs: Type.Array(AgentRunSchema),
   cleanup_pending: Type.Array(AgentCleanupPendingSchema),

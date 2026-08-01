@@ -502,7 +502,9 @@ let manager_snapshot ctx =
                (match identity.identity_kind with
                | Taumel.Agents.Generic -> `V_generic
                | Finder -> `V_finder
-               | Oracle -> `V_oracle))
+               | Oracle -> `V_oracle
+               | Code_reviewer -> `V_code_reviewer
+               | Code_quality_reviewer -> `V_code_quality_reviewer))
           ~model:identity.identity_model ~thinking:identity.identity_thinking
           ~workspace:(Taumel.Agents.identity_source_workspace identity)
           ?isolation:

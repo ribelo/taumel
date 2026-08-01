@@ -20,6 +20,8 @@ let agent_tool_specs =
     { name = "agent_close"; effect_kind = Spawn_agent };
     { name = "finder"; effect_kind = Spawn_agent };
     { name = "oracle"; effect_kind = Spawn_agent };
+    { name = "code_reviewer"; effect_kind = Spawn_agent };
+    { name = "code_quality_reviewer"; effect_kind = Spawn_agent };
   ]
 
 let agent_tool_names =

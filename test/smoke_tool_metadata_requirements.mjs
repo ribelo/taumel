@@ -63,7 +63,7 @@ for (const [toolName, expected] of Object.entries(PROMPT_GUIDELINES)) {
   );
 }
 
-for (const name of ["agent_spawn", "finder", "oracle", "agent_send", "agent_wait", "agent_list", "agent_close"]) {
+for (const name of ["agent_spawn", "finder", "oracle", "code_reviewer", "code_quality_reviewer", "agent_send", "agent_wait", "agent_list", "agent_close"]) {
   for (const line of contract(name).promptGuidelines ?? []) {
     assert(line.includes(name), `agent-1xfj: ${name} guideline must name the tool: ${line}`);
   }

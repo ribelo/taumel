@@ -65,11 +65,41 @@ export const OracleParamsSchema = Type.Object(
   { $id: "OracleParams", additionalProperties: false },
 );
 
+const reviewRequestDescription =
+  "The review request. Identify the exact changes to review as commit SHAs, a commit range, or explicit paths, and state the expected outcome and any constraints.";
+
+export const CodeReviewerParamsSchema = Type.Object(
+  {
+    message: Type.String({ minLength: 1, description: reviewRequestDescription }),
+    description: Type.String({
+      minLength: 1,
+      description:
+        "A specific, action-oriented three-to-five-word label written for the user and used for compact TUI display. This label is not sent to the child.",
+    }),
+    isolation: Type.Optional(AgentIsolationSchema),
+  },
+  { $id: "CodeReviewerParams", additionalProperties: false },
+);
+
+export const CodeQualityReviewerParamsSchema = Type.Object(
+  {
+    message: Type.String({ minLength: 1, description: reviewRequestDescription }),
+    description: Type.String({
+      minLength: 1,
+      description:
+        "A specific, action-oriented three-to-five-word label written for the user and used for compact TUI display. This label is not sent to the child.",
+    }),
+    isolation: Type.Optional(AgentIsolationSchema),
+  },
+  { $id: "CodeQualityReviewerParams", additionalProperties: false },
+);
+
 export const AgentSendParamsSchema = Type.Object(
   {
     agent_id: Type.String({
       minLength: 1,
-      description: "The owner-scoped agent handle returned by agent_spawn, finder, oracle, or agent_list.",
+      description:
+        "The owner-scoped agent handle returned by agent_spawn, finder, oracle, code_reviewer, code_quality_reviewer, or agent_list.",
     }),
     message: Type.Optional(Type.String({
       description:

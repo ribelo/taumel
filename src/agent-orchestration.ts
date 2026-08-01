@@ -7,6 +7,7 @@ import {
 } from "./util.ts";
 import {
   applyChildSessionUpdate,
+  appendSkillExpansionToChild,
   childSessionCacheKey,
   childSessionCacheKeyScopeFromContext,
   createChildSession,
@@ -15,6 +16,7 @@ import {
   refreshOwnedChildPermissions,
   sendToChildSession,
 } from "./child-sessions.ts";
+import type { SkillExpansionPlan } from "./skills.ts";
 import { latestTaumelCustomEntry } from "./pi-session-entries.ts";
 import { rememberAgentDescription } from "./agent-run-registry.ts";
 import { agentErrorToolResult, preparedToolResult } from "./tool-results.ts";
@@ -55,6 +57,12 @@ function isChildSessionContext(ctx: unknown): boolean {
 function stringField(value: UnknownFields, key: string): string {
   const raw = value[key];
   return typeof raw === "string" ? raw : "";
+}
+
+function childSkillExpansion(prepared: PreparedDispatchAction, ctx: unknown) {
+  const metadata = isObjectLike<UnknownFields>(prepared.metadata) ? prepared.metadata : undefined;
+  const cwd = metadata === undefined ? "" : stringField(metadata, "workspaceDirectory");
+  return cwd === "" ? undefined : { cwd, ctx };
 }
 
 function childFailureCode(message: string): string {
@@ -334,6 +342,7 @@ export async function executeAgentPrepared(
   ctx: unknown,
   signal?: AbortSignal,
   childExtensionFactory?: (pi: PiLike) => void,
+  reviewerRubricPlan?: SkillExpansionPlan,
 ) {
   const action = prepared.action;
   let dispatchDeliverAs: "steer" | "followUp" | undefined;
@@ -491,6 +500,9 @@ export async function executeAgentPrepared(
         return agentErrorToolResult(core, childFailureCode(message), message);
       }
       try {
+        if (reviewerRubricPlan !== undefined) {
+          await appendSkillExpansionToChild(bridge, reviewerRubricPlan, "followUp", ctx);
+        }
         recordAuthorizedDispatchBoundary(core, prepared, ctx, bridge, capabilityFacts!);
       } catch (error) {
         const cleanupError = await rollbackWorktreeThenState();
@@ -499,19 +511,28 @@ export async function executeAgentPrepared(
         return agentErrorToolResult(core, cleanupError ? childFailureCode(cleanupError) : "persistence_failed", message);
       }
       const startCompletion = completionGate();
-      const dispatch = await sendToChildSession(
-        pi,
-        core,
-        bridge,
-        stringField(prepared, "prompt"),
-        "no initial prompt",
-        {
-          awaitCompletion: false,
-          completionGate: startCompletion.wait,
-          onEvent: recordDispatchActivity(core, prepared, ctx),
-          onCompletion: recordDispatchCompletionInBackground(pi, core, prepared, ctx, pendingAgentWaits, bridge),
-        },
-      );
+      let dispatch: ChildDispatchResult;
+      try {
+        dispatch = await sendToChildSession(
+          pi,
+          core,
+          bridge,
+          stringField(prepared, "prompt"),
+          "no initial prompt",
+          {
+            awaitCompletion: false,
+            completionGate: startCompletion.wait,
+            onEvent: recordDispatchActivity(core, prepared, ctx),
+            onCompletion: recordDispatchCompletionInBackground(pi, core, prepared, ctx, pendingAgentWaits, bridge),
+            skillExpansion: childSkillExpansion(prepared, ctx),
+          },
+        );
+      } catch (error) {
+        startCompletion.release();
+        const cleanupError = await rollbackWorktreeThenState();
+        const reason = cleanupError ?? (error instanceof Error ? error.message : String(error));
+        return agentErrorToolResult(core, cleanupError ? childFailureCode(cleanupError) : "dispatch_failed", reason);
+      }
       if (dispatch.dispatched !== true) {
         startCompletion.release();
         const cleanupError = await rollbackWorktreeThenState();
@@ -637,20 +658,38 @@ export async function executeAgentPrepared(
       if (prepared.dispatch === true) {
         revalidateCapability();
         const sendCompletion = completionGate();
-        const dispatch = await sendToChildSession(
-          pi,
-          core,
-          bridge,
-          stringField(prepared, "prompt"),
-          "empty prompt",
-          {
-            awaitCompletion: false,
-            completionGate: sendCompletion.wait,
-            deliverAs: dispatchDeliverAs!,
-            onEvent: recordDispatchActivity(core, prepared, ctx),
-            onCompletion: recordDispatchCompletionInBackground(pi, core, prepared, ctx, pendingAgentWaits, bridge),
-          },
-        );
+        let dispatch: ChildDispatchResult;
+        try {
+          dispatch = await sendToChildSession(
+            pi,
+            core,
+            bridge,
+            stringField(prepared, "prompt"),
+            "empty prompt",
+            {
+              awaitCompletion: false,
+              completionGate: sendCompletion.wait,
+              deliverAs: dispatchDeliverAs!,
+              onEvent: recordDispatchActivity(core, prepared, ctx),
+              onCompletion: recordDispatchCompletionInBackground(pi, core, prepared, ctx, pendingAgentWaits, bridge),
+              skillExpansion: childSkillExpansion(prepared, ctx),
+            },
+          );
+        } catch (error) {
+          sendCompletion.release();
+          const reason = error instanceof Error ? error.message : String(error);
+          if (interrupt && stringField(prepared, "outcome") === "interrupted_and_sent") {
+            authorizeCapabilityCleanup();
+            decodeCoreAck(core.call("recordAgentSendDispatchFailure", [{
+              run_id: stringField(prepared, "runId"),
+              submission_id: stringField(prepared, "submissionId"),
+              error: reason,
+            }, { ctx }]));
+          } else {
+            rollbackAgentSendPreflight(core, prepared, ctx, authorizeCapabilityCleanup);
+          }
+          return agentErrorToolResult(core, "dispatch_failed", reason);
+        }
         if (dispatch.dispatched !== true) {
           sendCompletion.release();
           const reason = typeof dispatch.reason === "string"

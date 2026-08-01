@@ -223,7 +223,7 @@ let option_int_to_json = function
 
 let option_string_to_json = function None -> Null | Some value -> String value
 
-(* Short random handles shared by agent identities (^agent-id02) and plan
+(* Short random handles shared by agent identities (^agent-ym73) and plan
    tasks (^plan-tk03). Alphabet omits ambiguous characters (i/l/o/0/1). *)
 let nano_id_alphabet = "abcdefghjkmnpqrstuvwxyz23456789"
 

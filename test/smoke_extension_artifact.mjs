@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 const artifact = join(process.cwd(), "dist", "extension.js");
 
-// agent-um6s: the built module loads from an artifact-only layout with no loose Markdown resources.
+// agent-6b1f: the built module loads from an artifact-only layout with no loose Markdown resources.
 const isolatedRoot = mkdtempSync(join(process.cwd(), ".taumel-extension-artifact-"));
 try {
   const isolatedDist = join(isolatedRoot, "dist");

@@ -4,7 +4,9 @@ let default_routing ~kind ~effort ~parent_model =
   let effort =
     match kind with
     | Agents.Generic -> Some (Option.value effort ~default:Agents.Medium)
-    | Agents.Finder | Agents.Oracle -> None
+    | Agents.Finder | Agents.Oracle | Agents.Code_reviewer
+    | Agents.Code_quality_reviewer ->
+        None
   in
   let thinking = Agents.default_thinking_for_kind ~effort kind in
   (Option.value parent_model ~default:"inherit", thinking, effort)
@@ -17,6 +19,8 @@ type catalog = {
   generic_high : entry option;
   finder : entry option;
   oracle : entry option;
+  code_reviewer : entry option;
+  code_quality_reviewer : entry option;
   diagnostics : string list;
 }
 
@@ -27,6 +31,8 @@ let empty =
     generic_high = None;
     finder = None;
     oracle = None;
+    code_reviewer = None;
+    code_quality_reviewer = None;
     diagnostics = [];
   }
 
@@ -94,6 +100,8 @@ let parse_agents_object path = function
       in
       let finder = parse_specialist "finder" in
       let oracle = parse_specialist "oracle" in
+      let code_reviewer = parse_specialist "code-reviewer" in
+      let code_quality_reviewer = parse_specialist "code-quality-reviewer" in
       let diagnostics = !diagnostics in
       Ok
         {
@@ -102,6 +110,8 @@ let parse_agents_object path = function
           generic_high = high;
           finder;
           oracle;
+          code_reviewer;
+          code_quality_reviewer;
           diagnostics;
         }
   | Shared.Null -> Ok empty
@@ -137,6 +147,14 @@ let merge ~base ~override =
       (match override.oracle with
       | Some _ as value -> value
       | None -> base.oracle);
+    code_reviewer =
+      (match override.code_reviewer with
+      | Some _ as value -> value
+      | None -> base.code_reviewer);
+    code_quality_reviewer =
+      (match override.code_quality_reviewer with
+      | Some _ as value -> value
+      | None -> base.code_quality_reviewer);
     diagnostics = base.diagnostics @ override.diagnostics;
   }
 
@@ -145,6 +163,8 @@ let entry_for catalog ~(kind : Agents.agent_kind)
   match kind with
   | Agents.Finder -> catalog.finder
   | Agents.Oracle -> catalog.oracle
+  | Agents.Code_reviewer -> catalog.code_reviewer
+  | Agents.Code_quality_reviewer -> catalog.code_quality_reviewer
   | Agents.Generic -> (
       match effort with
       | Some Agents.Low -> catalog.generic_low

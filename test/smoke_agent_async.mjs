@@ -10,6 +10,13 @@ import { executeTool } from "../src/tool-executor.ts";
 
 const root = mkdtempSync(join(tmpdir(), "taumel-agent-async-"));
 process.env.PI_CODING_AGENT_DIR = root;
+const workspace = join(root, "workspace");
+mkdirSync(workspace, { recursive: true });
+for (const name of ["code-review", "code-quality-review"]) {
+  const directory = join(workspace, ".pi", "skills", name);
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, "SKILL.md"), `---\nname: ${name}\n---\n${name} rubric\n`);
+}
 const require = createRequire(import.meta.url);
 require("../dist/taumel.cjs");
 const bootstrap = globalThis.taumel;
@@ -17,7 +24,7 @@ let core;
 
 const parentEntries = [];
 const ctx = {
-  cwd: process.cwd(), mode: "print", hasUI: false,
+  cwd: workspace, mode: "print", hasUI: false,
   model: { provider: "test", id: "model" },
   activeTools: ["read", "exec_command", "agent_spawn", "agent_wait", "agent_close"],
   sessionManager: {
@@ -31,7 +38,7 @@ core = bootstrap.init({
   resolveAuthorizationPath: realpathSync,
   on: () => undefined, eventsOn: () => () => undefined, emit: () => undefined,
   exec: async () => ({ code: 0, stdout: "", stderr: "" }), setFooter: () => undefined,
-  sessionSnapshot: () => ({ cwd: process.cwd(), provider: "test", model: "model", thinking: "medium", totalCost: 0, contextPercent: 0, contextWindow: 1000 }),
+  sessionSnapshot: () => ({ cwd: workspace, provider: "test", model: "model", thinking: "medium", totalCost: 0, contextPercent: 0, contextWindow: 1000 }),
   getGitBranch: () => "main", onBranchChange: () => () => undefined,
   requestRender: () => undefined, themeFg: (_theme, _color, value) => value,
 });
@@ -71,10 +78,13 @@ let staleCleanupDisposals = 0;
 let staleDuringCreation = false;
 let staleCreationManagerEntries = [];
 let promptInvocations = 0;
+let customMessageError;
 let staleDuringRefresh = false;
 let staleRefreshAborts = 0;
 let staleRefreshDisposals = 0;
 const sessionMessages = [];
+const customMessages = [];
+const promptTexts = [];
 const model = { provider: "test", id: "model", reasoning: true };
 const pi = {
   modelRegistry: {
@@ -119,7 +129,12 @@ const pi = {
         subscribers.add(handler);
         return () => { subscribers.delete(handler); };
       },
-      prompt: () => {
+      sendCustomMessage: async (message, options) => {
+        if (customMessageError !== undefined) throw new Error(customMessageError);
+        customMessages.push({ message, options });
+      },
+      prompt: (text) => {
+        promptTexts.push(text);
         promptInvocations += 1;
         return immediateCompletion
         ? Promise.resolve({ status: "completed", finalOutput: "immediate answer" })
@@ -183,7 +198,7 @@ const invalidPreparedClose = await executeAgentPrepared(pi, core, childSessions,
   action: "agent_close", agentId: prepared.agentId, capabilityId: "forged", deleteWorktree: true,
 }, ctx);
 assert.equal(JSON.parse(invalidPreparedClose.content[0].text).error.code, "internal_error");
-// agent-tc17: failed agent calls use the stable JSON error envelope.
+// agent-05vq: failed agent calls use the stable JSON error envelope.
 const invalidStart = await executeTool(pi, core, childSessions, "agent_spawn", { message: "missing label" }, ctx);
 assert.deepEqual(JSON.parse(invalidStart.content[0].text), {
   ok: false,
@@ -217,7 +232,7 @@ writeFileSync(escapedChildFile, `${JSON.stringify({
   version: 3,
   id: "019f7760-2e4b-7242-b08f-9ac80611d6be",
   timestamp: new Date().toISOString(),
-  cwd: process.cwd(),
+  cwd: workspace,
 })}\n${readFileSync(allocatedSessionFile, "utf8")}`);
 const escapedChildLink = join(dirname(allocatedSessionFile), "escaped-session.jsonl");
 symlinkSync(escapedChildFile, escapedChildLink);
@@ -341,14 +356,16 @@ const failedWait = core.call("prepareTool", [{
 assert.equal(failedWait.details.results[0].status, "failed");
 assert.equal(failedWait.details.results[0].error, "provider failed");
 
-// agent-ki03/agent-xe88/agent-kd05: specialists supply their own base prompts through Pi's resource loader.
+// agent-ki03/agent-xe88/agent-it4p: specialists supply their own base prompts through Pi's resource loader.
 for (const [toolName, params, promptFile, requirementId] of [
   ["finder", { query: "locate prompt ownership", description: "Locate prompt ownership" }, "finder.md", "agent-ki03"],
   ["oracle", { message: "review prompt ownership", description: "Review prompt ownership" }, "oracle.md", "agent-xe88"],
+  ["code_reviewer", { message: "review HEAD~1..HEAD", description: "Review latest changes" }, "code-reviewer.md", "agent-6gev"],
+  ["code_quality_reviewer", { message: "review HEAD~1..HEAD", description: "Review code quality" }, "code-quality-reviewer.md", "agent-icsl"],
 ]) {
   const specialist = core.call("prepareTool", [{ name: toolName, params, ctx }]);
   const started = await executeAgentPrepared(pi, core, childSessions, pendingWaits, specialist, ctx);
-  assert.equal(started.details.status, "running");
+  assert.equal(started.details.status, "running", `${toolName}: ${JSON.stringify(started.details)}`);
   const expectedPrompt = readFileSync(new URL(`../resources/agents/${promptFile}`, import.meta.url), "utf8").trim();
   assert.equal(allocatedResourceLoader.getSystemPrompt(), expectedPrompt, `${requirementId}: specialist owns its base system prompt`);
   assert.equal(
@@ -361,6 +378,60 @@ for (const [toolName, params, promptFile, requirementId] of [
   const specialistClose = core.call("prepareTool", [{ name: "agent_close", params: { agent_id: specialist.agentId }, ctx }]);
   await executeAgentPrepared(pi, core, childSessions, pendingWaits, specialistClose, ctx);
 }
+
+// skr-efbe/agent-sp04: a child skill-context transport failure stops before
+// prompt dispatch and rolls back the unaccepted identity and run.
+const identitiesBeforeSkillFailure = core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]).details.agents.length;
+customMessageError = "forced child skill append failure";
+const failedSkillStart = await executeTool(pi, core, childSessions, "agent_spawn", {
+  message: "inspect with $code-review",
+  description: "Reject failed skill append",
+}, ctx);
+assert.deepEqual(failedSkillStart.details.error, {
+  code: "dispatch_failed",
+  message: "forced child skill append failure",
+});
+assert.equal(
+  core.call("prepareTool", [{ name: "agent_list", params: {}, ctx }]).details.agents.length,
+  identitiesBeforeSkillFailure,
+);
+customMessageError = undefined;
+
+// agent-ipxl/agent-q1y8: a successful reviewer start appends its resolved
+// rubric block and literal rubric instruction before the caller's request.
+customMessages.length = 0;
+promptTexts.length = 0;
+const reviewerStart = await executeTool(pi, core, childSessions, "code_reviewer", {
+  message: "review HEAD~1..HEAD",
+  description: "Review latest changes",
+}, ctx);
+assert.equal(reviewerStart.details.kind, "code-reviewer");
+assert.match(customMessages[0].message.content, /^<skill name="code-review" location="[^"]+">/);
+assert.equal(customMessages[1].message.content, "$code-review");
+assert.deepEqual(customMessages.map((entry) => entry.options), [
+  { triggerTurn: false, deliverAs: "followUp" },
+  { triggerTurn: false, deliverAs: "followUp" },
+]);
+assert.deepEqual(promptTexts, ["review HEAD~1..HEAD"]);
+settle();
+await new Promise((resolve) => setTimeout(resolve, 0));
+customMessages.length = 0;
+promptTexts.length = 0;
+const reviewerSend = await executeTool(pi, core, childSessions, "agent_send", {
+  agent_id: reviewerStart.details.agentId,
+  message: "check again with $code-review",
+  description: "Recheck latest changes",
+}, ctx);
+assert.equal(reviewerSend.details.status, "running");
+assert.equal(customMessages.length, 1);
+assert.match(customMessages[0].message.content, /^<skill name="code-review" location="[^"]+">/);
+assert.deepEqual(promptTexts, ["check again with $code-review"]);
+settle();
+await new Promise((resolve) => setTimeout(resolve, 0));
+const reviewerClose = core.call("prepareTool", [{
+  name: "agent_close", params: { agent_id: reviewerStart.details.agentId }, ctx,
+}]);
+await executeAgentPrepared(pi, core, childSessions, pendingWaits, reviewerClose, ctx);
 
 // agent-cl03: a child completion that arrives after permanent close is inert.
 const lateCompletionAgent = core.call("prepareTool", [{

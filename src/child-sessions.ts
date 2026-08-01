@@ -9,6 +9,8 @@ import { isAbsolute, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import finderPromptResource from "../resources/agents/finder.md" with { type: "text" };
 import oraclePromptResource from "../resources/agents/oracle.md" with { type: "text" };
+import codeReviewerPromptResource from "../resources/agents/code-reviewer.md" with { type: "text" };
+import codeQualityReviewerPromptResource from "../resources/agents/code-quality-reviewer.md" with { type: "text" };
 import subagentPromptResource from "../resources/agents/subagent.md" with { type: "text" };
 import type { ChildDispatchCompletion, ChildDispatchResult, ChildSessionMetadata, ChildSessionSetupEntry } from "./bridge-contracts.ts";
 import { decodeChildDispatchPlan, decodeChildPermissionRefreshPlan, decodeCoreAck } from "./bridge-contracts.ts";
@@ -18,6 +20,12 @@ import {
   isCanonicalEntryPresent,
   latestTaumelCustomEntry,
 } from "./pi-session-entries.ts";
+import {
+  applySkillExpansionPlan,
+  planSkillExpansion,
+  type SkillExpansionFacts,
+  type SkillExpansionPlan,
+} from "./skills.ts";
 
 import type {
   ChildSessionBridge,
@@ -56,6 +64,10 @@ type SdkSession = {
   readonly steer?: (prompt: string) => Promise<unknown>;
   readonly followUp?: (prompt: string) => Promise<unknown>;
   readonly prompt?: (prompt: string, options: { streamingBehavior: string }) => Promise<unknown>;
+  readonly sendCustomMessage?: (
+    message: { readonly customType: string; readonly content: string; readonly display?: boolean; readonly details?: unknown },
+    options?: { readonly triggerTurn?: boolean; readonly deliverAs?: string },
+  ) => Promise<unknown>;
   readonly getAvailableThinkingLevels?: () => readonly string[];
   readonly getActiveToolNames?: () => readonly string[];
   readonly sessionManager?: unknown; readonly sessionId?: unknown; readonly sessionFile?: unknown;
@@ -71,6 +83,7 @@ type HostCompletion = {
   readonly reason?: unknown; readonly errorMessage?: unknown; readonly error?: unknown;
 };
 type ChildSessionUpdate = { readonly action?: unknown; readonly key?: unknown; readonly reason?: unknown };
+type SkillWarningContext = { readonly ui?: { readonly notify?: (message: string, level: "warning") => unknown } };
 
 const sdkStopReasons = new Set(["stop", "length", "toolUse", "error", "aborted"]);
 const hostCompletionStatuses = new Set(["completed", "failed", "cancelled", "aborted", "timed_out"]);
@@ -80,11 +93,20 @@ function boundedCompletionReason(value: string): string {
   return value.slice(0, 4096);
 }
 
+function notifySkillWarning(ctx: unknown, message: string): void {
+  const context = objectLikeValue<SkillWarningContext>(ctx);
+  context?.ui?.notify?.(message, "warning");
+}
+
 function loadSpecialistPrompt(kind: string): string | undefined {
   const text = kind === "finder"
     ? finderPromptResource.trim()
     : kind === "oracle"
       ? oraclePromptResource.trim()
+      : kind === "code-reviewer"
+        ? codeReviewerPromptResource.trim()
+        : kind === "code-quality-reviewer"
+          ? codeQualityReviewerPromptResource.trim()
       : "";
   return text === "" ? undefined : text;
 }
@@ -516,7 +538,8 @@ export async function createChildSession(
     typeof metadataRecord?.childSessionFile === "string" ? metadataRecord.childSessionFile.trim() : "";
   const boundWorkspace = nonEmptyString(metadataRecord?.workspaceDirectory);
   const usePrivatePersistentSession =
-    (childKind === "agent" || childKind === "generic" || childKind === "finder" || childKind === "oracle")
+    (childKind === "agent" || childKind === "generic" || childKind === "finder" || childKind === "oracle"
+      || childKind === "code-reviewer" || childKind === "code-quality-reviewer")
     && (agentId !== "" || existingSessionFile !== "");
   if (usePrivatePersistentSession
     && (authorizeCleanup === undefined || revalidateAuthority === undefined)) {
@@ -535,7 +558,8 @@ export async function createChildSession(
   }
   const specialistPrompt = specialistPromptForMetadata(metadataRecord);
   const agentKind = nonEmptyString(metadataRecord?.agentKind);
-  if ((agentKind === "finder" || agentKind === "oracle") && specialistPrompt === undefined) {
+  if ((agentKind === "finder" || agentKind === "oracle" || agentKind === "code-reviewer"
+    || agentKind === "code-quality-reviewer") && specialistPrompt === undefined) {
     return { error: `specialist_prompt_unavailable: ${agentKind}` };
   }
   const subagentPrompt = loadSubagentPrompt();
@@ -743,6 +767,7 @@ export async function sendToChildSession(
     readonly onEvent?: (event: unknown) => void;
     readonly onCompletion?: (dispatch: ChildDispatchResult) => void | Promise<void>;
     readonly completionGate?: Promise<void>;
+    readonly skillExpansion?: Omit<SkillExpansionFacts, "text">;
   } = {},
 ): Promise<ChildDispatchResult> {
   const childCtx = child?.ctx;
@@ -805,29 +830,79 @@ export async function sendToChildSession(
       });
     return result;
   };
-  if (typeof child?.sendUserMessage === "function") {
-    if (!awaitCompletion) {
-      return completeLater(() => child.sendUserMessage?.(dispatchPrompt, sendOptions));
+  const sendDispatchPrompt = async (): Promise<ChildDispatchResult> => {
+    if (typeof child?.sendUserMessage === "function") {
+      if (!awaitCompletion) {
+        return completeLater(() => child.sendUserMessage?.(dispatchPrompt, sendOptions));
+      }
+      const hostResult = await child.sendUserMessage(dispatchPrompt, sendOptions);
+      return dispatchResultWithHostCompletion(result, hostResult);
     }
-    const hostResult = await child.sendUserMessage(dispatchPrompt, sendOptions);
-    return dispatchResultWithHostCompletion(result, hostResult);
-  }
-  if (typeof sendContext?.sendUserMessage === "function") {
-    const sendUserMessage = sendContext.sendUserMessage;
-    if (!awaitCompletion) {
-      return completeLater(() => sendUserMessage.call(childCtx, dispatchPrompt, sendOptions));
+    if (typeof sendContext?.sendUserMessage === "function") {
+      const sendUserMessage = sendContext.sendUserMessage;
+      if (!awaitCompletion) {
+        return completeLater(() => sendUserMessage.call(childCtx, dispatchPrompt, sendOptions));
+      }
+      const hostResult = await sendUserMessage.call(childCtx, dispatchPrompt, sendOptions);
+      return dispatchResultWithHostCompletion(result, hostResult);
     }
-    const hostResult = await sendUserMessage.call(childCtx, dispatchPrompt, sendOptions);
-    return dispatchResultWithHostCompletion(result, hostResult);
-  }
-  if (typeof pi.sendUserMessage === "function") {
-    if (!awaitCompletion) {
-      return completeLater(() => pi.sendUserMessage?.(dispatchPrompt, sendOptions));
+    if (typeof pi.sendUserMessage === "function") {
+      if (!awaitCompletion) {
+        return completeLater(() => pi.sendUserMessage?.(dispatchPrompt, sendOptions));
+      }
+      const hostResult = await pi.sendUserMessage(dispatchPrompt, sendOptions);
+      return dispatchResultWithHostCompletion(result, hostResult);
     }
-    const hostResult = await pi.sendUserMessage(dispatchPrompt, sendOptions);
-    return dispatchResultWithHostCompletion(result, hostResult);
+    return result;
+  };
+
+  if (options.skillExpansion === undefined) return sendDispatchPrompt();
+  const expansion = planSkillExpansion(core, {
+    text: dispatchPrompt,
+    ...options.skillExpansion,
+  });
+  if (expansion.messages.length === 0) return sendDispatchPrompt();
+  const session = objectLikeValue<SdkSession>(child?.session);
+  if (typeof session?.sendCustomMessage !== "function") {
+    throw new Error("child skill context is unavailable");
   }
-  return result;
+  let dispatched: ChildDispatchResult | undefined;
+  await applySkillExpansionPlan(expansion, {
+    notifyWarning: (message) => notifySkillWarning(options.skillExpansion?.ctx, message),
+    sendMessage: (message) => session.sendCustomMessage?.(message, {
+      triggerTurn: false,
+      deliverAs,
+    }),
+    sendText: async () => {
+      dispatched = await sendDispatchPrompt();
+    },
+  });
+  return dispatched ?? result;
+}
+
+export async function appendSkillExpansionToChild(
+  child: ChildSessionBridge | undefined,
+  plan: SkillExpansionPlan,
+  deliverAs: string,
+  ctx?: unknown,
+): Promise<void> {
+  const session = objectLikeValue<SdkSession>(child?.session);
+  if (typeof session?.sendCustomMessage !== "function") {
+    throw new Error("child skill context is unavailable");
+  }
+  const sendPassive = (
+    planned: { readonly customType: string; readonly content: string; readonly display?: boolean; readonly details?: unknown },
+  ) => session.sendCustomMessage?.(planned, { triggerTurn: false, deliverAs });
+  await applySkillExpansionPlan(plan, {
+    notifyWarning: (message) => notifySkillWarning(ctx, message),
+    sendMessage: sendPassive,
+    sendText: (text) => sendPassive({
+      customType: "skill",
+      content: text,
+      display: true,
+      details: plan.messages[0]?.details,
+    }),
+  });
 }
 
 function completionTextFromContent(content: unknown): string | undefined {

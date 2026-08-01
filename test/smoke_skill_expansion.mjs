@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { createRequire } from "node:module";
 
 import { applySkillExpansionPlan, installSkillResolver, planSkillExpansion } from "../src/skills.ts";
+import { appendSkillExpansionToChild, sendToChildSession } from "../src/child-sessions.ts";
+import { executeTool } from "../src/tool-executor.ts";
 
 const message = (name) => ({
   customType: "skill",
@@ -68,6 +70,74 @@ await assert.rejects(
   /append failed/,
 );
 assert.deepEqual(failedEffects, [["message", "first"]]);
+
+// skr-rzh1/skr-x9kv/skr-ktsq/skr-t3im/skr-u7h4: initial and later child
+// instructions use one plan, append skill context first, then start from the
+// exact instruction text.
+for (const phase of ["initial", "later"]) {
+  const childEffects = [];
+  const childCtx = { cwd: "/workspace" };
+  const childCore = {
+    call: (method, [facts]) => {
+      if (method === "planSkillExpansion") {
+        assert.deepEqual(facts, { text: `review $first ${phase}`, cwd: "/workspace", ctx: childCtx });
+        return { messages: [message("first")], warnings: [] };
+      }
+      assert.equal(method, "planChildDispatch");
+      return {
+        send: true,
+        prompt: facts.prompt,
+        deliverAs: "followUp",
+        result: { dispatched: true },
+      };
+    },
+  };
+  await sendToChildSession({}, childCore, {
+    session: {
+      sendCustomMessage: async (planned, options) => childEffects.push(["context", planned, options]),
+    },
+    sendUserMessage: async (text) => childEffects.push(["prompt", text]),
+  }, `review $first ${phase}`, "empty prompt", {
+    skillExpansion: { cwd: "/workspace", ctx: childCtx },
+  });
+  assert.deepEqual(childEffects, [
+    ["context", message("first"), { triggerTurn: false, deliverAs: "followUp" }],
+    ["prompt", `review $first ${phase}`],
+  ]);
+}
+
+// agent-q1y8: a reviewer receives the resolved rubric block and the literal
+// rubric instruction as passive context before the review request starts.
+const reviewerEffects = [];
+const reviewerChild = {
+  session: {
+    sendCustomMessage: async (planned, options) => reviewerEffects.push(["context", planned, options]),
+  },
+  sendUserMessage: async (text) => reviewerEffects.push(["prompt", text]),
+};
+await appendSkillExpansionToChild(reviewerChild, {
+  text: "$code-review",
+  messages: [message("code-review")],
+  warnings: [],
+}, "followUp");
+await sendToChildSession({}, {
+  call: () => ({
+    send: true,
+    prompt: "review HEAD~1..HEAD",
+    deliverAs: "followUp",
+    result: { dispatched: true },
+  }),
+}, reviewerChild, "review HEAD~1..HEAD");
+assert.deepEqual(reviewerEffects, [
+  ["context", message("code-review"), { triggerTurn: false, deliverAs: "followUp" }],
+  ["context", {
+    customType: "skill",
+    content: "$code-review",
+    display: true,
+    details: { source: "auto-skill-mention", trigger: "$code-review", name: "code-review" },
+  }, { triggerTurn: false, deliverAs: "followUp" }],
+  ["prompt", "review HEAD~1..HEAD"],
+]);
 
 // skr-3ws3/skr-sc04: the parent hook applies one plan and bypasses its own text re-entry.
 let inputHandler;
@@ -175,6 +245,30 @@ const addedPlan = planSkillExpansion(core, {
   ctx: coreCtx,
 });
 assert.deepEqual(addedPlan.messages.map((planned) => planned.details.name), ["plan-added"]);
+
+// agent-kql9/agent-kd6s: a missing fixed rubric fails before reviewer state or
+// child resources can be prepared, and names the unavailable skill.
+for (const [toolName, skillName] of [
+  ["code_reviewer", "code-review"],
+  ["code_quality_reviewer", "code-quality-review"],
+]) {
+  const entriesBeforeMissingRubric = entries.length;
+  const missingRubricCore = {
+    call: (method, args) => method === "planSkillExpansion"
+      ? { messages: [], warnings: [] }
+      : core.call(method, args),
+  };
+  const missingRubric = await executeTool({}, missingRubricCore, new Map(), toolName, {
+    message: "review HEAD~1..HEAD",
+    description: "Review latest changes",
+  }, coreCtx);
+  assert.equal(missingRubric.details.ok, false);
+  assert.deepEqual(missingRubric.details.error, {
+    code: "rubric_unavailable",
+    message: `reviewer rubric skill is unavailable: ${skillName}`,
+  });
+  assert.equal(entries.length, entriesBeforeMissingRubric);
+}
 rmSync(root, { recursive: true, force: true });
 
 console.log("skill expansion smoke: all assertions passed");

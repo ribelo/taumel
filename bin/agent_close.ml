@@ -13,7 +13,9 @@ let is_agent_child ctx =
   match Session_store.custom_entry_data ctx "taumel.childSession" with
   | Some data -> (
       match get_string data "kind" with
-      | "agent" | "generic" | "finder" | "oracle" -> true
+      | "agent" | "generic" | "finder" | "oracle" | "code-reviewer"
+      | "code-quality-reviewer" ->
+          true
       | _ -> false)
   | None -> false
 

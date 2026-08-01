@@ -38,7 +38,7 @@ const ctx = {
   activeTools: [
     "read", "exec_command", "edit",
     "agent_spawn", "agent_send", "agent_wait", "agent_list", "agent_close",
-    "finder", "oracle",
+    "finder", "oracle", "code_reviewer", "code_quality_reviewer",
   ],
   model: { provider: "openai-codex", id: "gpt-test" },
   sessionManager: {

@@ -44,6 +44,10 @@ export const TOOL_DESCRIPTIONS = {
     "Create a durable, read-only Finder specialist and start an asynchronous run for conceptual, behavior-based, or multi-step discovery that correlates findings across files. The identity can be continued with agent_send; the call returns after the query is accepted, without waiting for completion.",
   oracle:
     "Create a durable, read-only Oracle advisory specialist and start an asynchronous run for independent technical reasoning, judgment, critique, diagnosis, planning, review, or recommendations. The identity can be continued with agent_send; the call returns after the instruction is accepted, without waiting for completion.",
+  code_reviewer:
+    "Create a durable, read-only code reviewer and start an asynchronous run that reviews caller-identified changes against the correctness, security, and developer-experience rubric. The identity can be continued with agent_send; the call returns after the review request is accepted, without waiting for completion.",
+  code_quality_reviewer:
+    "Create a durable, read-only code quality reviewer and start an asynchronous run that reviews caller-identified changes against the maintainability rubric. The identity can be continued with agent_send; the call returns after the review request is accepted, without waiting for completion.",
   agent_send:
     "Send an instruction to an existing open agent in its retained conversation. Depending on current state, the call starts new work, steers active work, resumes suspended work, interrupts and replaces active execution, or interrupts without replacement. A message requires a short user-facing description.",
   agent_wait:
@@ -85,6 +89,8 @@ export const PROMPT_SNIPPETS = {
   agent_spawn: "Start a durable generic agent for substantial asynchronous execution.",
   finder: "Start a read-only Finder for conceptual, multi-file discovery.",
   oracle: "Start a read-only Oracle for independent technical reasoning and advice.",
+  code_reviewer: "Start a read-only code reviewer for correctness, security, and developer experience.",
+  code_quality_reviewer: "Start a read-only code quality reviewer for maintainability and structure.",
   agent_send: "Continue, steer, resume, or interrupt an existing agent.",
   agent_wait: "Wait for selected agent runs and retrieve ready outcomes.",
   agent_list: "Inspect open agent identities and their latest run activity.",
@@ -260,8 +266,20 @@ export const PARAM_DESCRIPTIONS = {
     "A specific, action-oriented three-to-five-word label written for the user and used for compact TUI display. This label is not sent to the child.",
   "oracle.isolation":
     "Workspace isolation for the new identity: none (default) uses the bound parent workspace; worktree creates a dedicated Git worktree.",
+  "code_reviewer.message":
+    "The review request. Identify the exact changes to review as commit SHAs, a commit range, or explicit paths, and state the expected outcome and any constraints.",
+  "code_reviewer.description":
+    "A specific, action-oriented three-to-five-word label written for the user and used for compact TUI display. This label is not sent to the child.",
+  "code_reviewer.isolation":
+    "Workspace isolation for the new identity: none (default) uses the bound parent workspace; worktree creates a dedicated Git worktree.",
+  "code_quality_reviewer.message":
+    "The review request. Identify the exact changes to review as commit SHAs, a commit range, or explicit paths, and state the expected outcome and any constraints.",
+  "code_quality_reviewer.description":
+    "A specific, action-oriented three-to-five-word label written for the user and used for compact TUI display. This label is not sent to the child.",
+  "code_quality_reviewer.isolation":
+    "Workspace isolation for the new identity: none (default) uses the bound parent workspace; worktree creates a dedicated Git worktree.",
   "agent_send.agent_id":
-    "The owner-scoped agent handle returned by agent_spawn, finder, oracle, or agent_list.",
+    "The owner-scoped agent handle returned by agent_spawn, finder, oracle, code_reviewer, code_quality_reviewer, or agent_list.",
   "agent_send.message":
     "The instruction to start idle work, steer active work, resume suspended work, or replace interrupted work. Omit only to interrupt without replacement.",
   "agent_send.description":
@@ -279,7 +297,7 @@ export const PARAM_DESCRIPTIONS = {
 export const PROMPT_GUIDELINES = {
   agent_spawn: [
     "For agent_spawn, choose tier by task complexity and scope. Use low for straightforward, well-defined work: a one-file change or simple mechanical refactor across the codebase; bounded delegated internet research; or one known check or bounded evidence collection. Use medium for well-scoped work requiring reasoning across several files; focused independent research across multiple sources; or reproducing and verifying a workflow across several components. Use high for difficult, open-ended, or repository-wide work: broad cross-cutting changes; comprehensive independent research requiring broad source synthesis; or repository-wide failure investigation and validation. Medium is the default.",
-    "Use agent_spawn for substantial delegated execution that does not fit finder or oracle, especially independent multi-step work, parallel disjoint work, or work with extensive intermediate output that the parent does not need.",
+    "Use agent_spawn for substantial delegated execution that does not fit finder, oracle, code_reviewer, or code_quality_reviewer, especially independent multi-step work, parallel disjoint work, or work with extensive intermediate output that the parent does not need.",
     "Use agent_spawn to create a new identity when substantial delegated execution has a materially different objective, files, component, or constraints and an existing agent's retained context would not help.",
     "When using agent_spawn, remember that the child has its own conversation and does not inherit the parent conversation. Include all relevant decisions, context, constraints, and validation instructions in message, or reference paths to files that contain them.",
   ],
@@ -288,6 +306,12 @@ export const PROMPT_GUIDELINES = {
   ],
   oracle: [
     "Use oracle when the primary outcome is independent reasoning, judgment, critique, diagnosis, planning, review, or a recommendation rather than carrying out the resulting action.",
+  ],
+  code_reviewer: [
+    "Use code_reviewer when the deliverable is a review of identified changes for correctness, security, and developer experience.",
+  ],
+  code_quality_reviewer: [
+    "Use code_quality_reviewer when the deliverable is a review of identified changes for maintainability, structure, abstraction quality, and test quality.",
   ],
   agent_send: [
     "Use agent_send when new instructions, steering, interruption, or resumed work should target an existing open agent and retain its context.",
@@ -306,9 +330,11 @@ export const PROMPT_GUIDELINES = {
 };
 
 export const PROMPT_GUIDELINE_REQUIREMENTS = {
-  agent_spawn: ["agent-cqyx", "agent-wdfo", "agent-mqpf", "agent-4zay"],
+  agent_spawn: ["agent-cqyx", "agent-bgnl", "agent-mqpf", "agent-4zay"],
   finder: ["agent-84os"],
   oracle: ["agent-pkzt"],
+  code_reviewer: ["agent-j7jz"],
+  code_quality_reviewer: ["agent-5c75"],
   agent_send: ["agent-lfet", "agent-dw6e"],
   agent_wait: ["agent-f0iv", "agent-88sp"],
   agent_list: ["agent-hx8f"],
@@ -471,24 +497,34 @@ export const REQUIREMENT_CHECKS = [
   ["agent-todp", "snippet", "agent_spawn"],
   ["agent-7i3j", "param", "agent_spawn.message"],
   ["agent-us77", "param", "agent_spawn.tier"],
-  ["agent-w981", "param", "agent_spawn.isolation"],
+  ["agent-ve1q", "param", "agent_spawn.isolation"],
   ["agent-tc15", "param", "agent_spawn.description"],
   ["agent-s58q", "tool", "finder"],
   ["agent-ub6w", "snippet", "finder"],
   ["agent-9s9b", "param", "finder.query"],
   ["agent-tc15", "param", "finder.description"],
-  ["agent-w981", "param", "finder.isolation"],
+  ["agent-ve1q", "param", "finder.isolation"],
   ["agent-tc22", "tool", "oracle"],
   ["agent-4mcx", "snippet", "oracle"],
   ["agent-tc22", "param", "oracle.message"],
   ["agent-tc15", "param", "oracle.description"],
-  ["agent-w981", "param", "oracle.isolation"],
-  ["agent-tc23", "tool", "agent_send"],
+  ["agent-ve1q", "param", "oracle.isolation"],
+  ["agent-nalt", "tool", "code_reviewer"],
+  ["agent-2342", "snippet", "code_reviewer"],
+  ["agent-6alt", "param", "code_reviewer.message"],
+  ["agent-tc15", "param", "code_reviewer.description"],
+  ["agent-ve1q", "param", "code_reviewer.isolation"],
+  ["agent-h28d", "tool", "code_quality_reviewer"],
+  ["agent-qkel", "snippet", "code_quality_reviewer"],
+  ["agent-i4vd", "param", "code_quality_reviewer.message"],
+  ["agent-tc15", "param", "code_quality_reviewer.description"],
+  ["agent-ve1q", "param", "code_quality_reviewer.isolation"],
+  ["agent-xsn0", "tool", "agent_send"],
   ["agent-44uh", "snippet", "agent_send"],
-  ["agent-tc23", "param", "agent_send.agent_id"],
-  ["agent-tc23", "param", "agent_send.message"],
-  ["agent-tc23", "param", "agent_send.description"],
-  ["agent-tc23", "param", "agent_send.interrupt"],
+  ["agent-xsn0", "param", "agent_send.agent_id"],
+  ["agent-xsn0", "param", "agent_send.message"],
+  ["agent-xsn0", "param", "agent_send.description"],
+  ["agent-xsn0", "param", "agent_send.interrupt"],
   ["agent-tc24", "tool", "agent_wait"],
   ["agent-lbc5", "snippet", "agent_wait"],
   ["agent-tc24", "param", "agent_wait.run_ids"],

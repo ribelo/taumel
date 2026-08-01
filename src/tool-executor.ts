@@ -53,6 +53,7 @@ import {
 import { authorityPlanId, discardPreparedAuthorityPlan, executeApprovedExaInCore, executeExaInCore } from "./authority-plans.ts";
 import { executeOpenAiUsageWithHostAuth, executeUsagePairWithHostAuth } from "./usage-host.ts";
 import { latestTaumelCustomEntry } from "./pi-session-entries.ts";
+import { planSkillExpansion, type SkillExpansionPlan } from "./skills.ts";
 type SettingsObject = { [key: string]: unknown };
 type ToolContext = { readonly cwd?: unknown; readonly model?: unknown; readonly ui?: unknown; readonly hasUI?: unknown; readonly sessionManager?: unknown };
 type ImageModel = { readonly input?: unknown };
@@ -61,7 +62,11 @@ type PreparedSuccess = Exclude<PreparedToolAction, { ok: false }>;
 type PreparedApprovalAction = Extract<PreparedSuccess, { action: "exec_command_approval" | "write_approval" | "edit_approval" | "apply_patch_approval" | "exa_agent_create_run_approval" }>;
 type PreparedMutationAction = Extract<PreparedSuccess, { action: "write" | "write_approval" | "edit" | "edit_approval" | "apply_patch" | "apply_patch_approval" }>;
 type GatewayToolResult = ToolResultEnvelope | ReturnType<typeof decodeViewMediaResultEnvelope>;
-const agentToolNames = new Set(["agent_spawn", "finder", "oracle", "agent_send", "agent_wait", "agent_list", "agent_close"]);
+const agentToolNames = new Set(["agent_spawn", "finder", "oracle", "code_reviewer", "code_quality_reviewer", "agent_send", "agent_wait", "agent_list", "agent_close"]);
+const reviewerRubricByTool = new Map([
+  ["code_reviewer", "code-review"],
+  ["code_quality_reviewer", "code-quality-review"],
+]);
 const invalidChildSafeToolNames = new Set([
   "read", "view_media", "get_plan", "query_threads", "read_thread",
   "ralph_continue", "ralph_finish", "cron_list", "agent_wait", "agent_list",
@@ -705,7 +710,24 @@ export async function executeTool(
     const error = "Current model does not support image input";
     return errorToolResult(core, error, { ok: false, error, modelSupportsImages: false });
   }
-  const agentTool = name === "agent_spawn" || name === "finder" || name === "oracle";
+  const agentTool = name === "agent_spawn" || name === "finder" || name === "oracle"
+    || name === "code_reviewer" || name === "code_quality_reviewer";
+  let reviewerRubricPlan: SkillExpansionPlan | undefined;
+  const reviewerRubric = reviewerRubricByTool.get(name);
+  if (reviewerRubric !== undefined) {
+    reviewerRubricPlan = planSkillExpansion(core, {
+      text: `$${reviewerRubric}`,
+      cwd: cwdFromContext(ctx),
+      ctx,
+    });
+    if (reviewerRubricPlan.messages.length === 0) {
+      return agentErrorToolResult(
+        core,
+        "rubric_unavailable",
+        `reviewer rubric skill is unavailable: ${reviewerRubric}`,
+      );
+    }
+  }
   if (name === "agent_list") {
     const prefix = `${childSessionCacheKeyScopeFromContext(ctx)}\0`;
     const liveAgentIds = [...childSessions.keys()]
@@ -753,7 +775,7 @@ export async function executeTool(
   }
   // ^agentui-xqzc: remember spawn/send descriptions so a later single-run
   // agent_wait can name the awaited run in its compact line.
-  if (name === "agent_spawn" || name === "finder" || name === "oracle" || name === "agent_send") {
+  if (name === "agent_spawn" || name === "finder" || name === "oracle" || name === "code_reviewer" || name === "code_quality_reviewer" || name === "agent_send") {
     const params: ToolRenderFields = isToolRenderFields(parsed.params) ? parsed.params : {};
     rememberAgentDescription(
       typeof params["agent_id"] === "string" ? params["agent_id"] : "",
@@ -796,6 +818,7 @@ export async function executeTool(
         ctx,
         signal,
         childExtensionFactory,
+        reviewerRubricPlan,
       );
     case "openai_usage_fetch":
       return executeOpenAiUsageWithHostAuth(pi, core, prepared, ctx);

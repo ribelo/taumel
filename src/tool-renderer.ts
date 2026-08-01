@@ -47,7 +47,10 @@ function argsFromContext(context: unknown): ToolRenderFields {
   return isToolRenderFields(context) && isToolRenderFields(context["args"]) ? context["args"] : {};
 }
 
-const agentToolNames = ["agent_spawn", "finder", "oracle", "agent_send", "agent_wait", "agent_list", "agent_close"];
+const agentToolNames = [
+  "agent_spawn", "finder", "oracle", "code_reviewer", "code_quality_reviewer",
+  "agent_send", "agent_wait", "agent_list", "agent_close",
+];
 const agentResultRenderedKey = "taumelAgentResultRendered";
 type ToolRenderState = { [key: string]: unknown };
 
@@ -176,7 +179,7 @@ function subjectFromArgs(name: string, args: ToolRenderFields): string {
     case "exa_agent_list_runs":
       return args["limit"] === undefined ? "recent runs" : `limit ${args["limit"]}`;
     case "agent_spawn": {
-      // agentui-weo6 / agent-rn05: handle already encodes tier (agent-medium-…),
+      // agentui-weo6 / agent-9ach: handle already encodes tier (agent-medium-…),
       // so compact pending/progress subject is handle · description only.
       const handle = stringFieldOrUndefined(args, "agent_id") ?? "";
       const description = stringFieldOrUndefined(args, "description") ?? "";
@@ -184,6 +187,8 @@ function subjectFromArgs(name: string, args: ToolRenderFields): string {
     }
     case "finder":
     case "oracle":
+    case "code_reviewer":
+    case "code_quality_reviewer":
       return oneLine(stringFieldOrUndefined(args, "message") ?? name);
     case "agent_send":
     case "agent_close":
@@ -794,7 +799,8 @@ export function cronFireMessageRenderer() {
 
 function progressText(name: string): string {
   if (name === "agent_wait") return "waiting for agents";
-  if (name === "agent_spawn" || name === "finder" || name === "oracle") return "starting agent";
+  if (name === "agent_spawn" || name === "finder" || name === "oracle"
+    || name === "code_reviewer" || name === "code_quality_reviewer") return "starting agent";
   if (name.startsWith("exa_") || name.endsWith("_exa")) return "waiting for Exa";
   if (name === "query_threads") return "searching threads";
   if (name === "read_thread") return "reading thread";
