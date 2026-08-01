@@ -23,8 +23,10 @@ function stepThinkingLevel(pi: PiLike, core: CoreBridge, ctx: unknown, delta: -1
   if (typeof pi.setThinkingLevel !== "function") return;
   const before = currentThinkingLevel(pi);
   const index = thinkingLevels.indexOf(before);
-  const nextIndex = Math.max(0, Math.min(thinkingLevels.length - 1, index + delta));
-  pi.setThinkingLevel(thinkingLevels[nextIndex]);
+  for (let nextIndex = index + delta; nextIndex >= 0 && nextIndex < thinkingLevels.length; nextIndex += delta) {
+    pi.setThinkingLevel(thinkingLevels[nextIndex]);
+    if (currentThinkingLevel(pi) !== before) break;
+  }
   const after = currentThinkingLevel(pi);
   updateFooterThinking(core, after, ctx);
   const context = typeof ctx === "object" && ctx !== null ? ctx as ThinkingNotificationContext : undefined;

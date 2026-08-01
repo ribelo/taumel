@@ -2,7 +2,9 @@ import { strict as assert } from "node:assert";
 
 import { registerThinkingShortcuts, installThinkingFooterRefresh } from "../src/thinking-shortcuts.ts";
 
-function makeHarness() {
+const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+function makeHarness(supportedLevels) {
   const levels = [];
   const notifications = [];
   const shortcuts = new Map();
@@ -16,7 +18,18 @@ function makeHarness() {
       shortcuts.set(shortcut, definition);
     },
     getThinkingLevel() { return currentLevel; },
-    setThinkingLevel(level) { currentLevel = level; },
+    setThinkingLevel(level) {
+      if (supportedLevels === undefined || supportedLevels.includes(level)) {
+        currentLevel = level;
+        return;
+      }
+      const index = thinkingLevels.indexOf(level);
+      currentLevel = supportedLevels.find((candidate) =>
+        thinkingLevels.indexOf(candidate) >= index
+      ) ?? supportedLevels.findLast((candidate) =>
+        thinkingLevels.indexOf(candidate) < index
+      ) ?? supportedLevels[0];
+    },
     on(event, handler) { eventHandlers.set(event, handler); },
   };
   const core = {
@@ -40,6 +53,17 @@ function makeHarness() {
   };
 
   return { pi, core, ctx, shortcuts, eventHandlers, footerThinkingUpdates, footerThinkingCtxs, levels, notifications };
+}
+
+// alt+, skips unsupported K3 levels instead of getting stuck after Pi clamps them.
+{
+  const { pi, core, ctx, shortcuts } = makeHarness(["low", "high", "max"]);
+  pi.setThinkingLevel("max");
+  registerThinkingShortcuts(pi, core);
+  shortcuts.get("alt+,").handler(ctx);
+  assert.equal(pi.getThinkingLevel(), "high", "alt+, should decrease K3 from max to high");
+  shortcuts.get("alt+,").handler(ctx);
+  assert.equal(pi.getThinkingLevel(), "low", "alt+, should decrease K3 from high to low");
 }
 
 // Four shortcuts should be registered.
