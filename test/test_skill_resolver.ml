@@ -19,6 +19,13 @@ let test_mentions () =
   assert_list "boundary after punctuation" [ "foo" ]
     (Skill.mentions "hello,$foo")
 
+let test_plan () =
+  let text = "\nreview $foo and $bar\n" in
+  let plan = Skill.plan text in
+  (* skr-amig: planning preserves text and ordered direct mentions. *)
+  assert_equal "plan text" text plan.text;
+  assert_list "plan direct mentions" [ "foo"; "bar" ] plan.direct_mentions
+
 let test_block () =
   let block =
     Skill.skill_block ~name:"foo" ~location:"/skills/foo/SKILL.md"
@@ -71,9 +78,12 @@ let test_closure () =
     (Skill.closure ~fetch:(fetch [ ("a", "\\$b $$c") ]) [ "a" ]);
   assert_pairs "chain"
     [ ("a", None); ("b", Some "a"); ("c", Some "b") ]
-    (Skill.closure ~fetch:(fetch [ ("a", "$b"); ("b", "$c"); ("c", "done") ]) [ "a" ])
+    (Skill.closure
+       ~fetch:(fetch [ ("a", "$b"); ("b", "$c"); ("c", "done") ])
+       [ "a" ])
 
 let () =
   test_mentions ();
+  test_plan ();
   test_block ();
   test_closure ()

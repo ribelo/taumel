@@ -169,28 +169,41 @@ export const SkillListResultSchema = Type.Object(
   { skills: Type.Array(SkillInfoSchema) },
   { $id: "SkillListResult", additionalProperties: false },
 );
-export const SkillResolveFactsSchema = Type.Object(
-  { prompt: Type.String(), cwd: Type.String(), ctx: Type.Optional(Type.Unknown()) },
-  { $id: "SkillResolveFacts", additionalProperties: false },
+export const SkillExpansionFactsSchema = Type.Object(
+  { text: Type.String(), cwd: Type.String(), ctx: Type.Optional(Type.Unknown()) },
+  { $id: "SkillExpansionFacts", additionalProperties: false },
 );
-export const SkillBlockSchema = Type.Object(
+export const SkillMessageDetailsSchema = Type.Object(
   {
-    name: Type.String({ minLength: 1 }), location: Type.String({ minLength: 1 }),
-    baseDir: Type.String(), content: Type.String({ minLength: 1 }),
+    source: Type.Literal("auto-skill-mention"),
+    trigger: Type.String({ minLength: 1 }),
+    name: Type.String({ minLength: 1 }),
     parent: Type.Optional(Type.String({ minLength: 1 })),
   },
-  { $id: "SkillBlock", additionalProperties: false },
+  { $id: "SkillMessageDetails", additionalProperties: false },
+);
+export const SkillMessageSchema = Type.Object(
+  {
+    customType: Type.Literal("skill"),
+    content: Type.String({ minLength: 1 }),
+    display: Type.Literal(true),
+    details: SkillMessageDetailsSchema,
+  },
+  { $id: "SkillMessage", additionalProperties: false },
 );
 export const BridgeWarningSchema = Type.Object(
   { message: Type.String({ minLength: 1 }) },
   { $id: "BridgeWarning", additionalProperties: false },
 );
-export const SkillResolveResultSchema = Type.Object(
-  { blocks: Type.Array(SkillBlockSchema), warnings: Type.Array(BridgeWarningSchema) },
-  { $id: "SkillResolveResult", additionalProperties: false },
+export const SkillExpansionEffectsSchema = Type.Object(
+  {
+    messages: Type.Array(SkillMessageSchema),
+    warnings: Type.Array(BridgeWarningSchema),
+  },
+  { $id: "SkillExpansionEffects", additionalProperties: false },
 );
 export type SkillListResult = Static<typeof SkillListResultSchema>;
-export type SkillResolveResult = Static<typeof SkillResolveResultSchema>;
+export type SkillExpansionEffects = Static<typeof SkillExpansionEffectsSchema>;
 
 export const EnvironmentContextFactsSchema = Type.Object(
   { shell: Type.String() },

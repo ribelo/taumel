@@ -42,7 +42,7 @@ let core_call name_js args_js =
       Tool_catalog_bridge.plan_active_tools_sync_js (arg 0)
   | "planEnvironmentContext" ->
       Environment_context_bridge.plan_context (arg 0) (arg 1)
-  | "resolveSkillMentions" -> Skill_tools.resolve_mentions (arg 0)
+  | "planSkillExpansion" -> Skill_tools.plan_expansion (arg 0)
   | "listSkills" -> Skill_tools.list_skills (arg 0)
   | "planCompactionModelCommand" -> Compaction_model_bridge.plan_command (arg 0)
   | "planSessionBeforeCompact" ->

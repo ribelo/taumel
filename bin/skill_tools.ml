@@ -158,9 +158,12 @@ let source_paths cwd =
 
 let warning message = Tool_contracts.BridgeWarning.create ~message ()
 
-let block_payload ?parent (skill : skill) content =
-  Tool_contracts.SkillBlock.create ~name:skill.name ~location:skill.path
-    ~baseDir:skill.base_dir ~content ?parent ()
+let message_payload ?parent (skill : skill) content =
+  let details =
+    Boundary_contracts.SkillMessageDetails.create ~trigger:("$" ^ skill.name)
+      ~name:skill.name ?parent ()
+  in
+  Boundary_contracts.SkillMessage.create ~content ~details ()
 
 let skill_payload (skill : skill) =
   Tool_contracts.SkillInfo.create ~name:skill.name ~location:skill.path
@@ -193,25 +196,26 @@ let list_skills params =
   let result = Tool_contracts.SkillListResult.create ~skills () in
   Tool_contracts.SkillListResult.t_to_js result |> inject
 
-let resolve_mentions params =
+let plan_expansion params =
   let params =
-    decode_ojs_contract Tool_contracts.SkillResolveFacts.t_of_js
+    decode_ojs_contract Tool_contracts.SkillExpansionFacts.t_of_js
       (ojs_of_js params)
   in
-  (match Tool_contracts.SkillResolveFacts.get_ctx params with
+  (match Tool_contracts.SkillExpansionFacts.get_ctx params with
   | None -> ()
   | Some ctx ->
       Session_sync.sync_persisted_session
         (Ts2ocaml.unknown_to_js ctx |> js_of_ojs));
-  let prompt = Tool_contracts.SkillResolveFacts.get_prompt params in
-  let names = Taumel.Skill_resolver.mentions prompt in
+  let text = Tool_contracts.SkillExpansionFacts.get_text params in
+  let expansion = Taumel.Skill_resolver.plan text in
+  let names = expansion.direct_mentions in
   if names = [] then
     let result =
-      Tool_contracts.SkillResolveResult.create ~blocks:[] ~warnings:[] ()
+      Tool_contracts.SkillExpansionEffects.create ~messages:[] ~warnings:[] ()
     in
-    Tool_contracts.SkillResolveResult.t_to_js result |> inject
+    Tool_contracts.SkillExpansionEffects.t_to_js result |> inject
   else
-    let cwd = Tool_contracts.SkillResolveFacts.get_cwd params in
+    let cwd = Tool_contracts.SkillExpansionFacts.get_cwd params in
     let table = Hashtbl.create 32 in
     List.iter (fun skill -> add_skill table skill) (discover_skills cwd);
     let warnings = ref [] in
@@ -236,7 +240,7 @@ let resolve_mentions params =
           body
     in
     let traversal = Taumel.Skill_resolver.closure ~fetch names in
-    let blocks =
+    let messages =
       List.filter_map
         (fun (name, parent) ->
           match (Hashtbl.find_opt table name, fetch name) with
@@ -245,12 +249,12 @@ let resolve_mentions params =
                 Taumel.Skill_resolver.skill_block ~name:skill.name
                   ~location:skill.path ~base_dir:skill.base_dir ~body
               in
-              Some (block_payload ?parent skill content)
+              Some (message_payload ?parent skill content)
           | _ -> None)
         traversal
     in
     let result =
-      Tool_contracts.SkillResolveResult.create ~blocks
+      Tool_contracts.SkillExpansionEffects.create ~messages
         ~warnings:(List.rev !warnings) ()
     in
-    Tool_contracts.SkillResolveResult.t_to_js result |> inject
+    Tool_contracts.SkillExpansionEffects.t_to_js result |> inject

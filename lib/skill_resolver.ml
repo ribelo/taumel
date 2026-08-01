@@ -4,6 +4,8 @@ let is_digit = function '0' .. '9' -> true | _ -> false
 
 let is_name_tail c = is_lower c || is_digit c || c = '-'
 
+type plan = { text : string; direct_mentions : string list }
+
 let blocks_start prev =
   not (is_lower prev || is_digit prev || prev = '$' || prev = '\\')
 
@@ -27,6 +29,8 @@ let mentions text =
         else scan !stop (name :: seen) (name :: acc)
   in
   scan 0 [] []
+
+let plan text = { text; direct_mentions = mentions text }
 
 let closure ~fetch names =
   let rec bfs queue seen acc =

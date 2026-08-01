@@ -53,7 +53,7 @@ import {
   decodePendingExecNotificationsResult,
   decodeRefreshExecPolicyResult,
   decodeSkillListResult,
-  decodeSkillResolveResult,
+  decodeSkillExpansionEffects,
   decodeThreadCatalogScansResult,
   decodeToolNamesResult,
   decodeCoreAck,
@@ -248,20 +248,29 @@ const skillList = decodeSkillListResult({
   skills: [{ name: "review", location: "/skills/review.md", baseDir: "/skills", description: "Review code" }],
 });
 if (skillList.skills[0]?.name !== "review") throw new Error("skill list did not decode");
-const skillResolution = decodeSkillResolveResult({
-  blocks: [{ name: "review", location: "/skills/review.md", baseDir: "/skills", content: "Review this" }],
+// skr-4281/skr-yyck/skr-z2n2/skr-copf: the generated seam accepts expansion effects.
+const skillExpansion = decodeSkillExpansionEffects({
+  messages: [{
+    customType: "skill", content: "Review this", display: true,
+    details: { source: "auto-skill-mention", trigger: "$review", name: "review" },
+  }],
   warnings: [{ message: "warning" }],
 });
-if (skillResolution.blocks[0]?.content !== "Review this") throw new Error("skill resolution did not decode");
+if (skillExpansion.messages[0]?.content !== "Review this") {
+  throw new Error("skill expansion effects did not decode");
+}
 for (const invalid of [
   { skills: [{ name: "", location: "/x", baseDir: "/", description: "" }] },
-  { blocks: [{ name: "x", location: "/x", baseDir: "/", content: "" }], warnings: [] },
-  { blocks: [], warnings: [{ message: "" }] },
+  { messages: [{ customType: "skill", content: "", display: true, details: { source: "auto-skill-mention", trigger: "$x", name: "x" } }], warnings: [] },
+  { messages: [{ customType: "other", content: "x", display: true, details: { source: "auto-skill-mention", trigger: "$x", name: "x" } }], warnings: [] },
+  { messages: [{ customType: "skill", content: "x", display: false, details: { source: "auto-skill-mention", trigger: "$x", name: "x" } }], warnings: [] },
+  { messages: [{ customType: "skill", content: "x", display: true, details: { source: "other", trigger: "$x", name: "x" } }], warnings: [] },
+  { messages: [], warnings: [{ message: "" }] },
 ]) {
   let rejected = false;
   try {
     if ("skills" in invalid) decodeSkillListResult(invalid);
-    else decodeSkillResolveResult(invalid);
+    else decodeSkillExpansionEffects(invalid);
   } catch {
     rejected = true;
   }

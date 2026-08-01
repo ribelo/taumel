@@ -17,7 +17,7 @@ export type CoreMethodArgs = {
   readonly commandSpecs: readonly [];
   readonly planActiveToolsSync: readonly [Static<typeof Core.ActiveToolsSyncFactsSchema>];
   readonly planEnvironmentContext: readonly [HostContext, Static<typeof Core.EnvironmentContextFactsSchema>];
-  readonly resolveSkillMentions: readonly [Static<typeof Core.SkillResolveFactsSchema>];
+  readonly planSkillExpansion: readonly [Static<typeof Core.SkillExpansionFactsSchema>];
   readonly listSkills: readonly [Static<typeof Core.SkillListFactsSchema>];
   readonly planCompactionModelCommand: readonly [Static<typeof Core.CompactionCommandFactsSchema>];
   readonly planSessionBeforeCompact: readonly [Static<typeof Core.CompactionSettingsSchema>];
