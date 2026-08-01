@@ -248,6 +248,7 @@ agents, plan-mode continuation, Librarian, and Painter.
 
 ### Starting agents
 
+- The agent subsystem shall own agent-tool parsing, kind-specific start policy, preparation, error mapping, and execution; the generic tool executor shall only identify an agent tool and delegate its invocation. ^agent-juxg
 - `agent_spawn` shall create one generic identity and immediately start its first run from `message` using the resolved tier routing. ^agent-sp01
 - `finder` shall create one Finder identity and immediately start its first run by passing `query` as the child's initial message; `oracle`, `code_reviewer`, and `code_quality_reviewer` shall each create one identity of their kind and immediately start its first run from `message` through the same shared start machinery. ^agent-hr2e
 - Starts shall be asynchronous and shall return only after child creation and message acceptance are known, not after the run finishes. ^agent-sp03

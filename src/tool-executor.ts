@@ -25,11 +25,8 @@ import {
   writePatchFiles,
   appendToFile,
   writeFileAtomically,
-  contextWithOverrides,
   type MutationPathAuthorization,
 } from "./util.ts";
-import { rememberAgentDescription } from "./agent-run-registry.ts";
-import { isToolRenderFields, type ToolRenderFields } from "./tool-renderer-kit.ts";
 import { threadSources } from "./thread-sources.ts";
 import { planContinuationMessageRenderer, notificationMessageRenderer, renderersForTool } from "./tool-renderer.ts";
 import { bindHarnessApprovalUi, clearHarnessApprovalUi, requestHarnessApproval, type ApprovalOutcome, type ApprovalResolution, type ApprovalUi } from "./approval-coordinator.ts";
@@ -41,10 +38,10 @@ import {
   sendToChildSession,
 } from "./child-sessions.ts";
 import { installExecNotificationLifecycle, startExecCompletionWaiter } from "./exec-notifications.ts";
-import { executeAgentPrepared, installAgentLifecycle, pendingAgentWaits } from "./agent-orchestration.ts";
-import { decodeAuthorityPlanIssued, decodeCoreAck, decodeEditApplicationResult, decodeExecApprovalPromptPlan, decodeExecApprovalResult, decodeExecPolicyAllowRuleResult, decodeExecToolResult, decodePatchApplicationResult, decodeToolNamesResult, decodeToolResultEnvelope, decodeViewMediaResultEnvelope, type PreparedToolAction, type ToolResultEnvelope } from "./bridge-contracts.ts";
+import { installAgentLifecycle, pendingAgentWaits } from "./agent-orchestration.ts";
+import { agentFailureText, executeAgentTool, isAgentToolName } from "./agent-tool-executor.ts";
+import { decodeAuthorityPlanIssued, decodeEditApplicationResult, decodeExecApprovalPromptPlan, decodeExecApprovalResult, decodeExecPolicyAllowRuleResult, decodeExecToolResult, decodePatchApplicationResult, decodeToolNamesResult, decodeToolResultEnvelope, decodeViewMediaResultEnvelope, type PreparedToolAction, type ToolResultEnvelope } from "./bridge-contracts.ts";
 import {
-  agentErrorToolResult,
   errorToolResult,
   hostToolResult,
   preparedAction,
@@ -53,7 +50,6 @@ import {
 import { authorityPlanId, discardPreparedAuthorityPlan, executeApprovedExaInCore, executeExaInCore } from "./authority-plans.ts";
 import { executeOpenAiUsageWithHostAuth, executeUsagePairWithHostAuth } from "./usage-host.ts";
 import { latestTaumelCustomEntry } from "./pi-session-entries.ts";
-import { planSkillExpansion, type SkillExpansionPlan } from "./skills.ts";
 type SettingsObject = { [key: string]: unknown };
 type ToolContext = { readonly cwd?: unknown; readonly model?: unknown; readonly ui?: unknown; readonly hasUI?: unknown; readonly sessionManager?: unknown };
 type ImageModel = { readonly input?: unknown };
@@ -62,27 +58,10 @@ type PreparedSuccess = Exclude<PreparedToolAction, { ok: false }>;
 type PreparedApprovalAction = Extract<PreparedSuccess, { action: "exec_command_approval" | "write_approval" | "edit_approval" | "apply_patch_approval" | "exa_agent_create_run_approval" }>;
 type PreparedMutationAction = Extract<PreparedSuccess, { action: "write" | "write_approval" | "edit" | "edit_approval" | "apply_patch" | "apply_patch_approval" }>;
 type GatewayToolResult = ToolResultEnvelope | ReturnType<typeof decodeViewMediaResultEnvelope>;
-const agentToolNames = new Set(["agent_spawn", "finder", "oracle", "code_reviewer", "code_quality_reviewer", "agent_send", "agent_wait", "agent_list", "agent_close"]);
-const reviewerRubricByTool = new Map([
-  ["code_reviewer", "code-review"],
-  ["code_quality_reviewer", "code-quality-review"],
-]);
 const invalidChildSafeToolNames = new Set([
   "read", "view_media", "get_plan", "query_threads", "read_thread",
-  "ralph_continue", "ralph_finish", "cron_list", "agent_wait", "agent_list",
+  "ralph_continue", "ralph_finish", "cron_list",
 ]);
-
-function agentFailureText(name: string, result: GatewayToolResult): string | undefined {
-  if (!agentToolNames.has(name)) return undefined;
-  const details = objectValue<SettingsObject>(result.details);
-  const error = objectValue<SettingsObject>(details?.["error"]);
-  if (details?.["ok"] !== false || typeof error?.["code"] !== "string" || typeof error["message"] !== "string") {
-    return undefined;
-  }
-  return result.content
-    .flatMap((item) => item.type === "text" ? [item.text] : [])
-    .join("\n");
-}
 
 export {
   applyChildSessionUpdate,
@@ -688,11 +667,21 @@ export async function executeTool(
   signal?: AbortSignal,
   childExtensionFactory?: (pi: PiLike) => void,
 ): Promise<GatewayToolResult> {
+  // ^agent-juxg: agent policy and execution belong to the agent subsystem.
+  if (isAgentToolName(name)) {
+    return executeAgentTool(
+      pi,
+      core,
+      childSessions,
+      name,
+      rawParams,
+      ctx,
+      signal,
+      childExtensionFactory,
+    );
+  }
   const parsed = parseToolParams(name, rawParams);
   if (!parsed.ok) {
-    if (agentToolNames.has(name)) {
-      return agentErrorToolResult(core, "invalid_arguments", parsed.error);
-    }
     return errorToolResult(core, parsed.error, { ok: false, error: parsed.error });
   }
   const childMarker = childSessionMarkerFromContext(ctx);
@@ -710,77 +699,14 @@ export async function executeTool(
     const error = "Current model does not support image input";
     return errorToolResult(core, error, { ok: false, error, modelSupportsImages: false });
   }
-  const agentTool = name === "agent_spawn" || name === "finder" || name === "oracle"
-    || name === "code_reviewer" || name === "code_quality_reviewer";
-  let reviewerRubricPlan: SkillExpansionPlan | undefined;
-  const reviewerRubric = reviewerRubricByTool.get(name);
-  if (reviewerRubric !== undefined) {
-    reviewerRubricPlan = planSkillExpansion(core, {
-      text: `Your rubric: $${reviewerRubric}. Follow it exactly.`,
-      cwd: cwdFromContext(ctx),
-      ctx,
-    });
-    if (reviewerRubricPlan.messages.length === 0) {
-      return agentErrorToolResult(
-        core,
-        "rubric_unavailable",
-        `reviewer rubric skill is unavailable: ${reviewerRubric}`,
-      );
-    }
-  }
-  if (name === "agent_list") {
-    const prefix = `${childSessionCacheKeyScopeFromContext(ctx)}\0`;
-    const liveAgentIds = [...childSessions.keys()]
-      .filter((key) => key.startsWith(prefix))
-      .map((key) => key.slice(prefix.length));
-    try {
-      decodeCoreAck(core.call("reconcileLiveAgentDispatches", [{ live_agent_ids: liveAgentIds }, { ctx }]));
-    } catch (error) {
-      return agentErrorToolResult(core, "persistence_failed", error instanceof Error ? error.message : String(error));
-    }
-  }
-  const prepareCtx = agentTool && typeof pi.getActiveTools === "function"
-    ? contextWithOverrides(ctx, { activeTools: pi.getActiveTools() })
-    : ctx;
   let prepared;
   try {
-    prepared = preparedAction(core, name, parsed.params, prepareCtx);
+    prepared = preparedAction(core, name, parsed.params, ctx);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (agentToolNames.has(name)) {
-      return agentErrorToolResult(core, "persistence_failed", message);
-    }
     throw error;
   }
   if (!prepared.ok) {
-    if (agentToolNames.has(name)) {
-      const message = prepared.error;
-      const code = /unknown run|not owned.*run/.test(message) ? "run_not_found"
-        : /unknown agent|not owned.*agent|closing/.test(message) ? "agent_not_found"
-        : /64 agents|namespace is exhausted/.test(message) ? "agent_limit_reached"
-        : /routing|model|thinking|authentication/.test(message) ? "routing_unavailable"
-        : /delete_worktree is only valid|invalid_arguments/.test(message) ? "invalid_arguments"
-        : /workspace_unavailable|workspace|Git repository|HEAD commit|isolated agent worktree/.test(message)
-          ? "workspace_unavailable"
-        : /state is unavailable|persistence_failed/.test(message) ? "persistence_failed"
-        : /cleanup_failed|cleanup|worktree has uncommitted|worktree deletion|provisional worktree cleanup/.test(message)
-          ? "cleanup_failed"
-        : "internal_error";
-      const safeMessage = code === "run_not_found" ? "run not found"
-        : code === "agent_not_found" ? "agent not found"
-        : message;
-      return agentErrorToolResult(core, code, safeMessage);
-    }
     return errorToolResult(core, prepared.error, { ...prepared });
-  }
-  // ^agentui-xqzc: remember spawn/send descriptions so a later single-run
-  // agent_wait can name the awaited run in its compact line.
-  if (name === "agent_spawn" || name === "finder" || name === "oracle" || name === "code_reviewer" || name === "code_quality_reviewer" || name === "agent_send") {
-    const params: ToolRenderFields = isToolRenderFields(parsed.params) ? parsed.params : {};
-    rememberAgentDescription(
-      typeof params["agent_id"] === "string" ? params["agent_id"] : "",
-      typeof params["description"] === "string" ? params["description"] : undefined,
-    );
   }
   const approvalStillCurrent = () => {
     try {
@@ -805,21 +731,6 @@ export async function executeTool(
   switch (prepared.action) {
     case "tool_result":
       return preparedToolResult(core, prepared);
-    case "agent_start":
-    case "agent_send":
-    case "agent_wait":
-    case "agent_close":
-      return executeAgentPrepared(
-        pi,
-        core,
-        childSessions,
-        pendingAgentWaits,
-        prepared,
-        ctx,
-        signal,
-        childExtensionFactory,
-        reviewerRubricPlan,
-      );
     case "openai_usage_fetch":
       return executeOpenAiUsageWithHostAuth(pi, core, prepared, ctx);
     case "usage_pair_fetch":
