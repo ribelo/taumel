@@ -2,7 +2,7 @@
 kind: requirement
 tags: [agents, subagents, finder, oracle, orchestration]
 depends_on: ["[[docs/requirements/capability-profile]]", "[[docs/requirements/sandbox]]", "[[docs/requirements/tool-gateway]]", "[[docs/requirements/shared-infrastructure]]"]
-traces_to: ["[[docs/research/amp-agent-surfaces]]", "[[docs/adr/0003-persist-agent-context-in-private-pi-sessions]]", "[[docs/adr/0004-deduplicate-agent-completion-notifications]]", "[[docs/adr/0005-bind-agent-identities-to-their-workspaces]]", "[[docs/adr/0006-scope-agent-ownership-to-pi-sessions]]", "[[docs/adr/0007-remove-agent-state-on-close]]"]
+traces_to: ["[[docs/research/amp-agent-surfaces]]", "[[docs/adr/0003-persist-agent-context-in-private-pi-sessions]]", "[[docs/adr/0004-deduplicate-agent-completion-notifications]]", "[[docs/adr/0005-bind-agent-identities-to-their-workspaces]]", "[[docs/adr/0006-scope-agent-ownership-to-pi-sessions]]", "[[docs/adr/0007-remove-agent-state-on-close]]", "[[docs/adr/0005-inject-reviewer-criteria-as-a-skill]]"]
 ---
 # Agents
 
@@ -11,10 +11,16 @@ traces_to: ["[[docs/research/amp-agent-surfaces]]", "[[docs/adr/0003-persist-age
 Taumel provides durable, asynchronous child agents owned by a main Pi session.
 A generic agent is created with a message and a low, medium, or high tier; it
 otherwise behaves like a normal Pi agent. Finder is created with a discovery
-query, while Oracle is created with a message. Both are built-in
-specialists with dedicated model-facing tools, fixed purposes, and read-only
-authority. All three kinds share identity, continuation, waiting, persistence,
-notification, and closing mechanics.
+query, while Oracle, code-reviewer, and code-quality-reviewer are created with a
+message. The four specialists are built-in kinds with dedicated model-facing
+tools, fixed purposes, and read-only authority. Every kind shares identity,
+continuation, waiting, persistence, notification, and closing mechanics.
+
+A reviewer specialist separates its criteria from its identity. Its prompt holds
+only identity, scope anchoring, and output discipline, while its review criteria
+arrive as a skill that the skill resolver injects into the child conversation
+before the caller's review request. A reviewer therefore never starts without
+its criteria.
 
 The user-only agent manager exposes identity, run, instruction, and transient
 worktree inspection without adding that inspection to the parent conversation
@@ -33,28 +39,29 @@ the parent conversation.
 
 This design deliberately exceeds Amp's one-shot `Task`: Taumel agents are
 steerable, reusable, and resumable. It deliberately omits profiles, user-defined
-agents, plan-mode continuation, Librarian, Review, and Painter.
+agents, plan-mode continuation, Librarian, and Painter.
 
 ## Requirements
 
 ### Model-facing surface
 
-- The system shall expose exactly the agent tools `agent_spawn`, `agent_send`, `agent_wait`, `agent_list`, `agent_close`, `finder`, and `oracle`. ^agent-ts01
-- The system shall not expose `agent_profiles`, a legacy agent multiplexer, a profile or persona selector, Librarian, Review, or Painter. ^agent-ts02
-- The system shall provide all seven tools in TUI, print, JSON, and RPC modes and shall not gate them on interactive UI availability. ^agent-ts03
+- The system shall expose exactly the agent tools `agent_spawn`, `agent_send`, `agent_wait`, `agent_list`, `agent_close`, `finder`, `oracle`, `code_reviewer`, and `code_quality_reviewer`. ^agent-8o87
+- The system shall not expose `agent_profiles`, a legacy agent multiplexer, a profile or persona selector, Librarian, or Painter. ^agent-7je2
+- The system shall provide all nine tools in TUI, print, JSON, and RPC modes and shall not gate them on interactive UI availability. ^agent-ncob
 - The system shall keep every agent tool schema stable for the main session lifetime; configuration and agent state shall change behavior, not registered schemas. ^agent-ts04
-- The system shall keep nesting depth exactly one and expose none of the seven agent tools to a child agent. ^agent-ts05
+- The system shall keep nesting depth exactly one and expose none of the nine agent tools to a child agent. ^agent-9vqk
 
 ### Tool contracts
 
 - `agent_spawn` shall require a non-empty `message` and non-empty `description`, accept optional `tier` restricted to `low`, `medium`, or `high`, default tier to `medium`, accept optional `isolation` restricted to `none` or `worktree` and default it to `none`, and reject unknown parameters. ^agent-tc01
 - `finder` shall require a non-empty `query` and non-empty `description`, `oracle` shall require a non-empty `message` and non-empty `description`, both tools shall accept optional `isolation` restricted to `none` or `worktree` and default it to `none`, and both tools shall reject unknown parameters. ^agent-tc02
+- `code_reviewer` and `code_quality_reviewer` shall each require a non-empty `message` and non-empty `description`, accept optional `isolation` restricted to `none` or `worktree` and default it to `none`, and reject unknown parameters. ^agent-p56b
 - `agent_send` shall require `agent_id`, accept optional `message`, `description`, and `interrupt`, require a non-empty message unless `interrupt = true`, require a non-empty `description` exactly when a message is supplied, and reject routing, prompt, tool, sandbox, and profile overrides. ^agent-tc03
 - `agent_wait` shall require a non-empty array of unique `run_ids`, accept optional non-negative `timeout_seconds`, and reject agent-id selectors, empty or duplicate selections, implicit all-run selection, and unknown parameters. ^agent-tc04
 - `agent_list` shall accept no parameters. ^agent-tc05
 - `agent_close` shall require one non-empty `agent_id`, accept optional Boolean `delete_worktree` defaulting to `false`, and reject arrays, `all`, and unknown parameters. ^agent-tc06
-- Every successful start through `agent_spawn`, `finder`, or `oracle` shall return one JSON object whose base fields are exactly `agent_id`, `run_id`, `kind`, and `status = running` without waiting for completion; the model-facing result shall not expose resolved model or thinking. ^agent-tc07
-- A successful generic start shall additionally return its resolved `tier`; Finder and Oracle start objects shall omit `tier`. ^agent-tc08
+- Every successful start through `agent_spawn`, `finder`, `oracle`, `code_reviewer`, or `code_quality_reviewer` shall return one JSON object whose base fields are exactly `agent_id`, `run_id`, `kind`, and `status = running` without waiting for completion; the model-facing result shall not expose resolved model or thinking. ^agent-s1zw
+- A successful generic start shall additionally return its resolved `tier`; a specialist start object shall omit `tier`. ^agent-5bkf
 - A successful `agent_send` that affects a run shall return one JSON object containing exactly `agent_id`, affected `run_id`, resulting `status`, and `outcome`; `no_active_run` shall return exactly `agent_id` and `outcome = no_active_run`, omitting `run_id` and `status`. ^agent-tc09
 - `agent_list` shall return one top-level JSON array whose items contain `agent_id`, identity `created_at`, `kind`, `isolation`, source `workspace`, active or latest `run_id` and `started_at`, authoritative lifecycle `status`, the run snapshot fields defined below, and an `activity` object containing `state`, `last_at`, `recommendation`, and `active_tool_calls`, plus `tier` only for generic identities; items shall not expose resolved model or thinking, and an empty list shall be `[]`. ^agent-2jx5
 - A successful `agent_close` shall return only the closed `agent_id` and `status = closed`; after that result, every former agent and run ID shall be unknown to all agent tools. ^agent-tc11
@@ -63,7 +70,7 @@ agents, plan-mode continuation, Librarian, Review, and Painter.
 - The model-facing `agent_spawn` metadata shall position generic delegation for substantial execution tasks whose primary outcome is an action or artifact and that benefit from independent asynchronous execution. ^agent-tc14
 - The model-facing description of every agent `description` parameter shall request a specific, action-oriented, three-to-five-word label written for the user and shall state that the label is used for compact TUI display rather than sent to the child. ^agent-tc15
 - The model-facing `agent_list` description shall state that it returns lifecycle status, per-run execution metrics, and observable activity phase and timing for progress inspection, and shall not claim that elapsed silence proves a stall. ^agent-tc16
-- A failed agent tool call shall use exactly one stable `error.code` from `invalid_arguments`, `agent_not_found`, `run_not_found`, `agent_limit_reached`, `routing_unavailable`, `workspace_unavailable`, `child_session_unavailable`, `dispatch_failed`, `persistence_failed`, `cleanup_failed`, or `internal_error`. ^agent-tc17
+- A failed agent tool call shall use exactly one stable `error.code` from `invalid_arguments`, `agent_not_found`, `run_not_found`, `agent_limit_reached`, `routing_unavailable`, `rubric_unavailable`, `workspace_unavailable`, `child_session_unavailable`, `dispatch_failed`, `persistence_failed`, `cleanup_failed`, or `internal_error`. ^agent-05vq
 - Unknown, closed, and not-owned agent resources shall all use `agent_not_found`, while unknown, closed, and not-owned run resources shall all use `run_not_found`; the error code or message shall not reveal whether another owner has the requested resource. ^agent-tc18
 - Routing configuration, model availability, authentication, and thinking-selection failures discovered before dispatch shall use `routing_unavailable`; child creation or message-acceptance failures shall use `dispatch_failed`; unavailable bound workspaces and private child sessions shall use their corresponding stable codes. ^agent-tc19
 - A provider, quota, authentication, or transport failure after run acceptance shall fail the run and remain observable through `agent_wait` rather than retroactively failing the accepted tool call; the same failure before message acceptance shall use the applicable `routing_unavailable` or `dispatch_failed` failed-call code. ^agent-tc20
@@ -73,12 +80,12 @@ agents, plan-mode continuation, Librarian, Review, and Painter.
 - The model-facing `agent_wait` description shall be `Race selected agent runs and return every result ready at the observation point. Omitted timeout waits indefinitely; a timeout bounds only this call and never stops the runs. Call again with returned pending_run_ids to await later completions.`; `run_ids` shall be described as `Unique owner-scoped run IDs that all belong to the current session.`; and `timeout_seconds` shall be described as `Maximum seconds to wait. Omit to wait indefinitely; use 0 to poll once. Timing out leaves all pending runs active.` ^agent-tc24
 - The model-facing `agent_list` description shall be `List all open agent identities owned by the current session, including lifecycle status, per-run execution metrics, and observable activity phase, timing, and recommended next action.` ^agent-tc25
 - The model-facing `agent_close` description shall be `Permanently close one agent identity, interrupt active execution, and remove all of its runs from current Taumel state. By default, an agent worktree and its dedicated branch are preserved; optional worktree deletion removes only a clean, verified worktree and preserves its branch. Closed identities cannot be resumed; use agent_send interruption for a reversible stop.`; `agent_id` shall be described as the owner-scoped handle of the identity to close permanently; and `delete_worktree` shall be described as `When true, remove the agent's clean, verified worktree while preserving its dedicated branch. Defaults to false.` ^agent-tc26
-- The model-facing description of `agent_spawn.isolation`, `finder.isolation`, and `oracle.isolation` shall be `Workspace isolation for the new identity: none (default) uses the bound parent workspace; worktree creates a dedicated Git worktree.` ^agent-w981
+- The model-facing description of `agent_spawn.isolation`, `finder.isolation`, `oracle.isolation`, `code_reviewer.isolation`, and `code_quality_reviewer.isolation` shall be `Workspace isolation for the new identity: none (default) uses the bound parent workspace; worktree creates a dedicated Git worktree.` ^agent-ve1q
 - The model-facing metadata for each agent tool shall use its tool description for the complete capability and important operational semantics, its prompt snippet for a concise and distinctive one-line catalog orientation, its parameter descriptions only for field-local meaning, units, defaults, constraints, or examples, and its optional prompt guidelines for tool-selection or usage policy. ^agent-695o
 - Every model-facing agent prompt guideline shall explicitly identify the tool or tools to which it applies and shall not repeat parameter-schema facts or duplicate the complete capability description. ^agent-1xfj
-- The model-facing agent prompt guidelines shall direct callers to use `finder` for conceptual, behavior-based, or multi-file discovery that correlates findings across files, `oracle` when the primary deliverable is independent judgment, critique, diagnosis, planning, review, or a recommendation, and `agent_spawn` for substantial delegated execution only when neither specialist purpose fits, especially independent multi-step work, parallel disjoint work, or work with extensive intermediate output that the parent does not need; they shall direct callers to prefer direct tools for known paths, symbols, or exact text. ^agent-cu3c
+- The model-facing agent prompt guidelines shall direct callers to use `finder` for conceptual, behavior-based, or multi-file discovery that correlates findings across files, `oracle` when the primary deliverable is independent judgment, critique, diagnosis, planning, review, or a recommendation, `code_reviewer` and `code_quality_reviewer` when the deliverable is a rubric-governed review of identified changes, and `agent_spawn` for substantial delegated execution only when no specialist purpose fits, especially independent multi-step work, parallel disjoint work, or work with extensive intermediate output that the parent does not need; they shall direct callers to prefer direct tools for known paths, symbols, or exact text. ^agent-lvuk
 - The model-facing agent prompt guidelines shall distinguish `agent_send` as the tool for instructing an existing open identity, including idle start, active steering, suspended resume, and active interruption; `agent_wait` as the tool for awaiting or polling selected runs and retrieving their outcomes and child output; and `agent_list` as the tool for inspecting owned open identities, lifecycle status, per-run turn count, and observable activity before choosing a lifecycle action, without inferring a stall from elapsed silence alone. ^agent-mbxx
-- Each of `agent_spawn`, `finder`, `oracle`, `agent_send`, `agent_wait`, and `agent_list` shall own a separate prompt guideline that describes when, and where useful when not, to use that tool; a guideline shall reference another tool only where needed to resolve a selection ambiguity, and the system shall not place the complete cross-tool routing policy under one tool. ^agent-vkp0
+- Each of `agent_spawn`, `finder`, `oracle`, `code_reviewer`, `code_quality_reviewer`, `agent_send`, `agent_wait`, and `agent_list` shall own a separate prompt guideline that describes when, and where useful when not, to use that tool; a guideline shall reference another tool only where needed to resolve a selection ambiguity, and the system shall not place the complete cross-tool routing policy under one tool. ^agent-w731
 - The model-facing generic-agent tier parameter description shall identify the field's meaning and state that `medium` is the default, while the `agent_spawn` prompt guideline shall provide concrete low, medium, and high selection examples for coding, independent research, and verification or operational work. ^agent-78rs
 - The model-facing `agent_spawn` tier guideline shall be `For agent_spawn, choose tier by task complexity and scope. Use low for straightforward, well-defined work: a one-file change or simple mechanical refactor across the codebase; bounded delegated internet research; or one known check or bounded evidence collection. Use medium for well-scoped work requiring reasoning across several files; focused independent research across multiple sources; or reproducing and verifying a workflow across several components. Use high for difficult, open-ended, or repository-wide work: broad cross-cutting changes; comprehensive independent research requiring broad source synthesis; or repository-wide failure investigation and validation. Medium is the default.` ^agent-cqyx
 - The model-facing description of `agent_spawn.tier` shall be `The generic agent's capacity tier. Defaults to medium.` ^agent-us77
@@ -99,38 +106,60 @@ agents, plan-mode continuation, Librarian, Review, and Painter.
 - The model-facing `finder` prompt snippet shall be `Start a read-only Finder for conceptual, multi-file discovery.` ^agent-ub6w
 - The model-facing description of `finder.query` shall be `The discovery query. Be specific and include relevant terms, file types, expected content or naming patterns, and clear success criteria.` ^agent-9s9b
 - The model-facing `oracle` prompt snippet shall be `Start a read-only Oracle for independent technical reasoning and advice.` ^agent-4mcx
+- The model-facing `code_reviewer` description shall be `Create a durable, read-only code reviewer and start an asynchronous run that reviews caller-identified changes against the correctness, security, and developer-experience rubric. The identity can be continued with agent_send; the call returns after the review request is accepted, without waiting for completion.` ^agent-nalt
+- The model-facing `code_reviewer` prompt snippet shall be `Start a read-only code reviewer for correctness, security, and developer experience.` ^agent-2342
+- The model-facing description of `code_reviewer.message` shall be `The review request. Identify the exact changes to review as commit SHAs, a commit range, or explicit paths, and state the expected outcome and any constraints.` ^agent-6alt
+- The model-facing `code_reviewer` routing guideline shall be `Use code_reviewer when the deliverable is a review of identified changes for correctness, security, and developer experience.` ^agent-j7jz
+- The model-facing `code_quality_reviewer` description shall be `Create a durable, read-only code quality reviewer and start an asynchronous run that reviews caller-identified changes against the maintainability rubric. The identity can be continued with agent_send; the call returns after the review request is accepted, without waiting for completion.` ^agent-h28d
+- The model-facing `code_quality_reviewer` prompt snippet shall be `Start a read-only code quality reviewer for maintainability and structure.` ^agent-qkel
+- The model-facing description of `code_quality_reviewer.message` shall be `The review request. Identify the exact changes to review as commit SHAs, a commit range, or explicit paths, and state the expected outcome and any constraints.` ^agent-i4vd
+- The model-facing `code_quality_reviewer` routing guideline shall be `Use code_quality_reviewer when the deliverable is a review of identified changes for maintainability, structure, abstraction quality, and test quality.` ^agent-5c75
 - The model-facing `agent_send` prompt snippet shall be `Continue, steer, resume, or interrupt an existing agent.` ^agent-44uh
-- Model-facing descriptions, parameter descriptions, prompt snippets, and prompt guidelines shall not characterize Finder, Oracle, or a generic-agent tier as fast, medium-speed, slow, cheap, or expensive; callers shall select among them by purpose, task complexity, and scope because configured routing and runtime conditions do not guarantee relative latency or cost. ^agent-48td
+- Model-facing descriptions, parameter descriptions, prompt snippets, and prompt guidelines shall not characterize a specialist or a generic-agent tier as fast, medium-speed, slow, cheap, or expensive; callers shall select among them by purpose, task complexity, and scope because configured routing and runtime conditions do not guarantee relative latency or cost. ^agent-vmgx
 - The model-facing `agent_wait` waiting-strategy guideline shall be `Prefer one indefinite agent_wait call over repeated polling or agent_list checks when no useful work can proceed until a selected run finishes.` ^agent-88sp
 - The model-facing `agent_wait` prompt snippet shall be `Wait for selected agent runs and retrieve ready outcomes.` ^agent-lbc5
 - The model-facing `agent_list` prompt snippet shall be `Inspect open agent identities and their latest run activity.` ^agent-p9k1
 
 ### Agent kinds and definitions
 
-- The system shall support exactly three agent kinds: `generic`, `finder`, and `oracle`. ^agent-kd01
+- The system shall support exactly five agent kinds: `generic`, `finder`, `oracle`, `code-reviewer`, and `code-quality-reviewer`. ^agent-uad7
 - When Taumel creates a generic child, Pi shall provide the child's base system prompt through its ordinary agent-session machinery for the child's model, tools, workspace, and project guidance. ^agent-kd03
 - When Taumel creates a Finder child, Taumel shall use the content of `resources/agents/finder.md` as the child's base system prompt. ^agent-ki03
 - When Taumel creates an Oracle child, Taumel shall use the content of `resources/agents/oracle.md` as the child's base system prompt. ^agent-xe88
-- Taumel shall provide the Finder and Oracle base system prompts to Pi through Pi's resource/context mechanism. ^agent-kd05
-- The Taumel build shall import and embed each agent prompt Markdown resource—`resources/agents/subagent.md`, `resources/agents/finder.md`, and `resources/agents/oracle.md`—in the shipped extension build output. ^agent-8wra
-- At runtime, Taumel shall obtain the common subagent, Finder, and Oracle prompts from the embedded Markdown resource imports produced by the build. ^agent-um6s
+- When Taumel creates a code-reviewer child, Taumel shall use the content of `resources/agents/code-reviewer.md` as the child's base system prompt. ^agent-6gev
+- When Taumel creates a code-quality-reviewer child, Taumel shall use the content of `resources/agents/code-quality-reviewer.md` as the child's base system prompt. ^agent-icsl
+- Taumel shall provide every specialist base system prompt to Pi through Pi's resource/context mechanism. ^agent-it4p
+- The Taumel build shall import and embed each agent prompt Markdown resource—`resources/agents/subagent.md`, `resources/agents/finder.md`, `resources/agents/oracle.md`, `resources/agents/code-reviewer.md`, and `resources/agents/code-quality-reviewer.md`—in the shipped extension build output. ^agent-inys
+- At runtime, Taumel shall obtain the common subagent prompt and every specialist prompt from the embedded Markdown resource imports produced by the build. ^agent-6b1f
 - Finder shall specialize in local conceptual and multi-step discovery across files rather than mutation or external research. ^agent-kd07
 - Oracle shall specialize in advisory tasks whose primary outcome is independent reasoning, judgment, critique, or a recommendation rather than carrying out the resulting action, including architecture, root-cause analysis, planning, review, and technical second opinions. ^agent-kd08
-- Finder and Oracle shall use the same internal identity and run lifecycle as generic agents rather than separate orchestration implementations. ^agent-kd09
+- Every specialist shall use the same internal identity and run lifecycle as generic agents rather than separate orchestration implementations. ^agent-61cz
 - Pi shall continue to own each child's provider interaction, retry, compaction, message history, and ordinary agent-session lifecycle; Taumel shall orchestrate identities and runs without duplicating those host behaviors. ^agent-kd10
 - Every child shall use Pi's ordinary resource and extension loading; Taumel shall not filter discovered extensions, suppress their initialization, or construct a restricted resource loader for children. ^agent-kd11
 - Parent and child shall remain independent conversations whose only communication is explicit parent-supplied messages and the child's returned last assistant message for a run; Taumel shall not copy, summarize, or otherwise transfer the parent transcript, current turn, reasoning, tool results, or hidden context into a child. ^agent-kd12
 - The system shall treat a child run as completed only after Pi settles it, including provider retries, auto-compaction retries, tool turns, and accepted steering; an intermediate low-level `agent_end` shall not complete the Taumel run. ^agent-kd13
 - Finder's extra instructions shall make it a strict file locator that returns at most a two-line summary followed by absolute paths and relevant line ranges, searches exhaustively when completeness is requested, scopes and parallelizes independent searches without fixed call or turn quotas, and includes complete relevant sections with five to ten lines of surrounding context. ^agent-kd14
 - Oracle's extra instructions shall retain its expert-subagent framing and default to the simplest viable recommendation, minimal incremental changes, YAGNI and KISS, at most one materially distinct alternative, context-first tool use, and a concise flexible response ordered as recommendation, rationale, risks, and escalation triggers when relevant; they shall not require effort estimates, fixed response headings, or citations. ^agent-kd15
+- code-reviewer's extra instructions shall define a reviewer that resolves the caller-identified changes itself with read-only version-control inspection, reports an ambiguous scope instead of assuming one, leads with findings that cite file and line, and states what it checked when it finds nothing wrong. ^agent-glqh
+- code-quality-reviewer's extra instructions shall define a reviewer with the same scope-resolution, ambiguity-reporting, findings-first, and clean-report discipline as code-reviewer. ^agent-gmvr
+- Each reviewer prompt shall carry identity, scope anchoring, and output discipline only; review criteria and skill locations shall stay outside the prompt. ^agent-493p
 - The system shall retain an agent task description as parent-facing metadata and shall not include it in the initial, steering, or resumed message delivered to the child. ^agent-kd16
 - Taumel shall deliver final or partial child answers to the parent only as attributed `agent_wait` tool-result fields and shall not inject child answers automatically as user, assistant, developer, or custom conversation messages. ^agent-kd17
+
+### Reviewer rubrics
+
+- When Taumel starts a code-reviewer child, the system shall use `$code-review` as that child's rubric instruction. ^agent-ipxl
+- When Taumel starts a code-quality-reviewer child, the system shall use `$code-quality-review` as that child's rubric instruction. ^agent-n95j
+- When Taumel starts a reviewer child, the system shall resolve that child's rubric instruction before it creates the identity, the child session, or the workspace. ^agent-kql9
+- If a reviewer's rubric instruction resolves to no skill message, then the system shall fail the start with `rubric_unavailable`, name the missing rubric skill, and leave no identity, run, worktree, or child session. ^agent-kd6s
+- When Taumel starts a reviewer child, the child conversation shall contain the resolved rubric skill messages and the rubric instruction before the caller's review request. ^agent-q1y8
 
 ### Routing and configuration
 
 - The system shall interpret generic tier as a routing key whose zero-configuration behavior inherits the parent's model and selects the matching Pi thinking level `low`, `medium`, or `high`. ^agent-rt01
 - The system shall default Finder to inherited parent model with `low` thinking and Oracle to inherited parent model with `high` thinking. ^agent-rt02
-- Taumel config shall allow complete model/thinking overrides for `taumel.agents.generic.low`, `taumel.agents.generic.medium`, `taumel.agents.generic.high`, `taumel.agents.finder`, and `taumel.agents.oracle`. ^agent-rt03
+- The system shall default code-reviewer and code-quality-reviewer to inherited parent model with `high` thinking. ^agent-p0t3
+- Taumel config shall allow complete model/thinking overrides for `taumel.agents.generic.low`, `taumel.agents.generic.medium`, `taumel.agents.generic.high`, `taumel.agents.finder`, `taumel.agents.oracle`, `taumel.agents.code-reviewer`, and `taumel.agents.code-quality-reviewer`. ^agent-25pk
 - A routing entry's `model` shall be either `inherit` or one canonical `provider/model` string, and its `thinking` shall be one Pi-supported thinking level. ^agent-rt04
 - A present routing override shall contain both `model` and `thinking`; the shared Taumel config precedence shall select one whole entry without field-by-field merging across scopes. ^agent-rt05
 - When a routing entry is malformed, the system shall report a scoped diagnostic and fail requests that depend on that entry rather than silently using defaults. ^agent-rt06
@@ -141,10 +170,11 @@ agents, plan-mode continuation, Librarian, Review, and Painter.
 
 ### Tool surfaces
 
-- A generic identity shall inherit the parent's active logical tool selection at creation, excluding all seven agent tools, and keep the resulting selection stable for its lifetime. ^agent-tl01
+- A generic identity shall inherit the parent's active logical tool selection at creation, excluding every agent tool, and keep the resulting selection stable for its lifetime. ^agent-alp0
 - Finder shall inherit only parent-active local read and command-execution tools, excluding mutation, network, approval-request, and agent-spawn effects. ^agent-tl02
 - Oracle shall inherit only parent-active read, command-execution, and network tools, excluding mutation, approval-request, and agent-spawn effects. ^agent-tl03
-- Neither specialist shall gain a tool absent from the parent's active selection. ^agent-tl04
+- code-reviewer and code-quality-reviewer shall inherit only parent-active read, command-execution, and network tools, excluding mutation, approval-request, and agent-spawn effects. ^agent-virk
+- No specialist shall gain a tool absent from the parent's active selection. ^agent-uni7
 - After resolving the child provider, the system shall apply the existing provider-aware `Tool_catalog` normalization to the child's selected tools. ^agent-tl05
 - When an OpenAI or OpenAI-Codex child inherits mutation capability, normalization shall replace `edit` and `write` with `apply_patch`; for another provider it shall replace an inherited `apply_patch` capability with the corresponding `edit` and `write` selection. ^agent-tl06
 - Capability normalization shall also preserve the existing shell-tool rewrite and shall not duplicate provider-specific tool logic inside the agent subsystem. ^agent-tl07
@@ -153,10 +183,10 @@ agents, plan-mode continuation, Librarian, Review, and Painter.
 ### Permissions and ownership
 
 - A generic identity's spawn-time permission ceiling shall be no broader than its parent's permission envelope at creation. ^agent-pm01
-- Finder and Oracle shall additionally have a fixed read-only sandbox ceiling and shall never receive mutation authority. ^agent-pm02
+- Every specialist shall additionally have a fixed read-only sandbox ceiling and shall never receive mutation authority. ^agent-wdqp
 - Every child side effect shall be authorized against the stricter combination of the identity's immutable spawn-time ceiling and its parent's current permission envelope. ^agent-pm03
 - Tightening parent permissions shall affect existing identities immediately; relaxing them may restore authority only up to the spawn-time ceiling and shall not change the identity's tool surface. ^agent-pm04
-- No child shall enable `no_sandbox` or inherit `danger-full-access` beyond the existing child clamp, and every Finder, Oracle, and worktree-isolated child shall reject command escalation rather than use approval to cross its immutable filesystem ceiling. ^agent-082w
+- No child shall enable `no_sandbox` or inherit `danger-full-access` beyond the existing child clamp, and every specialist and worktree-isolated child shall reject command escalation rather than use approval to cross its immutable filesystem ceiling. ^agent-mtcw
 - A child approval prompt shall identify the requesting agent; if its owning parent session is not loaded, the tool call shall receive `approval_unavailable` rather than displaying a prompt in another session or waiting indefinitely. ^agent-pm06
 - Every identity, run, wait, notification, send, list, close, and manager action shall remain scoped to the owning parent session and shall reveal no metadata for another owner's resources. ^agent-pm07
 - The agent owner shall be the Pi session identity rather than a conversation branch; in-place tree navigation shall retain ownership and access to that session's agents, including agents created on another branch. ^agent-pm08
@@ -164,7 +194,7 @@ agents, plan-mode continuation, Librarian, Review, and Painter.
 ### Identities and runs
 
 - An agent identity shall retain one Pi child conversation across multiple runs until permanently closed. ^agent-id01
-- The system shall generate an owner-scoped `agent_id` shaped `<kind>-<nano-id>` for Finder and Oracle identities and `agent-<tier>-<nano-id>` for generic identities, where tier is the effective effort `low`, `medium`, or `high` after applying the default `medium` and `nano-id` is exactly four characters from `abcdefghjkmnpqrstuvwxyz23456789`; it shall generate each owner-scoped `run_id` as `<agent_id>-run-<positive-integer>` with the integer increasing monotonically per identity, retry agent-handle collisions, never accept either ID from a spawning caller, and never reuse either within that parent session, including after closure. Exhausting a handle prefix's four-character namespace shall fail creation clearly rather than lengthening or reusing a handle; the entropy strategy is not contractual. ^agent-id02
+- The system shall generate an owner-scoped `agent_id` shaped `<kind>-<nano-id>` for a specialist identity and `agent-<tier>-<nano-id>` for a generic identity, where kind is the specialist kind name, tier is the effective effort `low`, `medium`, or `high` after applying the default `medium`, and `nano-id` is exactly four characters from `abcdefghjkmnpqrstuvwxyz23456789`; it shall generate each owner-scoped `run_id` as `<agent_id>-run-<positive-integer>` with the integer increasing monotonically per identity, retry agent-handle collisions, never accept either ID from a spawning caller, and never reuse either within that parent session, including after closure. Exhausting a handle prefix's four-character namespace shall fail creation clearly rather than lengthening or reusing a handle; the entropy strategy is not contractual. ^agent-ym73
 - Identity handles minted under the previous untiered `agent-<nano-id>` shape shall remain valid for existing persisted identities, including their derived run IDs and child-session paths, and only newly spawned generic identities shall receive the tiered shape. ^agent-zpfx
 - An identity shall have at most one active or suspended run; concurrent executions shall never mutate one child conversation. ^agent-id03
 - An identity shall keep immutable kind, generic tier when applicable, resolved routing, assigned tool surface, spawn-time permission ceiling, one closed workspace-binding variant, and child-session reference; isolation mode and effective-workspace behavior shall derive from the workspace binding rather than exist as independently variable identity fields. ^agent-gx91
@@ -219,10 +249,10 @@ agents, plan-mode continuation, Librarian, Review, and Painter.
 ### Starting agents
 
 - `agent_spawn` shall create one generic identity and immediately start its first run from `message` using the resolved tier routing. ^agent-sp01
-- `finder` shall create one Finder identity and immediately start its first run by passing `query` as the child's initial message; `oracle` shall create one Oracle identity and immediately start its first run from `message` through the same shared start machinery. ^agent-sp02
+- `finder` shall create one Finder identity and immediately start its first run by passing `query` as the child's initial message; `oracle`, `code_reviewer`, and `code_quality_reviewer` shall each create one identity of their kind and immediately start its first run from `message` through the same shared start machinery. ^agent-hr2e
 - Starts shall be asynchronous and shall return only after child creation and message acceptance are known, not after the run finishes. ^agent-sp03
 - If child creation, routing, workspace validation, or initial message acceptance fails, the system shall return a clear error and shall not leave an apparently running orphan identity or run. ^agent-sp04
-- A parent session shall own at most 64 existing agent identities; `agent_spawn`, `finder`, and `oracle` shall fail clearly before routing or child creation when that limit is reached, and successful `agent_close` shall free one identity slot. ^agent-sp05
+- A parent session shall own at most 64 existing agent identities; `agent_spawn`, `finder`, `oracle`, `code_reviewer`, and `code_quality_reviewer` shall fail clearly before routing or child creation when that limit is reached, and successful `agent_close` shall free one identity slot. ^agent-f1bp
 
 ### Sending, steering, and suspension
 
@@ -232,7 +262,7 @@ agents, plan-mode continuation, Librarian, Review, and Painter.
 - When `agent_send` supplies `interrupt = true` without a message to an active run, the system shall interrupt execution and mark that run suspended without closing the identity or creating a replacement run. ^agent-sd04
 - When `agent_send` supplies a message to a suspended run, with either value of `interrupt`, the system shall resume that same run through the retained child session and return the same `run_id`; there is no live execution to interrupt first. ^agent-sd05
 - When interruption without a message targets an identity with no active or suspended run, the system shall return a normal no-active-run result and change nothing. ^agent-sd06
-- `agent_send` shall work uniformly for generic, Finder, and Oracle identities while preserving each identity's kind, routing, tools, prompt behavior, permissions, and workspace. ^agent-sd07
+- `agent_send` shall work uniformly for every agent kind while preserving each identity's kind, routing, tools, prompt behavior, permissions, and workspace. ^agent-o8fk
 - If message dispatch fails after the current execution was interrupted, the logical run shall fail clearly and the interrupted execution shall not become authoritative again. ^agent-sd08
 - When an idle or suspended identity cannot pass workspace, child-session, routing, tool-surface, or message-acceptance preflight, `agent_send` shall fail without allocating a new run or changing the suspended run; the identity shall remain inspectable and closeable. ^agent-sd09
 - When interruption without a message targets a suspended run, the system shall return `already_suspended` with that run ID and change nothing. ^agent-sd10
@@ -258,7 +288,7 @@ agents, plan-mode continuation, Librarian, Review, and Painter.
 - A completed run shall return its final assistant answer without Taumel summarization. ^agent-rs01
 - A failed, cancelled, or lost run shall return its reason or error separately and label any available incomplete assistant text as partial rather than final. ^agent-rs02
 - A suspended run shall return status and reason without presenting incomplete text as a final answer. ^agent-rs03
-- Agent tools shall never return hidden reasoning, raw transcripts, tool logs, or a specialist's resolved prompt. ^agent-rs04
+- Agent tools shall never return hidden reasoning, raw transcripts, tool logs, a specialist's resolved prompt, or an injected rubric skill message. ^agent-64p2
 - Wait results shall include agent and run IDs, kind, status, timing, run-scoped execution metrics, and bounded reason metadata; they shall not expose resolved model or thinking. ^agent-rs05
 - If a completed answer cannot be recovered from Pi's child session, `agent_wait` shall return `output = null` rather than inventing output or treating the read as a tool failure; if incomplete text for a failed, cancelled, or lost run cannot be recovered, it shall analogously return `partial_output = null`. ^agent-rs06
 - When a recovered answer exceeds the shared tool-output line or byte limits, `agent_wait` shall use the same truncation and full-output artifact mechanism as command sessions, return clearly marked truncated text with truncation metadata and the complete output file path, and shall not summarize the answer. ^agent-rs07
@@ -318,6 +348,7 @@ agents, plan-mode continuation, Librarian, Review, and Painter.
 - A private child session shall carry immutable agent and owner identity markers; reopening shall validate those markers against the parent mapping and fail closed on absence or mismatch rather than attaching the conversation to another identity or owner. ^agent-ps15
 - Before recursively deleting a private child session, the system shall derive its owner-scoped directory from the authenticated agent owner and handle rather than from persisted path data, require the canonical target to equal that derived location beneath Taumel's canonical private-agent root, verify the matching immutable owner and agent marker immediately before deletion, and perform the recursive deletion without following symbolic links. ^agent-ps19
 - The agent subsystem shall decode only the exact current registry schema and the compatible parent-snapshot schema used to initialize an absent current registry; malformed, unsupported legacy, and unknown newer schemas shall fail closed rather than become partial or empty agent state. ^agent-8udz
+- The agent subsystem shall record handle issuance per kind name, so a registry written before an agent kind existed stays loadable without a persisted-schema version change. ^agent-qub5
 - The agent subsystem shall persist a monotonic set of every issued agent handle independently of the non-contractual handle-generation strategy, shall never generate a handle in that set again, and shall reject persisted state containing duplicate identity or run ids, a retained handle absent from the issued set, a run without its referenced identity, an issuance counter behind the issued set, or duplicate pending-cleanup ownership rather than construct a partial registry. ^agent-zwxp
 - The owning parent's durable mapping shall resolve each owner-scoped agent handle to one globally unique private Pi child session; persistence and private artifacts shall remain isolated when different parent sessions issue the same handle and shall never use the public handle alone as a global identity. ^agent-ps17
 - When parent state records a run as `running` but its exact private child session proves that Pi already settled that authoritative run with a final assistant answer, reconciliation shall recover the output locator and mark the run `completed` rather than leave it running, suspend it, or require manual repair. ^agent-ps18
@@ -379,15 +410,16 @@ agents, plan-mode continuation, Librarian, Review, and Painter.
 ### Rendering and diagnostics
 
 - All model-needed identifiers, statuses, pending IDs, results, and read instructions shall appear in model-visible tool or notification content rather than only hidden details or UI rendering; resolved routing facts are user-only and shall remain absent from model-visible content. ^agent-rn01
-- Human rendering shall present generic, Finder, and Oracle starts and runs with one shared agent-event grammar while labeling specialist purpose distinctly. ^agent-rn02
+- Human rendering shall present generic and specialist starts and runs with one shared agent-event grammar while labeling specialist purpose distinctly. ^agent-jtb9
 - Compact rendering shall remain bounded and shall not display raw protocol envelopes, full transcripts, or final output in `agent_list`. ^agent-rn03
 - Startup and call-time routing diagnostics shall identify the affected config key and reason without exposing credentials or silently changing routing. ^agent-rn04
-- When a successful `agent_spawn`, `finder`, or `oracle` result becomes available in a collapsed Pi TUI tool slot, the system shall display the tool name, short agent handle, and caller-supplied agent task description, so concurrent starts remain visibly distinct without expansion. ^agent-rn05
+- When a successful `agent_spawn`, `finder`, `oracle`, `code_reviewer`, or `code_quality_reviewer` result becomes available in a collapsed Pi TUI tool slot, the system shall display the tool name, short agent handle, and caller-supplied agent task description, so concurrent starts remain visibly distinct without expansion. ^agent-9ach
 - Except for the private child-session file path and effective worktree path shown explicitly in the `/agent-runs` Inspect submenu, the system shall not expose owner-session tokens, private child-session IDs, private session paths, storage keys, or any other internal agent-mapping identity through model-facing tool content, notifications, ordinary TUI rendering, or the agent manager; those surfaces shall identify agents only by their short owner-scoped handles and identify runs only by their owner-scoped run IDs. ^agent-0ujk
-- While the Pi TUI is active, each invocation of `agent_spawn`, `finder`, `oracle`, `agent_send`, `agent_wait`, `agent_list`, or `agent_close` shall occupy exactly one visible tool slot throughout its lifecycle, matching the one-invocation/one-slot behavior of ordinary tools such as `read` and `exec_command`; one invocation shall never render as zero or multiple visible tool slots. ^agent-rn07
+- While the Pi TUI is active, each invocation of an agent tool shall occupy exactly one visible tool slot throughout its lifecycle, matching the one-invocation/one-slot behavior of ordinary tools such as `read` and `exec_command`; one invocation shall never render as zero or multiple visible tool slots. ^agent-pce5
 - When the user expands a successful `agent_spawn` tool slot, the system shall show the message submitted to that subagent together with the labeled agent, run, kind, model, thinking, and status fields; it shall not show child conversation history. ^agent-rn08
 - When the user expands an `agent_wait` tool slot, the system shall render each ready result with the same labeled agent, run, kind, model, thinking, and status field layout used by expanded `agent_spawn`, followed by the response returned by `agent_wait`; it shall not show the child conversation history. ^agent-rn09
 - When the user expands a successful `finder` tool slot, the system shall label and show the submitted query together with the agent, run, kind, model, thinking, and status fields; it shall not show child conversation history. ^agent-rn10
+- When the user expands a successful `code_reviewer` or `code_quality_reviewer` tool slot, the system shall show the submitted review request together with the labeled agent, run, kind, model, thinking, and status fields; it shall not show the injected rubric skill message or child conversation history. ^agent-xxzd
 - When a successful `agent_send` carrying a message appears in a collapsed Pi TUI tool slot, the system shall show `agent_send`, the short agent handle, and the caller-supplied agent task description; interruption without a message shall not invent a description. ^agent-rn11
 - Collapsed successful slots shall use the shared compact grammar of tool name followed by the minimum identifying summary: Oracle handle and description, send handle and description plus outcome, wait ready and pending counts, list identity count, or close handle and `closed`; pending slots shall show the submitted description or selected-run count with a bounded active-state label. ^agent-rn12
 - When the user expands an `agent_list` tool slot, the system shall render each identity as labeled fields rather than a joined single-line summary: handle, kind, lifecycle status, activity state only while running, latest task description, run identifier, turn count, model, thinking, and workspace when present. ^agent-8xkn

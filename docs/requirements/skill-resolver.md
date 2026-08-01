@@ -5,6 +5,7 @@ traces_to:
   - "pi-mono (packages/coding-agent/src/core/skills.ts; input event transform/handled; sendCustomMessage + sendUserMessage)"
   - "pi-mono (packages/agent/src/agent-loop.ts runAgentLoop merges context.messages + prompts)"
   - "codex ($SkillName mention syntax; core/src/skills/render.rs)"
+  - "[[docs/adr/0005-inject-reviewer-criteria-as-a-skill]]"
 ---
 # Skill resolver
 
@@ -21,6 +22,10 @@ effects to the plan. It does not implement expansion policy.
 The Pi `input` event is the first plan consumer. The host sends each planned
 skill message before it sends the original user text. Pi then presents each
 skill as separate user context before the text.
+
+Agent instructions are the second plan consumer. One child agent instruction
+uses the same plan mechanism, so a rubric or any other mentioned skill reaches
+the child as context before the instruction that starts its run.
 
 Nested skill mentions use one cycle-safe traversal. Missing and disabled skills
 remain normal text. A read failure produces a warning and no message for that
@@ -74,6 +79,14 @@ skill.
 - When a plan contains no messages, the plan applicator shall notify warnings, send no text, and return `passthrough`. ^skr-fzw6
 - If a destination operation fails, then the plan applicator shall stop, propagate the failure, and execute no later operation. ^skr-efbe
 
+### Child agent instructions
+
+- When Taumel accepts an agent instruction for a child agent, the skill resolver shall create one host-effect plan for that instruction. ^skr-rzh1
+- When Taumel applies a child host-effect plan, the system shall append each planned skill message to the child conversation as context. ^skr-x9kv
+- When Taumel applies a child host-effect plan, the system shall start the child run from the agent instruction after every planned skill message. ^skr-ktsq
+- The system shall use one child plan mechanism for an initial agent instruction and for a later agent instruction. ^skr-t3im
+- The system shall deliver each agent instruction with its mention text unchanged. ^skr-u7h4
+
 ### Nested expansion
 
 - When a resolved skill's body contains a mention of another known enabled skill, the system shall resolve that mention transitively and emit the nested skill as its own custom message. ^skr-pvy4
@@ -112,3 +125,6 @@ skill.
   handled delivery, and destination failures.
 - The Pi input-hook seam verifies unchanged parent `$skill` behavior and
   one-time re-entry.
+- The agent-instruction seam verifies that a child agent receives planned skill
+  messages as context, that its run starts from the instruction, and that an
+  initial instruction and a later instruction behave alike.
