@@ -12,12 +12,7 @@ let owner_id ctx = Session_store.session_id_from_ctx ctx
 
 let is_agent_child ctx =
   match Session_store.custom_entry_data ctx "taumel.childSession" with
-  | Some data -> (
-      match get_string data "kind" with
-      | "agent" | "generic" | "finder" | "oracle" | "code-reviewer"
-      | "code-quality-reviewer" ->
-          true
-      | _ -> false)
+  | Some data -> get_string data "kind" = "agent"
   | None -> false
 
 let reject_nested name =
@@ -95,7 +90,7 @@ let permission_ceiling_for ~kind (parent : Taumel.Capability_profile.t) =
   let sandbox_preset =
     match kind with
     | Taumel.Agents.Finder | Taumel.Agents.Oracle | Taumel.Agents.Code_reviewer
-    | Taumel.Agents.Code_quality_reviewer ->
+    | Taumel.Agents.Code_quality_reviewer | Taumel.Agents.Other _ ->
         Taumel.Capability_profile.Read_only
     | Taumel.Agents.Generic -> (
         match parent.sandbox_preset with
@@ -143,7 +138,9 @@ let start_details ~(identity : Taumel.Agents.identity)
          | Taumel.Agents.Finder -> `V_finder
          | Taumel.Agents.Oracle -> `V_oracle
          | Taumel.Agents.Code_reviewer -> `V_code_reviewer
-         | Taumel.Agents.Code_quality_reviewer -> `V_code_quality_reviewer))
+         | Taumel.Agents.Code_quality_reviewer -> `V_code_quality_reviewer
+         | Taumel.Agents.Other name ->
+             invalid_arg ("unsupported agent start kind: " ^ name)))
     ~model:identity.identity_model ~thinking:identity.identity_thinking ~prompt
     ~agentId:identity.identity_agent_id
     ~activeTools:identity.identity_active_tools

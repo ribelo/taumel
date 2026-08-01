@@ -396,7 +396,14 @@ let kind_for_agent_id value =
   else if valid_agent_id Code_reviewer value then Some Code_reviewer
   else if valid_agent_id Code_quality_reviewer value then
     Some Code_quality_reviewer
-  else None
+  else
+    let suffix_length = nano_id_length + 1 in
+    let value_length = String.length value in
+    if value_length <= suffix_length then None
+    else
+      let prefix_length = value_length - suffix_length in
+      let prefix = String.sub value 0 prefix_length in
+      if matches_handle_prefix prefix value then Some (Other prefix) else None
 
 let validate_state state =
   let ( let* ) = Result.bind in
@@ -448,7 +455,9 @@ let validate_state state =
           let specialist =
             match identity.identity_kind with
             | Generic -> false
-            | Finder | Oracle | Code_reviewer | Code_quality_reviewer -> true
+            | Finder | Oracle | Code_reviewer | Code_quality_reviewer | Other _
+              ->
+                true
           in
           if
             List.exists
@@ -463,16 +472,17 @@ let validate_state state =
               (fun name ->
                 match (identity.identity_kind, tool_effect name) with
                 | Finder, Some (Tool_gateway.Pure | Tool_gateway.Execute)
-                | ( (Oracle | Code_reviewer | Code_quality_reviewer),
+                | ( (Oracle | Code_reviewer | Code_quality_reviewer | Other _),
                     Some
                       ( Tool_gateway.Pure | Tool_gateway.Execute
                       | Tool_gateway.Network ) )
                 | ( ( Generic | Finder | Oracle | Code_reviewer
-                    | Code_quality_reviewer ),
+                    | Code_quality_reviewer | Other _ ),
                     None )
                 | Generic, Some _ ->
                     false
-                | ( (Finder | Oracle | Code_reviewer | Code_quality_reviewer),
+                | ( ( Finder | Oracle | Code_reviewer | Code_quality_reviewer
+                    | Other _ ),
                     Some _ ) ->
                     true)
               identity.identity_active_tools
@@ -594,7 +604,8 @@ let validate_state state =
       (fun kind ->
         issued_count counts kind < issued_count_for kind
         || issued_count counts kind > nano_id_namespace_size)
-      [ Generic; Finder; Oracle; Code_reviewer; Code_quality_reviewer ]
+      ([ Generic; Finder; Oracle; Code_reviewer; Code_quality_reviewer ]
+      @ List.map (fun (name, _) -> Other name) counts.additional_kind_counts)
     || List.exists
          (fun (_, count) -> count < 0 || count > nano_id_namespace_size)
          counts.additional_kind_counts
@@ -683,12 +694,17 @@ let decode = function
                   | (name, _) :: rest when List.mem name known ->
                       decode_additional acc rest
                   | (name, value) :: rest ->
-                      let* count =
-                        Shared.json_int
-                          (Shared.json_path "issued_identity_counts" name)
-                          value
-                      in
-                      decode_additional ((name, count) :: acc) rest
+                      if not (Shared.valid_agent_kind_name name) then
+                        Error
+                          (Shared.json_path "issued_identity_counts" name
+                         ^ " is not a valid agent kind name")
+                      else
+                        let* count =
+                          Shared.json_int
+                            (Shared.json_path "issued_identity_counts" name)
+                            value
+                        in
+                        decode_additional ((name, count) :: acc) rest
                 in
                 let* additional_kind_counts =
                   decode_additional [] count_fields

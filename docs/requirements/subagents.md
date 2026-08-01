@@ -148,8 +148,8 @@ agents, plan-mode continuation, Librarian, and Painter.
 
 ### Reviewer rubrics
 
-- When Taumel starts a code-reviewer child, the system shall use `$code-review` as that child's rubric instruction. ^agent-ipxl
-- When Taumel starts a code-quality-reviewer child, the system shall use `$code-quality-review` as that child's rubric instruction. ^agent-n95j
+- When Taumel starts a code-reviewer child, the system shall use `Your rubric: $code-review. Follow it exactly.` as that child's rubric instruction. ^agent-qkil
+- When Taumel starts a code-quality-reviewer child, the system shall use `Your rubric: $code-quality-review. Follow it exactly.` as that child's rubric instruction. ^agent-ecr0
 - When Taumel starts a reviewer child, the system shall resolve that child's rubric instruction before it creates the identity, the child session, or the workspace. ^agent-kql9
 - If a reviewer's rubric instruction resolves to no skill message, then the system shall fail the start with `rubric_unavailable`, name the missing rubric skill, and leave no identity, run, worktree, or child session. ^agent-kd6s
 - When Taumel starts a reviewer child, the child conversation shall contain the resolved rubric skill messages and the rubric instruction before the caller's review request. ^agent-q1y8
@@ -349,6 +349,9 @@ agents, plan-mode continuation, Librarian, and Painter.
 - Before recursively deleting a private child session, the system shall derive its owner-scoped directory from the authenticated agent owner and handle rather than from persisted path data, require the canonical target to equal that derived location beneath Taumel's canonical private-agent root, verify the matching immutable owner and agent marker immediately before deletion, and perform the recursive deletion without following symbolic links. ^agent-ps19
 - The agent subsystem shall decode only the exact current registry schema and the compatible parent-snapshot schema used to initialize an absent current registry; malformed, unsupported legacy, and unknown newer schemas shall fail closed rather than become partial or empty agent state. ^agent-8udz
 - The agent subsystem shall record handle issuance per kind name, so a registry written before an agent kind existed stays loadable without a persisted-schema version change. ^agent-qub5
+- The persisted identity and child-session metadata contracts shall accept and preserve any agent kind name shaped `[a-z][a-z0-9-]*` rather than enumerate the kinds supported by the current build. ^agent-9vki
+- When a persisted identity names an agent kind that the current build does not support for new starts, the system shall load it as a read-only specialist and keep it inspectable, waitable, sendable through its retained child session, and closeable. ^agent-6ww4
+- The system shall identify an agent child from the stable child-session discriminator `kind = agent` rather than from an enumeration of agent kind names. ^agent-gpo1
 - The agent subsystem shall persist a monotonic set of every issued agent handle independently of the non-contractual handle-generation strategy, shall never generate a handle in that set again, and shall reject persisted state containing duplicate identity or run ids, a retained handle absent from the issued set, a run without its referenced identity, an issuance counter behind the issued set, or duplicate pending-cleanup ownership rather than construct a partial registry. ^agent-zwxp
 - The owning parent's durable mapping shall resolve each owner-scoped agent handle to one globally unique private Pi child session; persistence and private artifacts shall remain isolated when different parent sessions issue the same handle and shall never use the public handle alone as a global identity. ^agent-ps17
 - When parent state records a run as `running` but its exact private child session proves that Pi already settled that authoritative run with a final assistant answer, reconciliation shall recover the output locator and mark the run `completed` rather than leave it running, suspend it, or require manual repair. ^agent-ps18

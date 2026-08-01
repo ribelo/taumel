@@ -55,6 +55,7 @@ let routing_key kind effort =
   | Taumel.Agents.Code_reviewer, _ -> "taumel.agents.code-reviewer"
   | Taumel.Agents.Code_quality_reviewer, _ ->
       "taumel.agents.code-quality-reviewer"
+  | Taumel.Agents.Other name, _ -> "taumel.agents." ^ name
 
 let parent_model () =
   if state.provider = "" || state.model = "" then None
@@ -75,7 +76,8 @@ let resolve_routing ~kind ?effort () =
         | Taumel.Agents.Generic ->
             String.starts_with ~prefix:"taumel.agents.generic must" message
         | Taumel.Agents.Finder | Taumel.Agents.Oracle
-        | Taumel.Agents.Code_reviewer | Taumel.Agents.Code_quality_reviewer ->
+        | Taumel.Agents.Code_reviewer | Taumel.Agents.Code_quality_reviewer
+        | Taumel.Agents.Other _ ->
             false)
       catalog.diagnostics
   in

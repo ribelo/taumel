@@ -5,7 +5,7 @@ let default_routing ~kind ~effort ~parent_model =
     match kind with
     | Agents.Generic -> Some (Option.value effort ~default:Agents.Medium)
     | Agents.Finder | Agents.Oracle | Agents.Code_reviewer
-    | Agents.Code_quality_reviewer ->
+    | Agents.Code_quality_reviewer | Agents.Other _ ->
         None
   in
   let thinking = Agents.default_thinking_for_kind ~effort kind in
@@ -165,6 +165,7 @@ let entry_for catalog ~(kind : Agents.agent_kind)
   | Agents.Oracle -> catalog.oracle
   | Agents.Code_reviewer -> catalog.code_reviewer
   | Agents.Code_quality_reviewer -> catalog.code_quality_reviewer
+  | Agents.Other _ -> None
   | Agents.Generic -> (
       match effort with
       | Some Agents.Low -> catalog.generic_low

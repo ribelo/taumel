@@ -11,12 +11,7 @@ let owner_id ctx = Session_store.session_id_from_ctx ctx
 
 let is_agent_child ctx =
   match Session_store.custom_entry_data ctx "taumel.childSession" with
-  | Some data -> (
-      match get_string data "kind" with
-      | "agent" | "generic" | "finder" | "oracle" | "code-reviewer"
-      | "code-quality-reviewer" ->
-          true
-      | _ -> false)
+  | Some data -> get_string data "kind" = "agent"
   | None -> false
 
 let reject_nested name =

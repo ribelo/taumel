@@ -1078,6 +1078,23 @@ let test_child_session_persisted_metadata () =
     (Child_session.worktree_agent shared = None);
   assert_bool "finder rejects escalation"
     (Child_session.rejects_escalation shared);
+  let legacy =
+    Child_session.decode_persisted_metadata
+      (Shared.Object
+         [
+           ("kind", Shared.String "agent");
+           ("agentKind", Shared.String "retired-reviewer");
+           ("agentId", Shared.String "retired-reviewer-abcd");
+           ("workspaceDirectory", Shared.String "/repo");
+           ("sourceWorkspace", Shared.String "/repo");
+           ("isolation", Shared.String "none");
+           ( "workspaceBinding",
+             Taumel.Agent_workspace.binding_to_json shared_binding );
+         ])
+    |> expect_ok "decode legacy child kind"
+  in
+  assert_bool "legacy specialist rejects escalation"
+    (Child_session.rejects_escalation legacy);
   ignore
     (Child_session.decode_persisted_metadata
        (Shared.Object

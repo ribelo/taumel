@@ -22,6 +22,15 @@ let trim_non_empty value =
   let value = String.trim value in
   if value = "" then None else Some value
 
+let valid_agent_kind_name value =
+  let lowercase = function 'a' .. 'z' -> true | _ -> false in
+  let rest = function
+    | 'a' .. 'z' | '0' .. '9' | '-' -> true
+    | _ -> false
+  in
+  String.length value > 0 && lowercase value.[0]
+  && String.for_all rest value
+
 let require_non_empty label value =
   match trim_non_empty value with
   | Some value -> Ok value

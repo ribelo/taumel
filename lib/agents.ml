@@ -27,6 +27,7 @@ type agent_kind =
   | Oracle
   | Code_reviewer
   | Code_quality_reviewer
+  | Other of string
 
 type effort = Low | Medium | High
 
@@ -186,6 +187,7 @@ let agent_kind_to_string = function
   | Oracle -> "oracle"
   | Code_reviewer -> "code-reviewer"
   | Code_quality_reviewer -> "code-quality-reviewer"
+  | Other value -> value
 
 let agent_kind_of_string = function
   | "generic" -> Ok Generic
@@ -193,7 +195,11 @@ let agent_kind_of_string = function
   | "oracle" -> Ok Oracle
   | "code-reviewer" -> Ok Code_reviewer
   | "code-quality-reviewer" -> Ok Code_quality_reviewer
-  | value -> Error ("invalid agent kind: " ^ value)
+  | value -> (
+      match Shared.trim_non_empty value with
+      | Some value when Shared.valid_agent_kind_name value -> Ok (Other value)
+      | Some value -> Error ("invalid agent kind: " ^ value)
+      | None -> Error "agent kind is required")
 
 let effort_to_string = function
   | Low -> "low"
@@ -368,7 +374,7 @@ let specialist_tools ~kind parent_tools =
             match tool_effect name with
             | Some Tool_gateway.Pure | Some Tool_gateway.Execute -> true
             | _ -> false)
-    | Oracle | Code_reviewer | Code_quality_reviewer ->
+    | Oracle | Code_reviewer | Code_quality_reviewer | Other _ ->
         parent
         |> List.filter (fun name ->
             match tool_effect name with
@@ -461,6 +467,7 @@ let kind_prefix = function
   | Oracle -> "oracle"
   | Code_reviewer -> "code-reviewer"
   | Code_quality_reviewer -> "code-quality-reviewer"
+  | Other value -> value
 
 let issued_count counts = function
   | Generic -> counts.generic
@@ -468,6 +475,10 @@ let issued_count counts = function
   | Oracle -> counts.oracle
   | Code_reviewer -> counts.code_reviewer
   | Code_quality_reviewer -> counts.code_quality_reviewer
+  | Other name ->
+      Option.value
+        (List.assoc_opt name counts.additional_kind_counts)
+        ~default:0
 
 let with_issued_count counts kind value =
   match kind with
@@ -476,6 +487,12 @@ let with_issued_count counts kind value =
   | Oracle -> { counts with oracle = value }
   | Code_reviewer -> { counts with code_reviewer = value }
   | Code_quality_reviewer -> { counts with code_quality_reviewer = value }
+  | Other name ->
+      {
+        counts with
+        additional_kind_counts =
+          (name, value) :: List.remove_assoc name counts.additional_kind_counts;
+      }
 
 (* Generic: agent-<tier>-<nano4>; specialists: <kind>-<nano4>. ^agent-ym73 *)
 let mint_handle_prefix kind ~effort =
@@ -487,6 +504,7 @@ let mint_handle_prefix kind ~effort =
   | Oracle -> "oracle"
   | Code_reviewer -> "code-reviewer"
   | Code_quality_reviewer -> "code-quality-reviewer"
+  | Other value -> value
 
 let matches_handle_prefix prefix value =
   let prefix_length = String.length prefix in
@@ -498,7 +516,7 @@ let matches_handle_prefix prefix value =
 (* Tiered + legacy agent-<nano4> for Generic. ^agent-ym73 / ^agent-zpfx *)
 let valid_agent_id kind value =
   match kind with
-  | Finder | Oracle | Code_reviewer | Code_quality_reviewer ->
+  | Finder | Oracle | Code_reviewer | Code_quality_reviewer | Other _ ->
       matches_handle_prefix (kind_prefix kind) value
   | Generic ->
       matches_handle_prefix "agent-low" value
@@ -536,7 +554,7 @@ let default_thinking_for_kind ~effort = function
       | Some High -> "high"
       | Some Medium | None -> "medium")
   | Finder -> "low"
-  | Oracle | Code_reviewer | Code_quality_reviewer -> "high"
+  | Oracle | Code_reviewer | Code_quality_reviewer | Other _ -> "high"
 
 let create_run ~now ~agent_id ~run_id ~description =
   {
@@ -602,7 +620,8 @@ let record_spawn state ~now ~owner_session_id ~kind ?effort ~model ~thinking
     let effort =
       match kind with
       | Generic -> Some (Option.value effort ~default:Medium)
-      | Finder | Oracle | Code_reviewer | Code_quality_reviewer -> None
+      | Finder | Oracle | Code_reviewer | Code_quality_reviewer | Other _ ->
+          None
     in
     match generate_agent_id state kind ~owner_session_id ~effort with
     | Error _ as error -> error
@@ -622,7 +641,8 @@ let record_spawn state ~now ~owner_session_id ~kind ?effort ~model ~thinking
             identity_network_allowed =
               (match kind with
               | Finder -> false
-              | Generic | Oracle | Code_reviewer | Code_quality_reviewer ->
+              | Generic | Oracle | Code_reviewer | Code_quality_reviewer
+              | Other _ ->
                   network_allowed);
             identity_workspace_binding = workspace_binding;
             identity_child_session_file = None;

@@ -59,12 +59,7 @@ let ralph_child_context ctx =
 
 let agent_child_context ctx =
   match Session_store.custom_entry_data ctx "taumel.childSession" with
-  | Some data -> (
-      match get_string data "kind" with
-      | "agent" | "generic" | "finder" | "oracle" | "code-reviewer"
-      | "code-quality-reviewer" ->
-          true
-      | _ -> false)
+  | Some data -> get_string data "kind" = "agent"
   | None -> false
 
 let plan_active_tools_sync_js facts =

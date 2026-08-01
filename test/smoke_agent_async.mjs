@@ -357,16 +357,17 @@ assert.equal(failedWait.details.results[0].status, "failed");
 assert.equal(failedWait.details.results[0].error, "provider failed");
 
 // agent-ki03/agent-xe88/agent-it4p: specialists supply their own base prompts through Pi's resource loader.
-for (const [toolName, params, promptFile, requirementId] of [
+for (const [toolName, params, promptFile, requirementId, sourcePhrase] of [
   ["finder", { query: "locate prompt ownership", description: "Locate prompt ownership" }, "finder.md", "agent-ki03"],
   ["oracle", { message: "review prompt ownership", description: "Review prompt ownership" }, "oracle.md", "agent-xe88"],
-  ["code_reviewer", { message: "review HEAD~1..HEAD", description: "Review latest changes" }, "code-reviewer.md", "agent-6gev"],
-  ["code_quality_reviewer", { message: "review HEAD~1..HEAD", description: "Review code quality" }, "code-quality-reviewer.md", "agent-icsl"],
+  ["code_reviewer", { message: "review HEAD~1..HEAD", description: "Review latest changes" }, "code-reviewer.md", "agent-6gev", "Finish your independent audit first"],
+  ["code_quality_reviewer", { message: "review HEAD~1..HEAD", description: "Review code quality" }, "code-quality-reviewer.md", "agent-icsl", "Skip cosmetic nits when structural issues exist"],
 ]) {
   const specialist = core.call("prepareTool", [{ name: toolName, params, ctx }]);
   const started = await executeAgentPrepared(pi, core, childSessions, pendingWaits, specialist, ctx);
   assert.equal(started.details.status, "running", `${toolName}: ${JSON.stringify(started.details)}`);
   const expectedPrompt = readFileSync(new URL(`../resources/agents/${promptFile}`, import.meta.url), "utf8").trim();
+  if (sourcePhrase !== undefined) assert.ok(expectedPrompt.includes(sourcePhrase));
   assert.equal(allocatedResourceLoader.getSystemPrompt(), expectedPrompt, `${requirementId}: specialist owns its base system prompt`);
   assert.equal(
     allocatedResourceLoader.getAppendSystemPrompt().includes(expectedPrompt),
@@ -397,7 +398,7 @@ assert.equal(
 );
 customMessageError = undefined;
 
-// agent-ipxl/agent-q1y8: a successful reviewer start appends its resolved
+// agent-qkil/agent-q1y8: a successful reviewer start appends its resolved
 // rubric block and literal rubric instruction before the caller's request.
 customMessages.length = 0;
 promptTexts.length = 0;
@@ -407,7 +408,7 @@ const reviewerStart = await executeTool(pi, core, childSessions, "code_reviewer"
 }, ctx);
 assert.equal(reviewerStart.details.kind, "code-reviewer");
 assert.match(customMessages[0].message.content, /^<skill name="code-review" location="[^"]+">/);
-assert.equal(customMessages[1].message.content, "$code-review");
+assert.equal(customMessages[1].message.content, "Your rubric: $code-review. Follow it exactly.");
 assert.deepEqual(customMessages.map((entry) => entry.options), [
   { triggerTurn: false, deliverAs: "followUp" },
   { triggerTurn: false, deliverAs: "followUp" },
@@ -432,6 +433,24 @@ const reviewerClose = core.call("prepareTool", [{
   name: "agent_close", params: { agent_id: reviewerStart.details.agentId }, ctx,
 }]);
 await executeAgentPrepared(pi, core, childSessions, pendingWaits, reviewerClose, ctx);
+
+customMessages.length = 0;
+const qualityReviewerStart = await executeTool(pi, core, childSessions, "code_quality_reviewer", {
+  message: "review HEAD~1..HEAD",
+  description: "Review code quality",
+}, ctx);
+assert.match(customMessages[0].message.content, /^<skill name="code-quality-review" location="[^"]+">/);
+assert.equal(
+  customMessages[1].message.content,
+  "Your rubric: $code-quality-review. Follow it exactly.",
+  "agent-ecr0: quality reviewer receives authoritative rubric framing",
+);
+settle();
+await new Promise((resolve) => setTimeout(resolve, 0));
+const qualityReviewerClose = core.call("prepareTool", [{
+  name: "agent_close", params: { agent_id: qualityReviewerStart.details.agentId }, ctx,
+}]);
+await executeAgentPrepared(pi, core, childSessions, pendingWaits, qualityReviewerClose, ctx);
 
 // agent-cl03: a child completion that arrives after permanent close is inert.
 const lateCompletionAgent = core.call("prepareTool", [{

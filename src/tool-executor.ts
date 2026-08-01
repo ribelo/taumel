@@ -716,7 +716,7 @@ export async function executeTool(
   const reviewerRubric = reviewerRubricByTool.get(name);
   if (reviewerRubric !== undefined) {
     reviewerRubricPlan = planSkillExpansion(core, {
-      text: `$${reviewerRubric}`,
+      text: `Your rubric: $${reviewerRubric}. Follow it exactly.`,
       cwd: cwdFromContext(ctx),
       ctx,
     });

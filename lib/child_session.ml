@@ -6,6 +6,7 @@ type agent_kind =
   | Oracle
   | Code_reviewer
   | Code_quality_reviewer
+  | Other of string
 
 type worktree_agent = {
   agent_id : string;
@@ -102,7 +103,11 @@ let decode_agent_kind = function
   | "oracle" -> Ok Oracle
   | "code-reviewer" -> Ok Code_reviewer
   | "code-quality-reviewer" -> Ok Code_quality_reviewer
-  | value -> Error ("invalid child session agentKind: " ^ value)
+  | value -> (
+      match Shared.trim_non_empty value with
+      | Some value when Shared.valid_agent_kind_name value -> Ok (Other value)
+      | Some _ -> Error "child session metadata.agentKind is invalid"
+      | None -> Error "child session metadata.agentKind is required")
 
 let validate_optional_positive_int fields name =
   match List.assoc_opt name fields with
@@ -207,14 +212,10 @@ let persisted_agent_id = function
 
 let rejects_escalation = function
   | Ralph_metadata -> false
-  | Agent_metadata
-      {
-        agent_kind = Finder | Oracle | Code_reviewer | Code_quality_reviewer;
-        _;
-      } ->
-      true
-  | Agent_metadata { workspace = Worktree_workspace _; _ } -> true
-  | Agent_metadata _ -> false
+  | Agent_metadata { agent_kind = Generic; workspace = Shared_workspace _; _ }
+    ->
+      false
+  | Agent_metadata _ -> true
 
 let ralph_child_capability_profile (parent : Capability_profile.t) active_tools
     =

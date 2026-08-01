@@ -298,7 +298,23 @@ let test_specialist_tool_effect_clamps () =
     (not (List.mem "code_reviewer" code_quality_reviewer))
 
 let test_kind_name_identity_accounting_is_extensible () =
-  let encoded = Agents_codec.encode Agents.empty_session_state in
+  let specialist_ceiling =
+    Capability_profile.resolve ~sandbox_preset:Capability_profile.Read_only
+      ~no_sandbox_allowed:false Capability_profile.default
+  in
+  let future_state =
+    match
+      Agents.record_spawn Agents.empty_session_state ~now:1
+        ~owner_session_id:"parent-1" ~kind:(Agents.Other "future-reviewer")
+        ~model:"test/model" ~thinking:"high" ~description:"Legacy review"
+        ~active_tools:[ "read" ] ~permission_ceiling:specialist_ceiling
+        ~workspace_binding:(Agent_workspace.shared ~source_root:"/tmp/project")
+        ()
+    with
+    | Ok (state, _, _) -> state
+    | Error message -> failwith message
+  in
+  let encoded = Agents_codec.encode future_state in
   let with_future_kind =
     match encoded with
     | Shared.Object fields ->
@@ -310,8 +326,7 @@ let test_kind_name_identity_accounting_is_extensible () =
                 |> List.remove_assoc "code-reviewer"
                 |> List.remove_assoc "code-quality-reviewer"
               in
-              Shared.Object
-                (("future-reviewer", Shared.Number 0.) :: count_fields)
+              Shared.Object count_fields
           | _ -> failwith "missing issued identity counts"
         in
         Shared.Object
@@ -323,8 +338,25 @@ let test_kind_name_identity_accounting_is_extensible () =
   | Error message -> failwith message
   | Ok state ->
       assert_true "unknown future kind count is retained"
-        (List.mem ("future-reviewer", 0)
-           state.issued_identity_counts.additional_kind_counts)
+        (List.mem ("future-reviewer", 1)
+           state.issued_identity_counts.additional_kind_counts);
+      let identity = List.hd state.identities in
+      assert_equal "unknown future identity kind is retained" "future-reviewer"
+        (Agents.agent_kind_to_string identity.identity_kind);
+      assert_true "unknown future identity remains sendable"
+        (match
+           Agents.record_send state ~now:2 ~owner_session_id:"parent-1"
+             ~agent_id:identity.identity_agent_id "continue"
+         with
+        | Ok _ -> true
+        | Error _ -> false);
+      assert_true "unknown future identity remains closeable"
+        (match
+           Agent_registry.record_close state ~owner_session_id:"parent-1"
+             ~agent_id:identity.identity_agent_id
+         with
+        | Ok _ -> true
+        | Error _ -> false)
 
 let test_send_preflight_rollback_restores_state () =
   match spawn Agents.empty_session_state with

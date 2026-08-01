@@ -497,14 +497,7 @@ let manager_snapshot ctx =
         in
         Tool_contracts.AgentManagerIdentity.create
           ~agentId:identity.identity_agent_id
-          ~kind:
-            (Boundary_contracts.AgentManagerIdentity.kind_to_contract
-               (match identity.identity_kind with
-               | Taumel.Agents.Generic -> `V_generic
-               | Finder -> `V_finder
-               | Oracle -> `V_oracle
-               | Code_reviewer -> `V_code_reviewer
-               | Code_quality_reviewer -> `V_code_quality_reviewer))
+          ~kind:(Taumel.Agents.agent_kind_to_string identity.identity_kind)
           ~model:identity.identity_model ~thinking:identity.identity_thinking
           ~workspace:(Taumel.Agents.identity_source_workspace identity)
           ?isolation:

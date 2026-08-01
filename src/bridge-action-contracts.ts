@@ -237,6 +237,7 @@ const AgentKindSchema = Type.Union([
   Type.Literal("generic"), Type.Literal("finder"), Type.Literal("oracle"),
   Type.Literal("code-reviewer"), Type.Literal("code-quality-reviewer"),
 ]);
+const AgentKindNameSchema = Type.String({ pattern: "^[a-z][a-z0-9-]*$" });
 const AgentRunStatusSchema = Type.Union([
   Type.Literal("running"), Type.Literal("suspended"), Type.Literal("completed"),
   Type.Literal("failed"), Type.Literal("cancelled"), Type.Literal("lost"),
@@ -445,7 +446,7 @@ export const AgentCleanupPlanSchema = Type.Object(
 );
 export const AgentManagerIdentitySchema = Type.Object(
   {
-    agentId: Type.String({ minLength: 1 }), kind: AgentKindSchema,
+    agentId: Type.String({ minLength: 1 }), kind: AgentKindNameSchema,
     model: Type.String({ minLength: 1 }), thinking: Type.String({ minLength: 1 }),
     workspace: Type.String({ minLength: 1 }),
     isolation: Type.Optional(Type.Union([Type.Literal("none"), Type.Literal("worktree")])),

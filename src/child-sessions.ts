@@ -532,15 +532,11 @@ export async function createChildSession(
     readonly childSessionFile?: unknown;
     readonly workspaceDirectory?: unknown;
   }>(metadata);
-  const childKind = typeof metadataRecord?.kind === "string" ? metadataRecord.kind : "";
   const agentId = typeof metadataRecord?.agentId === "string" ? metadataRecord.agentId.trim() : "";
   const existingSessionFile =
     typeof metadataRecord?.childSessionFile === "string" ? metadataRecord.childSessionFile.trim() : "";
   const boundWorkspace = nonEmptyString(metadataRecord?.workspaceDirectory);
-  const usePrivatePersistentSession =
-    (childKind === "agent" || childKind === "generic" || childKind === "finder" || childKind === "oracle"
-      || childKind === "code-reviewer" || childKind === "code-quality-reviewer")
-    && (agentId !== "" || existingSessionFile !== "");
+  const usePrivatePersistentSession = agentId !== "" || existingSessionFile !== "";
   if (usePrivatePersistentSession
     && (authorizeCleanup === undefined || revalidateAuthority === undefined)) {
     return { error: "agent_cleanup_authority_missing" };

@@ -374,6 +374,9 @@ const worktreeMetadata = {
 if (decodeChildSessionMetadata(worktreeMetadata).isolation !== "worktree") {
   throw new Error("worktree child-session metadata did not decode");
 }
+if (decodeChildSessionMetadata({ ...worktreeMetadata, agentKind: "retired-reviewer" }).agentKind !== "retired-reviewer") {
+  throw new Error("legacy child agent kind did not decode");
+}
 let malformedWorktreeAccepted = false;
 try {
   const { mainRepositoryRoot: _missing, ...malformed } = worktreeMetadata;
