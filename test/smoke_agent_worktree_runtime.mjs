@@ -6,7 +6,11 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { executeTool, registerGatewayTools } from "../src/tool-executor.ts";
+import { executeTool as executeToolContract, registerGatewayTools } from "../src/tool-executor.ts";
+import { toolContractByName } from "../src/tool-contract-catalog.ts";
+
+const executeTool = (pi, core, sessions, name, params, ctx, signal, childFactory) =>
+  executeToolContract(pi, core, sessions, toolContractByName(name), params, ctx, signal, childFactory);
 
 const root = mkdtempSync(join(tmpdir(), "taumel-worktree-runtime-"));
 const main = join(root, "main");

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { parseToolParams } from "../src/tool-contracts.ts";
+import { parseToolParams } from "../src/tool-contract-catalog.ts";
 
 const require = createRequire(import.meta.url);
 

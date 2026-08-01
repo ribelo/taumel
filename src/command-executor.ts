@@ -33,7 +33,7 @@ import {
   isStaleContextError,
   liveToolNames,
 } from "./util.ts";
-import { toolNames } from "./tool-contracts.ts";
+import { toolNames } from "./tool-contract-catalog.ts";
 import { decodeActiveToolsPlan, decodeCommandChildSessionPlan, decodeCommandExecutionPlan, decodeCommandNotificationPlan, decodeCommandSpecsResult, decodeCoreAck } from "./bridge-contracts.ts";
 import { decodeBridgeCommandResult, decodeCommandChildDispatchPlan, decodeGatewayCommandOutput, decodePlanContinuationPlan, decodePlanRollbackResult, decodePermissionsCommandResult, decodePermissionsPrompt, decodePermissionsPromptPlan, type GatewayCommandOutput, type PlanContinuationFacts, type ToolResultEnvelope } from "./bridge-contracts.ts";
 

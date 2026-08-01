@@ -6,7 +6,11 @@ import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { executeAgentPrepared } from "../src/agent-orchestration.ts";
 import { createChildSession, sendToChildSession } from "../src/child-sessions.ts";
-import { executeTool } from "../src/tool-executor.ts";
+import { executeTool as executeToolContract } from "../src/tool-executor.ts";
+import { toolContractByName } from "../src/tool-contract-catalog.ts";
+
+const executeTool = (pi, core, sessions, name, params, ctx, signal, childFactory) =>
+  executeToolContract(pi, core, sessions, toolContractByName(name), params, ctx, signal, childFactory);
 
 const root = mkdtempSync(join(tmpdir(), "taumel-agent-async-"));
 process.env.PI_CODING_AGENT_DIR = root;

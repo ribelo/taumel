@@ -6,7 +6,11 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { executeTool } from "../src/tool-executor.ts";
+import { executeTool as executeToolContract } from "../src/tool-executor.ts";
+import { toolContractByName } from "../src/tool-contract-catalog.ts";
+
+const executeTool = (pi, core, sessions, name, params, ctx, signal, childFactory) =>
+  executeToolContract(pi, core, sessions, toolContractByName(name), params, ctx, signal, childFactory);
 
 const require = createRequire(import.meta.url);
 const pty = require("node-pty");

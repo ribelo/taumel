@@ -6,7 +6,11 @@ import { createRequire } from "node:module";
 
 import { applySkillExpansionPlan, installSkillResolver, planSkillExpansion } from "../src/skills.ts";
 import { appendSkillExpansionToChild, sendToChildSession } from "../src/child-sessions.ts";
-import { executeTool } from "../src/tool-executor.ts";
+import { executeTool as executeToolContract } from "../src/tool-executor.ts";
+import { toolContractByName } from "../src/tool-contract-catalog.ts";
+
+const executeTool = (pi, core, sessions, name, params, ctx, signal, childFactory) =>
+  executeToolContract(pi, core, sessions, toolContractByName(name), params, ctx, signal, childFactory);
 
 const message = (name) => ({
   customType: "skill",

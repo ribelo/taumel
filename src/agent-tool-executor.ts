@@ -1,6 +1,7 @@
 import type { ChildSessionBridge, CoreBridge, PiLike } from "./types.ts";
-import { parseToolParams } from "./tool-contracts.ts";
-import { contextWithOverrides, isObjectLike, objectValue } from "./util.ts";
+import type { AgentToolContract, AgentToolExecution, ToolContract } from "./tool-contract-model.ts";
+import { isAgentToolContract, parseContractParams } from "./tool-contract-model.ts";
+import { contextWithOverrides, cwdFromContext, isObjectLike, objectValue } from "./util.ts";
 import { latestTaumelCustomEntry } from "./pi-session-entries.ts";
 import { childSessionCacheKeyScopeFromContext } from "./child-sessions.ts";
 import { rememberAgentDescription } from "./agent-run-registry.ts";
@@ -8,25 +9,30 @@ import { isToolRenderFields, type ToolRenderFields } from "./tool-renderer-kit.t
 import { executeAgentPrepared, pendingAgentWaits } from "./agent-orchestration.ts";
 import { decodeCoreAck, type ToolResultEnvelope } from "./bridge-contracts.ts";
 import { agentErrorToolResult, errorToolResult, preparedAction } from "./tool-results.ts";
-import { planAgentStartContext, startKindForAgentTool } from "./agent-start-policy.ts";
+import { planSkillExpansion, type SkillExpansionPlan } from "./skills.ts";
 
 type SettingsObject = { [key: string]: unknown };
 type ToolContext = { readonly sessionManager?: unknown };
 
-const agentToolNames = new Set([
-  "agent_spawn", "finder", "oracle", "code_reviewer", "code_quality_reviewer",
-  "agent_send", "agent_wait", "agent_list", "agent_close",
-]);
+export type AgentToolRuntime = {
+  readonly pi: PiLike;
+  readonly core: CoreBridge;
+  readonly childSessions: Map<string, ChildSessionBridge>;
+  readonly childExtensionFactory?: (pi: PiLike) => void;
+};
 
-export function isAgentToolName(name: string): boolean {
-  return agentToolNames.has(name);
-}
+export type AgentToolInvocation = {
+  readonly contract: AgentToolContract;
+  readonly params: unknown;
+  readonly ctx: unknown;
+  readonly signal?: AbortSignal;
+};
 
 export function agentFailureText(
-  name: string,
+  contract: ToolContract,
   result: { readonly details: unknown; readonly content: readonly { readonly type: string; readonly text?: string }[] },
 ): string | undefined {
-  if (!isAgentToolName(name)) return undefined;
+  if (!isAgentToolContract(contract)) return undefined;
   const details = objectValue<SettingsObject>(result.details);
   const error = objectValue<SettingsObject>(details?.["error"]);
   if (details?.["ok"] !== false || typeof error?.["code"] !== "string" || typeof error["message"] !== "string") {
@@ -72,21 +78,42 @@ function rememberDescription(params: unknown): void {
   );
 }
 
-export async function executeAgentTool(
-  pi: PiLike,
+function planAdditionalInstruction(
   core: CoreBridge,
-  childSessions: Map<string, ChildSessionBridge>,
-  name: string,
-  rawParams: unknown,
+  execution: AgentToolExecution,
   ctx: unknown,
-  signal?: AbortSignal,
-  childExtensionFactory?: (pi: PiLike) => void,
+): SkillExpansionPlan | ToolResultEnvelope | undefined {
+  const instruction = execution.additionalInstruction;
+  if (instruction === undefined) return undefined;
+  const plan = planSkillExpansion(core, {
+    text: instruction.text,
+    cwd: cwdFromContext(ctx),
+    ctx,
+  });
+  const requiredSkillResolved = plan.messages.some(
+    (message) => message.details.name === instruction.requiredSkill,
+  );
+  return requiredSkillResolved
+    ? plan
+    : agentErrorToolResult(core, instruction.unavailable.code, instruction.unavailable.message);
+}
+
+function isToolResult(value: SkillExpansionPlan | ToolResultEnvelope): value is ToolResultEnvelope {
+  return "content" in value;
+}
+
+export async function executeAgentTool(
+  runtime: AgentToolRuntime,
+  invocation: AgentToolInvocation,
 ): Promise<ToolResultEnvelope> {
-  const parsed = parseToolParams(name, rawParams);
+  const { pi, core, childSessions, childExtensionFactory } = runtime;
+  const { contract, params, ctx, signal } = invocation;
+  const { execution } = contract;
+  const parsed = parseContractParams(contract, params);
   if (!parsed.ok) return agentErrorToolResult(core, "invalid_arguments", parsed.error);
 
   const marker = childMarker(ctx);
-  if (name !== "agent_wait" && name !== "agent_list"
+  if (!execution.allowInvalidChildMetadata
     && (marker.kind === "invalid" || marker.kind === "unavailable")) {
     return errorToolResult(core, "invalid child session authority metadata", {
       ok: false,
@@ -95,15 +122,12 @@ export async function executeAgentTool(
     });
   }
 
-  const startKind = startKindForAgentTool(name);
-  const startContext = startKind === undefined
-    ? { ok: true as const }
-    : planAgentStartContext(core, startKind, ctx);
-  if (!startContext.ok) {
-    return agentErrorToolResult(core, startContext.code, startContext.message);
+  const additionalInstruction = planAdditionalInstruction(core, execution, ctx);
+  if (additionalInstruction !== undefined && isToolResult(additionalInstruction)) {
+    return additionalInstruction;
   }
 
-  if (name === "agent_list") {
+  if (execution.reconcileLiveDispatches) {
     const prefix = `${childSessionCacheKeyScopeFromContext(ctx)}\0`;
     const liveAgentIds = [...childSessions.keys()]
       .filter((key) => key.startsWith(prefix))
@@ -115,12 +139,12 @@ export async function executeAgentTool(
     }
   }
 
-  const prepareCtx = startKind !== undefined && typeof pi.getActiveTools === "function"
+  const prepareCtx = execution.parentActiveTools && typeof pi.getActiveTools === "function"
     ? contextWithOverrides(ctx, { activeTools: pi.getActiveTools() })
     : ctx;
   let prepared;
   try {
-    prepared = preparedAction(core, name, parsed.params, prepareCtx);
+    prepared = preparedAction(core, contract.name, parsed.params, prepareCtx);
   } catch (error) {
     return agentErrorToolResult(core, "persistence_failed", error instanceof Error ? error.message : String(error));
   }
@@ -128,12 +152,12 @@ export async function executeAgentTool(
     const code = preparedFailureCode(prepared.error);
     return agentErrorToolResult(core, code, safePreparedFailureMessage(code, prepared.error));
   }
-  if (prepared.action !== "agent_start" && prepared.action !== "agent_send"
-    && prepared.action !== "agent_wait" && prepared.action !== "agent_close") {
-    return agentErrorToolResult(core, "internal_error", `unexpected agent action: ${prepared.action}`);
+  const expectedAction = execution.preparedAction;
+  if (prepared.action !== expectedAction) {
+    return agentErrorToolResult(core, "internal_error", `expected ${expectedAction}, got ${prepared.action}`);
   }
 
-  rememberDescription(parsed.params);
+  if (execution.rememberDescription) rememberDescription(parsed.params);
   return executeAgentPrepared(
     pi,
     core,
@@ -143,6 +167,6 @@ export async function executeAgentTool(
     ctx,
     signal,
     childExtensionFactory,
-    startContext.skillExpansion,
+    additionalInstruction,
   );
 }

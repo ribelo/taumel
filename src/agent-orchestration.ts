@@ -342,7 +342,7 @@ export async function executeAgentPrepared(
   ctx: unknown,
   signal?: AbortSignal,
   childExtensionFactory?: (pi: PiLike) => void,
-  reviewerRubricPlan?: SkillExpansionPlan,
+  additionalInstructionPlan?: SkillExpansionPlan,
 ) {
   const action = prepared.action;
   let dispatchDeliverAs: "steer" | "followUp" | undefined;
@@ -500,8 +500,8 @@ export async function executeAgentPrepared(
         return agentErrorToolResult(core, childFailureCode(message), message);
       }
       try {
-        if (reviewerRubricPlan !== undefined) {
-          await appendSkillExpansionToChild(bridge, reviewerRubricPlan, "followUp", ctx);
+        if (additionalInstructionPlan !== undefined) {
+          await appendSkillExpansionToChild(bridge, additionalInstructionPlan, "followUp", ctx);
         }
         recordAuthorizedDispatchBoundary(core, prepared, ctx, bridge, capabilityFacts!);
       } catch (error) {

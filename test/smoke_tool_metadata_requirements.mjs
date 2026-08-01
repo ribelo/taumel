@@ -1,7 +1,7 @@
 /**
  * Verifies model-facing tool metadata from plans/ (baseline 15dccb6).
  */
-import { parseToolParams } from "../src/tool-contracts.ts";
+import { parseToolParams } from "../src/tool-contract-catalog.ts";
 import { toolContracts } from "../src/tool-contract-catalog.ts";
 import {
   PARAM_DESCRIPTIONS,

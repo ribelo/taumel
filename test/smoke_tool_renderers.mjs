@@ -1,4 +1,4 @@
-import { toolNames } from "../src/tool-contracts.ts";
+import { toolNames } from "../src/tool-contract-catalog.ts";
 import { cronFireMessageRenderer, planContinuationMessageRenderer, notificationMessageRenderer, renderersForTool, skillMessageRenderer } from "../src/tool-renderer.ts";
 import { rememberAgentDescription } from "../src/agent-run-registry.ts";
 import { formatLocalTime } from "../src/util.ts";

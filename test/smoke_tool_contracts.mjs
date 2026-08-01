@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { parseToolParams } from "../src/tool-contracts.ts";
+import { parseToolParams } from "../src/tool-contract-catalog.ts";
 import { toolContracts } from "../src/tool-contract-catalog.ts";
 
 const assert = (condition, message) => {
@@ -33,6 +33,7 @@ function collectForbiddenKeys(value, path, found) {
 assert(toolContracts.length > 0, "expected registered Taumel tool contracts");
 
 for (const tool of toolContracts) {
+  assert(typeof tool.parseParams === "function", `${tool.name} does not carry its parameter parser`);
   const forbidden = [];
   collectForbiddenKeys(tool.parameters, `${tool.name}.parameters`, forbidden);
   assert(

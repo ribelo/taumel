@@ -1,4 +1,4 @@
-import { parseToolParams, toolNames } from "../src/tool-contracts.ts";
+import { parseToolParams, toolNames } from "../src/tool-contract-catalog.ts";
 
 const assert = (condition, message) => {
   if (!condition) throw new Error(message);

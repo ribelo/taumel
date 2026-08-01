@@ -7,11 +7,8 @@ import type {
   CoreBridge,
   PiLike,
 } from "./types.ts";
-import {
-  parseToolParams,
-  toolNames,
-} from "./tool-contracts.ts";
-import { toolContracts } from "./tool-contract-catalog.ts";
+import { toolContracts, toolNames } from "./tool-contract-catalog.ts";
+import { isAgentToolContract, parseContractParams, type ToolContract } from "./tool-contract-model.ts";
 
 import {
   objectLikeValue,
@@ -39,7 +36,7 @@ import {
 } from "./child-sessions.ts";
 import { installExecNotificationLifecycle, startExecCompletionWaiter } from "./exec-notifications.ts";
 import { installAgentLifecycle, pendingAgentWaits } from "./agent-orchestration.ts";
-import { agentFailureText, executeAgentTool, isAgentToolName } from "./agent-tool-executor.ts";
+import { agentFailureText, executeAgentTool } from "./agent-tool-executor.ts";
 import { decodeAuthorityPlanIssued, decodeEditApplicationResult, decodeExecApprovalPromptPlan, decodeExecApprovalResult, decodeExecPolicyAllowRuleResult, decodeExecToolResult, decodePatchApplicationResult, decodeToolNamesResult, decodeToolResultEnvelope, decodeViewMediaResultEnvelope, type PreparedToolAction, type ToolResultEnvelope } from "./bridge-contracts.ts";
 import {
   errorToolResult,
@@ -661,26 +658,21 @@ export async function executeTool(
   pi: PiLike,
   core: CoreBridge,
   childSessions: Map<string, ChildSessionBridge>,
-  name: string,
+  contract: ToolContract,
   rawParams: unknown,
   ctx: unknown,
   signal?: AbortSignal,
   childExtensionFactory?: (pi: PiLike) => void,
 ): Promise<GatewayToolResult> {
-  // ^agent-juxg: agent policy and execution belong to the agent subsystem.
-  if (isAgentToolName(name)) {
+  // ^agent-wf0o: execution consumes the tool's descriptor without name inference.
+  if (isAgentToolContract(contract)) {
     return executeAgentTool(
-      pi,
-      core,
-      childSessions,
-      name,
-      rawParams,
-      ctx,
-      signal,
-      childExtensionFactory,
+      { pi, core, childSessions, childExtensionFactory },
+      { contract, params: rawParams, ctx, signal },
     );
   }
-  const parsed = parseToolParams(name, rawParams);
+  const name = contract.name;
+  const parsed = parseContractParams(contract, rawParams);
   if (!parsed.ok) {
     return errorToolResult(core, parsed.error, { ok: false, error: parsed.error });
   }
@@ -727,7 +719,7 @@ export async function executeTool(
       return false;
     }
   };
-  const replan = () => executeTool(pi, core, childSessions, name, parsed.params, ctx, signal, childExtensionFactory);
+  const replan = () => executeTool(pi, core, childSessions, contract, parsed.params, ctx, signal, childExtensionFactory);
   switch (prepared.action) {
     case "tool_result":
       return preparedToolResult(core, prepared);
@@ -864,11 +856,11 @@ export function registerGatewayTools(
         const childExtensionFactory = (childPi: PiLike) =>
           registerGatewayTools(childPi, core, childSessions);
         const result = await executeTool(
-          pi, core, childSessions, name, args[1], args[4],
+          pi, core, childSessions, contract, args[1], args[4],
           args[2] instanceof AbortSignal ? args[2] : undefined,
           childExtensionFactory,
         );
-        const failure = agentFailureText(name, result);
+        const failure = agentFailureText(contract, result);
         if (failure !== undefined) throw new Error(failure);
         return result;
       },

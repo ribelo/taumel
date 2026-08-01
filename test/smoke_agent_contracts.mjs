@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { parseToolParams, toolNames } from "../src/tool-contracts.ts";
+import { parseToolParams, toolContractByName, toolNames } from "../src/tool-contract-catalog.ts";
 
 for (const name of [
   "agent_spawn",
@@ -13,7 +13,49 @@ for (const name of [
   "code_quality_reviewer",
 ]) {
   assert.ok(toolNames.includes(name), `missing tool contract: ${name}`);
+  assert.equal(typeof toolContractByName(name).parseParams, "function", `${name} must carry its parameter parser`);
 }
+
+const executionByTool = {
+  agent_spawn: ["agent_start", true, false, true, false],
+  finder: ["agent_start", true, false, true, false],
+  oracle: ["agent_start", true, false, true, false],
+  code_reviewer: ["agent_start", true, false, true, false],
+  code_quality_reviewer: ["agent_start", true, false, true, false],
+  agent_send: ["agent_send", false, false, true, false],
+  agent_wait: ["agent_wait", false, true, false, false],
+  agent_list: ["agent_wait", false, true, false, true],
+  agent_close: ["agent_close", false, false, false, false],
+};
+for (const [name, expected] of Object.entries(executionByTool)) {
+  const execution = toolContractByName(name).execution;
+  assert.ok(execution, `${name} must carry its agent execution descriptor`);
+  assert.deepEqual([
+    execution.preparedAction,
+    execution.parentActiveTools,
+    execution.allowInvalidChildMetadata,
+    execution.rememberDescription,
+    execution.reconcileLiveDispatches,
+  ], expected, `${name} execution descriptor`);
+}
+assert.deepEqual(toolContractByName("code_reviewer").execution.additionalInstruction, {
+  text: "Your rubric: $code-review. Follow it exactly.",
+  requiredSkill: "code-review",
+  unavailable: {
+    code: "rubric_unavailable",
+    message: "reviewer rubric skill is unavailable: code-review",
+  },
+});
+assert.deepEqual(toolContractByName("code_quality_reviewer").execution.additionalInstruction, {
+  text: "Your rubric: $code-quality-review. Follow it exactly.",
+  requiredSkill: "code-quality-review",
+  unavailable: {
+    code: "rubric_unavailable",
+    message: "reviewer rubric skill is unavailable: code-quality-review",
+  },
+});
+assert.equal(toolContractByName("oracle").execution.additionalInstruction, undefined);
+assert.equal(toolContractByName("read").execution, undefined);
 
 // agent-tc01: start calls require a parent-facing description.
 assert.equal(parseToolParams("agent_spawn", { message: "investigate", description: "Investigate agent work" }).ok, true);

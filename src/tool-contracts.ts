@@ -1,4 +1,3 @@
-import { Compile } from "typebox/compile";
 import Type from "typebox";
 import {
   WebSearchExaParamsSchema,
@@ -10,14 +9,8 @@ import {
   ExaAgentListEventsParamsSchema,
 } from "./tool-exa-contracts.ts";
 import {
-  AgentSpawnParamsSchema,
-  FinderParamsSchema,
-  OracleParamsSchema,
-  CodeReviewerParamsSchema,
-  CodeQualityReviewerParamsSchema,
-  AgentSendParamsSchema,
-  AgentWaitParamsSchema,
-  AgentCloseParamsSchema,
+  agentDtsSchemas,
+  agentToolParamSchemas,
 } from "./tool-agent-contracts.ts";
 
 export const EditReplacementSchema = Type.Object(
@@ -421,14 +414,7 @@ export const dtsSchemas = [
   ["ExaAgentRunIdParams", ExaAgentRunIdParamsSchema],
   ["ExaAgentListRunsParams", ExaAgentListRunsParamsSchema],
   ["ExaAgentListEventsParams", ExaAgentListEventsParamsSchema],
-  ["AgentSpawnParams", AgentSpawnParamsSchema],
-  ["FinderParams", FinderParamsSchema],
-  ["OracleParams", OracleParamsSchema],
-  ["CodeReviewerParams", CodeReviewerParamsSchema],
-  ["CodeQualityReviewerParams", CodeQualityReviewerParamsSchema],
-  ["AgentSendParams", AgentSendParamsSchema],
-  ["AgentWaitParams", AgentWaitParamsSchema],
-  ["AgentCloseParams", AgentCloseParamsSchema],
+  ...agentDtsSchemas,
 ] as const;
 
 export const toolParamSchemas = [
@@ -458,112 +444,5 @@ export const toolParamSchemas = [
   { name: "exa_agent_list_runs", interfaceName: "ExaAgentListRunsParams", schema: ExaAgentListRunsParamsSchema },
   { name: "exa_agent_cancel_run", interfaceName: "ExaAgentRunIdParams", schema: ExaAgentRunIdParamsSchema },
   { name: "exa_agent_list_events", interfaceName: "ExaAgentListEventsParams", schema: ExaAgentListEventsParamsSchema },
-  { name: "agent_spawn", interfaceName: "AgentSpawnParams", schema: AgentSpawnParamsSchema },
-  { name: "finder", interfaceName: "FinderParams", schema: FinderParamsSchema },
-  { name: "oracle", interfaceName: "OracleParams", schema: OracleParamsSchema },
-  { name: "code_reviewer", interfaceName: "CodeReviewerParams", schema: CodeReviewerParamsSchema },
-  { name: "code_quality_reviewer", interfaceName: "CodeQualityReviewerParams", schema: CodeQualityReviewerParamsSchema },
-  { name: "agent_send", interfaceName: "AgentSendParams", schema: AgentSendParamsSchema },
-  { name: "agent_wait", interfaceName: "AgentWaitParams", schema: AgentWaitParamsSchema },
-  { name: "agent_list", interfaceName: "EmptyParams", schema: EmptyParamsSchema },
-  { name: "agent_close", interfaceName: "AgentCloseParams", schema: AgentCloseParamsSchema },
+  ...agentToolParamSchemas,
 ] as const;
-
-type Validator = ReturnType<typeof Compile>;
-
-const validators = new Map<string, Validator>(
-  toolParamSchemas.map((contract) => [contract.name, Compile(contract.schema)]),
-);
-
-export const toolNames = toolParamSchemas.map((contract) => contract.name);
-
-export type ParsedToolParams = object;
-
-export type ParseToolParamsResult =
-  | { readonly ok: true; readonly params: ParsedToolParams }
-  | { readonly ok: false; readonly error: string };
-
-function formatValidationError(toolName: string, validator: Validator, value: unknown): string {
-  let first;
-  for (const error of validator.Errors(value)) {
-    first = error;
-    break;
-  }
-  if (first === undefined) return `${toolName}: invalid parameters`;
-  const path = typeof first.instancePath === "string" && first.instancePath !== ""
-    ? first.instancePath.replaceAll("/", ".").replace(/^\./, ".")
-    : "";
-  return `${toolName}${path}: ${first.message}`;
-}
-
-export function parseToolParams(toolName: string, rawParams: unknown): ParseToolParamsResult {
-  const validator = validators.get(toolName);
-  if (validator === undefined) {
-    return { ok: false, error: `unknown tool contract: ${toolName}` };
-  }
-  const params = rawParams === undefined || rawParams === null ? {} : rawParams;
-  if (!validator.Check(params)) {
-    return { ok: false, error: formatValidationError(toolName, validator, params) };
-  }
-  if (
-    toolName === "crawling_exa" &&
-    typeof params === "object" &&
-    params !== null &&
-    ("ids" in params) === ("urls" in params)
-  ) {
-    return { ok: false, error: "crawling_exa: provide either ids or urls, but not both" };
-  }
-  if (
-    toolName === "agent_send" &&
-    typeof params === "object" &&
-    params !== null
-  ) {
-    const record = params as { message?: unknown; description?: unknown; interrupt?: unknown };
-    const message = typeof record.message === "string" ? record.message.trim() : "";
-    if (message === "" && record.interrupt !== true) {
-      return { ok: false, error: "agent_send.message is required unless interrupt is true" };
-    }
-    if (message !== "" && (typeof record.description !== "string" || record.description.trim() === "")) {
-      return { ok: false, error: "agent_send.description is required when message is supplied" };
-    }
-  }
-  if (
-    (toolName === "agent_spawn" || toolName === "oracle" || toolName === "code_reviewer" || toolName === "code_quality_reviewer") &&
-    typeof params === "object" && params !== null
-  ) {
-    const message = (params as { message?: unknown }).message;
-    if (typeof message !== "string" || message.trim() === "") {
-      return { ok: false, error: `${toolName}.message must not be empty` };
-    }
-  }
-  if (toolName === "finder" && typeof params === "object" && params !== null) {
-    const query = (params as { query?: unknown }).query;
-    if (typeof query !== "string" || query.trim() === "") {
-      return { ok: false, error: "finder.query must not be empty" };
-    }
-  }
-  if (toolName === "agent_wait" && typeof params === "object" && params !== null) {
-    const runIds = (params as { run_ids?: unknown }).run_ids;
-    if (Array.isArray(runIds)) {
-      const trimmed = runIds.map((value) => typeof value === "string" ? value.trim() : "");
-      if (trimmed.some((value) => value === "")) {
-        return { ok: false, error: "agent_wait.run_ids must not contain empty ids" };
-      }
-      if (new Set(trimmed).size !== trimmed.length) {
-        return { ok: false, error: "agent_wait.run_ids must not contain duplicate ids" };
-      }
-    }
-  }
-  if (
-    (toolName === "agent_send" || toolName === "agent_close") &&
-    typeof params === "object" && params !== null
-  ) {
-    const agentId = (params as { agent_id?: unknown }).agent_id;
-    if (typeof agentId !== "string" || agentId.trim() === "") {
-      return { ok: false, error: `${toolName}.agent_id must not be empty` };
-    }
-  }
-  return { ok: true, params: params as ParsedToolParams };
-}
-
-export type { ToolContract } from "./tool-contract-model.ts";

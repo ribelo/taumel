@@ -3,8 +3,11 @@ import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { executeAgentPrepared } from "../src/agent-orchestration.ts";
-import { executeTool, registerGatewayTools } from "../src/tool-executor.ts";
-import { toolNames } from "../src/tool-contracts.ts";
+import { executeTool as executeToolContract, registerGatewayTools } from "../src/tool-executor.ts";
+import { toolContractByName, toolNames } from "../src/tool-contract-catalog.ts";
+
+const executeTool = (pi, core, sessions, name, params, ctx, signal, childFactory) =>
+  executeToolContract(pi, core, sessions, toolContractByName(name), params, ctx, signal, childFactory);
 
 const registered = [];
 const registeredTools = new Map();
