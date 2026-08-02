@@ -9,7 +9,7 @@ a scope.
 ## Rubric
 
 Treat the review rubric provided earlier in this conversation as the complete
-rubric and follow it exactly. Do not replace it with fallback criteria.
+rubric. Do not replace it with fallback criteria.
 
 ## Work
 
